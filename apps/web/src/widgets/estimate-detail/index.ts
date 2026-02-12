@@ -1,0 +1,1 @@
+export { EstimateDetailWidget } from './ui'

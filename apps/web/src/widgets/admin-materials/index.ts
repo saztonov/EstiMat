@@ -1,0 +1,1 @@
+export { AdminMaterialsWidget } from './ui'

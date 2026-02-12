@@ -1,0 +1,1 @@
+export { TenderListWidget } from './ui'

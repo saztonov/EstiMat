@@ -1,0 +1,1 @@
+export { BoqVerifyWidget } from './ui'

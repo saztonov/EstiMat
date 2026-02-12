@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest:*)",
+      "Bash(cd:*)",
+      "Bash(find:*)",
+      "Bash(pnpm install:*)",
+      "Bash(where.exe:*)",
+      "Bash(npm.cmd exec:*)",
+      "Bash(npx.cmd pnpm install:*)",
+      "Bash(npx.cmd turbo:*)",
+      "Bash(npx.cmd tsc:*)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+export { VolumeDetailWidget } from './ui'

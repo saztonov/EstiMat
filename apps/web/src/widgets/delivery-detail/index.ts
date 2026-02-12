@@ -1,0 +1,1 @@
+export { DeliveryDetailWidget } from './ui'
