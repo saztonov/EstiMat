@@ -85,7 +85,7 @@ export const api = {
     apiFetch<T>(url, { method: 'PUT', body: body ? JSON.stringify(body) : undefined }, opts),
 
   delete: <T = unknown>(url: string, opts?: FetchOptions) =>
-    apiFetch<T>(url, { method: 'DELETE' }, opts),
+    apiFetch<T>(url, { method: 'DELETE', headers: {} }, opts),
 
   upload: <T = unknown>(url: string, formData: FormData, opts?: FetchOptions) =>
     apiFetch<T>(url, { method: 'POST', body: formData, headers: {} }, opts),
