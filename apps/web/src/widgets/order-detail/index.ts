@@ -1,1 +1,0 @@
-export { OrderDetailWidget } from './ui'

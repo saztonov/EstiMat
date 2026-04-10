@@ -1,1 +1,0 @@
-export { BoqEditorWidget } from './ui'

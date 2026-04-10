@@ -1,1 +1,0 @@
-export { AdminSitesWidget } from './ui'

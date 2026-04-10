@@ -1,1 +1,0 @@
-export { RequestDetailWidget } from './ui'

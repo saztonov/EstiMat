@@ -2,26 +2,42 @@
 
 ## Общение
 - Язык общения: русский
-- В ответах не писать код — только архитектуру и описание изменений
+- Не запускать приложение для теста — пользователь запускает фронт и бэкенд самостоятельно
+
+## Разрешения
+- Автоматическое согласие на доступ к файлам проекта (чтение, создание, редактирование)
+- Автоматическое согласие на выполнение bash-команд в рамках проекта
 
 ## Технические ограничения
-- **Не использовать RLS** (Row Level Security отключён)
-- **Не запускать приложение для теста** — пользователь запускает фронт и бэкэнд самостоятельно
-- **ИИ-часть отложена** — нет LangGraph, Claude API, BullMQ, pdf-parse. Сметы и ВОР набираются вручную
+- **Без RLS** — авторизация на уровне Fastify middleware
+- **Без FSD** — простая страничная структура (pages/components/hooks/store)
+- **ИИ-часть отложена** — сметы и ВОР набираются вручную
+- **Drizzle в database-first режиме** — SQL-миграции вручную → drizzle-kit pull → автогенерация схемы
 
 ## Архитектура
-- Адаптированный FSD (Feature-Sliced Design) для Next.js App Router
-- `app/` — только роутинг (тонкие page.tsx, layout.tsx, API routes)
-- `src/widgets/` — композиции для страниц (собирают features и entities)
-- `src/features/` — пользовательские действия (сложные/кросс-доменные)
-- `src/entities/` — бизнес-сущности (api, hooks, ui, types, schemas)
-- `src/shared/` — generic переиспользуемое (UI-кит, Supabase, утилиты)
-- Зависимости строго вниз: app → widgets → features → entities → shared
+- Клиент-серверная: Fastify REST API + React SPA
+- Монорепо (npm workspaces): server/ + client/ + shared/
+- server/ — Fastify 5, плагины (database, auth, security, cors), routes, middleware
+- client/ — Vite 8 + React 19 + Ant Design 6 + React Router 7
+- shared/ — Zod-схемы, типы, константы (переиспользуются в server и client)
 
 ## Стек
-- Next.js 14 App Router + TypeScript
-- Shadcn/ui + Tailwind CSS
-- Supabase (PostgreSQL + Auth + Storage + Realtime) — облачный проект
-- TanStack Query + TanStack Table
-- React Hook Form + Zod
-- Монорепо: Turborepo + pnpm workspaces
+- Node.js 22 LTS + TypeScript 5.7
+- Backend: Fastify 5 + @fastify/jwt + @fastify/cookie + @fastify/helmet + @fastify/rate-limit
+- Frontend: Vite 8 + React 19 + React Router 7 + Ant Design 6
+- ORM: Drizzle ORM (database-first) + drizzle-kit
+- БД: PostgreSQL 17 (Yandex Managed в проде, Docker для локальной разработки)
+- Файлы: S3 Cloud.ru (@aws-sdk/client-s3)
+- Auth: JWT в httpOnly cookies (access 15 мин + refresh 7 дней)
+- Валидация: Zod 4
+- State: Zustand 5 + TanStack Query 5
+
+## Роли
+- admin — полный доступ
+- engineer — инженер-сметчик
+- contractor — подрядчик
+- manager — руководитель
+
+## Референсные проекты
+- BillHub: C:\Users\Usr\billhub (паттерн auth, структура Fastify)
+- PassDesk: github.com/loliloopp/PassDesk (Sequelize + Yandex PG)

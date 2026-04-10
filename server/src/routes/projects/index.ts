@@ -1,0 +1,87 @@
+import type { FastifyInstance } from 'fastify';
+import { authenticate } from '../../middleware/authenticate.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { createProjectSchema, updateProjectSchema } from '@estimat/shared';
+
+export default async function projectRoutes(fastify: FastifyInstance) {
+  fastify.addHook('preHandler', authenticate);
+
+  // GET /api/projects
+  fastify.get('/', async () => {
+    const { rows } = await fastify.pool.query(
+      'SELECT * FROM projects ORDER BY code',
+    );
+    return { data: rows };
+  });
+
+  // GET /api/projects/:id
+  fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
+    const { rows } = await fastify.pool.query(
+      'SELECT * FROM projects WHERE id = $1',
+      [request.params.id],
+    );
+    if (rows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
+    return { data: rows[0] };
+  });
+
+  // POST /api/projects
+  fastify.post('/', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
+    const body = createProjectSchema.parse(request.body);
+    const { rows } = await fastify.pool.query(
+      `INSERT INTO projects (code, name, full_name, org_id, address, status, start_date, end_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [body.code, body.name, body.fullName || null, body.orgId, body.address || null, body.status, body.startDate || null, body.endDate || null],
+    );
+    return reply.status(201).send({ data: rows[0] });
+  });
+
+  // PUT /api/projects/:id
+  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
+    const body = updateProjectSchema.parse(request.body);
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    let i = 1;
+
+    if (body.code !== undefined) { sets.push(`code = $${i++}`); values.push(body.code); }
+    if (body.name !== undefined) { sets.push(`name = $${i++}`); values.push(body.name); }
+    if (body.fullName !== undefined) { sets.push(`full_name = $${i++}`); values.push(body.fullName); }
+    if (body.orgId !== undefined) { sets.push(`org_id = $${i++}`); values.push(body.orgId); }
+    if (body.address !== undefined) { sets.push(`address = $${i++}`); values.push(body.address); }
+    if (body.status !== undefined) { sets.push(`status = $${i++}`); values.push(body.status); }
+    if (body.startDate !== undefined) { sets.push(`start_date = $${i++}`); values.push(body.startDate); }
+    if (body.endDate !== undefined) { sets.push(`end_date = $${i++}`); values.push(body.endDate); }
+
+    if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
+
+    values.push(request.params.id);
+    const { rows } = await fastify.pool.query(
+      `UPDATE projects SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+      values,
+    );
+    if (rows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
+    return { data: rows[0] };
+  });
+
+  // GET /api/projects/:id/members
+  fastify.get<{ Params: { id: string } }>('/:id/members', async (request) => {
+    const { rows } = await fastify.pool.query(
+      `SELECT pm.*, u.email, u.full_name
+       FROM project_members pm
+       JOIN users u ON u.id = pm.user_id
+       WHERE pm.project_id = $1`,
+      [request.params.id],
+    );
+    return { data: rows };
+  });
+
+  // POST /api/projects/:id/members
+  fastify.post<{ Params: { id: string } }>('/:id/members', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
+    const { userId, role } = request.body as { userId: string; role: string };
+    const { rows } = await fastify.pool.query(
+      `INSERT INTO project_members (project_id, user_id, role)
+       VALUES ($1, $2, $3) RETURNING *`,
+      [request.params.id, userId, role],
+    );
+    return reply.status(201).send({ data: rows[0] });
+  });
+}

@@ -1,1 +1,0 @@
-export { ProjectMembersWidget } from './ui'

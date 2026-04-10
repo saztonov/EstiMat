@@ -1,15 +1,16 @@
 {
   "name": "estimat",
   "private": true,
+  "workspaces": ["shared", "server", "client"],
   "scripts": {
-    "dev": "turbo dev",
-    "build": "turbo build",
-    "lint": "turbo lint",
-    "typecheck": "turbo typecheck"
+    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client"
   },
   "devDependencies": {
-    "turbo": "^2.0.0",
-    "typescript": "^5.4.0"
-  },
-  "packageManager": "pnpm@9.0.0"
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.0"
+  }
 }

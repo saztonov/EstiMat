@@ -1,1 +1,0 @@
-export { GlobalSearchWidget } from './ui'

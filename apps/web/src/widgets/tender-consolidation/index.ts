@@ -1,1 +1,0 @@
-export { TenderConsolidationWidget } from './ui'

@@ -1,1 +1,0 @@
-export { ClaimListWidget } from './ui'

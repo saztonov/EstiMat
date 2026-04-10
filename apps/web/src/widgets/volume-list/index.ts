@@ -1,1 +1,0 @@
-export { VolumeListWidget } from './ui'
