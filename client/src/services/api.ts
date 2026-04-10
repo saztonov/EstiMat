@@ -45,13 +45,15 @@ export async function apiFetch<T = unknown>(
   fetchOpts?: FetchOptions,
   isRetry = false,
 ): Promise<T> {
+  const headers: Record<string, string> = { ...options.headers as Record<string, string> };
+  if (options.body && !(options.body instanceof FormData)) {
+    headers['Content-Type'] ??= 'application/json';
+  }
+
   const res = await fetch(`${BASE_URL}${url}`, {
     ...options,
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers,
   });
 
   if (res.status === 401 && !isRetry) {
@@ -85,8 +87,8 @@ export const api = {
     apiFetch<T>(url, { method: 'PUT', body: body ? JSON.stringify(body) : undefined }, opts),
 
   delete: <T = unknown>(url: string, opts?: FetchOptions) =>
-    apiFetch<T>(url, { method: 'DELETE', headers: {} }, opts),
+    apiFetch<T>(url, { method: 'DELETE' }, opts),
 
   upload: <T = unknown>(url: string, formData: FormData, opts?: FetchOptions) =>
-    apiFetch<T>(url, { method: 'POST', body: formData, headers: {} }, opts),
+    apiFetch<T>(url, { method: 'POST', body: formData }, opts),
 };
