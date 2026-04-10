@@ -4,6 +4,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
+import multipart from '@fastify/multipart';
 import { config } from './config.js';
 
 export async function buildApp() {
@@ -58,6 +59,11 @@ export async function buildApp() {
     },
   });
 
+  // Multipart (file uploads)
+  await app.register(multipart, {
+    limits: { fileSize: 10 * 1024 * 1024 },
+  });
+
   // Database plugin
   await app.register(import('./plugins/database.js'));
 
@@ -68,6 +74,7 @@ export async function buildApp() {
   await app.register(import('./routes/materials/index.js'), { prefix: '/api/materials' });
   await app.register(import('./routes/rates/index.js'), { prefix: '/api/rates' });
   await app.register(import('./routes/estimates/index.js'), { prefix: '/api/estimates' });
+  await app.register(import('./routes/users/index.js'), { prefix: '/api/users' });
 
   // Health check
   app.get('/api/health', async () => ({ status: 'ok' }));

@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Table, Button, Card, Modal, Form, Input, Select, App } from 'antd';
+import { Table, Button, Modal, Form, Input, Select, Space, App } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 
-export function MaterialsPage() {
+export function MaterialsPanel() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
@@ -39,10 +39,10 @@ export function MaterialsPage() {
   ];
 
   return (
-    <Card
-      title="Справочник материалов"
-      extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Добавить</Button>}
-    >
+    <>
+      <Space style={{ marginBottom: 16 }}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Добавить</Button>
+      </Space>
       <Table rowKey="id" columns={columns} dataSource={materials?.data} loading={isLoading} />
 
       <Modal
@@ -71,6 +71,6 @@ export function MaterialsPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </Card>
+    </>
   );
 }

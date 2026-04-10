@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import ExcelJS from 'exceljs';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { createCostCategorySchema, createCostTypeSchema, createRateSchema, updateRateSchema } from '@estimat/shared';
@@ -136,6 +137,108 @@ export default async function rateRoutes(fastify: FastifyInstance) {
     );
     if (rows.length === 0) return reply.status(404).send({ error: 'Расценка не найдена' });
     return { data: rows[0] };
+  });
+
+  // DELETE /api/rates/:id
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+    const { rowCount } = await fastify.pool.query(
+      'DELETE FROM rates WHERE id = $1',
+      [request.params.id],
+    );
+    if (rowCount === 0) return reply.status(404).send({ error: 'Расценка не найдена' });
+    return { success: true };
+  });
+
+  // POST /api/rates/import — импорт из Excel
+  fastify.post('/import', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+    const file = await request.file();
+    if (!file) return reply.status(400).send({ error: 'Файл не загружен' });
+
+    const ext = file.filename.split('.').pop()?.toLowerCase();
+    if (ext !== 'xlsx') return reply.status(400).send({ error: 'Только .xlsx файлы' });
+
+    const buffer = await file.toBuffer();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) return reply.status(400).send({ error: 'Лист не найден в файле' });
+
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Load existing categories and types into cache
+      const catRes = await client.query('SELECT id, name FROM cost_categories');
+      const categoryCache = new Map<string, string>();
+      for (const row of catRes.rows) {
+        categoryCache.set((row.name as string).toLowerCase(), row.id as string);
+      }
+
+      const typeRes = await client.query('SELECT id, category_id, name FROM cost_types');
+      const typeCache = new Map<string, string>();
+      for (const row of typeRes.rows) {
+        typeCache.set(`${row.category_id}|${(row.name as string).toLowerCase()}`, row.id as string);
+      }
+
+      let imported = 0;
+      let categoriesCreated = 0;
+      let typesCreated = 0;
+
+      const rowCount = worksheet.rowCount;
+      for (let r = 2; r <= rowCount; r++) {
+        const row = worksheet.getRow(r);
+        const categoryName = (row.getCell(1).text || '').trim();
+        const typeName = (row.getCell(2).text || '').trim();
+        const rateName = (row.getCell(3).text || '').trim();
+        const unit = (row.getCell(4).text || '').trim();
+        const priceText = (row.getCell(5).text || '').trim();
+
+        if (!categoryName || !typeName || !rateName || !unit) continue;
+
+        const price = parseFloat(priceText) || 0;
+
+        // Find or create category
+        let categoryId = categoryCache.get(categoryName.toLowerCase());
+        if (!categoryId) {
+          const res = await client.query(
+            'INSERT INTO cost_categories (name) VALUES ($1) RETURNING id',
+            [categoryName],
+          );
+          categoryId = res.rows[0].id as string;
+          categoryCache.set(categoryName.toLowerCase(), categoryId);
+          categoriesCreated++;
+        }
+
+        // Find or create type
+        const typeKey = `${categoryId}|${typeName.toLowerCase()}`;
+        let typeId = typeCache.get(typeKey);
+        if (!typeId) {
+          const res = await client.query(
+            'INSERT INTO cost_types (category_id, name) VALUES ($1, $2) RETURNING id',
+            [categoryId, typeName],
+          );
+          typeId = res.rows[0].id as string;
+          typeCache.set(typeKey, typeId);
+          typesCreated++;
+        }
+
+        // Insert rate
+        await client.query(
+          'INSERT INTO rates (cost_type_id, name, unit, price) VALUES ($1, $2, $3, $4)',
+          [typeId, rateName, unit, price],
+        );
+        imported++;
+      }
+
+      await client.query('COMMIT');
+      return { success: true, imported, categoriesCreated, typesCreated };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   });
 
   // GET /api/rates/tree — полное дерево: категории → виды → расценки

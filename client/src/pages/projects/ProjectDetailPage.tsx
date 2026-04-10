@@ -21,7 +21,7 @@ export function ProjectDetailPage() {
 
   return (
     <div>
-      <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/projects')} style={{ marginBottom: 16 }}>
+      <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/references?tab=projects')} style={{ marginBottom: 16 }}>
         К списку проектов
       </Button>
       <Card

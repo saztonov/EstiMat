@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Table, Button, Card, Tag, Modal, Form, Input, Select, App } from 'antd';
+import { Table, Button, Modal, Form, Input, Select, Tag, Space, App } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -14,7 +14,7 @@ const statusColors: Record<string, string> = {
   archived: 'orange',
 };
 
-export function ProjectsPage() {
+export function ProjectsPanel() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
   const navigate = useNavigate();
@@ -57,10 +57,10 @@ export function ProjectsPage() {
   ];
 
   return (
-    <Card
-      title="Проекты"
-      extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Создать</Button>}
-    >
+    <>
+      <Space style={{ marginBottom: 16 }}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Создать</Button>
+      </Space>
       <Table
         rowKey="id"
         columns={columns}
@@ -98,6 +98,6 @@ export function ProjectsPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </Card>
+    </>
   );
 }

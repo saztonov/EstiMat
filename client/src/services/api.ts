@@ -86,4 +86,7 @@ export const api = {
 
   delete: <T = unknown>(url: string, opts?: FetchOptions) =>
     apiFetch<T>(url, { method: 'DELETE' }, opts),
+
+  upload: <T = unknown>(url: string, formData: FormData, opts?: FetchOptions) =>
+    apiFetch<T>(url, { method: 'POST', body: formData, headers: {} }, opts),
 };
