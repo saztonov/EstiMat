@@ -17,6 +17,7 @@ export const config = {
     database: env('DB_NAME', 'estimat'),
     user: env('DB_USER', 'estimat'),
     password: env('DB_PASSWORD', 'estimat_secret'),
+    ssl: process.env.DB_SSL === 'true',
   },
 
   jwt: {

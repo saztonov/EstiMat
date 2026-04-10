@@ -13,6 +13,7 @@ export default fp(async (fastify) => {
     user: config.db.user,
     password: config.db.password,
     max: 20,
+    ssl: config.db.ssl ? { rejectUnauthorized: false } : false,
   });
 
   const db = drizzle(pool);
