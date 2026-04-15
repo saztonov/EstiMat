@@ -1,3 +1,11 @@
+/* Корневые узлы должны иметь фиксированную высоту, иначе
+   flex-контейнеры Layout'а не ограничивают высоту таблицы,
+   и скролл уходит на всю страницу. */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
 /* Табличные layout'ы: таблица заполняет доступное пространство,
    шапка и пагинация фиксированы, скроллится только тело таблицы */
 
@@ -67,4 +75,5 @@
 .table-page-wrapper .ant-table-wrapper .ant-table .ant-table-body {
   flex: 1;
   overflow-y: auto !important;
+  overflow-x: auto !important;
 }
