@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, App } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined, SearchOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import type { ColumnsType } from 'antd/es/table';
@@ -26,6 +26,7 @@ export function RatesPanel() {
   const [editRecord, setEditRecord] = useState<Rate | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | undefined>();
   const [selectedCostTypeId, setSelectedCostTypeId] = useState<string | undefined>();
+  const [search, setSearch] = useState('');
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
   const { message } = App.useApp();
@@ -44,21 +45,23 @@ export function RatesPanel() {
     ),
   });
 
-  // Fetch rates (filtered by cost type if selected)
-  const ratesQueryKey = ['rates', selectedCategoryId, selectedCostTypeId];
+  // Fetch ALL rates once; filtering/search on client
   const { data: ratesData, isLoading } = useQuery({
-    queryKey: ratesQueryKey,
-    queryFn: () => {
-      let url = '/rates';
-      if (selectedCostTypeId) url += `?costTypeId=${selectedCostTypeId}`;
-      return api.get<{ data: Rate[] }>(url);
-    },
+    queryKey: ['rates'],
+    queryFn: () => api.get<{ data: Rate[] }>('/rates'),
   });
 
-  // Filter rates by category on the client side when only category is selected
+  // Фильтрация на клиенте: поиск по названию игнорирует фильтры категории/вида,
+  // работает по всем загруженным расценкам (как требовал пользователь).
   const filteredRates = (() => {
     if (!ratesData?.data) return [];
-    if (selectedCostTypeId) return ratesData.data;
+    const searchTrimmed = search.trim().toLowerCase();
+    if (searchTrimmed) {
+      return ratesData.data.filter((r) => r.name.toLowerCase().includes(searchTrimmed));
+    }
+    if (selectedCostTypeId) {
+      return ratesData.data.filter((r) => r.cost_type_id === selectedCostTypeId);
+    }
     if (selectedCategoryId && typesData?.data) {
       const typeIds = new Set(typesData.data.map((t) => t.id));
       return ratesData.data.filter((r) => typeIds.has(r.cost_type_id));
@@ -208,6 +211,14 @@ export function RatesPanel() {
           disabled={!selectedCategoryId && !selectedCostTypeId}
           onClick={() => { setSelectedCategoryId(undefined); setSelectedCostTypeId(undefined); }}
         />
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="Поиск по названию"
+          style={{ width: 300 }}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Добавить</Button>
         <Upload
           accept=".xlsx"
@@ -223,11 +234,12 @@ export function RatesPanel() {
 
       <Table
         rowKey="id"
+        size="small"
         columns={columns}
         dataSource={filteredRates}
         loading={isLoading}
-        scroll={{ y: 'flex' }}
-        pagination={{ pageSize: 50 }}
+        scroll={{ x: 'max-content', y: 'flex' }}
+        pagination={{ pageSize: 50, showSizeChanger: false }}
       />
 
       <Modal
