@@ -10,6 +10,7 @@ export const createProjectSchema = z.object({
   status: z.enum(PROJECT_STATUSES).default('planning'),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
+  imageUrl: z.string().url().nullable().optional(),
 });
 
 export const updateProjectSchema = createProjectSchema.partial();
@@ -24,6 +25,7 @@ export const projectSchema = z.object({
   status: z.enum(PROJECT_STATUSES),
   startDate: z.string().nullable(),
   endDate: z.string().nullable(),
+  imageUrl: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

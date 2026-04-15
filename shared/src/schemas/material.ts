@@ -10,6 +10,7 @@ export const createMaterialSchema = z.object({
   name: z.string().min(1, 'Название обязательно'),
   groupId: z.string().uuid().nullable().optional(),
   unit: z.string().min(1, 'Единица измерения обязательна'),
+  unitPrice: z.number().min(0, 'Цена не может быть отрицательной').default(0),
   description: z.string().optional(),
   attributes: z.record(z.unknown()).optional(),
 });

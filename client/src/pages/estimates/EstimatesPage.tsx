@@ -1,120 +1,151 @@
-import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
-import { Table, Button, Card, Tag, Modal, Form, Input, Select, App } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
+import { Card, Row, Col, Input, Select, Tag, Empty, Spin, Space } from 'antd';
+import { SearchOutlined, FileTextOutlined } from '@ant-design/icons';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
-import { ESTIMATE_STATUS_LABELS } from '@estimat/shared';
+import { PROJECT_STATUS_LABELS } from '@estimat/shared';
+
+interface ProjectWithStats {
+  id: string;
+  code: string;
+  name: string;
+  full_name: string | null;
+  address: string | null;
+  status: string;
+  image_url: string | null;
+  estimates_count: number;
+  estimates_total: string;
+}
 
 const statusColors: Record<string, string> = {
-  draft: 'default',
-  review: 'blue',
-  approved: 'green',
+  planning: 'default',
+  active: 'blue',
+  completed: 'green',
   archived: 'orange',
 };
 
+const formatMoney = (v: string | number) =>
+  `${Number(v ?? 0).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ₽`;
+
+const placeholderCover = (code: string) => {
+  const hue = (code.charCodeAt(0) * 37) % 360;
+  return (
+    <div
+      style={{
+        height: 140,
+        background: `linear-gradient(135deg, hsl(${hue},60%,55%), hsl(${(hue + 40) % 360},60%,45%))`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'rgba(255,255,255,0.85)',
+        fontSize: 40,
+      }}
+    >
+      <FileTextOutlined />
+    </div>
+  );
+};
+
 export function EstimatesPage() {
-  const [modalOpen, setModalOpen] = useState(false);
-  const [form] = Form.useForm();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const projectId = searchParams.get('projectId');
-  const queryClient = useQueryClient();
-  const { message } = App.useApp();
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<'code' | 'name' | 'total' | 'count'>('code');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['estimates', projectId],
-    queryFn: () => api.get<{ data: Record<string, unknown>[] }>(`/estimates${projectId ? `?projectId=${projectId}` : ''}`),
+    queryKey: ['projects-with-stats'],
+    queryFn: () => api.get<{ data: ProjectWithStats[] }>('/projects/with-stats'),
   });
 
-  const { data: projects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => api.get<{ data: Record<string, unknown>[] }>('/projects'),
-  });
+  const projects = useMemo(() => {
+    const rows = data?.data ?? [];
+    const filtered = search.trim()
+      ? rows.filter((p) => {
+          const q = search.trim().toLowerCase();
+          return (
+            p.code.toLowerCase().includes(q) ||
+            p.name.toLowerCase().includes(q) ||
+            (p.address || '').toLowerCase().includes(q)
+          );
+        })
+      : rows;
 
-  const { data: orgs } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => api.get<{ data: Record<string, unknown>[] }>('/organizations'),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: (values: Record<string, unknown>) => api.post('/estimates', values),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['estimates'] });
-      setModalOpen(false);
-      form.resetFields();
-      message.success('Смета создана');
-    },
-    onError: (err: Error) => message.error(err.message),
-  });
-
-  const columns = [
-    { title: 'Проект', dataIndex: 'project_code', width: 100 },
-    { title: 'Объект', dataIndex: 'project_name' },
-    { title: 'Подрядчик', dataIndex: 'contractor_name', render: (v: string) => v || '—' },
-    { title: 'Вид работ', dataIndex: 'work_type', render: (v: string) => v || '—' },
-    {
-      title: 'Статус',
-      dataIndex: 'status',
-      width: 130,
-      render: (s: string) => <Tag color={statusColors[s]}>{ESTIMATE_STATUS_LABELS[s as keyof typeof ESTIMATE_STATUS_LABELS]}</Tag>,
-    },
-    {
-      title: 'Сумма',
-      dataIndex: 'total_amount',
-      width: 140,
-      render: (v: string) => `${Number(v).toLocaleString('ru-RU')} ₽`,
-    },
-  ];
+    return [...filtered].sort((a, b) => {
+      switch (sort) {
+        case 'name': return a.name.localeCompare(b.name);
+        case 'total': return Number(b.estimates_total) - Number(a.estimates_total);
+        case 'count': return b.estimates_count - a.estimates_count;
+        default: return a.code.localeCompare(b.code);
+      }
+    });
+  }, [data, search, sort]);
 
   return (
     <Card
-      title={projectId ? 'Сметы проекта' : 'Все сметы'}
-      extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Создать</Button>}
+      title="Строительные объекты"
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-      styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
+      styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' } }}
     >
-      <div className="table-page-wrapper">
-      <Table
-        rowKey="id"
-        columns={columns}
-        dataSource={data?.data}
-        loading={isLoading}
-        scroll={{ y: 'flex' }}
-        onRow={(record) => ({ onClick: () => navigate(`/estimates/${record.id}`) })}
-        style={{ cursor: 'pointer' }}
-      />
+      <Space style={{ marginBottom: 16 }} wrap>
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="Поиск по коду, названию, адресу"
+          style={{ width: 340 }}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <Select
+          value={sort}
+          onChange={setSort}
+          style={{ width: 200 }}
+          options={[
+            { value: 'code', label: 'Сортировка: по коду' },
+            { value: 'name', label: 'Сортировка: по названию' },
+            { value: 'total', label: 'Сортировка: по сумме' },
+            { value: 'count', label: 'Сортировка: по числу смет' },
+          ]}
+        />
+      </Space>
 
-      <Modal
-        title="Новая смета"
-        open={modalOpen}
-        onCancel={() => setModalOpen(false)}
-        onOk={() => form.submit()}
-        confirmLoading={createMutation.isPending}
-      >
-        <Form form={form} layout="vertical" onFinish={(v) => createMutation.mutate(v)} initialValues={{ projectId: projectId || undefined }}>
-          <Form.Item name="projectId" label="Проект" rules={[{ required: true }]}>
-            <Select
-              placeholder="Выберите проект"
-              options={projects?.data.map((p) => ({ value: p.id as string, label: `${p.code} — ${p.name}` }))}
-            />
-          </Form.Item>
-          <Form.Item name="contractorId" label="Подрядчик">
-            <Select
-              allowClear
-              placeholder="Выберите подрядчика"
-              options={orgs?.data.filter((o) => o.type === 'subcontractor').map((o) => ({ value: o.id as string, label: o.name as string }))}
-            />
-          </Form.Item>
-          <Form.Item name="workType" label="Вид работ">
-            <Input />
-          </Form.Item>
-          <Form.Item name="notes" label="Примечания">
-            <Input.TextArea />
-          </Form.Item>
-        </Form>
-      </Modal>
-      </div>
+      {isLoading ? (
+        <Spin size="large" />
+      ) : projects.length === 0 ? (
+        <Empty description="Объектов не найдено" />
+      ) : (
+        <Row gutter={[16, 16]}>
+          {projects.map((p) => (
+            <Col key={p.id} xs={24} sm={12} lg={8} xl={6}>
+              <Card
+                hoverable
+                cover={
+                  p.image_url
+                    ? <img alt={p.name} src={p.image_url} style={{ height: 140, objectFit: 'cover' }} />
+                    : placeholderCover(p.code)
+                }
+                onClick={() => navigate(`/projects/${p.id}?tab=estimates`)}
+                styles={{ body: { padding: 16 } }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <strong>{p.code} · {p.name}</strong>
+                  <Tag color={statusColors[p.status]} style={{ marginInlineEnd: 0 }}>
+                    {PROJECT_STATUS_LABELS[p.status as keyof typeof PROJECT_STATUS_LABELS]}
+                  </Tag>
+                </div>
+                <div style={{ color: '#8c8c8c', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
+                  {p.address || '—'}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <span style={{ color: '#8c8c8c' }}>
+                    <FileTextOutlined /> {p.estimates_count} смет
+                  </span>
+                  <strong style={{ color: '#1677ff' }}>{formatMoney(p.estimates_total)}</strong>
+                </div>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      )}
     </Card>
   );
 }

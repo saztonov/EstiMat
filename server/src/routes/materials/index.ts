@@ -67,9 +67,9 @@ export default async function materialRoutes(fastify: FastifyInstance) {
   fastify.post('/', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
     const body = createMaterialSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
-      `INSERT INTO material_catalog (name, group_id, unit, description, attributes)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [body.name, body.groupId || null, body.unit, body.description || null, JSON.stringify(body.attributes || {})],
+      `INSERT INTO material_catalog (name, group_id, unit, unit_price, description, attributes)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [body.name, body.groupId || null, body.unit, body.unitPrice ?? 0, body.description || null, JSON.stringify(body.attributes || {})],
     );
     return reply.status(201).send({ data: rows[0] });
   });
@@ -84,6 +84,7 @@ export default async function materialRoutes(fastify: FastifyInstance) {
     if (body.name !== undefined) { sets.push(`name = $${i++}`); values.push(body.name); }
     if (body.groupId !== undefined) { sets.push(`group_id = $${i++}`); values.push(body.groupId); }
     if (body.unit !== undefined) { sets.push(`unit = $${i++}`); values.push(body.unit); }
+    if (body.unitPrice !== undefined) { sets.push(`unit_price = $${i++}`); values.push(body.unitPrice); }
     if (body.description !== undefined) { sets.push(`description = $${i++}`); values.push(body.description); }
     if (body.attributes !== undefined) { sets.push(`attributes = $${i++}`); values.push(JSON.stringify(body.attributes)); }
 

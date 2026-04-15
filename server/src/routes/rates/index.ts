@@ -159,7 +159,8 @@ export default async function rateRoutes(fastify: FastifyInstance) {
 
     const buffer = await file.toBuffer();
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await workbook.xlsx.load(buffer as any);
 
     const worksheet = workbook.worksheets[0];
     if (!worksheet) return reply.status(400).send({ error: 'Лист не найден в файле' });

@@ -14,6 +14,20 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     return { data: rows };
   });
 
+  // GET /api/projects/with-stats — для галереи объектов на странице «Сметы»
+  fastify.get('/with-stats', async () => {
+    const { rows } = await fastify.pool.query(
+      `SELECT p.*,
+              COALESCE(COUNT(e.id), 0)::int AS estimates_count,
+              COALESCE(SUM(e.total_amount), 0)::numeric AS estimates_total
+         FROM projects p
+         LEFT JOIN estimates e ON e.project_id = p.id
+         GROUP BY p.id
+         ORDER BY p.code`,
+    );
+    return { data: rows };
+  });
+
   // GET /api/projects/:id
   fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
     const { rows } = await fastify.pool.query(
@@ -24,13 +38,52 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     return { data: rows[0] };
   });
 
+  // GET /api/projects/:id/summary — сводная смета по объекту
+  fastify.get<{ Params: { id: string } }>('/:id/summary', async (request, reply) => {
+    const { rows: projectRows } = await fastify.pool.query(
+      'SELECT * FROM projects WHERE id = $1',
+      [request.params.id],
+    );
+    if (projectRows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
+
+    const { rows: estimates } = await fastify.pool.query(
+      `SELECT e.id, e.work_type, e.status, e.total_amount, e.created_at,
+              o.name as contractor_name
+         FROM estimates e
+         LEFT JOIN organizations o ON e.contractor_id = o.id
+         WHERE e.project_id = $1
+         ORDER BY e.created_at DESC`,
+      [request.params.id],
+    );
+
+    const grandTotal = estimates.reduce((acc, e) => acc + Number(e.total_amount || 0), 0);
+
+    return {
+      data: {
+        project: projectRows[0],
+        estimates,
+        grandTotal,
+      },
+    };
+  });
+
   // POST /api/projects
   fastify.post('/', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
     const body = createProjectSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
-      `INSERT INTO projects (code, name, full_name, org_id, address, status, start_date, end_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [body.code, body.name, body.fullName || null, body.orgId, body.address || null, body.status, body.startDate || null, body.endDate || null],
+      `INSERT INTO projects (code, name, full_name, org_id, address, status, start_date, end_date, image_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [
+        body.code,
+        body.name,
+        body.fullName || null,
+        body.orgId,
+        body.address || null,
+        body.status,
+        body.startDate || null,
+        body.endDate || null,
+        body.imageUrl || null,
+      ],
     );
     return reply.status(201).send({ data: rows[0] });
   });
@@ -50,6 +103,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     if (body.status !== undefined) { sets.push(`status = $${i++}`); values.push(body.status); }
     if (body.startDate !== undefined) { sets.push(`start_date = $${i++}`); values.push(body.startDate); }
     if (body.endDate !== undefined) { sets.push(`end_date = $${i++}`); values.push(body.endDate); }
+    if (body.imageUrl !== undefined) { sets.push(`image_url = $${i++}`); values.push(body.imageUrl); }
 
     if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
 

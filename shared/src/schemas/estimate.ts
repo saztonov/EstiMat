@@ -10,9 +10,26 @@ export const createEstimateSchema = z.object({
 
 export const updateEstimateSchema = createEstimateSchema.partial();
 
-export const createEstimateItemSchema = z.object({
-  estimateId: z.string().uuid(),
+export const ESTIMATE_ITEM_TYPES = ['work', 'material'] as const;
+export type EstimateItemType = (typeof ESTIMATE_ITEM_TYPES)[number];
+
+export const createEstimateSectionSchema = z.object({
   rateId: z.string().uuid().nullable().optional(),
+  name: z.string().min(1).optional(),
+  sortOrder: z.number().int().default(0),
+});
+
+export const updateEstimateSectionSchema = z.object({
+  rateId: z.string().uuid().nullable().optional(),
+  name: z.string().min(1).optional(),
+  sortOrder: z.number().int().optional(),
+});
+
+export const createEstimateItemSchema = z.object({
+  sectionId: z.string().uuid().optional(),
+  itemType: z.enum(ESTIMATE_ITEM_TYPES).default('work'),
+  rateId: z.string().uuid().nullable().optional(),
+  materialId: z.string().uuid().nullable().optional(),
   description: z.string().min(1, 'Описание обязательно'),
   quantity: z.number().positive('Количество должно быть положительным'),
   unit: z.string().min(1, 'Единица измерения обязательна'),
@@ -20,7 +37,7 @@ export const createEstimateItemSchema = z.object({
   sortOrder: z.number().int().default(0),
 });
 
-export const updateEstimateItemSchema = createEstimateItemSchema.partial().omit({ estimateId: true });
+export const updateEstimateItemSchema = createEstimateItemSchema.partial();
 
 export const estimateSchema = z.object({
   id: z.string().uuid(),
@@ -35,8 +52,21 @@ export const estimateSchema = z.object({
   updatedAt: z.string(),
 });
 
+export const estimateSectionSchema = z.object({
+  id: z.string().uuid(),
+  estimateId: z.string().uuid(),
+  rateId: z.string().uuid().nullable(),
+  name: z.string(),
+  sortOrder: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
 export type CreateEstimateInput = z.infer<typeof createEstimateSchema>;
 export type UpdateEstimateInput = z.infer<typeof updateEstimateSchema>;
+export type CreateEstimateSectionInput = z.infer<typeof createEstimateSectionSchema>;
+export type UpdateEstimateSectionInput = z.infer<typeof updateEstimateSectionSchema>;
 export type CreateEstimateItemInput = z.infer<typeof createEstimateItemSchema>;
 export type UpdateEstimateItemInput = z.infer<typeof updateEstimateItemSchema>;
 export type Estimate = z.infer<typeof estimateSchema>;
+export type EstimateSection = z.infer<typeof estimateSectionSchema>;
