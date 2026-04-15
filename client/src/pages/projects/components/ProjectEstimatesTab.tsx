@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Table, Button, Tag, Modal, Form, Input, Select, Space, App } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { Table, Button, Tag, Modal, Form, Input, Select, Space, App, Popconfirm } from 'antd';
+import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -40,11 +40,24 @@ export function ProjectEstimatesTab({ projectId }: Props) {
       api.post('/estimates', { ...values, projectId }),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['estimates', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['projects-with-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary', projectId] });
       setModalOpen(false);
       form.resetFields();
       message.success('Смета создана');
       const created = (result as { data?: { id?: string } })?.data;
       if (created?.id) navigate(`/estimates/${created.id}`);
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (estimateId: string) => api.delete(`/estimates/${estimateId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['estimates', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['projects-with-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['project-summary', projectId] });
+      message.success('Смета удалена');
     },
     onError: (e: Error) => message.error(e.message),
   });
@@ -78,6 +91,29 @@ export function ProjectEstimatesTab({ projectId }: Props) {
       dataIndex: 'created_at',
       width: 130,
       render: (v: string) => new Date(v).toLocaleDateString('ru-RU'),
+    },
+    {
+      title: '',
+      width: 60,
+      render: (_v: unknown, r: Record<string, unknown>) => (
+        <Popconfirm
+          title="Удалить смету?"
+          description="Все разделы и позиции будут удалены."
+          onConfirm={(e) => {
+            e?.stopPropagation();
+            deleteMutation.mutate(r.id as string);
+          }}
+          onCancel={(e) => e?.stopPropagation()}
+        >
+          <Button
+            type="text"
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </Popconfirm>
+      ),
     },
   ];
 

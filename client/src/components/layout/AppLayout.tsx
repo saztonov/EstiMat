@@ -37,9 +37,8 @@ export function AppLayout() {
   const selectedKeys = useMemo(() => {
     const path = location.pathname;
     if (path.startsWith('/references')) return ['/references'];
-    if (path.startsWith('/estimates')) return ['/estimates'];
     if (path.startsWith('/administration')) return ['/administration'];
-    if (path.startsWith('/projects')) return ['/references'];
+    if (path.startsWith('/estimates') || path.startsWith('/projects')) return ['/estimates'];
     return [path];
   }, [location.pathname]);
 

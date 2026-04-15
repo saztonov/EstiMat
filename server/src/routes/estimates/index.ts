@@ -111,6 +111,25 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     return { data: rows[0] };
   });
 
+  // DELETE /api/estimates/:id
+  fastify.delete<{ Params: { id: string } }>(
+    '/:id',
+    { preHandler: [requireRole('admin', 'manager')] },
+    async (request, reply) => {
+      const { rowCount } = await fastify.pool.query(
+        'DELETE FROM estimates WHERE id = $1',
+        [request.params.id],
+      );
+      if (rowCount === 0) return reply.status(404).send({ error: 'Смета не найдена' });
+      await fastify.pool.query(
+        `INSERT INTO audit_log (entity_type, entity_id, action, user_id, changes)
+         VALUES ('estimate', $1, 'deleted', $2, '{}')`,
+        [request.params.id, request.currentUser.id],
+      );
+      return { success: true };
+    },
+  );
+
   // PUT /api/estimates/:id/status
   fastify.put<{ Params: { id: string } }>('/:id/status', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
     const { status } = request.body as { status: string };

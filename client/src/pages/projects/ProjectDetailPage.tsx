@@ -1,5 +1,5 @@
 import { useParams, useNavigate, useSearchParams } from 'react-router';
-import { Card, Descriptions, Tag, Button, Spin, Tabs } from 'antd';
+import { Card, Tag, Button, Spin, Tabs, Space } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -11,7 +11,7 @@ export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') || 'info';
+  const activeTab = searchParams.get('tab') || 'estimates';
 
   const { data, isLoading } = useQuery({
     queryKey: ['project', id],
@@ -25,23 +25,6 @@ export function ProjectDetailPage() {
   if (!project) return <div>Проект не найден</div>;
 
   const tabs = [
-    {
-      key: 'info',
-      label: 'Информация',
-      children: (
-        <Descriptions column={2} bordered size="small" style={{ marginTop: 8 }}>
-          <Descriptions.Item label="Код">{project.code as string}</Descriptions.Item>
-          <Descriptions.Item label="Статус">
-            <Tag>{PROJECT_STATUS_LABELS[(project.status as string) as keyof typeof PROJECT_STATUS_LABELS]}</Tag>
-          </Descriptions.Item>
-          <Descriptions.Item label="Название">{project.name as string}</Descriptions.Item>
-          <Descriptions.Item label="Полное название">{(project.full_name as string) || '—'}</Descriptions.Item>
-          <Descriptions.Item label="Адрес">{(project.address as string) || '—'}</Descriptions.Item>
-          <Descriptions.Item label="Начало">{(project.start_date as string) || '—'}</Descriptions.Item>
-          <Descriptions.Item label="Окончание">{(project.end_date as string) || '—'}</Descriptions.Item>
-        </Descriptions>
-      ),
-    },
     {
       key: 'estimates',
       label: 'Сметы',
@@ -57,15 +40,20 @@ export function ProjectDetailPage() {
   return (
     <Card
       title={
-        <span>
+        <Space size={12} wrap>
           <Button
             type="text"
             icon={<ArrowLeftOutlined />}
             onClick={() => navigate('/estimates')}
-            style={{ marginRight: 8 }}
           />
-          {project.code as string} — {project.name as string}
-        </span>
+          <span>{project.code as string} — {project.name as string}</span>
+          <Tag>{PROJECT_STATUS_LABELS[(project.status as string) as keyof typeof PROJECT_STATUS_LABELS]}</Tag>
+          {project.address ? (
+            <span style={{ color: '#8c8c8c', fontWeight: 'normal' }}>
+              · {project.address as string}
+            </span>
+          ) : null}
+        </Space>
       }
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
       styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '0 24px 24px' } }}
