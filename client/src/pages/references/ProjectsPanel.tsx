@@ -57,8 +57,8 @@ export function ProjectsPanel() {
   ];
 
   return (
-    <>
-      <Space style={{ marginBottom: 16 }}>
+    <div className="table-page-wrapper">
+      <Space style={{ marginBottom: 16, flexShrink: 0 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Создать</Button>
       </Space>
       <Table
@@ -66,6 +66,7 @@ export function ProjectsPanel() {
         columns={columns}
         dataSource={data?.data}
         loading={isLoading}
+        scroll={{ y: 'flex' }}
         onRow={(record) => ({ onClick: () => navigate(`/projects/${record.id}`) })}
         style={{ cursor: 'pointer' }}
       />
@@ -98,6 +99,6 @@ export function ProjectsPanel() {
           </Form.Item>
         </Form>
       </Modal>
-    </>
+    </div>
   );
 }

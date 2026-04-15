@@ -143,11 +143,11 @@ export function UsersPanel() {
   ];
 
   return (
-    <>
-      <Space style={{ marginBottom: 16 }}>
+    <div className="table-page-wrapper">
+      <Space style={{ marginBottom: 16, flexShrink: 0 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Добавить</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={usersData?.data} loading={isLoading} />
+      <Table rowKey="id" columns={columns} dataSource={usersData?.data} loading={isLoading} scroll={{ y: 'flex' }} />
 
       {/* Create / Edit modal */}
       <Modal
@@ -207,6 +207,6 @@ export function UsersPanel() {
           </Form.Item>
         </Form>
       </Modal>
-    </>
+    </div>
   );
 }

@@ -39,11 +39,11 @@ export function MaterialsPanel() {
   ];
 
   return (
-    <>
-      <Space style={{ marginBottom: 16 }}>
+    <div className="table-page-wrapper">
+      <Space style={{ marginBottom: 16, flexShrink: 0 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Добавить</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={materials?.data} loading={isLoading} />
+      <Table rowKey="id" columns={columns} dataSource={materials?.data} loading={isLoading} scroll={{ y: 'flex' }} />
 
       <Modal
         title="Новый материал"
@@ -71,6 +71,6 @@ export function MaterialsPanel() {
           </Form.Item>
         </Form>
       </Modal>
-    </>
+    </div>
   );
 }

@@ -71,12 +71,16 @@ export function EstimatesPage() {
     <Card
       title={projectId ? 'Сметы проекта' : 'Все сметы'}
       extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Создать</Button>}
+      style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+      styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
     >
+      <div className="table-page-wrapper">
       <Table
         rowKey="id"
         columns={columns}
         dataSource={data?.data}
         loading={isLoading}
+        scroll={{ y: 'flex' }}
         onRow={(record) => ({ onClick: () => navigate(`/estimates/${record.id}`) })}
         style={{ cursor: 'pointer' }}
       />
@@ -110,6 +114,7 @@ export function EstimatesPage() {
           </Form.Item>
         </Form>
       </Modal>
+      </div>
     </Card>
   );
 }

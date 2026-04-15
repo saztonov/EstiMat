@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, App } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import type { ColumnsType } from 'antd/es/table';
@@ -150,17 +150,18 @@ export function RatesPanel() {
   }
 
   const columns: ColumnsType<Rate> = [
-    { title: 'Код', dataIndex: 'code', width: 100 },
-    { title: 'Название', dataIndex: 'name' },
-    { title: 'Ед. изм.', dataIndex: 'unit', width: 80 },
+    { title: 'Код', dataIndex: 'code', width: 100, sorter: (a, b) => (a.code || '').localeCompare(b.code || '') },
+    { title: 'Название', dataIndex: 'name', sorter: (a, b) => a.name.localeCompare(b.name) },
+    { title: 'Ед. изм.', dataIndex: 'unit', width: 80, sorter: (a, b) => a.unit.localeCompare(b.unit) },
     {
       title: 'Цена, \u20BD',
       dataIndex: 'price',
       width: 120,
+      sorter: (a, b) => Number(a.price) - Number(b.price),
       render: (price: string) => Number(price).toLocaleString('ru-RU'),
     },
-    { title: 'Вид затрат', dataIndex: 'cost_type_name', width: 200 },
-    { title: 'Категория', dataIndex: 'category_name', width: 200 },
+    { title: 'Вид затрат', dataIndex: 'cost_type_name', width: 200, sorter: (a, b) => a.cost_type_name.localeCompare(b.cost_type_name) },
+    { title: 'Категория', dataIndex: 'category_name', width: 200, sorter: (a, b) => a.category_name.localeCompare(b.category_name) },
     {
       title: 'Действия',
       width: 100,
@@ -176,10 +177,12 @@ export function RatesPanel() {
   ];
 
   return (
-    <>
-      <Space style={{ marginBottom: 16 }} wrap>
+    <div className="table-page-wrapper">
+      <Space style={{ marginBottom: 16, flexShrink: 0 }} wrap>
         <Select
           allowClear
+          showSearch
+          optionFilterProp="label"
           placeholder="Категория затрат"
           style={{ width: 250 }}
           value={selectedCategoryId}
@@ -191,12 +194,19 @@ export function RatesPanel() {
         />
         <Select
           allowClear
+          showSearch
+          optionFilterProp="label"
           placeholder="Вид затрат"
           style={{ width: 250 }}
           value={selectedCostTypeId}
           onChange={setSelectedCostTypeId}
           disabled={!selectedCategoryId}
           options={typesData?.data.map((t) => ({ value: t.id, label: t.name }))}
+        />
+        <Button
+          icon={<ClearOutlined />}
+          disabled={!selectedCategoryId && !selectedCostTypeId}
+          onClick={() => { setSelectedCategoryId(undefined); setSelectedCostTypeId(undefined); }}
         />
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Добавить</Button>
         <Upload
@@ -216,6 +226,7 @@ export function RatesPanel() {
         columns={columns}
         dataSource={filteredRates}
         loading={isLoading}
+        scroll={{ y: 'flex' }}
         pagination={{ pageSize: 50 }}
       />
 
@@ -254,6 +265,6 @@ export function RatesPanel() {
           </Form.Item>
         </Form>
       </Modal>
-    </>
+    </div>
   );
 }

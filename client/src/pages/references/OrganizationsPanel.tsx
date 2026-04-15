@@ -101,11 +101,11 @@ export function OrganizationsPanel() {
   ];
 
   return (
-    <>
-      <Space style={{ marginBottom: 16 }}>
+    <div className="table-page-wrapper">
+      <Space style={{ marginBottom: 16, flexShrink: 0 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Создать</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={data?.data} loading={isLoading} />
+      <Table rowKey="id" columns={columns} dataSource={data?.data} loading={isLoading} scroll={{ y: 'flex' }} />
 
       <Modal
         title={editRecord ? 'Редактирование организации' : 'Новая организация'}
@@ -129,6 +129,6 @@ export function OrganizationsPanel() {
           </Form.Item>
         </Form>
       </Modal>
-    </>
+    </div>
   );
 }

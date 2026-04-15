@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router';
 import { Layout, Menu, Button, Typography, Dropdown } from 'antd';
 import {
@@ -6,18 +7,21 @@ import {
   SettingOutlined,
   UserOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../store/authStore';
 import type { MenuProps } from 'antd';
 import { useMemo } from 'react';
 
-const { Sider, Header, Content } = Layout;
+const { Sider, Content } = Layout;
 const { Text } = Typography;
 
 export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
+  const [collapsed, setCollapsed] = useState(false);
 
   const menuItems = useMemo(() => {
     const items = [
@@ -57,27 +61,62 @@ export function AppLayout() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider width={240} theme="dark">
-        <div style={{ padding: '16px 24px', textAlign: 'center' }}>
-          <Link to="/" style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>EstiMat</Link>
+      <Sider
+        width={240}
+        collapsedWidth={64}
+        theme="dark"
+        collapsed={collapsed}
+        style={{ display: 'flex', flexDirection: 'column' }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ padding: collapsed ? '16px 0' : '16px 24px', textAlign: 'center' }}>
+            <Link to="/" style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>
+              {collapsed ? 'E' : 'EstiMat'}
+            </Link>
+          </div>
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={selectedKeys}
+            items={menuItems}
+            onClick={onMenuClick}
+            style={{ flex: 1, borderRight: 0 }}
+          />
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', padding: collapsed ? '8px 0' : '8px 16px' }}>
+            <Dropdown menu={{ items: userMenuItems }} placement="topRight" trigger={['click']}>
+              <Button
+                type="text"
+                icon={<UserOutlined />}
+                style={{
+                  color: 'rgba(255,255,255,0.85)',
+                  width: '100%',
+                  textAlign: 'left',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: collapsed ? 'center' : 'flex-start',
+                  gap: 8,
+                }}
+              >
+                {!collapsed && <Text style={{ color: 'rgba(255,255,255,0.85)' }} ellipsis>{user?.fullName || user?.email}</Text>}
+              </Button>
+            </Dropdown>
+          </div>
+          <Button
+            type="text"
+            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            onClick={() => setCollapsed(!collapsed)}
+            style={{
+              color: 'rgba(255,255,255,0.65)',
+              width: '100%',
+              borderRadius: 0,
+              borderTop: '1px solid rgba(255,255,255,0.1)',
+              height: 48,
+            }}
+          />
         </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={selectedKeys}
-          items={menuItems}
-          onClick={onMenuClick}
-        />
       </Sider>
       <Layout>
-        <Header style={{ background: '#fff', padding: '0 24px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-          <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-            <Button type="text" icon={<UserOutlined />}>
-              <Text>{user?.fullName || user?.email}</Text>
-            </Button>
-          </Dropdown>
-        </Header>
-        <Content style={{ margin: 24 }}>
+        <Content style={{ margin: 24, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <Outlet />
         </Content>
       </Layout>
