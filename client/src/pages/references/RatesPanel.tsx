@@ -154,7 +154,7 @@ export function RatesPanel() {
 
   const columns: ColumnsType<Rate> = [
     { title: 'Код', dataIndex: 'code', width: 100, sorter: (a, b) => (a.code || '').localeCompare(b.code || '') },
-    { title: 'Название', dataIndex: 'name', sorter: (a, b) => a.name.localeCompare(b.name) },
+    { title: 'Название', dataIndex: 'name', ellipsis: true, sorter: (a, b) => a.name.localeCompare(b.name) },
     { title: 'Ед. изм.', dataIndex: 'unit', width: 80, sorter: (a, b) => a.unit.localeCompare(b.unit) },
     {
       title: 'Цена, \u20BD',
@@ -238,7 +238,7 @@ export function RatesPanel() {
         columns={columns}
         dataSource={filteredRates}
         loading={isLoading}
-        scroll={{ x: 'max-content', y: 'flex' }}
+        scroll={{ y: 'flex' }}
         pagination={{ pageSize: 50, showSizeChanger: false }}
       />
 

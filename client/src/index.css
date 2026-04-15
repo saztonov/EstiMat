@@ -75,5 +75,4 @@ html, body, #root {
 .table-page-wrapper .ant-table-wrapper .ant-table .ant-table-body {
   flex: 1;
   overflow-y: auto !important;
-  overflow-x: auto !important;
 }
