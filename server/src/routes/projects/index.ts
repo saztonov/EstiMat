@@ -48,9 +48,9 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
     const { rows: estimates } = await fastify.pool.query(
       `SELECT e.id, e.work_type, e.status, e.total_amount, e.created_at,
-              o.name as contractor_name
+              cc.name AS cost_category_name
          FROM estimates e
-         LEFT JOIN organizations o ON e.contractor_id = o.id
+         LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
          WHERE e.project_id = $1
          ORDER BY e.created_at DESC`,
       [request.params.id],

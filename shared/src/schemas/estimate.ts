@@ -3,12 +3,16 @@ import { ESTIMATE_STATUSES } from '../constants/statuses.js';
 
 export const createEstimateSchema = z.object({
   projectId: z.string().uuid(),
-  contractorId: z.string().uuid().nullable().optional(),
+  costCategoryId: z.string().uuid().nullable().optional(),
   workType: z.string().optional(),
   notes: z.string().optional(),
 });
 
-export const updateEstimateSchema = createEstimateSchema.partial();
+export const updateEstimateSchema = z.object({
+  costCategoryId: z.string().uuid().nullable().optional(),
+  workType: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
 
 export const ESTIMATE_ITEM_TYPES = ['work', 'material'] as const;
 export type EstimateItemType = (typeof ESTIMATE_ITEM_TYPES)[number];
@@ -16,12 +20,14 @@ export type EstimateItemType = (typeof ESTIMATE_ITEM_TYPES)[number];
 export const createEstimateSectionSchema = z.object({
   costCategoryId: z.string().uuid(),
   costTypeId: z.string().uuid(),
+  contractorId: z.string().uuid().nullable().optional(),
   sortOrder: z.number().int().default(0),
 });
 
 export const updateEstimateSectionSchema = z.object({
   costCategoryId: z.string().uuid().optional(),
   costTypeId: z.string().uuid().optional(),
+  contractorId: z.string().uuid().nullable().optional(),
   sortOrder: z.number().int().optional(),
 });
 
@@ -42,7 +48,7 @@ export const updateEstimateItemSchema = createEstimateItemSchema.partial();
 export const estimateSchema = z.object({
   id: z.string().uuid(),
   projectId: z.string().uuid(),
-  contractorId: z.string().uuid().nullable(),
+  costCategoryId: z.string().uuid().nullable(),
   workType: z.string().nullable(),
   status: z.enum(ESTIMATE_STATUSES),
   totalAmount: z.string(),
@@ -56,6 +62,7 @@ export const estimateSectionSchema = z.object({
   id: z.string().uuid(),
   estimateId: z.string().uuid(),
   costTypeId: z.string().uuid().nullable(),
+  contractorId: z.string().uuid().nullable(),
   name: z.string(),
   sortOrder: z.number().int(),
   createdAt: z.string(),

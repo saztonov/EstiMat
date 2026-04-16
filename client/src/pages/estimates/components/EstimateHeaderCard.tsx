@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Card, Tag, Row, Col, Space, Button, Statistic } from 'antd';
-import { UpOutlined, DownOutlined } from '@ant-design/icons';
+import { UpOutlined, DownOutlined, EditOutlined } from '@ant-design/icons';
 import { ESTIMATE_STATUS_LABELS } from '@estimat/shared';
 import type { EstimateDetail } from './types';
 import { formatMoney } from './types';
@@ -15,9 +15,11 @@ const statusColors: Record<string, string> = {
 interface Props {
   estimate: EstimateDetail;
   itemCount: number;
+  editable: boolean;
+  onEdit: () => void;
 }
 
-export function EstimateHeaderCard({ estimate, itemCount }: Props) {
+export function EstimateHeaderCard({ estimate, itemCount, editable, onEdit }: Props) {
   const [collapsed, setCollapsed] = useState(false);
 
   const statusLabel = ESTIMATE_STATUS_LABELS[estimate.status as keyof typeof ESTIMATE_STATUS_LABELS];
@@ -32,8 +34,13 @@ export function EstimateHeaderCard({ estimate, itemCount }: Props) {
         <Col flex="auto">
           <Space direction="vertical" size={4} style={{ width: '100%' }}>
             <Space size={12} wrap>
-              <span style={{ color: '#8c8c8c' }}>{estimate.project_code} · {estimate.project_name}</span>
+              <span style={{ color: '#8c8c8c' }}>
+                {estimate.project_code} · {estimate.project_name}
+              </span>
               <Tag color={statusColors[estimate.status]}>{statusLabel}</Tag>
+              {estimate.cost_category_name && (
+                <Tag color="geekblue">{estimate.cost_category_name}</Tag>
+              )}
             </Space>
             <div style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2 }}>
               {title}{' '}
@@ -41,10 +48,9 @@ export function EstimateHeaderCard({ estimate, itemCount }: Props) {
                 {formatMoney(estimate.total_amount)}
               </span>
             </div>
-            {!collapsed && (
+            {!collapsed && estimate.notes && (
               <Space size={12} wrap style={{ color: '#8c8c8c' }}>
-                {estimate.contractor_name && <span>Подрядчик: {estimate.contractor_name}</span>}
-                {estimate.notes && <span>· {estimate.notes}</span>}
+                <span>{estimate.notes}</span>
               </Space>
             )}
           </Space>
@@ -70,11 +76,16 @@ export function EstimateHeaderCard({ estimate, itemCount }: Props) {
         )}
 
         <Col flex="none">
-          <Button
-            type="text"
-            icon={collapsed ? <DownOutlined /> : <UpOutlined />}
-            onClick={() => setCollapsed(!collapsed)}
-          />
+          <Space>
+            {editable && (
+              <Button type="text" icon={<EditOutlined />} onClick={onEdit} />
+            )}
+            <Button
+              type="text"
+              icon={collapsed ? <DownOutlined /> : <UpOutlined />}
+              onClick={() => setCollapsed(!collapsed)}
+            />
+          </Space>
         </Col>
       </Row>
     </Card>

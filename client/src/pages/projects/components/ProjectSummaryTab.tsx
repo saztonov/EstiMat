@@ -19,7 +19,7 @@ interface SummaryData {
     status: string;
     total_amount: string;
     created_at: string;
-    contractor_name: string | null;
+    cost_category_name: string | null;
   }>;
   grandTotal: number;
 }
@@ -51,8 +51,8 @@ export function ProjectSummaryTab({ projectId }: Props) {
       render: (v: string) => v || '—',
     },
     {
-      title: 'Подрядчик',
-      dataIndex: 'contractor_name',
+      title: 'Категория затрат',
+      dataIndex: 'cost_category_name',
       render: (v: string) => v || '—',
     },
     {

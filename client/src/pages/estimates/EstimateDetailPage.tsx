@@ -6,7 +6,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { EstimateHeaderCard } from './components/EstimateHeaderCard';
 import { SectionBlock, type SaveItemPayload } from './components/SectionBlock';
-import { AddSectionModal, type AddSectionPayload } from './components/AddSectionModal';
+import { AddSectionModal, type SectionFormPayload } from './components/AddSectionModal';
+import { EditEstimateModal, type EditEstimatePayload } from './components/EditEstimateModal';
 import type { EstimateDetail } from './components/types';
 
 export function EstimateDetailPage() {
@@ -16,6 +17,8 @@ export function EstimateDetailPage() {
   const { message } = App.useApp();
 
   const [sectionModalOpen, setSectionModalOpen] = useState(false);
+  const [editSectionId, setEditSectionId] = useState<string | null>(null);
+  const [editEstimateOpen, setEditEstimateOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['estimate', id],
@@ -25,12 +28,33 @@ export function EstimateDetailPage() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['estimate', id] });
 
+  const editEstimateMutation = useMutation({
+    mutationFn: (payload: EditEstimatePayload) => api.put(`/estimates/${id}`, payload),
+    onSuccess: () => {
+      invalidate();
+      setEditEstimateOpen(false);
+      message.success('Смета обновлена');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
   const addSectionMutation = useMutation({
-    mutationFn: (payload: AddSectionPayload) => api.post(`/estimates/${id}/sections`, payload),
+    mutationFn: (payload: SectionFormPayload) => api.post(`/estimates/${id}/sections`, payload),
     onSuccess: () => {
       invalidate();
       setSectionModalOpen(false);
       message.success('Раздел добавлен');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const editSectionMutation = useMutation({
+    mutationFn: ({ sectionId, payload }: { sectionId: string; payload: SectionFormPayload }) =>
+      api.put(`/estimates/sections/${sectionId}`, payload),
+    onSuccess: () => {
+      invalidate();
+      setEditSectionId(null);
+      message.success('Раздел обновлён');
     },
     onError: (e: Error) => message.error(e.message),
   });
@@ -50,6 +74,16 @@ export function EstimateDetailPage() {
     onSuccess: () => {
       invalidate();
       message.success('Позиция добавлена');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const updateItemMutation = useMutation({
+    mutationFn: ({ itemId, payload }: { itemId: string; payload: SaveItemPayload }) =>
+      api.put(`/estimates/items/${itemId}`, payload),
+    onSuccess: () => {
+      invalidate();
+      message.success('Позиция обновлена');
     },
     onError: (e: Error) => message.error(e.message),
   });
@@ -80,8 +114,15 @@ export function EstimateDetailPage() {
   const isDraft = estimate.status === 'draft';
   const totalItems = estimate.sections?.reduce((acc, s) => acc + s.items.length, 0) ?? 0;
 
-  const handleSaveItem = (sectionId: string, payload: SaveItemPayload) =>
+  const editingSection = editSectionId
+    ? estimate.sections.find((s) => s.id === editSectionId)
+    : null;
+
+  const handleCreateItem = (sectionId: string, payload: SaveItemPayload) =>
     addItemMutation.mutateAsync({ sectionId, payload }).then(() => undefined);
+
+  const handleUpdateItem = (itemId: string, payload: SaveItemPayload) =>
+    updateItemMutation.mutateAsync({ itemId, payload }).then(() => undefined);
 
   return (
     <div>
@@ -106,7 +147,12 @@ export function EstimateDetailPage() {
         </Space>
       </div>
 
-      <EstimateHeaderCard estimate={estimate} itemCount={totalItems} />
+      <EstimateHeaderCard
+        estimate={estimate}
+        itemCount={totalItems}
+        editable={isDraft}
+        onEdit={() => setEditEstimateOpen(true)}
+      />
 
       {isDraft && (
         <Button
@@ -127,8 +173,10 @@ export function EstimateDetailPage() {
               section={section}
               index={i}
               editable={isDraft}
-              onSaveItem={handleSaveItem}
+              onCreateItem={handleCreateItem}
+              onUpdateItem={handleUpdateItem}
               onDeleteItem={(itemId) => deleteItemMutation.mutate(itemId)}
+              onEditSection={(sectionId) => setEditSectionId(sectionId)}
               onDeleteSection={(sectionId) => deleteSectionMutation.mutate(sectionId)}
             />
           ))}
@@ -149,9 +197,42 @@ export function EstimateDetailPage() {
 
       <AddSectionModal
         open={sectionModalOpen}
+        mode="create"
         onCancel={() => setSectionModalOpen(false)}
         onSubmit={(payload) => addSectionMutation.mutate(payload)}
         loading={addSectionMutation.isPending}
+      />
+
+      <AddSectionModal
+        open={!!editingSection}
+        mode="edit"
+        initialValues={
+          editingSection
+            ? {
+                costCategoryId: editingSection.cost_category_id ?? undefined,
+                costTypeId: editingSection.cost_type_id ?? undefined,
+                contractorId: editingSection.contractor_id ?? null,
+              }
+            : undefined
+        }
+        onCancel={() => setEditSectionId(null)}
+        onSubmit={(payload) => {
+          if (!editingSection) return;
+          editSectionMutation.mutate({ sectionId: editingSection.id, payload });
+        }}
+        loading={editSectionMutation.isPending}
+      />
+
+      <EditEstimateModal
+        open={editEstimateOpen}
+        initialValues={{
+          costCategoryId: estimate.cost_category_id,
+          workType: estimate.work_type,
+          notes: estimate.notes,
+        }}
+        onCancel={() => setEditEstimateOpen(false)}
+        onSubmit={(payload) => editEstimateMutation.mutate(payload)}
+        loading={editEstimateMutation.isPending}
       />
     </div>
   );

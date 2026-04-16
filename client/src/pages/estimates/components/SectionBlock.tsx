@@ -17,6 +17,8 @@ import {
   DeleteOutlined,
   CheckOutlined,
   CloseOutlined,
+  EditOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -40,7 +42,8 @@ interface Material {
   unit_price: string;
 }
 
-interface DraftState {
+interface EditingState {
+  itemId: string | null;
   itemType: 'work' | 'material';
   rateId: string | null;
   materialId: string | null;
@@ -52,8 +55,8 @@ interface DraftState {
 
 export interface SaveItemPayload {
   itemType: 'work' | 'material';
-  rateId?: string;
-  materialId?: string;
+  rateId?: string | null;
+  materialId?: string | null;
   description: string;
   unit: string;
   quantity: number;
@@ -64,12 +67,15 @@ interface Props {
   section: EstimateSection;
   index: number;
   editable: boolean;
-  onSaveItem: (sectionId: string, payload: SaveItemPayload) => Promise<void>;
+  onCreateItem: (sectionId: string, payload: SaveItemPayload) => Promise<void>;
+  onUpdateItem: (itemId: string, payload: SaveItemPayload) => Promise<void>;
   onDeleteItem: (itemId: string) => void;
+  onEditSection: (sectionId: string) => void;
   onDeleteSection: (sectionId: string) => void;
 }
 
-const EMPTY_DRAFT: DraftState = {
+const EMPTY_EDIT: EditingState = {
+  itemId: null,
   itemType: 'work',
   rateId: null,
   materialId: null,
@@ -83,24 +89,26 @@ export function SectionBlock({
   section,
   index,
   editable,
-  onSaveItem,
+  onCreateItem,
+  onUpdateItem,
   onDeleteItem,
+  onEditSection,
   onDeleteSection,
 }: Props) {
   const { message } = App.useApp();
-  const [draft, setDraft] = useState<DraftState | null>(null);
+  const [editing, setEditing] = useState<EditingState | null>(null);
   const [saving, setSaving] = useState(false);
 
   const { data: ratesData } = useQuery({
     queryKey: ['rates'],
     queryFn: () => api.get<{ data: Rate[] }>('/rates'),
-    enabled: !!draft && draft.itemType === 'work',
+    enabled: !!editing && editing.itemType === 'work',
   });
 
   const { data: materialsData } = useQuery({
     queryKey: ['materials'],
     queryFn: () => api.get<{ data: Material[] }>('/materials'),
-    enabled: !!draft && draft.itemType === 'material',
+    enabled: !!editing && editing.itemType === 'material',
   });
 
   const sectionTotal = section.items.reduce(
@@ -108,31 +116,50 @@ export function SectionBlock({
     0,
   );
 
-  const draftRow: EstimateItem | null = draft
-    ? {
-        id: DRAFT_ID,
-        section_id: section.id,
-        item_type: draft.itemType,
-        rate_id: draft.rateId,
-        material_id: draft.materialId,
-        description: draft.description,
-        quantity: String(draft.quantity),
-        unit: draft.unit,
-        unit_price: String(draft.unitPrice),
-        total: String(draft.quantity * draft.unitPrice),
-        sort_order: 9999,
-        rate_name: null,
-        rate_code: null,
-        material_name: null,
-      }
-    : null;
+  const isEditingExisting = !!editing && editing.itemId !== null;
+  const isAddingDraft = !!editing && editing.itemId === null;
 
-  const dataSource: EstimateItem[] = draftRow
-    ? [...section.items, draftRow]
-    : section.items;
+  // Собираем строки таблицы: для редактируемой существующей — подменяем её,
+  // для draft — добавляем в конец.
+  const rowsForTable: EstimateItem[] = section.items.map((it) =>
+    editing && editing.itemId === it.id
+      ? {
+          ...it,
+          item_type: editing.itemType,
+          rate_id: editing.rateId,
+          material_id: editing.materialId,
+          description: editing.description,
+          unit: editing.unit,
+          quantity: String(editing.quantity),
+          unit_price: String(editing.unitPrice),
+          total: String(editing.quantity * editing.unitPrice),
+        }
+      : it,
+  );
+  if (isAddingDraft && editing) {
+    rowsForTable.push({
+      id: DRAFT_ID,
+      section_id: section.id,
+      item_type: editing.itemType,
+      rate_id: editing.rateId,
+      material_id: editing.materialId,
+      description: editing.description,
+      quantity: String(editing.quantity),
+      unit: editing.unit,
+      unit_price: String(editing.unitPrice),
+      total: String(editing.quantity * editing.unitPrice),
+      sort_order: 9999,
+      rate_name: null,
+      rate_code: null,
+      material_name: null,
+    });
+  }
+
+  const isRowInEdit = (r: EstimateItem) =>
+    !!editing && (r.id === DRAFT_ID || r.id === editing.itemId);
 
   const nameOptions =
-    draft?.itemType === 'work'
+    editing?.itemType === 'work'
       ? ratesData?.data.map((r) => ({
           key: r.id,
           value: r.code ? `[${r.code}] ${r.name}` : r.name,
@@ -145,12 +172,12 @@ export function SectionBlock({
         }));
 
   function handleSelectRef(id: string) {
-    if (!draft) return;
-    if (draft.itemType === 'work') {
+    if (!editing) return;
+    if (editing.itemType === 'work') {
       const rate = ratesData?.data.find((r) => r.id === id);
       if (rate) {
-        setDraft({
-          ...draft,
+        setEditing({
+          ...editing,
           rateId: rate.id,
           materialId: null,
           description: rate.code ? `[${rate.code}] ${rate.name}` : rate.name,
@@ -161,8 +188,8 @@ export function SectionBlock({
     } else {
       const mat = materialsData?.data.find((m) => m.id === id);
       if (mat) {
-        setDraft({
-          ...draft,
+        setEditing({
+          ...editing,
           materialId: mat.id,
           rateId: null,
           description: mat.name,
@@ -174,9 +201,9 @@ export function SectionBlock({
   }
 
   function handleTypeChange(type: 'work' | 'material') {
-    if (!draft) return;
-    setDraft({
-      ...draft,
+    if (!editing) return;
+    setEditing({
+      ...editing,
       itemType: type,
       rateId: null,
       materialId: null,
@@ -184,18 +211,32 @@ export function SectionBlock({
   }
 
   function handleAddDraft() {
-    if (draft) return;
-    setDraft({ ...EMPTY_DRAFT });
+    if (editing) return;
+    setEditing({ ...EMPTY_EDIT });
+  }
+
+  function handleEditItem(item: EstimateItem) {
+    if (editing) return;
+    setEditing({
+      itemId: item.id,
+      itemType: item.item_type,
+      rateId: item.rate_id,
+      materialId: item.material_id,
+      description: item.description,
+      unit: item.unit,
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.unit_price),
+    });
   }
 
   function handleCancel() {
-    setDraft(null);
+    setEditing(null);
   }
 
   async function handleCommit() {
-    if (!draft || saving) return;
-    const description = draft.description.trim();
-    const unit = draft.unit.trim();
+    if (!editing || saving) return;
+    const description = editing.description.trim();
+    const unit = editing.unit.trim();
     if (!description) {
       message.warning('Укажите наименование');
       return;
@@ -204,27 +245,33 @@ export function SectionBlock({
       message.warning('Укажите единицу измерения');
       return;
     }
-    if (!(draft.quantity > 0)) {
+    if (!(editing.quantity > 0)) {
       message.warning('Количество должно быть больше 0');
       return;
     }
-    if (draft.unitPrice < 0) {
+    if (editing.unitPrice < 0) {
       message.warning('Цена не может быть отрицательной');
       return;
     }
 
+    const payload: SaveItemPayload = {
+      itemType: editing.itemType,
+      rateId: editing.rateId,
+      materialId: editing.materialId,
+      description,
+      unit,
+      quantity: editing.quantity,
+      unitPrice: editing.unitPrice,
+    };
+
     setSaving(true);
     try {
-      await onSaveItem(section.id, {
-        itemType: draft.itemType,
-        rateId: draft.rateId ?? undefined,
-        materialId: draft.materialId ?? undefined,
-        description,
-        unit,
-        quantity: draft.quantity,
-        unitPrice: draft.unitPrice,
-      });
-      setDraft(null);
+      if (editing.itemId) {
+        await onUpdateItem(editing.itemId, payload);
+      } else {
+        await onCreateItem(section.id, payload);
+      }
+      setEditing(null);
     } catch {
       // ошибку покажет мутация в родителе
     } finally {
@@ -240,13 +287,13 @@ export function SectionBlock({
     },
     {
       title: 'Тип',
-      width: 120,
+      width: 130,
       render: (_v, r) => {
-        if (r.id === DRAFT_ID && draft) {
+        if (isRowInEdit(r) && editing) {
           return (
             <Segmented
               size="small"
-              value={draft.itemType}
+              value={editing.itemType}
               onChange={(v) => handleTypeChange(v as 'work' | 'material')}
               options={[
                 { label: 'Работа', value: 'work' },
@@ -266,14 +313,14 @@ export function SectionBlock({
       title: 'Наименование',
       dataIndex: 'description',
       render: (v: string, r: EstimateItem) => {
-        if (r.id === DRAFT_ID && draft) {
+        if (isRowInEdit(r) && editing) {
           return (
             <AutoComplete
               style={{ width: '100%' }}
-              value={draft.description}
+              value={editing.description}
               options={nameOptions}
               onChange={(text) =>
-                setDraft({ ...draft, description: text ?? '' })
+                setEditing({ ...editing, description: text ?? '' })
               }
               onSelect={(_val, option) => {
                 const id = (option as { key?: string }).key;
@@ -285,7 +332,7 @@ export function SectionBlock({
                   .includes(input.toLowerCase())
               }
               placeholder={
-                draft.itemType === 'work'
+                editing.itemType === 'work'
                   ? 'Наименование работы или выбор из справочника'
                   : 'Наименование материала или выбор из справочника'
               }
@@ -302,12 +349,12 @@ export function SectionBlock({
       width: 110,
       align: 'center',
       render: (v: string, r: EstimateItem) => {
-        if (r.id === DRAFT_ID && draft) {
+        if (isRowInEdit(r) && editing) {
           return (
             <Input
               size="small"
-              value={draft.unit}
-              onChange={(e) => setDraft({ ...draft, unit: e.target.value })}
+              value={editing.unit}
+              onChange={(e) => setEditing({ ...editing, unit: e.target.value })}
               onPressEnter={handleCommit}
             />
           );
@@ -321,7 +368,7 @@ export function SectionBlock({
       width: 120,
       align: 'right',
       render: (v: string, r: EstimateItem) => {
-        if (r.id === DRAFT_ID && draft) {
+        if (isRowInEdit(r) && editing) {
           return (
             <InputNumber
               size="small"
@@ -329,9 +376,9 @@ export function SectionBlock({
               step={0.01}
               decimalSeparator=","
               style={{ width: '100%' }}
-              value={draft.quantity}
+              value={editing.quantity}
               onChange={(val) =>
-                setDraft({ ...draft, quantity: Number(val ?? 0) })
+                setEditing({ ...editing, quantity: Number(val ?? 0) })
               }
               onPressEnter={handleCommit}
             />
@@ -346,7 +393,7 @@ export function SectionBlock({
       width: 140,
       align: 'right',
       render: (v: string, r: EstimateItem) => {
-        if (r.id === DRAFT_ID && draft) {
+        if (isRowInEdit(r) && editing) {
           return (
             <InputNumber
               size="small"
@@ -354,9 +401,9 @@ export function SectionBlock({
               step={0.01}
               decimalSeparator=","
               style={{ width: '100%' }}
-              value={draft.unitPrice}
+              value={editing.unitPrice}
               onChange={(val) =>
-                setDraft({ ...draft, unitPrice: Number(val ?? 0) })
+                setEditing({ ...editing, unitPrice: Number(val ?? 0) })
               }
               onPressEnter={handleCommit}
             />
@@ -371,9 +418,11 @@ export function SectionBlock({
       width: 150,
       align: 'right',
       render: (v: string, r: EstimateItem) => {
-        if (r.id === DRAFT_ID && draft) {
+        if (isRowInEdit(r) && editing) {
           return (
-            <strong>{formatMoney(draft.quantity * draft.unitPrice)}</strong>
+            <strong>
+              {formatMoney(editing.quantity * editing.unitPrice)}
+            </strong>
           );
         }
         return <strong>{formatMoney(v)}</strong>;
@@ -383,9 +432,9 @@ export function SectionBlock({
       ? [
           {
             title: '',
-            width: 80,
+            width: 90,
             render: (_: unknown, r: EstimateItem) => {
-              if (r.id === DRAFT_ID) {
+              if (isRowInEdit(r)) {
                 return (
                   <Space size={4}>
                     <Button
@@ -405,17 +454,27 @@ export function SectionBlock({
                 );
               }
               return (
-                <Popconfirm
-                  title="Удалить позицию?"
-                  onConfirm={() => onDeleteItem(r.id)}
-                >
+                <Space size={4}>
                   <Button
                     type="text"
                     size="small"
-                    danger
-                    icon={<DeleteOutlined />}
+                    icon={<EditOutlined />}
+                    disabled={!!editing}
+                    onClick={() => handleEditItem(r)}
                   />
-                </Popconfirm>
+                  <Popconfirm
+                    title="Удалить позицию?"
+                    onConfirm={() => onDeleteItem(r.id)}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      disabled={!!editing}
+                      icon={<DeleteOutlined />}
+                    />
+                  </Popconfirm>
+                </Space>
               );
             },
           },
@@ -432,7 +491,7 @@ export function SectionBlock({
         border: '1px solid #f0f0f0',
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Escape' && draft && !saving) {
+        if (e.key === 'Escape' && editing && !saving) {
           e.stopPropagation();
           handleCancel();
         }
@@ -451,6 +510,11 @@ export function SectionBlock({
         <strong style={{ fontSize: 15 }}>
           {index + 1}. {section.name}
         </strong>
+        {section.contractor_name && (
+          <Tag icon={<UserOutlined />} color="purple">
+            {section.contractor_name}
+          </Tag>
+        )}
         <span style={{ color: '#8c8c8c', flex: 1 }} />
         <span style={{ color: '#1677ff', fontWeight: 600 }}>
           {formatMoney(sectionTotal)}
@@ -462,10 +526,17 @@ export function SectionBlock({
               size="small"
               icon={<PlusOutlined />}
               onClick={handleAddDraft}
-              disabled={!!draft}
+              disabled={!!editing}
             >
               Позиция
             </Button>
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              disabled={!!editing}
+              onClick={() => onEditSection(section.id)}
+            />
             <Popconfirm
               title="Удалить раздел со всеми позициями?"
               onConfirm={() => onDeleteSection(section.id)}
@@ -474,6 +545,7 @@ export function SectionBlock({
                 type="text"
                 size="small"
                 danger
+                disabled={!!editing}
                 icon={<DeleteOutlined />}
               />
             </Popconfirm>
@@ -485,10 +557,12 @@ export function SectionBlock({
         rowKey="id"
         size="small"
         columns={columns}
-        dataSource={dataSource}
+        dataSource={rowsForTable}
         pagination={false}
         locale={{ emptyText: 'Нет позиций. Нажмите «Позиция».' }}
+        rowClassName={(r) => (isRowInEdit(r) ? 'estimat-row-editing' : '')}
       />
+      {isEditingExisting && <div style={{ display: 'none' }} />}
     </div>
   );
 }

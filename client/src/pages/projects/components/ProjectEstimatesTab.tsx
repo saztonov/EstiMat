@@ -17,6 +17,11 @@ interface Props {
   projectId: string;
 }
 
+interface CostCategory {
+  id: string;
+  name: string;
+}
+
 export function ProjectEstimatesTab({ projectId }: Props) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -29,9 +34,9 @@ export function ProjectEstimatesTab({ projectId }: Props) {
     queryFn: () => api.get<{ data: Record<string, unknown>[] }>(`/estimates?projectId=${projectId}`),
   });
 
-  const { data: orgs } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => api.get<{ data: Record<string, unknown>[] }>('/organizations'),
+  const { data: categories } = useQuery({
+    queryKey: ['rate-categories'],
+    queryFn: () => api.get<{ data: CostCategory[] }>('/rates/categories'),
     enabled: modalOpen,
   });
 
@@ -69,8 +74,8 @@ export function ProjectEstimatesTab({ projectId }: Props) {
       render: (v: string) => v || '—',
     },
     {
-      title: 'Подрядчик',
-      dataIndex: 'contractor_name',
+      title: 'Категория затрат',
+      dataIndex: 'cost_category_name',
       render: (v: string) => v || '—',
     },
     {
@@ -143,13 +148,16 @@ export function ProjectEstimatesTab({ projectId }: Props) {
         confirmLoading={createMutation.isPending}
       >
         <Form form={form} layout="vertical" onFinish={(v) => createMutation.mutate(v)}>
-          <Form.Item name="contractorId" label="Подрядчик">
+          <Form.Item
+            name="costCategoryId"
+            label="Категория затрат"
+            rules={[{ required: true, message: 'Выберите категорию затрат' }]}
+          >
             <Select
-              allowClear
-              placeholder="Выберите подрядчика"
-              options={orgs?.data
-                .filter((o) => o.type === 'subcontractor')
-                .map((o) => ({ value: o.id as string, label: o.name as string }))}
+              showSearch
+              optionFilterProp="label"
+              placeholder="Выберите категорию затрат"
+              options={categories?.data.map((c) => ({ value: c.id, label: c.name }))}
             />
           </Form.Item>
           <Form.Item name="workType" label="Вид работ">

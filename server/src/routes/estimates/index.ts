@@ -16,10 +16,13 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   // GET /api/estimates?projectId=
   fastify.get('/', async (request) => {
     const { projectId } = request.query as { projectId?: string };
-    let query = `SELECT e.*, p.code as project_code, p.name as project_name, o.name as contractor_name
+    let query = `SELECT e.*,
+                        p.code AS project_code,
+                        p.name AS project_name,
+                        cc.name AS cost_category_name
                  FROM estimates e
                  JOIN projects p ON e.project_id = p.id
-                 LEFT JOIN organizations o ON e.contractor_id = o.id`;
+                 LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id`;
     const values: string[] = [];
     if (projectId) {
       query += ' WHERE e.project_id = $1';
@@ -33,10 +36,13 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   // GET /api/estimates/:id — с разделами и позициями
   fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
     const { rows } = await fastify.pool.query(
-      `SELECT e.*, p.code as project_code, p.name as project_name, o.name as contractor_name
+      `SELECT e.*,
+              p.code AS project_code,
+              p.name AS project_name,
+              cc.name AS cost_category_name
        FROM estimates e
        JOIN projects p ON e.project_id = p.id
-       LEFT JOIN organizations o ON e.contractor_id = o.id
+       LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
        WHERE e.id = $1`,
       [request.params.id],
     );
@@ -46,10 +52,12 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       `SELECT s.*,
               ct.name AS cost_type_name,
               cc.id   AS cost_category_id,
-              cc.name AS cost_category_name
+              cc.name AS cost_category_name,
+              o.name  AS contractor_name
        FROM estimate_sections s
        LEFT JOIN cost_types ct      ON s.cost_type_id = ct.id
        LEFT JOIN cost_categories cc ON ct.category_id = cc.id
+       LEFT JOIN organizations o    ON s.contractor_id = o.id
        WHERE s.estimate_id = $1
        ORDER BY s.sort_order, s.created_at`,
       [request.params.id],
@@ -85,9 +93,15 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   fastify.post('/', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createEstimateSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
-      `INSERT INTO estimates (project_id, contractor_id, work_type, notes, created_by)
+      `INSERT INTO estimates (project_id, cost_category_id, work_type, notes, created_by)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [body.projectId, body.contractorId || null, body.workType || null, body.notes || null, request.currentUser.id],
+      [
+        body.projectId,
+        body.costCategoryId || null,
+        body.workType || null,
+        body.notes || null,
+        request.currentUser.id,
+      ],
     );
     return reply.status(201).send({ data: rows[0] });
   });
@@ -99,8 +113,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     const values: unknown[] = [];
     let i = 1;
 
-    if (body.projectId !== undefined) { sets.push(`project_id = $${i++}`); values.push(body.projectId); }
-    if (body.contractorId !== undefined) { sets.push(`contractor_id = $${i++}`); values.push(body.contractorId); }
+    if (body.costCategoryId !== undefined) { sets.push(`cost_category_id = $${i++}`); values.push(body.costCategoryId); }
     if (body.workType !== undefined) { sets.push(`work_type = $${i++}`); values.push(body.workType); }
     if (body.notes !== undefined) { sets.push(`notes = $${i++}`); values.push(body.notes); }
 
@@ -195,9 +208,15 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       const name = `${ctypeRows[0].category_name} / ${ctypeRows[0].type_name}`;
 
       const { rows: created } = await fastify.pool.query(
-        `INSERT INTO estimate_sections (estimate_id, cost_type_id, name, sort_order)
-         VALUES ($1, $2, $3, $4) RETURNING *`,
-        [request.params.id, body.costTypeId, name, body.sortOrder ?? 0],
+        `INSERT INTO estimate_sections (estimate_id, cost_type_id, contractor_id, name, sort_order)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [
+          request.params.id,
+          body.costTypeId,
+          body.contractorId ?? null,
+          name,
+          body.sortOrder ?? 0,
+        ],
       );
       return reply.status(201).send({ data: created[0] });
     },
@@ -237,6 +256,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         sets.push(`cost_type_id = $${i++}`); values.push(body.costTypeId);
         sets.push(`name = $${i++}`); values.push(`${ctypeRows[0].category_name} / ${ctypeRows[0].type_name}`);
       }
+      if (body.contractorId !== undefined) { sets.push(`contractor_id = $${i++}`); values.push(body.contractorId); }
       if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
 
       if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });

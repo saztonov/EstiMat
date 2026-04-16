@@ -22,6 +22,8 @@ export interface EstimateSection {
   cost_type_name: string | null;
   cost_category_id: string | null;
   cost_category_name: string | null;
+  contractor_id: string | null;
+  contractor_name: string | null;
   name: string;
   sort_order: number;
   items: EstimateItem[];
@@ -32,7 +34,8 @@ export interface EstimateDetail {
   project_id: string;
   project_code: string;
   project_name: string;
-  contractor_name: string | null;
+  cost_category_id: string | null;
+  cost_category_name: string | null;
   work_type: string | null;
   status: string;
   total_amount: string;
