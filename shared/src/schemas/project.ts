@@ -4,12 +4,12 @@ import { PROJECT_STATUSES } from '../constants/statuses.js';
 export const createProjectSchema = z.object({
   code: z.string().min(3).max(6, 'Код: 3-6 символов'),
   name: z.string().min(1, 'Название обязательно'),
-  fullName: z.string().optional(),
+  fullName: z.string().nullable().optional(),
   orgId: z.string().uuid(),
-  address: z.string().optional(),
+  address: z.string().nullable().optional(),
   status: z.enum(PROJECT_STATUSES).default('planning'),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
+  startDate: z.string().nullable().optional(),
+  endDate: z.string().nullable().optional(),
   imageUrl: z.string().nullable().optional(),
 });
 
