@@ -150,20 +150,18 @@ export function EstimateDetailPage() {
       <EstimateHeaderCard
         estimate={estimate}
         itemCount={totalItems}
-        editable={isDraft}
+        editable
         onEdit={() => setEditEstimateOpen(true)}
       />
 
-      {isDraft && (
-        <Button
-          type="dashed"
-          icon={<PlusOutlined />}
-          onClick={() => setSectionModalOpen(true)}
-          style={{ width: '100%', marginTop: 8, marginBottom: 16 }}
-        >
-          Добавить раздел
-        </Button>
-      )}
+      <Button
+        type="dashed"
+        icon={<PlusOutlined />}
+        onClick={() => setSectionModalOpen(true)}
+        style={{ width: '100%', marginTop: 8, marginBottom: 16 }}
+      >
+        Добавить раздел
+      </Button>
 
       {estimate.sections && estimate.sections.length > 0 ? (
         <>
@@ -172,7 +170,7 @@ export function EstimateDetailPage() {
               key={section.id}
               section={section}
               index={i}
-              editable={isDraft}
+              editable
               onCreateItem={handleCreateItem}
               onUpdateItem={handleUpdateItem}
               onDeleteItem={(itemId) => deleteItemMutation.mutate(itemId)}
@@ -180,16 +178,14 @@ export function EstimateDetailPage() {
               onDeleteSection={(sectionId) => deleteSectionMutation.mutate(sectionId)}
             />
           ))}
-          {isDraft && (
-            <Button
-              type="dashed"
-              icon={<PlusOutlined />}
-              onClick={() => setSectionModalOpen(true)}
-              style={{ width: '100%', marginTop: 8 }}
-            >
-              Добавить раздел
-            </Button>
-          )}
+          <Button
+            type="dashed"
+            icon={<PlusOutlined />}
+            onClick={() => setSectionModalOpen(true)}
+            style={{ width: '100%', marginTop: 8 }}
+          >
+            Добавить раздел
+          </Button>
         </>
       ) : (
         <Empty description="В смете пока нет разделов" style={{ padding: '40px 0' }} />

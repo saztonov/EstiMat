@@ -121,10 +121,10 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
 
     values.push(request.params.id);
     const { rows } = await fastify.pool.query(
-      `UPDATE estimates SET ${sets.join(', ')} WHERE id = $${i} AND status = 'draft' RETURNING *`,
+      `UPDATE estimates SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
       values,
     );
-    if (rows.length === 0) return reply.status(404).send({ error: 'Смета не найдена или не в статусе черновик' });
+    if (rows.length === 0) return reply.status(404).send({ error: 'Смета не найдена' });
     return { data: rows[0] };
   });
 
@@ -175,24 +175,11 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
 
   // === Разделы ===
 
-  async function assertDraft(estimateId: string) {
-    const { rows } = await fastify.pool.query(
-      `SELECT status FROM estimates WHERE id = $1`,
-      [estimateId],
-    );
-    if (rows.length === 0) return { ok: false, code: 404, err: 'Смета не найдена' };
-    if (rows[0].status !== 'draft') return { ok: false, code: 409, err: 'Редактировать можно только черновик' };
-    return { ok: true };
-  }
-
   // POST /api/estimates/:id/sections
   fastify.post<{ Params: { id: string } }>(
     '/:id/sections',
     { preHandler: [requireRole('admin', 'engineer')] },
     async (request, reply) => {
-      const check = await assertDraft(request.params.id);
-      if (!check.ok) return reply.status(check.code!).send({ error: check.err });
-
       const body = createEstimateSectionSchema.parse(request.body);
 
       const { rows: ctypeRows } = await fastify.pool.query(
@@ -234,9 +221,6 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         [request.params.id],
       );
       if (existing.length === 0) return reply.status(404).send({ error: 'Раздел не найден' });
-
-      const check = await assertDraft(existing[0].estimate_id);
-      if (!check.ok) return reply.status(check.code!).send({ error: check.err });
 
       const sets: string[] = [];
       const values: unknown[] = [];
@@ -281,9 +265,6 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       );
       if (existing.length === 0) return reply.status(404).send({ error: 'Раздел не найден' });
 
-      const check = await assertDraft(existing[0].estimate_id);
-      if (!check.ok) return reply.status(check.code!).send({ error: check.err });
-
       await fastify.pool.query('DELETE FROM estimate_sections WHERE id = $1', [request.params.id]);
       return { success: true };
     },
@@ -299,9 +280,6 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         [request.params.id],
       );
       if (sec.length === 0) return reply.status(404).send({ error: 'Раздел не найден' });
-
-      const check = await assertDraft(sec[0].estimate_id);
-      if (!check.ok) return reply.status(check.code!).send({ error: check.err });
 
       const body = createEstimateItemSchema.parse(request.body);
       const { rows } = await fastify.pool.query(
@@ -329,9 +307,6 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
 
   // POST /api/estimates/:id/items — legacy, без раздела
   fastify.post<{ Params: { id: string } }>('/:id/items', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
-    const check = await assertDraft(request.params.id);
-    if (!check.ok) return reply.status(check.code!).send({ error: check.err });
-
     const body = createEstimateItemSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       `INSERT INTO estimate_items
