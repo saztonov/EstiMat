@@ -5,9 +5,8 @@ import { ArrowLeftOutlined, CheckOutlined, PlusOutlined } from '@ant-design/icon
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { EstimateHeaderCard } from './components/EstimateHeaderCard';
-import { SectionBlock } from './components/SectionBlock';
+import { SectionBlock, type SaveItemPayload } from './components/SectionBlock';
 import { AddSectionModal, type AddSectionPayload } from './components/AddSectionModal';
-import { AddItemModal, type AddItemPayload } from './components/AddItemModal';
 import type { EstimateDetail } from './components/types';
 
 export function EstimateDetailPage() {
@@ -17,7 +16,6 @@ export function EstimateDetailPage() {
   const { message } = App.useApp();
 
   const [sectionModalOpen, setSectionModalOpen] = useState(false);
-  const [itemModal, setItemModal] = useState<{ sectionId: string; type: 'work' | 'material' } | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['estimate', id],
@@ -47,11 +45,10 @@ export function EstimateDetailPage() {
   });
 
   const addItemMutation = useMutation({
-    mutationFn: ({ sectionId, payload }: { sectionId: string; payload: AddItemPayload }) =>
+    mutationFn: ({ sectionId, payload }: { sectionId: string; payload: SaveItemPayload }) =>
       api.post(`/estimates/sections/${sectionId}/items`, payload),
     onSuccess: () => {
       invalidate();
-      setItemModal(null);
       message.success('Позиция добавлена');
     },
     onError: (e: Error) => message.error(e.message),
@@ -82,6 +79,9 @@ export function EstimateDetailPage() {
 
   const isDraft = estimate.status === 'draft';
   const totalItems = estimate.sections?.reduce((acc, s) => acc + s.items.length, 0) ?? 0;
+
+  const handleSaveItem = (sectionId: string, payload: SaveItemPayload) =>
+    addItemMutation.mutateAsync({ sectionId, payload }).then(() => undefined);
 
   return (
     <div>
@@ -127,7 +127,7 @@ export function EstimateDetailPage() {
               section={section}
               index={i}
               editable={isDraft}
-              onAddItem={(sectionId, type) => setItemModal({ sectionId, type })}
+              onSaveItem={handleSaveItem}
               onDeleteItem={(itemId) => deleteItemMutation.mutate(itemId)}
               onDeleteSection={(sectionId) => deleteSectionMutation.mutate(sectionId)}
             />
@@ -152,17 +152,6 @@ export function EstimateDetailPage() {
         onCancel={() => setSectionModalOpen(false)}
         onSubmit={(payload) => addSectionMutation.mutate(payload)}
         loading={addSectionMutation.isPending}
-      />
-
-      <AddItemModal
-        open={!!itemModal}
-        itemType={itemModal?.type ?? 'work'}
-        onCancel={() => setItemModal(null)}
-        onSubmit={(payload) => {
-          if (!itemModal) return;
-          addItemMutation.mutate({ sectionId: itemModal.sectionId, payload });
-        }}
-        loading={addItemMutation.isPending}
       />
     </div>
   );
