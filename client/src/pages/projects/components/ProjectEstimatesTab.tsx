@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Table, Button, Tag, Modal, Form, Input, Select, Space, App, Popconfirm } from 'antd';
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -28,6 +28,8 @@ export function ProjectEstimatesTab({ projectId }: Props) {
   const { message } = App.useApp();
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string | undefined>();
 
   const { data, isLoading } = useQuery({
     queryKey: ['estimates', projectId],
@@ -37,8 +39,17 @@ export function ProjectEstimatesTab({ projectId }: Props) {
   const { data: categories } = useQuery({
     queryKey: ['rate-categories'],
     queryFn: () => api.get<{ data: CostCategory[] }>('/rates/categories'),
-    enabled: modalOpen,
   });
+
+  const filteredData = useMemo(() => {
+    const list = data?.data ?? [];
+    const q = search.trim().toLowerCase();
+    return list.filter((row) => {
+      if (categoryFilter && row.cost_category_id !== categoryFilter) return false;
+      if (q && !String(row.work_type ?? '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [data?.data, search, categoryFilter]);
 
   const createMutation = useMutation({
     mutationFn: (values: Record<string, unknown>) =>
@@ -69,7 +80,7 @@ export function ProjectEstimatesTab({ projectId }: Props) {
 
   const columns = [
     {
-      title: 'Вид работ',
+      title: 'Работы',
       dataIndex: 'work_type',
       render: (v: string) => v || '—',
     },
@@ -124,16 +135,45 @@ export function ProjectEstimatesTab({ projectId }: Props) {
 
   return (
     <div className="table-page-wrapper">
-      <Space style={{ marginBottom: 16, flexShrink: 0 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 16,
+          gap: 12,
+          flexShrink: 0,
+        }}
+      >
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
           Создать смету
         </Button>
-      </Space>
+        <Space>
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="Поиск по работам"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 260 }}
+          />
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="Категория затрат"
+            value={categoryFilter}
+            onChange={setCategoryFilter}
+            options={categories?.data.map((c) => ({ value: c.id, label: c.name }))}
+            style={{ width: 240 }}
+          />
+        </Space>
+      </div>
 
       <Table
         rowKey="id"
         columns={columns}
-        dataSource={data?.data}
+        dataSource={filteredData}
         loading={isLoading}
         scroll={{ y: 'flex' }}
         onRow={(record) => ({ onClick: () => navigate(`/estimates/${record.id}`) })}
@@ -160,7 +200,7 @@ export function ProjectEstimatesTab({ projectId }: Props) {
               options={categories?.data.map((c) => ({ value: c.id, label: c.name }))}
             />
           </Form.Item>
-          <Form.Item name="workType" label="Вид работ">
+          <Form.Item name="workType" label="Работы">
             <Input placeholder="Например: Отделка, Черновые работы" />
           </Form.Item>
           <Form.Item name="notes" label="Примечания">

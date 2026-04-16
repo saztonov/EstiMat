@@ -75,7 +75,7 @@ export function EditEstimateModal({
             options={categories?.data.map((c) => ({ value: c.id, label: c.name }))}
           />
         </Form.Item>
-        <Form.Item name="workType" label="Вид работ">
+        <Form.Item name="workType" label="Работы">
           <Input placeholder="Например: Отделка, Черновые работы" />
         </Form.Item>
         <Form.Item name="notes" label="Примечания">
