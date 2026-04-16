@@ -198,6 +198,11 @@ export function EstimateDetailPage() {
       <AddSectionModal
         open={sectionModalOpen}
         mode="create"
+        initialValues={
+          estimate.cost_category_id
+            ? { costCategoryId: estimate.cost_category_id }
+            : undefined
+        }
         onCancel={() => setSectionModalOpen(false)}
         onSubmit={(payload) => addSectionMutation.mutate(payload)}
         loading={addSectionMutation.isPending}

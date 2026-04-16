@@ -100,9 +100,12 @@ export function SectionBlock({
   const [saving, setSaving] = useState(false);
 
   const { data: ratesData } = useQuery({
-    queryKey: ['rates'],
-    queryFn: () => api.get<{ data: Rate[] }>('/rates'),
-    enabled: !!editing && editing.itemType === 'work',
+    queryKey: ['rates', section.cost_type_id],
+    queryFn: () =>
+      api.get<{ data: Rate[] }>(
+        `/rates?costTypeId=${encodeURIComponent(section.cost_type_id ?? '')}`,
+      ),
+    enabled: !!editing && editing.itemType === 'work' && !!section.cost_type_id,
   });
 
   const { data: materialsData } = useQuery({
