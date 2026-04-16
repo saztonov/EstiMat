@@ -5,7 +5,14 @@ import rateLimit from '@fastify/rate-limit';
 import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
+import { mkdir } from 'fs/promises';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { config } from './config.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const UPLOADS_DIR = join(__dirname, '..', 'uploads');
 
 export async function buildApp() {
   const app = Fastify({
@@ -64,6 +71,14 @@ export async function buildApp() {
     limits: { fileSize: 10 * 1024 * 1024 },
   });
 
+  // Static files (user uploads)
+  await mkdir(join(UPLOADS_DIR, 'projects'), { recursive: true });
+  await app.register(fastifyStatic, {
+    root: UPLOADS_DIR,
+    prefix: '/uploads/',
+    decorateReply: false,
+  });
+
   // Database plugin
   await app.register(import('./plugins/database.js'));
 
@@ -75,6 +90,7 @@ export async function buildApp() {
   await app.register(import('./routes/rates/index.js'), { prefix: '/api/rates' });
   await app.register(import('./routes/estimates/index.js'), { prefix: '/api/estimates' });
   await app.register(import('./routes/users/index.js'), { prefix: '/api/users' });
+  await app.register(import('./routes/uploads/index.js'), { prefix: '/api/uploads' });
 
   // Health check
   app.get('/api/health', async () => ({ status: 'ok' }));

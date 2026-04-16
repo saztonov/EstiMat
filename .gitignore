@@ -31,3 +31,6 @@ vite.config.ts.timestamp-*
 pgdata/
 
 temp/
+
+# Uploaded files
+server/uploads/

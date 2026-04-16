@@ -1,7 +1,24 @@
 import type { FastifyInstance } from 'fastify';
+import { unlink } from 'fs/promises';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { createProjectSchema, updateProjectSchema } from '@estimat/shared';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const UPLOADS_ROOT = join(__dirname, '..', '..', '..', 'uploads');
+
+async function removeLocalUpload(url: string | null | undefined) {
+  if (!url || !url.startsWith('/uploads/projects/')) return;
+  const name = url.slice('/uploads/projects/'.length);
+  if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) return;
+  try {
+    await unlink(join(UPLOADS_ROOT, 'projects', name));
+  } catch {
+    // файл мог быть удалён ранее — игнорируем
+  }
+}
 
 export default async function projectRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -107,12 +124,26 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
     if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
 
+    let previousImageUrl: string | null = null;
+    if (body.imageUrl !== undefined) {
+      const { rows: prev } = await fastify.pool.query(
+        'SELECT image_url FROM projects WHERE id = $1',
+        [request.params.id],
+      );
+      previousImageUrl = prev[0]?.image_url ?? null;
+    }
+
     values.push(request.params.id);
     const { rows } = await fastify.pool.query(
       `UPDATE projects SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
       values,
     );
     if (rows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
+
+    if (body.imageUrl !== undefined && previousImageUrl && previousImageUrl !== body.imageUrl) {
+      await removeLocalUpload(previousImageUrl);
+    }
+
     return { data: rows[0] };
   });
 
