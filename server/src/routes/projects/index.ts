@@ -65,6 +65,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
     const { rows: estimates } = await fastify.pool.query(
       `SELECT e.id, e.work_type, e.status, e.total_amount, e.created_at,
+              e.cost_category_id,
               cc.name AS cost_category_name
          FROM estimates e
          LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
@@ -73,12 +74,59 @@ export default async function projectRoutes(fastify: FastifyInstance) {
       [request.params.id],
     );
 
+    const estimateIds = estimates.map((e) => e.id);
+
+    const sectionsRows = estimateIds.length
+      ? (
+          await fastify.pool.query(
+            `SELECT s.*,
+                    ct.name AS cost_type_name,
+                    cc.id   AS cost_category_id,
+                    cc.name AS cost_category_name,
+                    o.name  AS contractor_name
+               FROM estimate_sections s
+               LEFT JOIN cost_types ct      ON s.cost_type_id = ct.id
+               LEFT JOIN cost_categories cc ON ct.category_id = cc.id
+               LEFT JOIN organizations o    ON s.contractor_id = o.id
+               WHERE s.estimate_id = ANY($1)
+               ORDER BY s.sort_order, s.created_at`,
+            [estimateIds],
+          )
+        ).rows
+      : [];
+
+    const itemsRows = estimateIds.length
+      ? (
+          await fastify.pool.query(
+            `SELECT ei.*,
+                    r.name as rate_name, r.code as rate_code,
+                    mc.name as material_name
+               FROM estimate_items ei
+               LEFT JOIN rates r ON ei.rate_id = r.id
+               LEFT JOIN material_catalog mc ON ei.material_id = mc.id
+               WHERE ei.estimate_id = ANY($1)
+               ORDER BY ei.sort_order, ei.created_at`,
+            [estimateIds],
+          )
+        ).rows
+      : [];
+
+    const sectionsWithItems = sectionsRows.map((s) => ({
+      ...s,
+      items: itemsRows.filter((i) => i.section_id === s.id),
+    }));
+
+    const estimatesWithSections = estimates.map((e) => ({
+      ...e,
+      sections: sectionsWithItems.filter((s) => s.estimate_id === e.id),
+    }));
+
     const grandTotal = estimates.reduce((acc, e) => acc + Number(e.total_amount || 0), 0);
 
     return {
       data: {
         project: projectRows[0],
-        estimates,
+        estimates: estimatesWithSections,
         grandTotal,
       },
     };

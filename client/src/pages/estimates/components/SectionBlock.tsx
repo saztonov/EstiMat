@@ -19,6 +19,8 @@ import {
   CloseOutlined,
   EditOutlined,
   UserOutlined,
+  CaretRightOutlined,
+  CaretDownOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -72,6 +74,8 @@ interface Props {
   onDeleteItem: (itemId: string) => void;
   onEditSection: (sectionId: string) => void;
   onDeleteSection: (sectionId: string) => void;
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
 }
 
 const EMPTY_EDIT: EditingState = {
@@ -94,10 +98,13 @@ export function SectionBlock({
   onDeleteItem,
   onEditSection,
   onDeleteSection,
+  collapsible = false,
+  defaultCollapsed = false,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [collapsed, setCollapsed] = useState(collapsible && defaultCollapsed);
 
   const { data: ratesData } = useQuery({
     queryKey: ['rates', section.cost_type_id],
@@ -506,10 +513,25 @@ export function SectionBlock({
           alignItems: 'center',
           padding: '12px 16px',
           background: '#fafbfc',
-          borderBottom: '1px solid #f0f0f0',
+          borderBottom: collapsible && collapsed ? 'none' : '1px solid #f0f0f0',
           gap: 12,
+          cursor: collapsible ? 'pointer' : 'default',
+          userSelect: collapsible ? 'none' : 'auto',
         }}
+        onClick={
+          collapsible
+            ? (e) => {
+                if ((e.target as HTMLElement).closest('button, .ant-popover, .ant-popconfirm')) return;
+                setCollapsed((c) => !c);
+              }
+            : undefined
+        }
       >
+        {collapsible && (
+          collapsed
+            ? <CaretRightOutlined style={{ color: '#8c8c8c' }} />
+            : <CaretDownOutlined style={{ color: '#8c8c8c' }} />
+        )}
         <strong style={{ fontSize: 15 }}>
           {index + 1}. {section.name}
         </strong>
@@ -556,15 +578,17 @@ export function SectionBlock({
         )}
       </div>
 
-      <Table
-        rowKey="id"
-        size="small"
-        columns={columns}
-        dataSource={rowsForTable}
-        pagination={false}
-        locale={{ emptyText: 'Нет позиций. Нажмите «Позиция».' }}
-        rowClassName={(r) => (isRowInEdit(r) ? 'estimat-row-editing' : '')}
-      />
+      {!(collapsible && collapsed) && (
+        <Table
+          rowKey="id"
+          size="small"
+          columns={columns}
+          dataSource={rowsForTable}
+          pagination={false}
+          locale={{ emptyText: editable ? 'Нет позиций. Нажмите «Позиция».' : 'Нет позиций.' }}
+          rowClassName={(r) => (isRowInEdit(r) ? 'estimat-row-editing' : '')}
+        />
+      )}
       {isEditingExisting && <div style={{ display: 'none' }} />}
     </div>
   );
