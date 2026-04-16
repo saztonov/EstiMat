@@ -3,27 +3,46 @@ import { Modal, Form, Select } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 
-interface Rate {
+interface Category {
   id: string;
   name: string;
-  code: string | null;
-  unit: string;
+}
+
+interface CostType {
+  id: string;
+  name: string;
+  category_id: string;
+}
+
+export interface AddSectionPayload {
+  costCategoryId: string;
+  costTypeId: string;
 }
 
 interface Props {
   open: boolean;
   onCancel: () => void;
-  onSubmit: (rateId: string) => void;
+  onSubmit: (payload: AddSectionPayload) => void;
   loading?: boolean;
 }
 
 export function AddSectionModal({ open, onCancel, onSubmit, loading }: Props) {
-  const [form] = Form.useForm();
+  const [form] = Form.useForm<AddSectionPayload>();
+  const categoryId = Form.useWatch('costCategoryId', form);
 
-  const { data: rates } = useQuery({
-    queryKey: ['rates'],
-    queryFn: () => api.get<{ data: Rate[] }>('/rates'),
+  const { data: categories } = useQuery({
+    queryKey: ['rate-categories'],
+    queryFn: () => api.get<{ data: Category[] }>('/rates/categories'),
     enabled: open,
+  });
+
+  const { data: types } = useQuery({
+    queryKey: ['rate-types', categoryId],
+    queryFn: () =>
+      api.get<{ data: CostType[] }>(
+        categoryId ? `/rates/types?categoryId=${categoryId}` : '/rates/types',
+      ),
+    enabled: open && !!categoryId,
   });
 
   useEffect(() => {
@@ -42,22 +61,34 @@ export function AddSectionModal({ open, onCancel, onSubmit, loading }: Props) {
       <Form
         form={form}
         layout="vertical"
-        onFinish={(v) => onSubmit(v.rateId)}
+        onFinish={(v) => onSubmit({ costCategoryId: v.costCategoryId, costTypeId: v.costTypeId })}
       >
         <Form.Item
-          name="rateId"
-          label="Расценка (вид работ)"
-          rules={[{ required: true, message: 'Выберите расценку' }]}
-          extra="Название раздела будет взято из расценки"
+          name="costCategoryId"
+          label="Категория затрат"
+          rules={[{ required: true, message: 'Выберите категорию' }]}
         >
           <Select
             showSearch
             optionFilterProp="label"
-            placeholder="Начните вводить название расценки"
-            options={rates?.data.map((r) => ({
-              value: r.id,
-              label: `${r.code ? `[${r.code}] ` : ''}${r.name}`,
-            }))}
+            placeholder="Выберите категорию затрат"
+            onChange={() => form.setFieldValue('costTypeId', undefined)}
+            options={categories?.data.map((c) => ({ value: c.id, label: c.name }))}
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="costTypeId"
+          label="Вид затрат"
+          rules={[{ required: true, message: 'Выберите вид затрат' }]}
+          extra="Название раздела сформируется как «Категория / Вид затрат»"
+        >
+          <Select
+            showSearch
+            optionFilterProp="label"
+            placeholder="Выберите вид затрат"
+            disabled={!categoryId}
+            options={types?.data.map((t) => ({ value: t.id, label: t.name }))}
           />
         </Form.Item>
       </Form>

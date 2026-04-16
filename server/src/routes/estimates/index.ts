@@ -43,9 +43,13 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     if (rows.length === 0) return reply.status(404).send({ error: 'Смета не найдена' });
 
     const sections = await fastify.pool.query(
-      `SELECT s.*, r.name as rate_name, r.code as rate_code
+      `SELECT s.*,
+              ct.name AS cost_type_name,
+              cc.id   AS cost_category_id,
+              cc.name AS cost_category_name
        FROM estimate_sections s
-       LEFT JOIN rates r ON s.rate_id = r.id
+       LEFT JOIN cost_types ct      ON s.cost_type_id = ct.id
+       LEFT JOIN cost_categories cc ON ct.category_id = cc.id
        WHERE s.estimate_id = $1
        ORDER BY s.sort_order, s.created_at`,
       [request.params.id],
@@ -177,20 +181,23 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       if (!check.ok) return reply.status(check.code!).send({ error: check.err });
 
       const body = createEstimateSectionSchema.parse(request.body);
-      let name = body.name ?? null;
 
-      if (body.rateId && !name) {
-        const { rows } = await fastify.pool.query('SELECT name FROM rates WHERE id = $1', [body.rateId]);
-        if (rows.length === 0) return reply.status(400).send({ error: 'Расценка не найдена' });
-        name = rows[0].name;
+      const { rows: ctypeRows } = await fastify.pool.query(
+        `SELECT ct.name AS type_name, cc.name AS category_name
+         FROM cost_types ct
+         JOIN cost_categories cc ON ct.category_id = cc.id
+         WHERE ct.id = $1 AND ct.category_id = $2`,
+        [body.costTypeId, body.costCategoryId],
+      );
+      if (ctypeRows.length === 0) {
+        return reply.status(400).send({ error: 'Вид затрат не принадлежит выбранной категории' });
       }
-
-      if (!name) return reply.status(400).send({ error: 'Укажите расценку или название раздела' });
+      const name = `${ctypeRows[0].category_name} / ${ctypeRows[0].type_name}`;
 
       const { rows: created } = await fastify.pool.query(
-        `INSERT INTO estimate_sections (estimate_id, rate_id, name, sort_order)
+        `INSERT INTO estimate_sections (estimate_id, cost_type_id, name, sort_order)
          VALUES ($1, $2, $3, $4) RETURNING *`,
-        [request.params.id, body.rateId ?? null, name, body.sortOrder ?? 0],
+        [request.params.id, body.costTypeId, name, body.sortOrder ?? 0],
       );
       return reply.status(201).send({ data: created[0] });
     },
@@ -215,8 +222,21 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       const sets: string[] = [];
       const values: unknown[] = [];
       let i = 1;
-      if (body.rateId !== undefined) { sets.push(`rate_id = $${i++}`); values.push(body.rateId); }
-      if (body.name !== undefined) { sets.push(`name = $${i++}`); values.push(body.name); }
+
+      if (body.costTypeId !== undefined && body.costCategoryId !== undefined) {
+        const { rows: ctypeRows } = await fastify.pool.query(
+          `SELECT ct.name AS type_name, cc.name AS category_name
+           FROM cost_types ct
+           JOIN cost_categories cc ON ct.category_id = cc.id
+           WHERE ct.id = $1 AND ct.category_id = $2`,
+          [body.costTypeId, body.costCategoryId],
+        );
+        if (ctypeRows.length === 0) {
+          return reply.status(400).send({ error: 'Вид затрат не принадлежит выбранной категории' });
+        }
+        sets.push(`cost_type_id = $${i++}`); values.push(body.costTypeId);
+        sets.push(`name = $${i++}`); values.push(`${ctypeRows[0].category_name} / ${ctypeRows[0].type_name}`);
+      }
       if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
 
       if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });

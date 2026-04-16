@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { EstimateHeaderCard } from './components/EstimateHeaderCard';
 import { SectionBlock } from './components/SectionBlock';
-import { AddSectionModal } from './components/AddSectionModal';
+import { AddSectionModal, type AddSectionPayload } from './components/AddSectionModal';
 import { AddItemModal, type AddItemPayload } from './components/AddItemModal';
 import type { EstimateDetail } from './components/types';
 
@@ -28,7 +28,7 @@ export function EstimateDetailPage() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['estimate', id] });
 
   const addSectionMutation = useMutation({
-    mutationFn: (rateId: string) => api.post(`/estimates/${id}/sections`, { rateId }),
+    mutationFn: (payload: AddSectionPayload) => api.post(`/estimates/${id}/sections`, payload),
     onSuccess: () => {
       invalidate();
       setSectionModalOpen(false);
@@ -108,37 +108,49 @@ export function EstimateDetailPage() {
 
       <EstimateHeaderCard estimate={estimate} itemCount={totalItems} />
 
-      {estimate.sections && estimate.sections.length > 0 ? (
-        estimate.sections.map((section, i) => (
-          <SectionBlock
-            key={section.id}
-            section={section}
-            index={i}
-            editable={isDraft}
-            onAddItem={(sectionId, type) => setItemModal({ sectionId, type })}
-            onDeleteItem={(itemId) => deleteItemMutation.mutate(itemId)}
-            onDeleteSection={(sectionId) => deleteSectionMutation.mutate(sectionId)}
-          />
-        ))
-      ) : (
-        <Empty description="В смете пока нет разделов" style={{ padding: '40px 0' }} />
-      )}
-
       {isDraft && (
         <Button
           type="dashed"
           icon={<PlusOutlined />}
           onClick={() => setSectionModalOpen(true)}
-          style={{ width: '100%', marginTop: 8 }}
+          style={{ width: '100%', marginTop: 8, marginBottom: 16 }}
         >
           Добавить раздел
         </Button>
       )}
 
+      {estimate.sections && estimate.sections.length > 0 ? (
+        <>
+          {estimate.sections.map((section, i) => (
+            <SectionBlock
+              key={section.id}
+              section={section}
+              index={i}
+              editable={isDraft}
+              onAddItem={(sectionId, type) => setItemModal({ sectionId, type })}
+              onDeleteItem={(itemId) => deleteItemMutation.mutate(itemId)}
+              onDeleteSection={(sectionId) => deleteSectionMutation.mutate(sectionId)}
+            />
+          ))}
+          {isDraft && (
+            <Button
+              type="dashed"
+              icon={<PlusOutlined />}
+              onClick={() => setSectionModalOpen(true)}
+              style={{ width: '100%', marginTop: 8 }}
+            >
+              Добавить раздел
+            </Button>
+          )}
+        </>
+      ) : (
+        <Empty description="В смете пока нет разделов" style={{ padding: '40px 0' }} />
+      )}
+
       <AddSectionModal
         open={sectionModalOpen}
         onCancel={() => setSectionModalOpen(false)}
-        onSubmit={(rateId) => addSectionMutation.mutate(rateId)}
+        onSubmit={(payload) => addSectionMutation.mutate(payload)}
         loading={addSectionMutation.isPending}
       />
 

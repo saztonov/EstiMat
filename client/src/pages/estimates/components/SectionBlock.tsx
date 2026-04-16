@@ -96,9 +96,7 @@ export function SectionBlock({
         <strong style={{ fontSize: 15 }}>
           {index + 1}. {section.name}
         </strong>
-        <span style={{ color: '#8c8c8c', flex: 1 }}>
-          {section.rate_code && <>· код {section.rate_code}</>}
-        </span>
+        <span style={{ color: '#8c8c8c', flex: 1 }} />
         <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(sectionTotal)}</span>
         {editable && (
           <Space>

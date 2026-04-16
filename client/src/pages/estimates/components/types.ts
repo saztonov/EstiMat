@@ -18,9 +18,10 @@ export interface EstimateItem {
 export interface EstimateSection {
   id: string;
   estimate_id: string;
-  rate_id: string | null;
-  rate_name: string | null;
-  rate_code: string | null;
+  cost_type_id: string | null;
+  cost_type_name: string | null;
+  cost_category_id: string | null;
+  cost_category_name: string | null;
   name: string;
   sort_order: number;
   items: EstimateItem[];

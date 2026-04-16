@@ -14,14 +14,14 @@ export const ESTIMATE_ITEM_TYPES = ['work', 'material'] as const;
 export type EstimateItemType = (typeof ESTIMATE_ITEM_TYPES)[number];
 
 export const createEstimateSectionSchema = z.object({
-  rateId: z.string().uuid().nullable().optional(),
-  name: z.string().min(1).optional(),
+  costCategoryId: z.string().uuid(),
+  costTypeId: z.string().uuid(),
   sortOrder: z.number().int().default(0),
 });
 
 export const updateEstimateSectionSchema = z.object({
-  rateId: z.string().uuid().nullable().optional(),
-  name: z.string().min(1).optional(),
+  costCategoryId: z.string().uuid().optional(),
+  costTypeId: z.string().uuid().optional(),
   sortOrder: z.number().int().optional(),
 });
 
@@ -55,7 +55,7 @@ export const estimateSchema = z.object({
 export const estimateSectionSchema = z.object({
   id: z.string().uuid(),
   estimateId: z.string().uuid(),
-  rateId: z.string().uuid().nullable(),
+  costTypeId: z.string().uuid().nullable(),
   name: z.string(),
   sortOrder: z.number().int(),
   createdAt: z.string(),
