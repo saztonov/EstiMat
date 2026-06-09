@@ -106,13 +106,13 @@ export function WorkspaceToolbar({
         {formatMoney(estimate.total_amount)}
       </span>
       <Typography.Text type="secondary" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
-        Работ: {totalItems} · Видов затрат: {groupCount}
+        Работ: {totalItems} · Видов работ: {groupCount}
       </Typography.Text>
 
       <span style={{ flex: 1 }} />
 
       <Button type="dashed" icon={<PlusOutlined />} onClick={onAddCostType}>
-        Вид затрат
+        Вид работ
       </Button>
       <Button type="text" icon={<EditOutlined />} onClick={onEdit} />
       {isDraft && (

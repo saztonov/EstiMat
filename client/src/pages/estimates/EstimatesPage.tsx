@@ -123,7 +123,7 @@ export function EstimatesPage() {
                     ? <img alt={p.name} src={p.image_url} style={{ height: 140, objectFit: 'cover' }} />
                     : placeholderCover(p.code)
                 }
-                onClick={() => navigate(`/projects/${p.id}?tab=estimates`)}
+                onClick={() => navigate(`/projects/${p.id}`)}
                 styles={{ body: { padding: 16 } }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>

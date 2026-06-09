@@ -1,11 +1,16 @@
 import { Empty } from 'antd';
 import { SectionShell } from './SectionShell';
 
+interface Props {
+  collapsed?: boolean;
+  onToggle?: () => void;
+}
+
 // «Рабочая документация» — заглушка. Таблиц РД ещё нет; в будущем сюда
 // подтянутся распознанные страницы чертежей (markdown) из внешнего портала.
-export function RdSection() {
+export function RdSection({ collapsed, onToggle }: Props) {
   return (
-    <SectionShell title="Рабочая документация" meta="скоро">
+    <SectionShell title="Рабочая документация" meta="скоро" collapsed={collapsed} onToggle={onToggle}>
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
         description={

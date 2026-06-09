@@ -1,5 +1,5 @@
-import { Tag, Button, Empty, Space } from 'antd';
-import { ExportOutlined } from '@ant-design/icons';
+import { Tag, Button, Empty, Space, Popconfirm } from 'antd';
+import { ExportOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router';
 import { ESTIMATE_STATUS_LABELS } from '@estimat/shared';
 import { CostTypeGroupBlock } from '../../estimates/components/CostTypeGroupBlock';
@@ -27,12 +27,17 @@ export interface SummaryEstimate {
 
 interface Props {
   estimate: SummaryEstimate;
+  /** Позиции с учётом отбора (по умолчанию — все позиции сметы). */
+  items?: EstimateItem[];
+  /** Сумма с учётом отбора (по умолчанию — полная сумма сметы). */
+  total?: number;
   index: number;
+  onDelete?: (estimateId: string) => void;
 }
 
-export function SummaryEstimateBlock({ estimate, index }: Props) {
+export function SummaryEstimateBlock({ estimate, items, total, index, onDelete }: Props) {
   const navigate = useNavigate();
-  const groups = buildCostTypeGroups(estimate.items ?? [], estimate.contractors ?? []);
+  const groups = buildCostTypeGroups(items ?? estimate.items ?? [], estimate.contractors ?? []);
 
   return (
     <div
@@ -67,7 +72,7 @@ export function SummaryEstimateBlock({ estimate, index }: Props) {
         <span style={{ flex: 1 }} />
         <Space>
           <span style={{ color: '#1677ff', fontWeight: 600, fontSize: 16 }}>
-            {formatMoney(estimate.total_amount)}
+            {formatMoney(total ?? estimate.total_amount)}
           </span>
           <Button
             type="text"
@@ -76,6 +81,17 @@ export function SummaryEstimateBlock({ estimate, index }: Props) {
             onClick={() => navigate(`/estimates/${estimate.id}`)}
             title="Открыть смету"
           />
+          {onDelete && (
+            <Popconfirm
+              title="Удалить смету?"
+              description="Все разделы и позиции будут удалены."
+              okText="Удалить"
+              cancelText="Отмена"
+              onConfirm={() => onDelete(estimate.id)}
+            >
+              <Button type="text" size="small" danger icon={<DeleteOutlined />} title="Удалить смету" />
+            </Popconfirm>
+          )}
         </Space>
       </div>
 

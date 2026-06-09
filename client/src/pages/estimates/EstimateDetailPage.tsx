@@ -222,7 +222,7 @@ export function EstimateDetailPage() {
         isDraft={isDraft}
         totalItems={totalItems}
         groupCount={groups.length}
-        onBack={() => navigate(`/projects/${estimate.project_id}?tab=estimates`)}
+        onBack={() => navigate(`/projects/${estimate.project_id}`)}
         onEdit={() => setEditEstimateOpen(true)}
         onAddCostType={() => setCostTypeModalOpen(true)}
         onChangeStatus={(s) => statusMutation.mutate(s)}

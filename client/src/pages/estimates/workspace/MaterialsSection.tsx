@@ -1,27 +1,39 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Key, ReactNode } from 'react';
 import { Input, Tree, Spin, Empty, App, Button, Tooltip } from 'antd';
 import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
+import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { SectionShell } from './SectionShell';
+import type { SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import type { MaterialRef } from './types';
 
 const UNGROUPED = '__ungrouped__';
 
 interface MatNode extends DataNode {
   searchText: string;
+  material?: MaterialRef;
   children?: MatNode[];
+}
+
+interface Props {
+  onAddMaterial: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
+  collapsed?: boolean;
+  onToggle?: () => void;
 }
 
 // Каталог материалов: Группа → Материал, с поиском. Сейчас панель —
 // браузер справочника; материалы в смету добавляются под работой кнопкой
 // «Материал» (нужна активная работа). Двойной клик / «+» подсказывают это.
-export function MaterialsSection() {
+export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) {
   const { message } = App.useApp();
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<Key[]>([]);
+  const selectedWorkId = useEstimateSelectionStore((s) => s.selectedWorkId);
+  const selectedWorkLabel = useEstimateSelectionStore((s) => s.selectedWorkLabel);
+  const lastAdd = useRef<{ id: string; ts: number }>({ id: '', ts: 0 });
 
   const { data, isLoading } = useQuery({
     queryKey: ['materials'],
@@ -49,6 +61,7 @@ export function MaterialsSection() {
           selectable: false,
           title: `${m.name} · ${m.unit} · ${Number(m.unit_price ?? 0).toLocaleString('ru-RU')} ₽`,
           searchText: m.name.toLowerCase(),
+          material: m,
         })),
       }));
   }, [data]);
@@ -71,7 +84,26 @@ export function MaterialsSection() {
   }, [allNodes, search]);
 
   const searching = search.trim().length > 0;
-  const guide = () => message.info('Чтобы добавить материал, откройте работу в смете и нажмите «Материал» под ней.');
+
+  // Добавить материал из справочника к выделенной работе.
+  // Защита от двойного добавления подряд (клик + дабл-клик).
+  function addToWork(m?: MaterialRef) {
+    if (!m) return;
+    if (!selectedWorkId) {
+      message.info('Сначала выделите работу в смете — материал добавится к ней.');
+      return;
+    }
+    const now = Date.now();
+    if (lastAdd.current.id === m.id && now - lastAdd.current.ts < 600) return;
+    lastAdd.current = { id: m.id, ts: now };
+    void onAddMaterial(selectedWorkId, {
+      materialId: m.id,
+      description: m.name,
+      unit: m.unit,
+      quantity: 1,
+      unitPrice: Number(m.unit_price ?? 0),
+    });
+  }
 
   const titleRender = (node: MatNode): ReactNode => {
     if (!node.isLeaf) {
@@ -81,12 +113,13 @@ export function MaterialsSection() {
       <div
         className="estimat-tree-leaf"
         style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}
-        onDoubleClick={guide}
+        onDoubleClick={() => addToWork(node.material)}
+        title="Двойной клик — добавить к выделенной работе"
       >
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {node.title as string}
         </span>
-        <Tooltip title="Добавить под работу в смете">
+        <Tooltip title="Добавить к выделенной работе">
           <Button
             className="estimat-tree-add"
             type="text"
@@ -94,7 +127,7 @@ export function MaterialsSection() {
             icon={<PlusOutlined />}
             onClick={(e) => {
               e.stopPropagation();
-              guide();
+              addToWork(node.material);
             }}
           />
         </Tooltip>
@@ -102,8 +135,12 @@ export function MaterialsSection() {
     );
   };
 
+  const meta = selectedWorkLabel
+    ? `→ ${selectedWorkLabel.length > 40 ? selectedWorkLabel.slice(0, 40) + '…' : selectedWorkLabel}`
+    : 'Группа · Наименование';
+
   return (
-    <SectionShell title="Материалы" meta="Группа · Наименование">
+    <SectionShell title="Материалы" meta={meta} collapsed={collapsed} onToggle={onToggle}>
       <Input
         allowClear
         size="small"

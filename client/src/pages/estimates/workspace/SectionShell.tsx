@@ -1,17 +1,32 @@
 import type { ReactNode } from 'react';
+import { CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
 
 interface Props {
   title: ReactNode;
   meta?: ReactNode;
+  /** Сворачиваемость: если задан onToggle — шапка кликабельна с кареткой. */
+  collapsed?: boolean;
+  onToggle?: () => void;
   children: ReactNode;
 }
 
-// Секция справочника внутри вертикального Splitter: фиксированная мини-шапка
-// + независимо скроллящееся тело.
-export function SectionShell({ title, meta, children }: Props) {
+// Секция справочника: фиксированная мини-шапка + независимо скроллящееся тело.
+// Если передан onToggle — секция сворачивается аккордеоном (тело скрывается,
+// остаётся только заголовок с кареткой).
+export function SectionShell({ title, meta, collapsed, onToggle, children }: Props) {
+  const collapsible = !!onToggle;
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+    <div
+      style={{
+        height: collapsible && collapsed ? 'auto' : '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        overflow: 'hidden',
+      }}
+    >
       <div
+        onClick={onToggle}
         style={{
           flexShrink: 0,
           display: 'flex',
@@ -22,12 +37,24 @@ export function SectionShell({ title, meta, children }: Props) {
           borderBottom: '1px solid #f0f0f0',
           fontWeight: 600,
           fontSize: 13,
+          cursor: collapsible ? 'pointer' : 'default',
+          userSelect: collapsible ? 'none' : 'auto',
         }}
       >
+        {collapsible &&
+          (collapsed ? (
+            <CaretRightOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+          ) : (
+            <CaretDownOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+          ))}
         <span>{title}</span>
-        {meta && <span style={{ marginLeft: 'auto', fontWeight: 400, color: '#8c8c8c', fontSize: 12 }}>{meta}</span>}
+        {meta && (
+          <span style={{ marginLeft: 'auto', fontWeight: 400, color: '#8c8c8c', fontSize: 12 }}>{meta}</span>
+        )}
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '8px 10px' }}>{children}</div>
+      {!(collapsible && collapsed) && (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '8px 10px' }}>{children}</div>
+      )}
     </div>
   );
 }

@@ -52,7 +52,7 @@ export function SmetaPanel({
       title="Сметная часть"
       meta={
         <>
-          Работ: {totalItems} · Видов затрат: {groupCount} ·{' '}
+          Работ: {totalItems} · Видов работ: {groupCount} ·{' '}
           <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(total)}</span>
         </>
       }
@@ -79,15 +79,15 @@ export function SmetaPanel({
           ))}
           {editable && (
             <Button type="dashed" icon={<PlusOutlined />} onClick={onAddCostType} style={{ width: '100%' }}>
-              Добавить вид затрат
+              Добавить вид работ
             </Button>
           )}
         </>
       ) : (
-        <Empty description="В смете пока нет работ. Добавьте вид затрат или перенесите работу из справочника двойным кликом." style={{ padding: '40px 0' }}>
+        <Empty description="В смете пока нет работ. Добавьте вид работ или перенесите работу из справочника двойным кликом." style={{ padding: '40px 0' }}>
           {editable && (
             <Button type="primary" icon={<PlusOutlined />} onClick={onAddCostType}>
-              Добавить вид затрат
+              Добавить вид работ
             </Button>
           )}
         </Empty>

@@ -102,3 +102,10 @@ html, body, #root {
   line-height: 16px;
   white-space: nowrap;
 }
+/* Выделенная строка работы в окне ввода сметы (клик по строке) */
+.estimat-row-selected > td {
+  background: #e6f4ff;
+}
+.estimat-row-selected:hover > td {
+  background: #d6ebff !important;
+}

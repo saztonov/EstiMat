@@ -1,46 +1,62 @@
-import { Splitter } from 'antd';
+import type { ReactNode } from 'react';
 import { AppstoreOutlined } from '@ant-design/icons';
 import { PanelShell } from './PanelShell';
 import { RdSection } from './RdSection';
 import { WorksTreeSection } from './WorksTreeSection';
 import { MaterialsSection } from './MaterialsSection';
-import { useWorkspaceLayoutStore, type RefSectionId } from '../../../store/workspaceLayoutStore';
+import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
+import type { SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import type { RateLeafPayload } from './types';
-
-const IDS: RefSectionId[] = ['rd', 'works', 'mat'];
 
 interface Props {
   onAddRate: (payload: RateLeafPayload) => void;
+  onAddMaterial: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
 }
 
-// Правая панель справочников: вложенный вертикальный Splitter из трёх
-// сворачиваемых секций (РД / Работы / Материалы) с перетаскиваемыми границами.
-export function ReferencesPanel({ onAddRate }: Props) {
-  const { refSectionSizes, setRefSectionSizes, setCollapsedSections } = useWorkspaceLayoutStore();
-  const def = (id: RefSectionId, fb: string) =>
-    refSectionSizes[id] != null ? `${refSectionSizes[id]}%` : fb;
+// Правая панель справочников: вертикальный аккордеон из трёх секций
+// (РД / Работы / Материалы). Каждая сворачивается кликом по шапке;
+// развёрнутые делят высоту поровну.
+export function ReferencesPanel({ onAddRate, onAddMaterial }: Props) {
+  const { collapsedSections, toggleSection } = useWorkspaceLayoutStore();
+
+  const wrap = (id: 'rd' | 'works' | 'mat', node: ReactNode) => {
+    const collapsed = collapsedSections[id];
+    return (
+      <div
+        style={{
+          flex: collapsed ? '0 0 auto' : '1 1 0',
+          minHeight: 0,
+          borderBottom: '1px solid #f0f0f0',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {node}
+      </div>
+    );
+  };
 
   return (
     <PanelShell icon={<AppstoreOutlined />} title="Справочники" flush>
-      <Splitter
-        layout="vertical"
-        style={{ height: '100%' }}
-        onResizeEnd={(sizes) => setRefSectionSizes(IDS, sizes)}
-        onCollapse={(collapsed, sizes) => {
-          setRefSectionSizes(IDS, sizes);
-          setCollapsedSections(IDS, collapsed);
-        }}
-      >
-        <Splitter.Panel collapsible defaultSize={def('rd', '14%')} min={36}>
-          <RdSection />
-        </Splitter.Panel>
-        <Splitter.Panel collapsible defaultSize={def('works', '50%')} min={80}>
-          <WorksTreeSection onAddRate={onAddRate} />
-        </Splitter.Panel>
-        <Splitter.Panel collapsible min={80}>
-          <MaterialsSection />
-        </Splitter.Panel>
-      </Splitter>
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {wrap('rd', <RdSection collapsed={collapsedSections.rd} onToggle={() => toggleSection('rd')} />)}
+        {wrap(
+          'works',
+          <WorksTreeSection
+            onAddRate={onAddRate}
+            collapsed={collapsedSections.works}
+            onToggle={() => toggleSection('works')}
+          />,
+        )}
+        {wrap(
+          'mat',
+          <MaterialsSection
+            onAddMaterial={onAddMaterial}
+            collapsed={collapsedSections.mat}
+            onToggle={() => toggleSection('mat')}
+          />,
+        )}
+      </div>
     </PanelShell>
   );
 }

@@ -10,11 +10,13 @@ import type { RateTreeCategory, RateLeafPayload } from './types';
 
 interface Props {
   onAddRate: (payload: RateLeafPayload) => void;
+  collapsed?: boolean;
+  onToggle?: () => void;
 }
 
 // Справочник «Наименования работ»: дерево Категория → Вид работ → Наименование.
 // Перенос в смету: двойной клик по наименованию ИЛИ кнопка «+» при наведении.
-export function WorksTreeSection({ onAddRate }: Props) {
+export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
   const [search, setSearch] = useState('');
   const [userExpanded, setUserExpanded] = useState<Key[]>([]);
   const lastAdd = useRef<{ id: string; ts: number }>({ id: '', ts: 0 });
@@ -80,7 +82,12 @@ export function WorksTreeSection({ onAddRate }: Props) {
   };
 
   return (
-    <SectionShell title="Наименования работ" meta="Категория · Вид работ · Наименование">
+    <SectionShell
+      title="Наименования работ"
+      meta="Категория · Вид работ · Наименование"
+      collapsed={collapsed}
+      onToggle={onToggle}
+    >
       <Input
         allowClear
         size="small"

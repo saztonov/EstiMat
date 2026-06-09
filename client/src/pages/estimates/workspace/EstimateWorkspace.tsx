@@ -110,7 +110,12 @@ export function EstimateWorkspace(props: Props) {
     },
   ];
   if (visibility.refs) {
-    panels.push({ id: 'refs', min: 300, fb: '40%', node: <ReferencesPanel onAddRate={props.onAddRate} /> });
+    panels.push({
+      id: 'refs',
+      min: 300,
+      fb: '40%',
+      node: <ReferencesPanel onAddRate={props.onAddRate} onAddMaterial={props.onCreateMaterial} />,
+    });
   }
   if (visibility.ai && aiExpanded) {
     panels.push({ id: 'ai', min: 300, fb: '30%', node: <AiChatPanel onCollapse={() => setAiExpanded(false)} /> });

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type Key } from 'react';
 import {
   Table,
   Button,
@@ -24,6 +24,7 @@ import {
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
+import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
 import { formatMoney } from './types';
 
@@ -328,6 +329,9 @@ export function CostTypeGroupBlock({
   const [editing, setEditing] = useState<WorkEdit | null>(null);
   const [saving, setSaving] = useState(false);
   const [collapsed, setCollapsed] = useState(collapsible && defaultCollapsed);
+  const [expandedKeys, setExpandedKeys] = useState<readonly Key[]>([]);
+  const selectedWorkId = useEstimateSelectionStore((s) => s.selectedWorkId);
+  const selectWork = useEstimateSelectionStore((s) => s.selectWork);
 
   const { data: ratesData } = useQuery({
     queryKey: ['rates', group.costTypeId],
@@ -337,7 +341,7 @@ export function CostTypeGroupBlock({
 
   const title = group.costCategoryName
     ? `${group.costCategoryName} / ${group.costTypeName ?? '—'}`
-    : group.costTypeName ?? 'Без вида затрат';
+    : group.costTypeName ?? 'Без вида работ';
 
   const groupTotal = group.works.reduce(
     (acc, w) => acc + Number(w.total ?? 0) + w.materials.reduce((a, m) => a + Number(m.total ?? 0), 0),
@@ -574,8 +578,34 @@ export function CostTypeGroupBlock({
           dataSource={rows}
           pagination={false}
           locale={{ emptyText: editable ? 'Нет работ. Нажмите «Работа».' : 'Нет работ.' }}
-          rowClassName={(r) => (isRowInEdit(r) ? 'estimat-row-editing' : '')}
+          rowClassName={(r) =>
+            [
+              isRowInEdit(r) ? 'estimat-row-editing' : '',
+              editable && r.id === selectedWorkId ? 'estimat-row-selected' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
+          }
+          onRow={
+            editable
+              ? (r) => ({
+                  onClick: (e) => {
+                    if (r.id === DRAFT_ID || isRowInEdit(r)) return;
+                    if (
+                      (e.target as HTMLElement).closest(
+                        '.ant-table-row-expand-icon, button, input, .ant-select, .ant-input-number, .ant-popover, .ant-popconfirm',
+                      )
+                    )
+                      return;
+                    selectWork(r.id, r.description);
+                    setExpandedKeys((keys) => (keys.includes(r.id) ? keys : [...keys, r.id]));
+                  },
+                })
+              : undefined
+          }
           expandable={{
+            expandedRowKeys: expandedKeys,
+            onExpandedRowsChange: (keys) => setExpandedKeys(keys),
             rowExpandable: (r) => r.id !== DRAFT_ID,
             expandedRowRender: (r) => (
               <MaterialsSubTable

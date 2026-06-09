@@ -61,7 +61,7 @@ export function EstimateHeaderCard({ estimate, itemCount, groupCount, editable, 
           <Col flex="none">
             <Space size={24}>
               <Statistic title="Работ" value={itemCount} />
-              <Statistic title="Видов затрат" value={groupCount} />
+              <Statistic title="Видов работ" value={groupCount} />
               <Statistic
                 title="Итого"
                 value={Number(estimate.total_amount ?? 0)}

@@ -66,12 +66,12 @@ export function EditEstimateModal({
           })
         }
       >
-        <Form.Item name="costCategoryId" label="Категория затрат">
+        <Form.Item name="costCategoryId" label="Категория">
           <Select
             allowClear
             showSearch
             optionFilterProp="label"
-            placeholder="Выберите категорию затрат"
+            placeholder="Выберите категорию"
             options={categories?.data.map((c) => ({ value: c.id, label: c.name }))}
           />
         </Form.Item>

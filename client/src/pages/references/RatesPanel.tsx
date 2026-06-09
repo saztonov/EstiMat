@@ -163,7 +163,7 @@ export function RatesPanel() {
       sorter: (a, b) => Number(a.price) - Number(b.price),
       render: (price: string) => Number(price).toLocaleString('ru-RU'),
     },
-    { title: 'Вид затрат', dataIndex: 'cost_type_name', width: 200, sorter: (a, b) => a.cost_type_name.localeCompare(b.cost_type_name) },
+    { title: 'Вид работ', dataIndex: 'cost_type_name', width: 200, sorter: (a, b) => a.cost_type_name.localeCompare(b.cost_type_name) },
     { title: 'Категория', dataIndex: 'category_name', width: 200, sorter: (a, b) => a.category_name.localeCompare(b.category_name) },
     {
       title: 'Действия',
@@ -186,7 +186,7 @@ export function RatesPanel() {
           allowClear
           showSearch
           optionFilterProp="label"
-          placeholder="Категория затрат"
+          placeholder="Категория"
           style={{ width: 250 }}
           value={selectedCategoryId}
           onChange={(val) => {
@@ -199,7 +199,7 @@ export function RatesPanel() {
           allowClear
           showSearch
           optionFilterProp="label"
-          placeholder="Вид затрат"
+          placeholder="Вид работ"
           style={{ width: 250 }}
           value={selectedCostTypeId}
           onChange={setSelectedCostTypeId}
@@ -251,11 +251,11 @@ export function RatesPanel() {
       >
         <Form form={form} layout="vertical" onFinish={onFinish}>
           {!editRecord && (
-            <Form.Item name="costTypeId" label="Вид затрат" rules={[{ required: true, message: 'Выберите вид затрат' }]}>
+            <Form.Item name="costTypeId" label="Вид работ" rules={[{ required: true, message: 'Выберите вид работ' }]}>
               <Select
                 showSearch
                 optionFilterProp="label"
-                placeholder="Выберите вид затрат"
+                placeholder="Выберите вид работ"
                 options={allTypesData?.data.map((t) => ({ value: t.id, label: t.name }))}
               />
             </Form.Item>

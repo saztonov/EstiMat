@@ -72,7 +72,7 @@ export function EstimateItemsPage() {
         r.project_code ? `${r.project_code} · ${r.project_name ?? ''}` : (r.project_name ?? '—'),
     },
     { title: 'Категория', dataIndex: 'cost_category_name', width: 180, render: (v: string) => v || '—' },
-    { title: 'Вид затрат', dataIndex: 'cost_type_name', width: 180, render: (v: string) => v || '—' },
+    { title: 'Вид работ', dataIndex: 'cost_type_name', width: 180, render: (v: string) => v || '—' },
     {
       title: 'Подрядчик',
       dataIndex: 'contractor_name',
@@ -125,7 +125,7 @@ export function EstimateItemsPage() {
           allowClear
           showSearch
           optionFilterProp="label"
-          placeholder="Категория затрат"
+          placeholder="Категория"
           style={{ width: 220 }}
           value={costCategoryId}
           onChange={(v) => { setCostCategoryId(v); setCostTypeId(undefined); setPage(1); }}
@@ -135,7 +135,7 @@ export function EstimateItemsPage() {
           allowClear
           showSearch
           optionFilterProp="label"
-          placeholder="Вид затрат"
+          placeholder="Вид работ"
           style={{ width: 220 }}
           value={costTypeId}
           onChange={(v) => { setCostTypeId(v); setPage(1); }}

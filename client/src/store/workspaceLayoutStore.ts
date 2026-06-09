@@ -10,17 +10,15 @@ interface WorkspaceLayoutState {
   visibility: { ai: boolean; refs: boolean };
   // ИИ развёрнут в колонку (true) или свёрнут в рельс (false)
   aiExpanded: boolean;
-  // Размеры колонок и секций — в процентах, по id
+  // Размеры колонок — в процентах, по id
   colSizes: Partial<Record<PanelId, number>>;
-  refSectionSizes: Partial<Record<RefSectionId, number>>;
-  // Свёрнутость секций справочника
+  // Свёрнутость секций справочника (аккордеон)
   collapsedSections: Record<RefSectionId, boolean>;
 
   toggleArea: (area: 'ai' | 'refs') => void;
   setAiExpanded: (v: boolean) => void;
   setColSizes: (ids: PanelId[], sizesPx: number[]) => void;
-  setRefSectionSizes: (ids: RefSectionId[], sizesPx: number[]) => void;
-  setCollapsedSections: (ids: RefSectionId[], collapsed: boolean[]) => void;
+  toggleSection: (id: RefSectionId) => void;
 }
 
 // Splitter отдаёт пиксели — храним проценты (устойчиво к ресайзу окна)
@@ -35,7 +33,6 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutState>()(
       visibility: { ai: true, refs: true },
       aiExpanded: false,
       colSizes: {},
-      refSectionSizes: {},
       collapsedSections: { rd: true, works: false, mat: false },
 
       toggleArea: (area) =>
@@ -53,24 +50,10 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutState>()(
           return { colSizes: next };
         }),
 
-      setRefSectionSizes: (ids, sizesPx) =>
-        set((s) => {
-          const pct = toPercents(sizesPx);
-          const next = { ...s.refSectionSizes };
-          ids.forEach((id, i) => {
-            if (pct[i] != null) next[id] = pct[i];
-          });
-          return { refSectionSizes: next };
-        }),
-
-      setCollapsedSections: (ids, collapsed) =>
-        set((s) => {
-          const next = { ...s.collapsedSections };
-          ids.forEach((id, i) => {
-            next[id] = !!collapsed[i];
-          });
-          return { collapsedSections: next };
-        }),
+      toggleSection: (id) =>
+        set((s) => ({
+          collapsedSections: { ...s.collapsedSections, [id]: !s.collapsedSections[id] },
+        })),
     }),
     { name: 'estimat:workspace-layout', version: 1 },
   ),

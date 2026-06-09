@@ -71,7 +71,7 @@ export function AddCostTypeModal({ open, initialCategoryId, onCancel, onSubmit, 
 
   return (
     <Modal
-      title="Добавить вид затрат"
+      title="Добавить вид работ"
       open={open}
       onCancel={onCancel}
       onOk={() => form.submit()}
@@ -96,13 +96,13 @@ export function AddCostTypeModal({ open, initialCategoryId, onCancel, onSubmit, 
       >
         <Form.Item
           name="costCategoryId"
-          label="Категория затрат"
+          label="Категория"
           rules={[{ required: true, message: 'Выберите категорию' }]}
         >
           <Select
             showSearch
             optionFilterProp="label"
-            placeholder="Выберите категорию затрат"
+            placeholder="Выберите категорию"
             onChange={() => form.setFieldValue('costTypeId', undefined)}
             options={categories?.data.map((c) => ({ value: c.id, label: c.name }))}
           />
@@ -110,13 +110,13 @@ export function AddCostTypeModal({ open, initialCategoryId, onCancel, onSubmit, 
 
         <Form.Item
           name="costTypeId"
-          label="Вид затрат"
-          rules={[{ required: true, message: 'Выберите вид затрат' }]}
+          label="Вид работ"
+          rules={[{ required: true, message: 'Выберите вид работ' }]}
         >
           <Select
             showSearch
             optionFilterProp="label"
-            placeholder="Выберите вид затрат"
+            placeholder="Выберите вид работ"
             disabled={!categoryId}
             options={types?.data.map((t) => ({ value: t.id, label: t.name }))}
           />
@@ -124,8 +124,8 @@ export function AddCostTypeModal({ open, initialCategoryId, onCancel, onSubmit, 
 
         <Form.Item
           name="contractorId"
-          label="Подрядчик (исполнитель вида затрат)"
-          extra="Опционально — кто выполняет работы этого вида затрат"
+          label="Подрядчик (исполнитель вида работ)"
+          extra="Опционально — кто выполняет работы этого вида"
         >
           <Select
             allowClear
