@@ -1,18 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { Button, Space, Spin, App, Empty } from 'antd';
-import { ArrowLeftOutlined, CheckOutlined, PlusOutlined } from '@ant-design/icons';
+import { Spin, App } from 'antd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
-import { EstimateHeaderCard } from './components/EstimateHeaderCard';
-import {
-  CostTypeGroupBlock,
-  type SaveWorkPayload,
-  type SaveMaterialPayload,
-} from './components/CostTypeGroupBlock';
+import type { SaveWorkPayload, SaveMaterialPayload } from './components/CostTypeGroupBlock';
 import { AddCostTypeModal, type CostTypeFormPayload } from './components/AddCostTypeModal';
 import { EditEstimateModal, type EditEstimatePayload } from './components/EditEstimateModal';
 import { buildCostTypeGroups, type CostTypeGroup, type EstimateDetail } from './components/types';
+import { EstimateWorkspace } from './workspace/EstimateWorkspace';
+import type { RateLeafPayload } from './workspace/types';
 
 interface Organization {
   id: string;
@@ -185,79 +181,63 @@ export function EstimateDetailPage() {
   const updateMaterial = (materialId: string, payload: SaveMaterialPayload) =>
     updateMaterialMutation.mutateAsync({ materialId, payload }).then(() => undefined);
 
+  // Добавление работы из дерева справочника: регистрируем «отложенную» группу
+  // (чтобы заголовок вида затрат показался сразу с правильным именем —
+  // на сервере cost_category_id строки = NULL) и создаём работу.
+  const handleAddRate = (p: RateLeafPayload) => {
+    setPendingGroups((prev) =>
+      prev.some((g) => g.costTypeId === p.costTypeId)
+        ? prev
+        : [
+            ...prev,
+            {
+              costTypeId: p.costTypeId,
+              costTypeName: p.costTypeName,
+              costCategoryId: p.costCategoryId,
+              costCategoryName: p.costCategoryName,
+              works: [],
+              contractor: null,
+            },
+          ],
+    );
+    createWorkMutation.mutate({
+      costTypeId: p.costTypeId,
+      payload: {
+        costTypeId: p.costTypeId,
+        rateId: p.rateId,
+        description: p.name,
+        unit: p.unit,
+        quantity: 1,
+        unitPrice: p.price,
+      },
+    });
+  };
+
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Button
-          icon={<ArrowLeftOutlined />}
-          onClick={() => navigate(`/projects/${estimate.project_id}?tab=estimates`)}
-        >
-          К объекту
-        </Button>
-        <Space>
-          {isDraft && (
-            <Button type="primary" icon={<CheckOutlined />} onClick={() => statusMutation.mutate('review')}>
-              На проверку
-            </Button>
-          )}
-          {estimate.status === 'review' && (
-            <Button type="primary" icon={<CheckOutlined />} onClick={() => statusMutation.mutate('approved')}>
-              Утвердить
-            </Button>
-          )}
-        </Space>
-      </div>
-
-      <EstimateHeaderCard
+    <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <EstimateWorkspace
         estimate={estimate}
-        itemCount={totalItems}
+        groups={groups}
+        orgs={orgsData?.data}
+        isDraft={isDraft}
+        totalItems={totalItems}
         groupCount={groups.length}
-        editable
+        onBack={() => navigate(`/projects/${estimate.project_id}?tab=estimates`)}
         onEdit={() => setEditEstimateOpen(true)}
+        onAddCostType={() => setCostTypeModalOpen(true)}
+        onChangeStatus={(s) => statusMutation.mutate(s)}
+        onCreateWork={createWork}
+        onUpdateWork={updateWork}
+        onDeleteWork={(workId) => deleteWorkMutation.mutate(workId)}
+        onCreateMaterial={createMaterial}
+        onUpdateMaterial={updateMaterial}
+        onDeleteMaterial={(materialId) => deleteMaterialMutation.mutate(materialId)}
+        onSetContractor={(costTypeId, contractorId) =>
+          setContractorMutation.mutate({ costTypeId, contractorId })
+        }
+        onClearContractor={(costTypeId) => clearContractorMutation.mutate(costTypeId)}
+        onAddRate={handleAddRate}
       />
-
-      <Button
-        type="dashed"
-        icon={<PlusOutlined />}
-        onClick={() => setCostTypeModalOpen(true)}
-        style={{ width: '100%', marginTop: 8, marginBottom: 16 }}
-      >
-        Добавить вид затрат
-      </Button>
-
-      {groups.length > 0 ? (
-        <>
-          {groups.map((group, i) => (
-            <CostTypeGroupBlock
-              key={group.costTypeId ?? '__none__'}
-              group={group}
-              index={i}
-              editable
-              orgs={orgsData?.data}
-              onCreateWork={createWork}
-              onUpdateWork={updateWork}
-              onDeleteWork={(workId) => deleteWorkMutation.mutate(workId)}
-              onCreateMaterial={createMaterial}
-              onUpdateMaterial={updateMaterial}
-              onDeleteMaterial={(materialId) => deleteMaterialMutation.mutate(materialId)}
-              onSetContractor={(costTypeId, contractorId) =>
-                setContractorMutation.mutate({ costTypeId, contractorId })
-              }
-              onClearContractor={(costTypeId) => clearContractorMutation.mutate(costTypeId)}
-            />
-          ))}
-          <Button
-            type="dashed"
-            icon={<PlusOutlined />}
-            onClick={() => setCostTypeModalOpen(true)}
-            style={{ width: '100%', marginTop: 8 }}
-          >
-            Добавить вид затрат
-          </Button>
-        </>
-      ) : (
-        <Empty description="В смете пока нет работ" style={{ padding: '40px 0' }} />
-      )}
 
       <AddCostTypeModal
         open={costTypeModalOpen}

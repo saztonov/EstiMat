@@ -10,7 +10,8 @@
       "Bash(npx.cmd pnpm install:*)",
       "Bash(npx.cmd turbo:*)",
       "Bash(npx.cmd tsc:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "mcp__postgres_matcheck__query"
     ]
   }
 }

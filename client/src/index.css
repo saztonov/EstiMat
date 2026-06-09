@@ -76,3 +76,29 @@ html, body, #root {
   flex: 1;
   overflow-y: auto !important;
 }
+
+/* Дерево справочников в workspace ввода сметы */
+.estimat-ref-tree .ant-tree-node-content-wrapper {
+  width: 100%;
+  overflow: hidden;
+}
+.estimat-ref-tree .ant-tree-treenode {
+  width: 100%;
+}
+.estimat-tree-add {
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.estimat-tree-leaf:hover .estimat-tree-add {
+  opacity: 1;
+}
+.estimat-tree-badge {
+  font-size: 10px;
+  color: #8c8c8c;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 0 6px;
+  line-height: 16px;
+  white-space: nowrap;
+}

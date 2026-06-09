@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EstiMat — макеты раскладки экрана ввода сметы</title>
+<style>
+  :root{
+    --primary:#1677ff; --primary-bg:#e6f4ff; --primary-border:#91caff;
+    --text:rgba(0,0,0,.88); --text-2:rgba(0,0,0,.65); --text-3:rgba(0,0,0,.45);
+    --border:#d9d9d9; --border-2:#f0f0f0; --bg:#ffffff; --bg-layout:#f5f5f5; --bg-soft:#fafafa; --bg-head:#fafbfc;
+    --green-bg:#f6ffed; --green-bd:#b7eb8f; --green-tx:#389e0d;
+    --purple-bg:#f9f0ff; --purple-bd:#d3adf7; --purple-tx:#722ed1;
+    --geek-bg:#f0f5ff; --geek-bd:#adc6ff; --geek-tx:#2f54eb;
+    --radius:6px; --shadow:0 1px 2px rgba(0,0,0,.04),0 1px 6px -1px rgba(0,0,0,.02);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    color:var(--text);background:var(--bg-layout);font-size:14px;line-height:1.5;
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+
+  /* ---- верхний переключатель макетов (вне приложения) ---- */
+  .switcher{flex:0 0 auto;background:#001529;color:#fff;padding:10px 18px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .switcher .brand{font-weight:700;font-size:15px;letter-spacing:.3px}
+  .switcher .brand small{font-weight:400;color:rgba(255,255,255,.55);margin-left:8px}
+  .switcher .tabs{display:flex;gap:8px;margin-left:6px}
+  .switcher .tab{
+    cursor:pointer;border:1px solid rgba(255,255,255,.22);background:transparent;color:rgba(255,255,255,.85);
+    padding:5px 14px;border-radius:var(--radius);font-size:13px;display:flex;align-items:center;gap:7px;transition:.15s;
+  }
+  .switcher .tab:hover{border-color:var(--primary);color:#fff}
+  .switcher .tab.active{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600}
+  .switcher .tab .star{color:#ffd666}
+  .switcher .hint{margin-left:auto;color:rgba(255,255,255,.6);font-size:12.5px;max-width:46ch}
+
+  /* ---- каркас приложения ---- */
+  .app{flex:1;display:flex;min-height:0;overflow:hidden;margin:14px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.12);background:var(--bg-layout)}
+  .sider{flex:0 0 200px;background:#001529;color:#fff;display:flex;flex-direction:column;border-radius:10px 0 0 10px}
+  .sider .logo{padding:16px 20px;font-weight:700;font-size:18px;color:#fff}
+  .sider .menu{padding:6px 8px;display:flex;flex-direction:column;gap:2px}
+  .sider .mi{padding:10px 14px;border-radius:var(--radius);color:rgba(255,255,255,.7);display:flex;gap:10px;align-items:center;font-size:14px;cursor:default}
+  .sider .mi.active{background:var(--primary);color:#fff}
+  .sider .mi .ico{width:16px;text-align:center;opacity:.9}
+
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg-layout);border-radius:0 10px 10px 0;overflow:hidden}
+
+  /* ---- toolbar ---- */
+  .toolbar{flex:0 0 auto;background:var(--bg);border-bottom:1px solid var(--border-2);padding:9px 14px;display:flex;align-items:center;gap:12px}
+  .btn{border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:var(--radius);padding:5px 12px;font-size:13.5px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.15s;white-space:nowrap}
+  .btn:hover{color:var(--primary);border-color:var(--primary)}
+  .btn .ico{font-size:13px}
+  .btn.ghost{border-style:dashed}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .btn.primary:hover{background:#4096ff;border-color:#4096ff;color:#fff}
+  .btn.text{border-color:transparent;background:transparent;color:var(--text-2)}
+  .btn.text:hover{background:var(--bg-soft);color:var(--primary)}
+  .btn.sm{padding:3px 9px;font-size:12.5px}
+  .btn[disabled]{cursor:not-allowed}
+
+  .toggles{display:flex;gap:8px;align-items:center}
+  .toggles .tg{border:1px solid var(--border);background:var(--bg);color:var(--text-2);border-radius:var(--radius);padding:5px 13px;font-size:13.5px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.15s}
+  .toggles .tg .dot{width:7px;height:7px;border-radius:50%;background:var(--border)}
+  .toggles .tg.on{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 0 0 3px var(--primary-bg)}
+  .toggles .tg.on .dot{background:#fff}
+  .toggles .tg.locked{opacity:.95;cursor:not-allowed}
+  .toggles .sep{width:1px;height:20px;background:var(--border-2);margin:0 2px}
+
+  .title-wrap{display:flex;align-items:center;gap:10px;min-width:0}
+  .title-wrap .t-main{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .title-wrap .t-sub{color:var(--text-3);font-size:12.5px;white-space:nowrap}
+  .spacer{flex:1}
+
+  .tag{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:4px;font-size:12px;line-height:20px;border:1px solid transparent}
+  .tag.green{background:var(--green-bg);border-color:var(--green-bd);color:var(--green-tx)}
+  .tag.purple{background:var(--purple-bg);border-color:var(--purple-bd);color:var(--purple-tx)}
+  .tag.geek{background:var(--geek-bg);border-color:var(--geek-bd);color:var(--geek-tx)}
+  .tag.blue{background:var(--primary-bg);border-color:var(--primary-border);color:var(--primary)}
+  .sum{color:var(--primary);font-weight:700}
+
+  /* ---- workspace ---- */
+  .ws{flex:1;min-height:0;display:flex;overflow:hidden;padding:12px;gap:0}
+  .panel{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg);border:1px solid var(--border-2);border-radius:8px;overflow:hidden}
+  .panel .p-head{flex:0 0 auto;padding:9px 13px;border-bottom:1px solid var(--border-2);background:var(--bg-head);display:flex;align-items:center;gap:9px;font-weight:600;font-size:13.5px}
+  .panel .p-head .p-ico{color:var(--text-3)}
+  .panel .p-head .p-meta{margin-left:auto;font-weight:400;color:var(--text-3);font-size:12.5px;display:flex;align-items:center;gap:8px}
+  .panel .p-body{flex:1;min-height:0;overflow:auto;padding:10px}
+
+  /* resizers */
+  .rz{flex:0 0 10px;align-self:stretch;cursor:col-resize;display:flex;align-items:center;justify-content:center}
+  .rz .grip{width:4px;height:46px;border-radius:3px;background:var(--border-2);transition:.15s}
+  .rz:hover .grip{background:var(--primary)}
+  .rz.h{flex-basis:10px;cursor:row-resize;align-self:auto;width:100%;height:10px}
+  .rz.h .grip{width:46px;height:4px}
+
+  /* ---- смета ---- */
+  .group{border:1px solid var(--border-2);border-radius:8px;margin-bottom:12px;overflow:hidden}
+  .group .g-head{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--bg-head);border-bottom:1px solid var(--border-2)}
+  .group .g-head .g-num{font-weight:700}
+  .group .g-head .g-name{font-weight:600}
+  .group .g-head .g-sum{margin-left:auto;color:var(--primary);font-weight:700}
+  table.smeta{width:100%;border-collapse:collapse;font-size:13px}
+  table.smeta th{font-weight:600;color:var(--text-2);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border-2);background:#fff;font-size:12px;white-space:nowrap}
+  table.smeta td{padding:7px 10px;border-bottom:1px solid var(--border-2);vertical-align:middle}
+  table.smeta tr:last-child td{border-bottom:none}
+  table.smeta .num{text-align:right;white-space:nowrap}
+  table.smeta .ar{text-align:right}
+  table.smeta .work-row td{background:#fff}
+  table.smeta .mat-row td{background:#fafdff}
+  .mat-name{padding-left:20px;color:var(--text-2);position:relative}
+  .mat-name::before{content:'└';position:absolute;left:4px;color:var(--text-3)}
+  .pill{display:inline-block;font-size:11px;padding:0 7px;border-radius:10px;border:1px solid var(--border-2);color:var(--text-3);background:#fff}
+  .qty{display:inline-flex;align-items:center;border:1px solid var(--primary-border);border-radius:5px;background:var(--primary-bg);padding:1px 8px;color:var(--primary);font-weight:600}
+  .row-add{padding:7px 12px}
+  .icobtn{border:none;background:transparent;color:var(--text-3);cursor:pointer;padding:3px 6px;border-radius:4px;font-size:13px}
+  .icobtn:hover{background:var(--bg-soft);color:var(--primary)}
+  .icobtn.del:hover{color:#ff4d4f}
+
+  /* ---- справочники ---- */
+  .refs{display:flex;flex-direction:column;min-height:0;height:100%}
+  .sec{display:flex;flex-direction:column;min-height:0;overflow:hidden;border-bottom:1px solid var(--border-2)}
+  .sec:last-child{border-bottom:none}
+  .sec .s-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-head);cursor:pointer;font-weight:600;font-size:13px;user-select:none}
+  .sec .s-head .caret{color:var(--text-3);transition:transform .15s;width:12px;display:inline-block}
+  .sec .s-head .s-meta{margin-left:auto;font-weight:400;color:var(--text-3);font-size:12px}
+  .sec .s-body{flex:1;min-height:0;overflow:auto;padding:8px 10px}
+  .sec.collapsed{flex:0 0 auto !important}
+  .sec.collapsed .s-body{display:none}
+  .sec.collapsed .caret{transform:rotate(-90deg)}
+
+  .search{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:var(--radius);padding:4px 10px;margin-bottom:8px;color:var(--text-3)}
+  .search input{border:none;outline:none;flex:1;font-size:13px;color:var(--text)}
+
+  .tree{font-size:13px}
+  .tnode{padding:3px 0}
+  .trow{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:5px;cursor:default;position:relative}
+  .trow:hover{background:var(--bg-soft)}
+  .trow .caret{color:var(--text-3);width:12px;display:inline-block;font-size:11px}
+  .trow .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trow.cat .lbl{font-weight:600}
+  .trow.type{padding-left:18px}
+  .trow.type .lbl{color:var(--text)}
+  .trow.leaf{padding-left:36px;color:var(--text-2)}
+  .trow.leaf .lbl{color:var(--text-2)}
+  .trow.leaf .price{color:var(--text-3);font-size:12px;margin-left:auto;white-space:nowrap}
+  .trow .add{opacity:0;border:1px solid var(--primary-border);background:var(--primary-bg);color:var(--primary);border-radius:5px;width:20px;height:20px;line-height:18px;text-align:center;cursor:pointer;font-size:13px;flex:0 0 auto}
+  .trow.leaf:hover .add{opacity:1}
+  .trow.leaf:hover{background:var(--primary-bg)}
+  .badge-cat{font-size:10px;color:var(--text-3);border:1px solid var(--border-2);border-radius:8px;padding:0 6px;margin-left:6px}
+
+  .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text-3);padding:22px 10px;text-align:center}
+  .empty .big{font-size:30px;opacity:.5}
+  .empty .muted{font-size:12px;max-width:30ch}
+
+  /* ---- ИИ чат ---- */
+  .ai{display:flex;flex-direction:column;height:100%;min-height:0}
+  .ai .log{flex:1;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px}
+  .msg{max-width:84%;padding:9px 12px;border-radius:12px;font-size:13.5px;white-space:pre-wrap}
+  .msg.user{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:4px}
+  .msg.ai{align-self:flex-start;background:var(--bg-soft);border:1px solid var(--border-2);border-bottom-left-radius:4px}
+  .msg .who{font-size:11px;opacity:.7;margin-bottom:3px}
+  .ai-stub-note{align-self:center;color:var(--text-3);font-size:12px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;padding:4px 10px}
+  .composer{flex:0 0 auto;border-top:1px solid var(--border-2);padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--bg)}
+  .composer .crow{display:flex;gap:8px;align-items:center}
+  .composer textarea{flex:1;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;font-family:inherit;font-size:13.5px;resize:none;outline:none;min-height:40px}
+  .composer textarea:focus{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-bg)}
+  .select{border:1px solid var(--border);border-radius:var(--radius);padding:5px 10px;font-size:13px;background:#fff;color:var(--text);min-width:170px}
+  .composer .run{align-self:flex-end}
+
+  /* ---- свёрнутый рельс ИИ (вариант B) ---- */
+  .rail{flex:0 0 46px;display:flex;flex-direction:column;align-items:center;gap:14px;padding:12px 0;background:var(--bg);border:1px solid var(--border-2);border-radius:8px;margin-left:8px;cursor:pointer}
+  .rail:hover{border-color:var(--primary)}
+  .rail .ricon{font-size:18px;color:var(--primary)}
+  .rail .rtext{writing-mode:vertical-rl;transform:rotate(180deg);color:var(--text-2);font-size:12.5px;letter-spacing:.5px}
+  .rail .rarrow{margin-top:auto;color:var(--text-3)}
+
+  .note{flex:0 0 auto;background:#fff;border-top:1px solid var(--border-2);padding:7px 16px;color:var(--text-3);font-size:12.5px;display:flex;gap:10px;align-items:center}
+  .note b{color:var(--text-2);font-weight:600}
+  .kbd{border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;color:var(--text-2);background:#fff}
+</style>
+</head>
+<body>
+  <div class="switcher">
+    <div class="brand">EstiMat <small>макеты раскладки экрана ввода сметы</small></div>
+    <div class="tabs">
+      <button class="tab active" data-v="B"><span class="star">★</span> Вариант B — рекомендуемый</button>
+      <button class="tab" data-v="A">Вариант A — ваш (ИИ в центре)</button>
+      <button class="tab" data-v="C">Вариант C — IDE</button>
+    </div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <div class="app">
+    <aside class="sider">
+      <div class="logo">EstiMat</div>
+      <nav class="menu">
+        <div class="mi active"><span class="ico">▤</span> Сметы</div>
+        <div class="mi"><span class="ico">▦</span> Справочники</div>
+        <div class="mi"><span class="ico">⚙</span> Администрирование</div>
+      </nav>
+    </aside>
+
+    <div class="main">
+      <div class="toolbar">
+        <button class="btn text"><span class="ico">←</span> К объекту</button>
+        <div class="title-wrap">
+          <span class="t-main">Отделка помещений</span>
+          <span class="tag green">Черновик</span>
+          <span class="t-sub">ОБ-014 · ЖК «Северный», корпус 2</span>
+        </div>
+        <span class="sum">1 248 600,00 ₽</span>
+        <div class="spacer"></div>
+        <button class="btn ghost sm"><span class="ico">＋</span> Вид затрат</button>
+        <button class="btn text sm"><span class="ico">✎</span></button>
+        <button class="btn primary sm"><span class="ico">✓</span> На проверку</button>
+        <div class="toggles" id="toggles">
+          <span class="sep"></span>
+          <button class="tg on locked" title="Сметная часть всегда включена"><span class="dot"></span> Сметная часть</button>
+          <button class="tg on" data-area="ai"><span class="dot"></span> ИИ часть</button>
+          <button class="tg on" data-area="refs"><span class="dot"></span> Справочники</button>
+        </div>
+      </div>
+
+      <div class="ws" id="ws"><!-- панели рендерятся JS --></div>
+
+      <div class="note">
+        <b>Подсказки:</b>
+        <span>тяните <span class="kbd">‖</span> границы панелей</span> ·
+        <span>клик по заголовку секции справа — свернуть</span> ·
+        <span>двойной клик по наименованию или <span class="kbd">＋</span> — добавить работу в смету</span> ·
+        <span>тумблеры сверху включают/выключают области (Сметная часть всегда вкл.)</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+const fmt = '₽';
+
+/* ----- содержимое панелей (общее для всех вариантов) ----- */
+function smetaPanel(){
+  return `
+  <div class="panel" data-panel="smeta" style="flex:1.7 1 0">
+    <div class="p-head"><span class="p-ico">▤</span> Сметная часть
+      <span class="p-meta">Работ: 6 · Видов затрат: 2 · <span class="sum">1 248 600,00 ₽</span></span>
+    </div>
+    <div class="p-body">
+      <div class="group">
+        <div class="g-head"><span class="g-num">1.</span><span class="g-name">Отделочные работы / Штукатурные работы</span>
+          <span class="tag purple">⛑ ООО «СтройОтделка»</span><span class="g-sum">812 400,00 ₽</span></div>
+        <table class="smeta">
+          <thead><tr><th>Наименование</th><th>Ед.</th><th class="num">Кол-во</th><th class="num">Цена</th><th class="num">Сумма</th><th></th></tr></thead>
+          <tbody>
+            <tr class="work-row"><td>Штукатурка стен по маякам</td><td><span class="pill">м²</span></td><td class="num"><span class="qty">120</span></td><td class="num">450,00</td><td class="num"><b>54 000,00</b></td>
+              <td class="ar"><button class="icobtn">✎</button><button class="icobtn del">🗑</button></td></tr>
+            <tr class="mat-row"><td class="mat-name">Штукатурка Ротбанд, 30 кг</td><td><span class="pill">меш</span></td><td class="num"><span class="qty">40</span></td><td class="num">520,00</td><td class="num">20 800,00</td>
+              <td class="ar"><button class="icobtn">✎</button><button class="icobtn del">🗑</button></td></tr>
+            <tr class="mat-row"><td class="mat-name">Грунтовка Бетоконтакт, 20 кг</td><td><span class="pill">шт</span></td><td class="num"><span class="qty">6</span></td><td class="num">890,00</td><td class="num">5 340,00</td>
+              <td class="ar"><button class="icobtn">✎</button><button class="icobtn del">🗑</button></td></tr>
+            <tr class="work-row"><td>Грунтовка стен глубокого проникновения</td><td><span class="pill">м²</span></td><td class="num"><span class="qty">340</span></td><td class="num">85,00</td><td class="num"><b>28 900,00</b></td>
+              <td class="ar"><button class="icobtn">✎</button><button class="icobtn del">🗑</button></td></tr>
+          </tbody>
+        </table>
+        <div class="row-add"><button class="btn ghost sm"><span class="ico">＋</span> Работа</button></div>
+      </div>
+
+      <div class="group">
+        <div class="g-head"><span class="g-num">2.</span><span class="g-name">Отделочные работы / Малярные работы</span>
+          <span class="g-sum">436 200,00 ₽</span></div>
+        <table class="smeta">
+          <thead><tr><th>Наименование</th><th>Ед.</th><th class="num">Кол-во</th><th class="num">Цена</th><th class="num">Сумма</th><th></th></tr></thead>
+          <tbody>
+            <tr class="work-row"><td>Шпатлёвка стен под покраску, 2 слоя</td><td><span class="pill">м²</span></td><td class="num"><span class="qty">340</span></td><td class="num">320,00</td><td class="num"><b>108 800,00</b></td>
+              <td class="ar"><button class="icobtn">✎</button><button class="icobtn del">🗑</button></td></tr>
+            <tr class="work-row"><td>Окраска стен водоэмульсионной краской</td><td><span class="pill">м²</span></td><td class="num"><span class="qty">340</span></td><td class="num">210,00</td><td class="num"><b>71 400,00</b></td>
+              <td class="ar"><button class="icobtn">✎</button><button class="icobtn del">🗑</button></td></tr>
+          </tbody>
+        </table>
+        <div class="row-add"><button class="btn ghost sm"><span class="ico">＋</span> Работа</button></div>
+      </div>
+
+      <button class="btn ghost" style="width:100%"><span class="ico">＋</span> Добавить вид затрат</button>
+    </div>
+  </div>`;
+}
+
+function aiPanel(flex){
+  return `
+  <div class="panel" data-panel="ai" style="flex:${flex} 1 0">
+    <div class="p-head"><span class="p-ico">✦</span> ИИ-ассистент <span class="tag blue" style="margin-left:6px">заглушка</span>
+      <span class="p-meta">подбор работ и материалов</span>
+    </div>
+    <div class="ai">
+      <div class="log">
+        <div class="ai-stub-note">⚙ Раздел в разработке — реальные запросы к модели появятся позже</div>
+        <div class="msg ai"><div class="who">ИИ-ассистент</div>Здравствуйте! Когда функция заработает, я смогу пройти по рабочей документации, подобрать подходящие работы по категориям и видам, а затем материалы к ним. Сейчас смету наполняет специалист вручную.</div>
+        <div class="msg user"><div class="who">Вы</div>Подбери работы по штукатурке стен из раздела «Отделка».</div>
+        <div class="msg ai"><div class="who">ИИ-ассистент</div>Функция ИИ в разработке. Здесь появится ответ модели с предложенными расценками и кнопкой «Добавить в смету».</div>
+      </div>
+      <div class="composer">
+        <textarea placeholder="Опишите задачу для ИИ… (например: подобрать работы по разделу РД)"></textarea>
+        <div class="crow">
+          <select class="select">
+            <option>Модель A (заглушка)</option>
+            <option>Модель B (заглушка)</option>
+          </select>
+          <div class="spacer" style="flex:1"></div>
+          <button class="btn primary run"><span class="ico">▶</span> Пуск</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function refsPanel(flex){
+  return `
+  <div class="panel" data-panel="refs" style="flex:${flex} 1 0">
+    <div class="p-head"><span class="p-ico">▦</span> Справочники</div>
+    <div class="refs">
+      <div class="sec collapsed" data-sec="rd" style="flex:0 0 auto">
+        <div class="s-head"><span class="caret">▾</span> Рабочая документация <span class="s-meta">скоро</span></div>
+        <div class="s-body">
+          <div class="empty"><div class="big">🗂</div><div>Пока пусто</div>
+            <div class="muted">Рабочая документация будет подтягиваться из портала распознавания чертежей (markdown).</div></div>
+        </div>
+      </div>
+
+      <div class="sec" data-sec="works" style="flex:1.4 1 0">
+        <div class="s-head"><span class="caret">▾</span> Наименования работ <span class="s-meta">Категория · Вид работ · Наименование</span></div>
+        <div class="s-body">
+          <div class="search">🔍 <input placeholder="Поиск работы…"></div>
+          <div class="tree">
+            <div class="trow cat"><span class="caret">▾</span><span class="lbl">Отделочные работы</span><span class="badge-cat">Категория</span></div>
+            <div class="trow type"><span class="caret">▾</span><span class="lbl">Штукатурные работы</span><span class="badge-cat">Вид работ</span></div>
+            <div class="trow leaf"><span class="lbl">Штукатурка стен по маякам · м²</span><span class="price">450,00 ₽</span><span class="add" title="Добавить в смету">＋</span></div>
+            <div class="trow leaf"><span class="lbl">Грунтовка стен глубокого проникновения · м²</span><span class="price">85,00 ₽</span><span class="add">＋</span></div>
+            <div class="trow leaf"><span class="lbl">Установка штукатурных маяков · м.п.</span><span class="price">60,00 ₽</span><span class="add">＋</span></div>
+            <div class="trow type"><span class="caret">▸</span><span class="lbl">Малярные работы</span><span class="badge-cat">Вид работ</span></div>
+            <div class="trow type"><span class="caret">▸</span><span class="lbl">Облицовочные работы</span><span class="badge-cat">Вид работ</span></div>
+            <div class="trow cat"><span class="caret">▸</span><span class="lbl">Земляные работы</span><span class="badge-cat">Категория</span></div>
+            <div class="trow cat"><span class="caret">▸</span><span class="lbl">Бетонные работы</span><span class="badge-cat">Категория</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sec" data-sec="mat" style="flex:1 1 0">
+        <div class="s-head"><span class="caret">▾</span> Материалы <span class="s-meta">Группа · Наименование</span></div>
+        <div class="s-body">
+          <div class="search">🔍 <input placeholder="Поиск материала…"></div>
+          <div class="tree">
+            <div class="trow cat"><span class="caret">▾</span><span class="lbl">Сухие смеси</span></div>
+            <div class="trow leaf"><span class="lbl">Штукатурка Ротбанд, 30 кг · меш</span><span class="price">520,00 ₽</span><span class="add">＋</span></div>
+            <div class="trow leaf"><span class="lbl">Грунтовка Бетоконтакт, 20 кг · шт</span><span class="price">890,00 ₽</span><span class="add">＋</span></div>
+            <div class="trow cat"><span class="caret">▸</span><span class="lbl">Лакокрасочные материалы</span></div>
+            <div class="trow cat"><span class="caret">▸</span><span class="lbl">Крепёж</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function aiRail(){
+  return `<div class="rail" data-rail="1" title="Открыть ИИ-ассистента">
+    <span class="ricon">✦</span><span class="rtext">ИИ-ассистент</span><span class="rarrow">‹</span></div>`;
+}
+function rzH(){ return `<div class="rz"><div class="grip"></div></div>`; }
+
+/* ----- сборка вариантов ----- */
+const HINTS = {
+  B:'Смета и справочник рядом (минимум движений мышью), ИИ свёрнут в рельс справа — раскрывается по кнопке. Оптимально для быстрого ручного ввода.',
+  A:'Ваш вариант: три равные колонки, ИИ-чат в центре. Симметрично и готово к будущему «ИИ ведёт подбор», но смета и справочник разделены чатом.',
+  C:'Паттерн Cursor/VSCode: справочник-источник слева, смета-документ в центре, ИИ справа. Смета и справочник тоже соседствуют.'
+};
+
+function render(v){
+  const ws = document.getElementById('ws');
+  const tg = document.getElementById('toggles');
+  // сбросить тумблеры в "вкл"
+  tg.querySelectorAll('.tg[data-area]').forEach(b=>b.classList.add('on'));
+  let html='';
+  if(v==='B'){
+    html = smetaPanel() + rzH() + refsPanel(1) + aiRail();
+  } else if(v==='A'){
+    html = smetaPanel().replace('flex:1.7 1 0','flex:1 1 0') + rzH() + aiPanel(1) + rzH() + refsPanel(1);
+  } else { // C
+    html = refsPanel(1) + rzH() + smetaPanel().replace('flex:1.7 1 0','flex:1.5 1 0') + rzH() + aiPanel(1);
+  }
+  ws.innerHTML = html;
+  document.getElementById('hint').textContent = HINTS[v];
+  wireSections();
+  wireRail();
+}
+
+/* свёртка секций справочника */
+function wireSections(){
+  document.querySelectorAll('.sec .s-head').forEach(h=>{
+    h.onclick = ()=>{
+      const sec=h.parentElement;
+      sec.classList.toggle('collapsed');
+      sec.style.flex = sec.classList.contains('collapsed') ? '0 0 auto' : (sec.dataset.sec==='works'?'1.4 1 0':'1 1 0');
+    };
+  });
+}
+/* рельс ИИ → разворачивает панель ИИ как 3-ю колонку (демо) */
+function wireRail(){
+  const rail=document.querySelector('[data-rail]');
+  if(rail) rail.onclick=()=>{
+    const ws=document.getElementById('ws');
+    ws.innerHTML = smetaPanel().replace('flex:1.7 1 0','flex:1.4 1 0') + rzH() + refsPanel(1) + rzH() + aiPanel(1);
+    wireSections(); wireResizers();
+  };
+}
+
+/* тумблеры областей */
+document.getElementById('toggles').addEventListener('click',e=>{
+  const b=e.target.closest('.tg[data-area]'); if(!b) return;
+  b.classList.toggle('on');
+  const area=b.dataset.area, panel=document.querySelector('.panel[data-panel="'+area+'"]'),
+        rail=document.querySelector('[data-rail]');
+  if(area==='ai'){
+    // показать/скрыть ИИ (панель или рельс — что есть в текущем варианте)
+    if(panel){ panel.style.display = b.classList.contains('on')?'':'none'; panel.previousElementSibling?.classList.contains('rz') && (panel.previousElementSibling.style.display=b.classList.contains('on')?'':'none'); }
+    if(rail){ rail.style.display = b.classList.contains('on')?'':'none'; }
+  }
+  if(area==='refs' && panel){
+    panel.style.display = b.classList.contains('on')?'':'none';
+    const sib=panel.previousElementSibling||panel.nextElementSibling;
+    sib&&sib.classList.contains('rz')&&(sib.style.display=b.classList.contains('on')?'':'none');
+  }
+});
+
+/* перетаскивание границ панелей (по горизонтали) */
+function wireResizers(){
+  document.querySelectorAll('.ws > .rz').forEach(rz=>{
+    rz.onmousedown=(e)=>{
+      e.preventDefault();
+      const left=rz.previousElementSibling, right=rz.nextElementSibling;
+      if(!left||!right) return;
+      const lw=left.offsetWidth, rw=right.offsetWidth, total=lw+rw, sx=e.clientX, min=240;
+      const mm=(ev)=>{
+        let nl=lw+(ev.clientX-sx); nl=Math.max(min,Math.min(total-min,nl));
+        left.style.flex='0 0 '+nl+'px'; right.style.flex='0 0 '+(total-nl)+'px';
+      };
+      const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);document.body.style.cursor='';};
+      document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);document.body.style.cursor='col-resize';
+    };
+  });
+}
+
+/* табы */
+document.querySelectorAll('.switcher .tab').forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll('.switcher .tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    render(t.dataset.v);
+    wireResizers();
+  };
+});
+
+render('B');
+wireResizers();
+</script>
+</body>
+</html>
