@@ -1,14 +1,24 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Button, Space, Spin, App, Empty } from 'antd';
 import { ArrowLeftOutlined, CheckOutlined, PlusOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { EstimateHeaderCard } from './components/EstimateHeaderCard';
-import { SectionBlock, type SaveItemPayload } from './components/SectionBlock';
-import { AddSectionModal, type SectionFormPayload } from './components/AddSectionModal';
+import {
+  CostTypeGroupBlock,
+  type SaveWorkPayload,
+  type SaveMaterialPayload,
+} from './components/CostTypeGroupBlock';
+import { AddCostTypeModal, type CostTypeFormPayload } from './components/AddCostTypeModal';
 import { EditEstimateModal, type EditEstimatePayload } from './components/EditEstimateModal';
-import type { EstimateDetail } from './components/types';
+import { buildCostTypeGroups, type CostTypeGroup, type EstimateDetail } from './components/types';
+
+interface Organization {
+  id: string;
+  name: string;
+  type?: string;
+}
 
 export function EstimateDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -16,9 +26,9 @@ export function EstimateDetailPage() {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
 
-  const [sectionModalOpen, setSectionModalOpen] = useState(false);
-  const [editSectionId, setEditSectionId] = useState<string | null>(null);
+  const [costTypeModalOpen, setCostTypeModalOpen] = useState(false);
   const [editEstimateOpen, setEditEstimateOpen] = useState(false);
+  const [pendingGroups, setPendingGroups] = useState<CostTypeGroup[]>([]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['estimate', id],
@@ -26,7 +36,21 @@ export function EstimateDetailPage() {
     enabled: !!id,
   });
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['estimate', id] });
+  const { data: orgsData } = useQuery({
+    queryKey: ['organizations'],
+    queryFn: () => api.get<{ data: Organization[] }>('/organizations'),
+  });
+
+  const estimate = data?.data;
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['estimate', id] });
+    if (estimate) {
+      queryClient.invalidateQueries({ queryKey: ['project-summary', estimate.project_id] });
+      queryClient.invalidateQueries({ queryKey: ['estimates', estimate.project_id] });
+      queryClient.invalidateQueries({ queryKey: ['projects-with-stats'] });
+    }
+  };
 
   const editEstimateMutation = useMutation({
     mutationFn: (payload: EditEstimatePayload) => api.put(`/estimates/${id}`, payload),
@@ -38,62 +62,75 @@ export function EstimateDetailPage() {
     onError: (e: Error) => message.error(e.message),
   });
 
-  const addSectionMutation = useMutation({
-    mutationFn: (payload: SectionFormPayload) => api.post(`/estimates/${id}/sections`, payload),
+  const createWorkMutation = useMutation({
+    mutationFn: ({ costTypeId, payload }: { costTypeId: string | null; payload: SaveWorkPayload }) =>
+      api.post(`/estimates/${id}/items`, { ...payload, costTypeId }),
     onSuccess: () => {
       invalidate();
-      setSectionModalOpen(false);
-      message.success('Раздел добавлен');
+      message.success('Работа добавлена');
     },
     onError: (e: Error) => message.error(e.message),
   });
 
-  const editSectionMutation = useMutation({
-    mutationFn: ({ sectionId, payload }: { sectionId: string; payload: SectionFormPayload }) =>
-      api.put(`/estimates/sections/${sectionId}`, payload),
+  const updateWorkMutation = useMutation({
+    mutationFn: ({ workId, payload }: { workId: string; payload: SaveWorkPayload }) =>
+      api.put(`/estimates/items/${workId}`, payload),
     onSuccess: () => {
       invalidate();
-      setEditSectionId(null);
-      message.success('Раздел обновлён');
+      message.success('Работа обновлена');
     },
     onError: (e: Error) => message.error(e.message),
   });
 
-  const deleteSectionMutation = useMutation({
-    mutationFn: (sectionId: string) => api.delete(`/estimates/sections/${sectionId}`),
+  const deleteWorkMutation = useMutation({
+    mutationFn: (workId: string) => api.delete(`/estimates/items/${workId}`),
     onSuccess: () => {
       invalidate();
-      message.success('Раздел удалён');
+      message.success('Работа удалена');
     },
     onError: (e: Error) => message.error(e.message),
   });
 
-  const addItemMutation = useMutation({
-    mutationFn: ({ sectionId, payload }: { sectionId: string; payload: SaveItemPayload }) =>
-      api.post(`/estimates/sections/${sectionId}/items`, payload),
+  const createMaterialMutation = useMutation({
+    mutationFn: ({ workId, payload }: { workId: string; payload: SaveMaterialPayload }) =>
+      api.post(`/estimate-items/${workId}/materials`, payload),
     onSuccess: () => {
       invalidate();
-      message.success('Позиция добавлена');
+      message.success('Материал добавлен');
     },
     onError: (e: Error) => message.error(e.message),
   });
 
-  const updateItemMutation = useMutation({
-    mutationFn: ({ itemId, payload }: { itemId: string; payload: SaveItemPayload }) =>
-      api.put(`/estimates/items/${itemId}`, payload),
+  const updateMaterialMutation = useMutation({
+    mutationFn: ({ materialId, payload }: { materialId: string; payload: SaveMaterialPayload }) =>
+      api.put(`/estimate-items/materials/${materialId}`, payload),
     onSuccess: () => {
       invalidate();
-      message.success('Позиция обновлена');
+      message.success('Материал обновлён');
     },
     onError: (e: Error) => message.error(e.message),
   });
 
-  const deleteItemMutation = useMutation({
-    mutationFn: (itemId: string) => api.delete(`/estimates/items/${itemId}`),
+  const deleteMaterialMutation = useMutation({
+    mutationFn: (materialId: string) => api.delete(`/estimate-items/materials/${materialId}`),
     onSuccess: () => {
       invalidate();
-      message.success('Позиция удалена');
+      message.success('Материал удалён');
     },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const setContractorMutation = useMutation({
+    mutationFn: ({ costTypeId, contractorId }: { costTypeId: string; contractorId: string }) =>
+      api.put(`/estimates/${id}/contractors`, { costTypeId, contractorId }),
+    onSuccess: () => invalidate(),
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const clearContractorMutation = useMutation({
+    mutationFn: (costTypeId: string) =>
+      api.delete(`/estimates/${id}/contractors?costTypeId=${encodeURIComponent(costTypeId)}`),
+    onSuccess: () => invalidate(),
     onError: (e: Error) => message.error(e.message),
   });
 
@@ -106,23 +143,47 @@ export function EstimateDetailPage() {
     onError: (e: Error) => message.error(e.message),
   });
 
-  if (isLoading) return <Spin size="large" />;
+  const groups = useMemo(
+    () => (estimate ? buildCostTypeGroups(estimate.items, estimate.contractors, pendingGroups) : []),
+    [estimate, pendingGroups],
+  );
 
-  const estimate = data?.data;
+  if (isLoading) return <Spin size="large" />;
   if (!estimate) return <div>Смета не найдена</div>;
 
   const isDraft = estimate.status === 'draft';
-  const totalItems = estimate.sections?.reduce((acc, s) => acc + s.items.length, 0) ?? 0;
+  const totalItems = estimate.items?.length ?? 0;
 
-  const editingSection = editSectionId
-    ? estimate.sections.find((s) => s.id === editSectionId)
-    : null;
+  const handleAddCostType = (payload: CostTypeFormPayload) => {
+    setPendingGroups((prev) =>
+      prev.some((g) => g.costTypeId === payload.costTypeId)
+        ? prev
+        : [
+            ...prev,
+            {
+              costTypeId: payload.costTypeId,
+              costTypeName: payload.costTypeName,
+              costCategoryId: payload.costCategoryId,
+              costCategoryName: payload.costCategoryName,
+              works: [],
+              contractor: null,
+            },
+          ],
+    );
+    if (payload.contractorId) {
+      setContractorMutation.mutate({ costTypeId: payload.costTypeId, contractorId: payload.contractorId });
+    }
+    setCostTypeModalOpen(false);
+  };
 
-  const handleCreateItem = (sectionId: string, payload: SaveItemPayload) =>
-    addItemMutation.mutateAsync({ sectionId, payload }).then(() => undefined);
-
-  const handleUpdateItem = (itemId: string, payload: SaveItemPayload) =>
-    updateItemMutation.mutateAsync({ itemId, payload }).then(() => undefined);
+  const createWork = (costTypeId: string | null, payload: SaveWorkPayload) =>
+    createWorkMutation.mutateAsync({ costTypeId, payload }).then(() => undefined);
+  const updateWork = (workId: string, payload: SaveWorkPayload) =>
+    updateWorkMutation.mutateAsync({ workId, payload }).then(() => undefined);
+  const createMaterial = (workId: string, payload: SaveMaterialPayload) =>
+    createMaterialMutation.mutateAsync({ workId, payload }).then(() => undefined);
+  const updateMaterial = (materialId: string, payload: SaveMaterialPayload) =>
+    updateMaterialMutation.mutateAsync({ materialId, payload }).then(() => undefined);
 
   return (
     <div>
@@ -150,6 +211,7 @@ export function EstimateDetailPage() {
       <EstimateHeaderCard
         estimate={estimate}
         itemCount={totalItems}
+        groupCount={groups.length}
         editable
         onEdit={() => setEditEstimateOpen(true)}
       />
@@ -157,71 +219,52 @@ export function EstimateDetailPage() {
       <Button
         type="dashed"
         icon={<PlusOutlined />}
-        onClick={() => setSectionModalOpen(true)}
+        onClick={() => setCostTypeModalOpen(true)}
         style={{ width: '100%', marginTop: 8, marginBottom: 16 }}
       >
-        Добавить раздел
+        Добавить вид затрат
       </Button>
 
-      {estimate.sections && estimate.sections.length > 0 ? (
+      {groups.length > 0 ? (
         <>
-          {estimate.sections.map((section, i) => (
-            <SectionBlock
-              key={section.id}
-              section={section}
+          {groups.map((group, i) => (
+            <CostTypeGroupBlock
+              key={group.costTypeId ?? '__none__'}
+              group={group}
               index={i}
               editable
-              onCreateItem={handleCreateItem}
-              onUpdateItem={handleUpdateItem}
-              onDeleteItem={(itemId) => deleteItemMutation.mutate(itemId)}
-              onEditSection={(sectionId) => setEditSectionId(sectionId)}
-              onDeleteSection={(sectionId) => deleteSectionMutation.mutate(sectionId)}
+              orgs={orgsData?.data}
+              onCreateWork={createWork}
+              onUpdateWork={updateWork}
+              onDeleteWork={(workId) => deleteWorkMutation.mutate(workId)}
+              onCreateMaterial={createMaterial}
+              onUpdateMaterial={updateMaterial}
+              onDeleteMaterial={(materialId) => deleteMaterialMutation.mutate(materialId)}
+              onSetContractor={(costTypeId, contractorId) =>
+                setContractorMutation.mutate({ costTypeId, contractorId })
+              }
+              onClearContractor={(costTypeId) => clearContractorMutation.mutate(costTypeId)}
             />
           ))}
           <Button
             type="dashed"
             icon={<PlusOutlined />}
-            onClick={() => setSectionModalOpen(true)}
+            onClick={() => setCostTypeModalOpen(true)}
             style={{ width: '100%', marginTop: 8 }}
           >
-            Добавить раздел
+            Добавить вид затрат
           </Button>
         </>
       ) : (
-        <Empty description="В смете пока нет разделов" style={{ padding: '40px 0' }} />
+        <Empty description="В смете пока нет работ" style={{ padding: '40px 0' }} />
       )}
 
-      <AddSectionModal
-        open={sectionModalOpen}
-        mode="create"
-        initialValues={
-          estimate.cost_category_id
-            ? { costCategoryId: estimate.cost_category_id }
-            : undefined
-        }
-        onCancel={() => setSectionModalOpen(false)}
-        onSubmit={(payload) => addSectionMutation.mutate(payload)}
-        loading={addSectionMutation.isPending}
-      />
-
-      <AddSectionModal
-        open={!!editingSection}
-        mode="edit"
-        initialValues={
-          editingSection
-            ? {
-                costCategoryId: editingSection.cost_category_id ?? undefined,
-                costTypeId: editingSection.cost_type_id ?? undefined,
-                contractorId: editingSection.contractor_id ?? null,
-              }
-            : undefined
-        }
-        onCancel={() => setEditSectionId(null)}
-        onSubmit={(payload) => {
-          if (!editingSection) return;
-          editSectionMutation.mutate({ sectionId: editingSection.id, payload });
-        }}
-        loading={editSectionMutation.isPending}
+      <AddCostTypeModal
+        open={costTypeModalOpen}
+        initialCategoryId={estimate.cost_category_id}
+        onCancel={() => setCostTypeModalOpen(false)}
+        onSubmit={handleAddCostType}
+        loading={setContractorMutation.isPending}
       />
 
       <EditEstimateModal

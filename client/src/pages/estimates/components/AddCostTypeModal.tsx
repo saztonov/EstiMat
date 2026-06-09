@@ -20,33 +20,24 @@ interface Organization {
   type?: string;
 }
 
-export interface SectionFormPayload {
+export interface CostTypeFormPayload {
   costCategoryId: string;
+  costCategoryName: string;
   costTypeId: string;
+  costTypeName: string;
   contractorId?: string | null;
 }
 
 interface Props {
   open: boolean;
-  mode?: 'create' | 'edit';
-  initialValues?: Partial<SectionFormPayload>;
+  initialCategoryId?: string | null;
   onCancel: () => void;
-  onSubmit: (payload: SectionFormPayload) => void;
+  onSubmit: (payload: CostTypeFormPayload) => void;
   loading?: boolean;
 }
 
-// Legacy alias — сохранён для минимальной правки импортов
-export type AddSectionPayload = SectionFormPayload;
-
-export function AddSectionModal({
-  open,
-  mode = 'create',
-  initialValues,
-  onCancel,
-  onSubmit,
-  loading,
-}: Props) {
-  const [form] = Form.useForm<SectionFormPayload>();
+export function AddCostTypeModal({ open, initialCategoryId, onCancel, onSubmit, loading }: Props) {
+  const [form] = Form.useForm<{ costCategoryId: string; costTypeId: string; contractorId?: string }>();
   const categoryId = Form.useWatch('costCategoryId', form);
 
   const { data: categories } = useQuery({
@@ -73,16 +64,14 @@ export function AddSectionModal({
   useEffect(() => {
     if (!open) {
       form.resetFields();
-    } else if (initialValues) {
-      form.setFieldsValue(initialValues);
+    } else if (initialCategoryId) {
+      form.setFieldsValue({ costCategoryId: initialCategoryId });
     }
-  }, [open, initialValues, form]);
-
-  const title = mode === 'edit' ? 'Редактировать раздел' : 'Добавить раздел сметы';
+  }, [open, initialCategoryId, form]);
 
   return (
     <Modal
-      title={title}
+      title="Добавить вид затрат"
       open={open}
       onCancel={onCancel}
       onOk={() => form.submit()}
@@ -93,13 +82,17 @@ export function AddSectionModal({
       <Form
         form={form}
         layout="vertical"
-        onFinish={(v) =>
+        onFinish={(v) => {
+          const cat = categories?.data.find((c) => c.id === v.costCategoryId);
+          const type = types?.data.find((t) => t.id === v.costTypeId);
           onSubmit({
             costCategoryId: v.costCategoryId,
+            costCategoryName: cat?.name ?? '',
             costTypeId: v.costTypeId,
+            costTypeName: type?.name ?? '',
             contractorId: v.contractorId ?? null,
-          })
-        }
+          });
+        }}
       >
         <Form.Item
           name="costCategoryId"
@@ -119,7 +112,6 @@ export function AddSectionModal({
           name="costTypeId"
           label="Вид затрат"
           rules={[{ required: true, message: 'Выберите вид затрат' }]}
-          extra="Название раздела сформируется как «Категория / Вид затрат»"
         >
           <Select
             showSearch
@@ -132,8 +124,8 @@ export function AddSectionModal({
 
         <Form.Item
           name="contractorId"
-          label="Подрядчик (исполнитель раздела)"
-          extra="Опционально — кто выполняет работы этого раздела"
+          label="Подрядчик (исполнитель вида затрат)"
+          extra="Опционально — кто выполняет работы этого вида затрат"
         >
           <Select
             allowClear
@@ -141,9 +133,7 @@ export function AddSectionModal({
             optionFilterProp="label"
             placeholder="Без подрядчика"
             options={orgs?.data
-              .filter(
-                (o) => o.type === 'subcontractor' || o.type === 'general_contractor',
-              )
+              .filter((o) => o.type === 'subcontractor' || o.type === 'general_contractor')
               .map((o) => ({ value: o.id, label: o.name }))}
           />
         </Form.Item>

@@ -15,11 +15,12 @@ const statusColors: Record<string, string> = {
 interface Props {
   estimate: EstimateDetail;
   itemCount: number;
+  groupCount: number;
   editable: boolean;
   onEdit: () => void;
 }
 
-export function EstimateHeaderCard({ estimate, itemCount, editable, onEdit }: Props) {
+export function EstimateHeaderCard({ estimate, itemCount, groupCount, editable, onEdit }: Props) {
   const [collapsed, setCollapsed] = useState(false);
 
   const statusLabel = ESTIMATE_STATUS_LABELS[estimate.status as keyof typeof ESTIMATE_STATUS_LABELS];
@@ -59,11 +60,8 @@ export function EstimateHeaderCard({ estimate, itemCount, editable, onEdit }: Pr
         {!collapsed && (
           <Col flex="none">
             <Space size={24}>
-              <Statistic title="Позиций" value={itemCount} />
-              <Statistic
-                title="Разделов"
-                value={estimate.sections?.length || 0}
-              />
+              <Statistic title="Работ" value={itemCount} />
+              <Statistic title="Видов затрат" value={groupCount} />
               <Statistic
                 title="Итого"
                 value={Number(estimate.total_amount ?? 0)}

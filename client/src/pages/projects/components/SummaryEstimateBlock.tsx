@@ -2,8 +2,9 @@ import { Tag, Button, Empty, Space } from 'antd';
 import { ExportOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router';
 import { ESTIMATE_STATUS_LABELS } from '@estimat/shared';
-import { SectionBlock } from '../../estimates/components/SectionBlock';
-import type { EstimateSection } from '../../estimates/components/types';
+import { CostTypeGroupBlock } from '../../estimates/components/CostTypeGroupBlock';
+import { buildCostTypeGroups } from '../../estimates/components/types';
+import type { EstimateItem, EstimateContractor } from '../../estimates/components/types';
 import { formatMoney } from '../../estimates/components/types';
 
 const statusColors: Record<string, string> = {
@@ -20,7 +21,8 @@ export interface SummaryEstimate {
   total_amount: string;
   cost_category_id: string | null;
   cost_category_name: string | null;
-  sections: EstimateSection[];
+  items: EstimateItem[];
+  contractors: EstimateContractor[];
 }
 
 interface Props {
@@ -28,11 +30,9 @@ interface Props {
   index: number;
 }
 
-const noopAsync = async () => {};
-const noop = () => {};
-
 export function SummaryEstimateBlock({ estimate, index }: Props) {
   const navigate = useNavigate();
+  const groups = buildCostTypeGroups(estimate.items ?? [], estimate.contractors ?? []);
 
   return (
     <div
@@ -80,22 +80,17 @@ export function SummaryEstimateBlock({ estimate, index }: Props) {
       </div>
 
       <div style={{ padding: '12px 16px' }}>
-        {estimate.sections.length === 0 ? (
-          <Empty description="В смете нет разделов" style={{ padding: '20px 0' }} />
+        {groups.length === 0 ? (
+          <Empty description="В смете нет работ" style={{ padding: '20px 0' }} />
         ) : (
-          estimate.sections.map((section, i) => (
-            <SectionBlock
-              key={section.id}
-              section={section}
+          groups.map((group, i) => (
+            <CostTypeGroupBlock
+              key={group.costTypeId ?? '__none__'}
+              group={group}
               index={i}
               editable={false}
               collapsible
               defaultCollapsed
-              onCreateItem={noopAsync}
-              onUpdateItem={noopAsync}
-              onDeleteItem={noop}
-              onEditSection={noop}
-              onDeleteSection={noop}
             />
           ))
         )}

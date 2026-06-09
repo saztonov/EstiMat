@@ -1,0 +1,594 @@
+import { useState } from 'react';
+import {
+  Table,
+  Button,
+  Popconfirm,
+  Space,
+  Tag,
+  AutoComplete,
+  Input,
+  InputNumber,
+  Select,
+  App,
+} from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import {
+  PlusOutlined,
+  DeleteOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  EditOutlined,
+  UserOutlined,
+  CaretRightOutlined,
+  CaretDownOutlined,
+} from '@ant-design/icons';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../../services/api';
+import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
+import { formatMoney } from './types';
+
+const DRAFT_ID = '__draft__';
+
+interface Rate {
+  id: string;
+  name: string;
+  code: string | null;
+  unit: string;
+  price: string;
+}
+
+interface Material {
+  id: string;
+  name: string;
+  unit: string;
+  unit_price: string;
+}
+
+interface Organization {
+  id: string;
+  name: string;
+  type?: string;
+}
+
+export interface SaveWorkPayload {
+  costTypeId: string | null;
+  rateId: string | null;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export interface SaveMaterialPayload {
+  materialId: string | null;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+interface WorkEdit {
+  workId: string | null;
+  rateId: string | null;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+interface MaterialEdit {
+  materialId: string | null;
+  refMaterialId: string | null;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+// ============================================================
+// Вложенная таблица материалов под работой
+// ============================================================
+function MaterialsSubTable({
+  work,
+  editable,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: {
+  work: EstimateItem;
+  editable: boolean;
+  onCreate: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
+  onUpdate: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
+  onDelete: (materialId: string) => void;
+}) {
+  const { message } = App.useApp();
+  const [editing, setEditing] = useState<MaterialEdit | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const { data: materialsData } = useQuery({
+    queryKey: ['materials'],
+    queryFn: () => api.get<{ data: Material[] }>('/materials'),
+    enabled: !!editing,
+  });
+
+  const rows: EstimateMaterial[] = work.materials.map((m) =>
+    editing && editing.materialId === m.id
+      ? {
+          ...m,
+          material_id: editing.refMaterialId,
+          description: editing.description,
+          unit: editing.unit,
+          quantity: String(editing.quantity),
+          unit_price: String(editing.unitPrice),
+          total: String(editing.quantity * editing.unitPrice),
+        }
+      : m,
+  );
+  if (editing && editing.materialId === null) {
+    rows.push({
+      id: DRAFT_ID,
+      item_id: work.id,
+      material_id: editing.refMaterialId,
+      description: editing.description,
+      unit: editing.unit,
+      quantity: String(editing.quantity),
+      unit_price: String(editing.unitPrice),
+      total: String(editing.quantity * editing.unitPrice),
+      material_name: null,
+    });
+  }
+
+  const isRowInEdit = (r: EstimateMaterial) =>
+    !!editing && (r.id === DRAFT_ID || r.id === editing.materialId);
+
+  const nameOptions = materialsData?.data.map((m) => ({
+    key: m.id,
+    value: m.name,
+    label: `${m.name} · ${m.unit} · ${Number(m.unit_price ?? 0).toLocaleString('ru-RU')} ₽`,
+  }));
+
+  function selectRef(id: string) {
+    if (!editing) return;
+    const mat = materialsData?.data.find((m) => m.id === id);
+    if (mat) {
+      setEditing({
+        ...editing,
+        refMaterialId: mat.id,
+        description: mat.name,
+        unit: mat.unit,
+        unitPrice: Number(mat.unit_price ?? 0),
+      });
+    }
+  }
+
+  async function commit() {
+    if (!editing || saving) return;
+    const description = editing.description.trim();
+    const unit = editing.unit.trim();
+    if (!description) return message.warning('Укажите наименование материала');
+    if (!unit) return message.warning('Укажите единицу измерения');
+    if (!(editing.quantity > 0)) return message.warning('Количество должно быть больше 0');
+    if (editing.unitPrice < 0) return message.warning('Цена не может быть отрицательной');
+
+    const payload: SaveMaterialPayload = {
+      materialId: editing.refMaterialId,
+      description,
+      unit,
+      quantity: editing.quantity,
+      unitPrice: editing.unitPrice,
+    };
+    setSaving(true);
+    try {
+      if (editing.materialId) await onUpdate(editing.materialId, payload);
+      else await onCreate(work.id, payload);
+      setEditing(null);
+    } catch {
+      /* ошибку покажет мутация */
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const columns: ColumnsType<EstimateMaterial> = [
+    { title: 'Материал', dataIndex: 'description', render: (v: string, r) => {
+        if (isRowInEdit(r) && editing) {
+          return (
+            <AutoComplete
+              style={{ width: '100%' }}
+              size="small"
+              value={editing.description}
+              options={nameOptions}
+              onChange={(t) => setEditing({ ...editing, description: t ?? '' })}
+              onSelect={(_v, option) => {
+                const id = (option as { key?: string }).key;
+                if (id) selectRef(id);
+              }}
+              filterOption={(input, option) =>
+                String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              placeholder="Материал или выбор из справочника"
+              autoFocus
+            />
+          );
+        }
+        return v;
+      },
+    },
+    { title: 'Ед. изм.', dataIndex: 'unit', width: 100, align: 'center', render: (v: string, r) =>
+        isRowInEdit(r) && editing ? (
+          <Input size="small" value={editing.unit} onChange={(e) => setEditing({ ...editing, unit: e.target.value })} onPressEnter={commit} />
+        ) : v,
+    },
+    { title: 'Кол-во', dataIndex: 'quantity', width: 110, align: 'right', render: (v: string, r) =>
+        isRowInEdit(r) && editing ? (
+          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
+        ) : Number(v).toLocaleString('ru-RU'),
+    },
+    { title: 'Цена', dataIndex: 'unit_price', width: 130, align: 'right', render: (v: string, r) =>
+        isRowInEdit(r) && editing ? (
+          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
+        ) : formatMoney(v),
+    },
+    { title: 'Сумма', dataIndex: 'total', width: 140, align: 'right', render: (v: string, r) =>
+        isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
+    },
+    ...(editable
+      ? [{
+          title: '', width: 80,
+          render: (_: unknown, r: EstimateMaterial) => {
+            if (isRowInEdit(r)) {
+              return (
+                <Space size={4}>
+                  <Button type="primary" size="small" icon={<CheckOutlined />} loading={saving} onClick={commit} />
+                  <Button size="small" icon={<CloseOutlined />} disabled={saving} onClick={() => setEditing(null)} />
+                </Space>
+              );
+            }
+            return (
+              <Space size={4}>
+                <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
+                  onClick={() => setEditing({ materialId: r.id, refMaterialId: r.material_id, description: r.description, unit: r.unit, quantity: Number(r.quantity), unitPrice: Number(r.unit_price) })} />
+                <Popconfirm title="Удалить материал?" onConfirm={() => onDelete(r.id)}>
+                  <Button type="text" size="small" danger disabled={!!editing} icon={<DeleteOutlined />} />
+                </Popconfirm>
+              </Space>
+            );
+          },
+        }]
+      : []),
+  ];
+
+  return (
+    <div style={{ padding: '4px 0 4px 24px' }}>
+      <Table
+        rowKey="id"
+        size="small"
+        columns={columns}
+        dataSource={rows}
+        pagination={false}
+        locale={{ emptyText: editable ? 'Материалов нет. Нажмите «Материал».' : 'Материалов нет.' }}
+        rowClassName={(r) => (isRowInEdit(r) ? 'estimat-row-editing' : '')}
+      />
+      {editable && (
+        <Button
+          type="link"
+          size="small"
+          icon={<PlusOutlined />}
+          disabled={!!editing}
+          onClick={() => setEditing({ materialId: null, refMaterialId: null, description: '', unit: '', quantity: 1, unitPrice: 0 })}
+          style={{ marginTop: 4 }}
+        >
+          Материал
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Группа по виду затрат: работы + вложенные материалы + подрядчик
+// ============================================================
+interface Props {
+  group: CostTypeGroup;
+  index: number;
+  editable: boolean;
+  orgs?: Organization[];
+  onCreateWork?: (costTypeId: string | null, payload: SaveWorkPayload) => Promise<void>;
+  onUpdateWork?: (workId: string, payload: SaveWorkPayload) => Promise<void>;
+  onDeleteWork?: (workId: string) => void;
+  onCreateMaterial?: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
+  onUpdateMaterial?: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
+  onDeleteMaterial?: (materialId: string) => void;
+  onSetContractor?: (costTypeId: string, contractorId: string) => void;
+  onClearContractor?: (costTypeId: string) => void;
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
+}
+
+const noopAsync = async () => {};
+const noop = () => {};
+
+export function CostTypeGroupBlock({
+  group,
+  index,
+  editable,
+  orgs,
+  onCreateWork = noopAsync,
+  onUpdateWork = noopAsync,
+  onDeleteWork = noop,
+  onCreateMaterial = noopAsync,
+  onUpdateMaterial = noopAsync,
+  onDeleteMaterial = noop,
+  onSetContractor = noop,
+  onClearContractor = noop,
+  collapsible = false,
+  defaultCollapsed = false,
+}: Props) {
+  const { message } = App.useApp();
+  const [editing, setEditing] = useState<WorkEdit | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [collapsed, setCollapsed] = useState(collapsible && defaultCollapsed);
+
+  const { data: ratesData } = useQuery({
+    queryKey: ['rates', group.costTypeId],
+    queryFn: () => api.get<{ data: Rate[] }>(`/rates?costTypeId=${encodeURIComponent(group.costTypeId ?? '')}`),
+    enabled: !!editing && !!group.costTypeId,
+  });
+
+  const title = group.costCategoryName
+    ? `${group.costCategoryName} / ${group.costTypeName ?? '—'}`
+    : group.costTypeName ?? 'Без вида затрат';
+
+  const groupTotal = group.works.reduce(
+    (acc, w) => acc + Number(w.total ?? 0) + w.materials.reduce((a, m) => a + Number(m.total ?? 0), 0),
+    0,
+  );
+
+  const rows: EstimateItem[] = group.works.map((w) =>
+    editing && editing.workId === w.id
+      ? {
+          ...w,
+          rate_id: editing.rateId,
+          description: editing.description,
+          unit: editing.unit,
+          quantity: String(editing.quantity),
+          unit_price: String(editing.unitPrice),
+          total: String(editing.quantity * editing.unitPrice),
+        }
+      : w,
+  );
+  if (editing && editing.workId === null) {
+    rows.push({
+      id: DRAFT_ID,
+      estimate_id: '',
+      cost_category_id: group.costCategoryId,
+      cost_type_id: group.costTypeId,
+      rate_id: editing.rateId,
+      description: editing.description,
+      quantity: String(editing.quantity),
+      unit: editing.unit,
+      unit_price: String(editing.unitPrice),
+      total: String(editing.quantity * editing.unitPrice),
+      sort_order: 9999,
+      rate_name: null,
+      rate_code: null,
+      materials: [],
+    });
+  }
+
+  const isRowInEdit = (r: EstimateItem) => !!editing && (r.id === DRAFT_ID || r.id === editing.workId);
+
+  const nameOptions = ratesData?.data.map((r) => ({
+    key: r.id,
+    value: r.code ? `[${r.code}] ${r.name}` : r.name,
+    label: `${r.code ? `[${r.code}] ` : ''}${r.name} · ${r.unit} · ${Number(r.price).toLocaleString('ru-RU')} ₽`,
+  }));
+
+  function selectRate(id: string) {
+    if (!editing) return;
+    const rate = ratesData?.data.find((r) => r.id === id);
+    if (rate) {
+      setEditing({
+        ...editing,
+        rateId: rate.id,
+        description: rate.code ? `[${rate.code}] ${rate.name}` : rate.name,
+        unit: rate.unit,
+        unitPrice: Number(rate.price),
+      });
+    }
+  }
+
+  async function commit() {
+    if (!editing || saving) return;
+    const description = editing.description.trim();
+    const unit = editing.unit.trim();
+    if (!description) return message.warning('Укажите наименование работы');
+    if (!unit) return message.warning('Укажите единицу измерения');
+    if (!(editing.quantity > 0)) return message.warning('Количество должно быть больше 0');
+    if (editing.unitPrice < 0) return message.warning('Цена не может быть отрицательной');
+
+    const payload: SaveWorkPayload = {
+      costTypeId: group.costTypeId,
+      rateId: editing.rateId,
+      description,
+      unit,
+      quantity: editing.quantity,
+      unitPrice: editing.unitPrice,
+    };
+    setSaving(true);
+    try {
+      if (editing.workId) await onUpdateWork(editing.workId, payload);
+      else await onCreateWork(group.costTypeId, payload);
+      setEditing(null);
+    } catch {
+      /* ошибку покажет мутация */
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const columns: ColumnsType<EstimateItem> = [
+    { title: '№', width: 50, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
+    {
+      title: 'Наименование работы', dataIndex: 'description',
+      render: (v: string, r) => {
+        if (isRowInEdit(r) && editing) {
+          return (
+            <AutoComplete
+              style={{ width: '100%' }}
+              value={editing.description}
+              options={nameOptions}
+              onChange={(t) => setEditing({ ...editing, description: t ?? '' })}
+              onSelect={(_v, option) => {
+                const id = (option as { key?: string }).key;
+                if (id) selectRate(id);
+              }}
+              filterOption={(input, option) =>
+                String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              placeholder="Наименование работы или выбор из справочника"
+              autoFocus
+            />
+          );
+        }
+        return v;
+      },
+    },
+    { title: 'Ед. изм.', dataIndex: 'unit', width: 110, align: 'center', render: (v: string, r) =>
+        isRowInEdit(r) && editing ? (
+          <Input size="small" value={editing.unit} onChange={(e) => setEditing({ ...editing, unit: e.target.value })} onPressEnter={commit} />
+        ) : v,
+    },
+    { title: 'Кол-во', dataIndex: 'quantity', width: 120, align: 'right', render: (v: string, r) =>
+        isRowInEdit(r) && editing ? (
+          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
+        ) : Number(v).toLocaleString('ru-RU'),
+    },
+    { title: 'Цена', dataIndex: 'unit_price', width: 140, align: 'right', render: (v: string, r) =>
+        isRowInEdit(r) && editing ? (
+          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
+        ) : formatMoney(v),
+    },
+    { title: 'Сумма', dataIndex: 'total', width: 150, align: 'right', render: (v: string, r) =>
+        isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
+    },
+    ...(editable
+      ? [{
+          title: '', width: 90,
+          render: (_: unknown, r: EstimateItem) => {
+            if (isRowInEdit(r)) {
+              return (
+                <Space size={4}>
+                  <Button type="primary" size="small" icon={<CheckOutlined />} loading={saving} onClick={commit} />
+                  <Button size="small" icon={<CloseOutlined />} disabled={saving} onClick={() => setEditing(null)} />
+                </Space>
+              );
+            }
+            return (
+              <Space size={4}>
+                <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
+                  onClick={() => setEditing({ workId: r.id, rateId: r.rate_id, description: r.description, unit: r.unit, quantity: Number(r.quantity), unitPrice: Number(r.unit_price) })} />
+                <Popconfirm title="Удалить работу со всеми материалами?" onConfirm={() => onDeleteWork(r.id)}>
+                  <Button type="text" size="small" danger disabled={!!editing} icon={<DeleteOutlined />} />
+                </Popconfirm>
+              </Space>
+            );
+          },
+        }]
+      : []),
+  ];
+
+  const contractorOptions = orgs
+    ?.filter((o) => o.type === 'subcontractor' || o.type === 'general_contractor')
+    .map((o) => ({ value: o.id, label: o.name }));
+
+  return (
+    <div
+      style={{ background: '#fff', borderRadius: 8, marginBottom: 16, border: '1px solid #f0f0f0' }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && editing && !saving) {
+          e.stopPropagation();
+          setEditing(null);
+        }
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          padding: '12px 16px',
+          background: '#fafbfc',
+          borderBottom: collapsible && collapsed ? 'none' : '1px solid #f0f0f0',
+          gap: 12,
+          cursor: collapsible ? 'pointer' : 'default',
+          userSelect: collapsible ? 'none' : 'auto',
+        }}
+        onClick={
+          collapsible
+            ? (e) => {
+                if ((e.target as HTMLElement).closest('button, .ant-select, .ant-popover, .ant-popconfirm')) return;
+                setCollapsed((c) => !c);
+              }
+            : undefined
+        }
+      >
+        {collapsible && (collapsed ? <CaretRightOutlined style={{ color: '#8c8c8c' }} /> : <CaretDownOutlined style={{ color: '#8c8c8c' }} />)}
+        <strong style={{ fontSize: 15 }}>{index + 1}. {title}</strong>
+
+        {editable && group.costTypeId ? (
+          <Select
+            size="small"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="Подрядчик"
+            style={{ minWidth: 200 }}
+            value={group.contractor?.contractor_id}
+            options={contractorOptions}
+            onChange={(val) => {
+              if (val) onSetContractor(group.costTypeId!, val);
+              else onClearContractor(group.costTypeId!);
+            }}
+            suffixIcon={<UserOutlined />}
+          />
+        ) : (
+          group.contractor?.contractor_name && (
+            <Tag icon={<UserOutlined />} color="purple">{group.contractor.contractor_name}</Tag>
+          )
+        )}
+
+        <span style={{ flex: 1 }} />
+        <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>
+        {editable && (
+          <Button type="primary" size="small" icon={<PlusOutlined />} disabled={!!editing} onClick={() => setEditing({ workId: null, rateId: null, description: '', unit: '', quantity: 1, unitPrice: 0 })}>
+            Работа
+          </Button>
+        )}
+      </div>
+
+      {!(collapsible && collapsed) && (
+        <Table
+          rowKey="id"
+          size="small"
+          columns={columns}
+          dataSource={rows}
+          pagination={false}
+          locale={{ emptyText: editable ? 'Нет работ. Нажмите «Работа».' : 'Нет работ.' }}
+          rowClassName={(r) => (isRowInEdit(r) ? 'estimat-row-editing' : '')}
+          expandable={{
+            rowExpandable: (r) => r.id !== DRAFT_ID,
+            expandedRowRender: (r) => (
+              <MaterialsSubTable
+                work={r}
+                editable={editable}
+                onCreate={onCreateMaterial}
+                onUpdate={onUpdateMaterial}
+                onDelete={onDeleteMaterial}
+              />
+            ),
+          }}
+        />
+      )}
+    </div>
+  );
+}

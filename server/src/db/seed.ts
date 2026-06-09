@@ -110,10 +110,25 @@ async function seed() {
     );
 
     // Estimate
+    const estResult = await client.query(
+      `INSERT INTO estimates (project_id, cost_category_id, work_type, created_by, notes)
+       VALUES ($1, $2, 'Электромонтажные работы', $3, 'Тестовая смета') RETURNING id`,
+      [projectId, emCatId, adminId],
+    );
+    const estimateId = estResult.rows[0].id;
+
+    // Подрядчик на вид затрат «Прокладка кабеля»
     await client.query(
-      `INSERT INTO estimates (project_id, contractor_id, work_type, created_by, notes)
-       VALUES ($1, $2, 'Электромонтажные работы', $3, 'Тестовая смета')`,
-      [projectId, subId, adminId],
+      `INSERT INTO estimate_contractors (estimate_id, cost_type_id, contractor_id)
+       VALUES ($1, $2, $3)`,
+      [estimateId, pkTypeId, subId],
+    );
+
+    // Работа в смете (объект/категория проставятся триггером по виду затрат)
+    await client.query(
+      `INSERT INTO estimate_items (estimate_id, cost_type_id, description, quantity, unit, unit_price)
+       VALUES ($1, $2, 'Прокладка кабеля в гофротрубе', 100, 'м', 150.00)`,
+      [estimateId, pkTypeId],
     );
 
     console.log('Seed completed successfully');

@@ -6,8 +6,7 @@ import {
   updateEstimateSchema,
   createEstimateItemSchema,
   updateEstimateItemSchema,
-  createEstimateSectionSchema,
-  updateEstimateSectionSchema,
+  setEstimateContractorSchema,
 } from '@estimat/shared';
 
 export default async function estimateRoutes(fastify: FastifyInstance) {
@@ -33,7 +32,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     return { data: rows };
   });
 
-  // GET /api/estimates/:id — с разделами и позициями
+  // GET /api/estimates/:id — работы (с измерениями), материалы (вложенно), подрядчики по видам затрат
   fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
     const { rows } = await fastify.pool.query(
       `SELECT e.*,
@@ -48,43 +47,54 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     );
     if (rows.length === 0) return reply.status(404).send({ error: 'Смета не найдена' });
 
-    const sections = await fastify.pool.query(
-      `SELECT s.*,
-              ct.name AS cost_type_name,
-              cc.id   AS cost_category_id,
-              cc.name AS cost_category_name,
-              o.name  AS contractor_name
-       FROM estimate_sections s
-       LEFT JOIN cost_types ct      ON s.cost_type_id = ct.id
-       LEFT JOIN cost_categories cc ON ct.category_id = cc.id
-       LEFT JOIN organizations o    ON s.contractor_id = o.id
-       WHERE s.estimate_id = $1
-       ORDER BY s.sort_order, s.created_at`,
-      [request.params.id],
-    );
-
     const items = await fastify.pool.query(
       `SELECT ei.*,
-              r.name as rate_name, r.code as rate_code,
-              mc.name as material_name
+              r.name  AS rate_name,
+              r.code  AS rate_code,
+              ct.name AS cost_type_name,
+              cc.name AS cost_category_name
        FROM estimate_items ei
-       LEFT JOIN rates r ON ei.rate_id = r.id
-       LEFT JOIN material_catalog mc ON ei.material_id = mc.id
+       LEFT JOIN rates r            ON ei.rate_id = r.id
+       LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
+       LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
        WHERE ei.estimate_id = $1
-       ORDER BY ei.sort_order, ei.created_at`,
+       ORDER BY cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
       [request.params.id],
     );
 
-    const sectionsWithItems = sections.rows.map((s) => ({
-      ...s,
-      items: items.rows.filter((i) => i.section_id === s.id),
+    const materials = await fastify.pool.query(
+      `SELECT em.*, mc.name AS material_name
+       FROM estimate_materials em
+       LEFT JOIN material_catalog mc ON em.material_id = mc.id
+       WHERE em.estimate_id = $1
+       ORDER BY em.sort_order, em.created_at`,
+      [request.params.id],
+    );
+
+    const contractors = await fastify.pool.query(
+      `SELECT ec.cost_type_id, ec.contractor_id,
+              o.name  AS contractor_name,
+              ct.name AS cost_type_name,
+              cc.id   AS cost_category_id,
+              cc.name AS cost_category_name
+       FROM estimate_contractors ec
+       LEFT JOIN organizations o    ON ec.contractor_id = o.id
+       LEFT JOIN cost_types ct      ON ec.cost_type_id = ct.id
+       LEFT JOIN cost_categories cc ON ct.category_id = cc.id
+       WHERE ec.estimate_id = $1`,
+      [request.params.id],
+    );
+
+    const itemsWithMaterials = items.rows.map((it) => ({
+      ...it,
+      materials: materials.rows.filter((m) => m.item_id === it.id),
     }));
 
     return {
       data: {
         ...rows[0],
-        sections: sectionsWithItems,
-        items: items.rows, // для обратной совместимости
+        items: itemsWithMaterials,
+        contractors: contractors.rows,
       },
     };
   });
@@ -173,125 +183,57 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     return { data: rows[0] };
   });
 
-  // === Разделы ===
+  // === Подрядчик на вид затрат ===
 
-  // POST /api/estimates/:id/sections
-  fastify.post<{ Params: { id: string } }>(
-    '/:id/sections',
-    { preHandler: [requireRole('admin', 'engineer')] },
-    async (request, reply) => {
-      const body = createEstimateSectionSchema.parse(request.body);
-
-      const { rows: ctypeRows } = await fastify.pool.query(
-        `SELECT ct.name AS type_name, cc.name AS category_name
-         FROM cost_types ct
-         JOIN cost_categories cc ON ct.category_id = cc.id
-         WHERE ct.id = $1 AND ct.category_id = $2`,
-        [body.costTypeId, body.costCategoryId],
-      );
-      if (ctypeRows.length === 0) {
-        return reply.status(400).send({ error: 'Вид затрат не принадлежит выбранной категории' });
-      }
-      const name = `${ctypeRows[0].category_name} / ${ctypeRows[0].type_name}`;
-
-      const { rows: created } = await fastify.pool.query(
-        `INSERT INTO estimate_sections (estimate_id, cost_type_id, contractor_id, name, sort_order)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        [
-          request.params.id,
-          body.costTypeId,
-          body.contractorId ?? null,
-          name,
-          body.sortOrder ?? 0,
-        ],
-      );
-      return reply.status(201).send({ data: created[0] });
-    },
-  );
-
-  // PUT /api/estimates/sections/:id
+  // PUT /api/estimates/:id/contractors — назначить/сменить подрядчика для вида затрат
   fastify.put<{ Params: { id: string } }>(
-    '/sections/:id',
+    '/:id/contractors',
     { preHandler: [requireRole('admin', 'engineer')] },
     async (request, reply) => {
-      const body = updateEstimateSectionSchema.parse(request.body);
-
-      const { rows: existing } = await fastify.pool.query(
-        `SELECT estimate_id FROM estimate_sections WHERE id = $1`,
-        [request.params.id],
-      );
-      if (existing.length === 0) return reply.status(404).send({ error: 'Раздел не найден' });
-
-      const sets: string[] = [];
-      const values: unknown[] = [];
-      let i = 1;
-
-      if (body.costTypeId !== undefined && body.costCategoryId !== undefined) {
-        const { rows: ctypeRows } = await fastify.pool.query(
-          `SELECT ct.name AS type_name, cc.name AS category_name
-           FROM cost_types ct
-           JOIN cost_categories cc ON ct.category_id = cc.id
-           WHERE ct.id = $1 AND ct.category_id = $2`,
-          [body.costTypeId, body.costCategoryId],
-        );
-        if (ctypeRows.length === 0) {
-          return reply.status(400).send({ error: 'Вид затрат не принадлежит выбранной категории' });
-        }
-        sets.push(`cost_type_id = $${i++}`); values.push(body.costTypeId);
-        sets.push(`name = $${i++}`); values.push(`${ctypeRows[0].category_name} / ${ctypeRows[0].type_name}`);
-      }
-      if (body.contractorId !== undefined) { sets.push(`contractor_id = $${i++}`); values.push(body.contractorId); }
-      if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
-
-      if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
-
-      values.push(request.params.id);
+      const body = setEstimateContractorSchema.parse(request.body);
       const { rows } = await fastify.pool.query(
-        `UPDATE estimate_sections SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
-        values,
+        `INSERT INTO estimate_contractors (estimate_id, cost_type_id, contractor_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (estimate_id, cost_type_id)
+           DO UPDATE SET contractor_id = EXCLUDED.contractor_id, updated_at = now()
+         RETURNING *`,
+        [request.params.id, body.costTypeId, body.contractorId],
       );
       return { data: rows[0] };
     },
   );
 
-  // DELETE /api/estimates/sections/:id
-  fastify.delete<{ Params: { id: string } }>(
-    '/sections/:id',
+  // DELETE /api/estimates/:id/contractors?costTypeId= — снять подрядчика с вида затрат
+  fastify.delete<{ Params: { id: string }; Querystring: { costTypeId?: string } }>(
+    '/:id/contractors',
     { preHandler: [requireRole('admin', 'engineer')] },
     async (request, reply) => {
-      const { rows: existing } = await fastify.pool.query(
-        `SELECT estimate_id FROM estimate_sections WHERE id = $1`,
-        [request.params.id],
+      const { costTypeId } = request.query;
+      if (!costTypeId) return reply.status(400).send({ error: 'Не указан вид затрат' });
+      await fastify.pool.query(
+        'DELETE FROM estimate_contractors WHERE estimate_id = $1 AND cost_type_id = $2',
+        [request.params.id, costTypeId],
       );
-      if (existing.length === 0) return reply.status(404).send({ error: 'Раздел не найден' });
-
-      await fastify.pool.query('DELETE FROM estimate_sections WHERE id = $1', [request.params.id]);
       return { success: true };
     },
   );
 
-  // POST /api/estimates/sections/:id/items — создать позицию в разделе
+  // === Работы (строки сметы) ===
+
+  // POST /api/estimates/:id/items — создать работу
   fastify.post<{ Params: { id: string } }>(
-    '/sections/:id/items',
+    '/:id/items',
     { preHandler: [requireRole('admin', 'engineer')] },
     async (request, reply) => {
-      const { rows: sec } = await fastify.pool.query(
-        `SELECT estimate_id FROM estimate_sections WHERE id = $1`,
-        [request.params.id],
-      );
-      if (sec.length === 0) return reply.status(404).send({ error: 'Раздел не найден' });
-
       const body = createEstimateItemSchema.parse(request.body);
       const { rows } = await fastify.pool.query(
         `INSERT INTO estimate_items
-           (estimate_id, section_id, item_type, rate_id, material_id, description, quantity, unit, unit_price, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+           (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
         [
-          sec[0].estimate_id,
           request.params.id,
-          body.itemType,
+          body.costTypeId ?? null,
           body.rateId ?? null,
-          body.materialId ?? null,
           body.description,
           body.quantity,
           body.unit,
@@ -303,42 +245,15 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     },
   );
 
-  // === Позиции (legacy + обновление) ===
-
-  // POST /api/estimates/:id/items — legacy, без раздела
-  fastify.post<{ Params: { id: string } }>('/:id/items', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
-    const body = createEstimateItemSchema.parse(request.body);
-    const { rows } = await fastify.pool.query(
-      `INSERT INTO estimate_items
-         (estimate_id, section_id, item_type, rate_id, material_id, description, quantity, unit, unit_price, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [
-        request.params.id,
-        body.sectionId ?? null,
-        body.itemType,
-        body.rateId ?? null,
-        body.materialId ?? null,
-        body.description,
-        body.quantity,
-        body.unit,
-        body.unitPrice,
-        body.sortOrder,
-      ],
-    );
-    return reply.status(201).send({ data: rows[0] });
-  });
-
-  // PUT /api/estimates/items/:id
+  // PUT /api/estimates/items/:id — обновить работу
   fastify.put<{ Params: { id: string } }>('/items/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
     const body = updateEstimateItemSchema.parse(request.body);
     const sets: string[] = [];
     const values: unknown[] = [];
     let i = 1;
 
-    if (body.sectionId !== undefined) { sets.push(`section_id = $${i++}`); values.push(body.sectionId); }
-    if (body.itemType !== undefined) { sets.push(`item_type = $${i++}`); values.push(body.itemType); }
+    if (body.costTypeId !== undefined) { sets.push(`cost_type_id = $${i++}`); values.push(body.costTypeId); }
     if (body.rateId !== undefined) { sets.push(`rate_id = $${i++}`); values.push(body.rateId); }
-    if (body.materialId !== undefined) { sets.push(`material_id = $${i++}`); values.push(body.materialId); }
     if (body.description !== undefined) { sets.push(`description = $${i++}`); values.push(body.description); }
     if (body.quantity !== undefined) { sets.push(`quantity = $${i++}`); values.push(body.quantity); }
     if (body.unit !== undefined) { sets.push(`unit = $${i++}`); values.push(body.unit); }
@@ -356,7 +271,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     return { data: rows[0] };
   });
 
-  // DELETE /api/estimates/items/:id
+  // DELETE /api/estimates/items/:id — удалить работу (материалы удалятся каскадом)
   fastify.delete<{ Params: { id: string } }>('/items/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
     const { rowCount } = await fastify.pool.query(
       'DELETE FROM estimate_items WHERE id = $1',

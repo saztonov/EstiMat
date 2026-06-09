@@ -76,49 +76,65 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
     const estimateIds = estimates.map((e) => e.id);
 
-    const sectionsRows = estimateIds.length
-      ? (
-          await fastify.pool.query(
-            `SELECT s.*,
-                    ct.name AS cost_type_name,
-                    cc.id   AS cost_category_id,
-                    cc.name AS cost_category_name,
-                    o.name  AS contractor_name
-               FROM estimate_sections s
-               LEFT JOIN cost_types ct      ON s.cost_type_id = ct.id
-               LEFT JOIN cost_categories cc ON ct.category_id = cc.id
-               LEFT JOIN organizations o    ON s.contractor_id = o.id
-               WHERE s.estimate_id = ANY($1)
-               ORDER BY s.sort_order, s.created_at`,
-            [estimateIds],
-          )
-        ).rows
-      : [];
-
     const itemsRows = estimateIds.length
       ? (
           await fastify.pool.query(
             `SELECT ei.*,
-                    r.name as rate_name, r.code as rate_code,
-                    mc.name as material_name
+                    r.name  AS rate_name,
+                    r.code  AS rate_code,
+                    ct.name AS cost_type_name,
+                    cc.name AS cost_category_name
                FROM estimate_items ei
-               LEFT JOIN rates r ON ei.rate_id = r.id
-               LEFT JOIN material_catalog mc ON ei.material_id = mc.id
+               LEFT JOIN rates r            ON ei.rate_id = r.id
+               LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
+               LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
                WHERE ei.estimate_id = ANY($1)
-               ORDER BY ei.sort_order, ei.created_at`,
+               ORDER BY cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
             [estimateIds],
           )
         ).rows
       : [];
 
-    const sectionsWithItems = sectionsRows.map((s) => ({
-      ...s,
-      items: itemsRows.filter((i) => i.section_id === s.id),
+    const materialsRows = estimateIds.length
+      ? (
+          await fastify.pool.query(
+            `SELECT em.*, mc.name AS material_name
+               FROM estimate_materials em
+               LEFT JOIN material_catalog mc ON em.material_id = mc.id
+               WHERE em.estimate_id = ANY($1)
+               ORDER BY em.sort_order, em.created_at`,
+            [estimateIds],
+          )
+        ).rows
+      : [];
+
+    const contractorsRows = estimateIds.length
+      ? (
+          await fastify.pool.query(
+            `SELECT ec.estimate_id, ec.cost_type_id, ec.contractor_id,
+                    o.name  AS contractor_name,
+                    ct.name AS cost_type_name,
+                    cc.id   AS cost_category_id,
+                    cc.name AS cost_category_name
+               FROM estimate_contractors ec
+               LEFT JOIN organizations o    ON ec.contractor_id = o.id
+               LEFT JOIN cost_types ct      ON ec.cost_type_id = ct.id
+               LEFT JOIN cost_categories cc ON ct.category_id = cc.id
+               WHERE ec.estimate_id = ANY($1)`,
+            [estimateIds],
+          )
+        ).rows
+      : [];
+
+    const itemsWithMaterials = itemsRows.map((it) => ({
+      ...it,
+      materials: materialsRows.filter((m) => m.item_id === it.id),
     }));
 
-    const estimatesWithSections = estimates.map((e) => ({
+    const estimatesWithItems = estimates.map((e) => ({
       ...e,
-      sections: sectionsWithItems.filter((s) => s.estimate_id === e.id),
+      items: itemsWithMaterials.filter((it) => it.estimate_id === e.id),
+      contractors: contractorsRows.filter((c) => c.estimate_id === e.id),
     }));
 
     const grandTotal = estimates.reduce((acc, e) => acc + Number(e.total_amount || 0), 0);
@@ -126,7 +142,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     return {
       data: {
         project: projectRows[0],
-        estimates: estimatesWithSections,
+        estimates: estimatesWithItems,
         grandTotal,
       },
     };

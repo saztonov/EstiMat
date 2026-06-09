@@ -14,28 +14,12 @@ export const updateEstimateSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
-export const ESTIMATE_ITEM_TYPES = ['work', 'material'] as const;
-export type EstimateItemType = (typeof ESTIMATE_ITEM_TYPES)[number];
-
-export const createEstimateSectionSchema = z.object({
-  costCategoryId: z.string().uuid(),
-  costTypeId: z.string().uuid(),
-  contractorId: z.string().uuid().nullable().optional(),
-  sortOrder: z.number().int().default(0),
-});
-
-export const updateEstimateSectionSchema = z.object({
-  costCategoryId: z.string().uuid().optional(),
-  costTypeId: z.string().uuid().optional(),
-  contractorId: z.string().uuid().nullable().optional(),
-  sortOrder: z.number().int().optional(),
-});
-
+// === Работы (строки сметы) ===
+// Строка работы несёт вид затрат (cost_type_id); объект и категория проставляются
+// триггером БД из сметы и вида затрат.
 export const createEstimateItemSchema = z.object({
-  sectionId: z.string().uuid().optional(),
-  itemType: z.enum(ESTIMATE_ITEM_TYPES).default('work'),
+  costTypeId: z.string().uuid().nullable().optional(),
   rateId: z.string().uuid().nullable().optional(),
-  materialId: z.string().uuid().nullable().optional(),
   description: z.string().min(1, 'Описание обязательно'),
   quantity: z.number().positive('Количество должно быть положительным'),
   unit: z.string().min(1, 'Единица измерения обязательна'),
@@ -44,6 +28,38 @@ export const createEstimateItemSchema = z.object({
 });
 
 export const updateEstimateItemSchema = createEstimateItemSchema.partial();
+
+// === Материалы (привязаны к строке работы) ===
+export const createEstimateMaterialSchema = z.object({
+  materialId: z.string().uuid().nullable().optional(),
+  description: z.string().min(1, 'Описание обязательно'),
+  quantity: z.number().positive('Количество должно быть положительным'),
+  unit: z.string().min(1, 'Единица измерения обязательна'),
+  unitPrice: z.number().min(0, 'Цена не может быть отрицательной'),
+  sortOrder: z.number().int().default(0),
+});
+
+export const updateEstimateMaterialSchema = createEstimateMaterialSchema.partial();
+
+// === Подрядчик на вид затрат (estimate + cost_type) ===
+export const setEstimateContractorSchema = z.object({
+  costTypeId: z.string().uuid(),
+  contractorId: z.string().uuid(),
+});
+
+// === Реестр строк: компонуемые фильтры ===
+export const estimateItemsQuerySchema = z.object({
+  projectId: z.string().uuid().optional(),
+  costCategoryId: z.string().uuid().optional(),
+  costTypeId: z.string().uuid().optional(),
+  contractorId: z.string().uuid().optional(),
+  materialId: z.string().uuid().optional(),
+  search: z.string().trim().min(1).optional(),
+  sortBy: z.enum(['project_code', 'description', 'total', 'created_at']).default('project_code'),
+  sortDir: z.enum(['asc', 'desc']).default('asc'),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
 
 export const estimateSchema = z.object({
   id: z.string().uuid(),
@@ -58,22 +74,12 @@ export const estimateSchema = z.object({
   updatedAt: z.string(),
 });
 
-export const estimateSectionSchema = z.object({
-  id: z.string().uuid(),
-  estimateId: z.string().uuid(),
-  costTypeId: z.string().uuid().nullable(),
-  contractorId: z.string().uuid().nullable(),
-  name: z.string(),
-  sortOrder: z.number().int(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-
 export type CreateEstimateInput = z.infer<typeof createEstimateSchema>;
 export type UpdateEstimateInput = z.infer<typeof updateEstimateSchema>;
-export type CreateEstimateSectionInput = z.infer<typeof createEstimateSectionSchema>;
-export type UpdateEstimateSectionInput = z.infer<typeof updateEstimateSectionSchema>;
 export type CreateEstimateItemInput = z.infer<typeof createEstimateItemSchema>;
 export type UpdateEstimateItemInput = z.infer<typeof updateEstimateItemSchema>;
+export type CreateEstimateMaterialInput = z.infer<typeof createEstimateMaterialSchema>;
+export type UpdateEstimateMaterialInput = z.infer<typeof updateEstimateMaterialSchema>;
+export type SetEstimateContractorInput = z.infer<typeof setEstimateContractorSchema>;
+export type EstimateItemsQuery = z.infer<typeof estimateItemsQuerySchema>;
 export type Estimate = z.infer<typeof estimateSchema>;
-export type EstimateSection = z.infer<typeof estimateSectionSchema>;
