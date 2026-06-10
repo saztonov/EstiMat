@@ -47,20 +47,6 @@ export const setEstimateContractorSchema = z.object({
   contractorId: z.string().uuid(),
 });
 
-// === Реестр строк: компонуемые фильтры ===
-export const estimateItemsQuerySchema = z.object({
-  projectId: z.string().uuid().optional(),
-  costCategoryId: z.string().uuid().optional(),
-  costTypeId: z.string().uuid().optional(),
-  contractorId: z.string().uuid().optional(),
-  materialId: z.string().uuid().optional(),
-  search: z.string().trim().min(1).optional(),
-  sortBy: z.enum(['project_code', 'description', 'total', 'created_at']).default('project_code'),
-  sortDir: z.enum(['asc', 'desc']).default('asc'),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
-});
-
 export const estimateSchema = z.object({
   id: z.string().uuid(),
   projectId: z.string().uuid(),
@@ -81,5 +67,4 @@ export type UpdateEstimateItemInput = z.infer<typeof updateEstimateItemSchema>;
 export type CreateEstimateMaterialInput = z.infer<typeof createEstimateMaterialSchema>;
 export type UpdateEstimateMaterialInput = z.infer<typeof updateEstimateMaterialSchema>;
 export type SetEstimateContractorInput = z.infer<typeof setEstimateContractorSchema>;
-export type EstimateItemsQuery = z.infer<typeof estimateItemsQuerySchema>;
 export type Estimate = z.infer<typeof estimateSchema>;

@@ -6,7 +6,6 @@ import { RegisterPage } from './pages/auth/RegisterPage';
 import { ProjectDetailPage } from './pages/projects/ProjectDetailPage';
 import { EstimatesPage } from './pages/estimates/EstimatesPage';
 import { EstimateDetailPage } from './pages/estimates/EstimateDetailPage';
-import { EstimateItemsPage } from './pages/estimate-items/EstimateItemsPage';
 import { ReferencesPage } from './pages/references/ReferencesPage';
 import { AdministrationPage } from './pages/administration/AdministrationPage';
 
@@ -22,7 +21,6 @@ export default function App() {
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/estimates" element={<EstimatesPage />} />
           <Route path="/estimates/:id" element={<EstimateDetailPage />} />
-          <Route path="/estimate-items" element={<EstimateItemsPage />} />
           <Route path="/administration" element={<AdministrationPage />} />
         </Route>
       </Route>

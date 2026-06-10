@@ -9,7 +9,6 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  UnorderedListOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../store/authStore';
 import type { MenuProps } from 'antd';
@@ -27,7 +26,6 @@ export function AppLayout() {
   const menuItems = useMemo(() => {
     const items = [
       { key: '/estimates', icon: <FileTextOutlined />, label: 'Сметы' },
-      { key: '/estimate-items', icon: <UnorderedListOutlined />, label: 'Реестр строк' },
       { key: '/references', icon: <AppstoreOutlined />, label: 'Справочники' },
     ];
     if (user?.role === 'admin') {
@@ -40,7 +38,6 @@ export function AppLayout() {
     const path = location.pathname;
     if (path.startsWith('/references')) return ['/references'];
     if (path.startsWith('/administration')) return ['/administration'];
-    if (path.startsWith('/estimate-items')) return ['/estimate-items'];
     if (path.startsWith('/estimates') || path.startsWith('/projects')) return ['/estimates'];
     return [path];
   }, [location.pathname]);

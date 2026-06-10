@@ -2,110 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import {
-  estimateItemsQuerySchema,
   createEstimateMaterialSchema,
   updateEstimateMaterialSchema,
 } from '@estimat/shared';
 
 export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
-
-  // GET /api/estimate-items — реестр строк (работ) по всем объектам с компонуемыми фильтрами
-  fastify.get('/', async (request, reply) => {
-    const parsed = estimateItemsQuerySchema.safeParse(request.query);
-    if (!parsed.success) {
-      return reply.status(400).send({ error: 'Некорректные параметры запроса' });
-    }
-    const q = parsed.data;
-
-    const conds: string[] = [];
-    const values: unknown[] = [];
-    const add = (frag: (idx: number) => string, val: unknown) => {
-      values.push(val);
-      conds.push(frag(values.length));
-    };
-
-    if (q.projectId) add((i) => `ei.project_id = $${i}`, q.projectId);
-    if (q.costCategoryId) add((i) => `ei.cost_category_id = $${i}`, q.costCategoryId);
-    if (q.costTypeId) add((i) => `ei.cost_type_id = $${i}`, q.costTypeId);
-    if (q.contractorId) add((i) => `ec.contractor_id = $${i}`, q.contractorId);
-    if (q.materialId) {
-      add(
-        (i) => `EXISTS (SELECT 1 FROM estimate_materials em2 WHERE em2.item_id = ei.id AND em2.material_id = $${i})`,
-        q.materialId,
-      );
-    }
-    if (q.search) add((i) => `ei.description ILIKE $${i}`, `%${q.search}%`);
-
-    const whereSql = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-
-    // Подсчёт total с теми же фильтрами (ec нужен для фильтра по подрядчику)
-    const countRes = await fastify.pool.query(
-      `SELECT COUNT(*)::int AS total
-       FROM estimate_items ei
-       LEFT JOIN estimate_contractors ec ON ec.estimate_id = ei.estimate_id AND ec.cost_type_id = ei.cost_type_id
-       ${whereSql}`,
-      values,
-    );
-    const total: number = countRes.rows[0]?.total ?? 0;
-
-    const sortCols: Record<string, string> = {
-      project_code: 'p.code',
-      description: 'ei.description',
-      total: 'ei.total',
-      created_at: 'ei.created_at',
-    };
-    const sortCol = sortCols[q.sortBy] ?? 'p.code';
-    const dir = q.sortDir === 'desc' ? 'DESC' : 'ASC';
-    const orderSql = `ORDER BY ${sortCol} ${dir}, ei.sort_order, ei.created_at`;
-
-    const dataValues = [...values, q.pageSize, (q.page - 1) * q.pageSize];
-    const limitIdx = values.length + 1;
-    const offsetIdx = values.length + 2;
-
-    const { rows } = await fastify.pool.query(
-      `SELECT ei.id, ei.estimate_id, ei.project_id, ei.cost_category_id, ei.cost_type_id,
-              ei.rate_id, ei.description, ei.quantity, ei.unit, ei.unit_price, ei.total,
-              ei.sort_order, ei.created_at,
-              p.code  AS project_code,
-              p.name  AS project_name,
-              cc.name AS cost_category_name,
-              ct.name AS cost_type_name,
-              r.code  AS rate_code,
-              ec.contractor_id,
-              o.name  AS contractor_name,
-              COALESCE(m.materials, '[]'::json) AS materials
-       FROM estimate_items ei
-       LEFT JOIN projects p          ON ei.project_id = p.id
-       LEFT JOIN cost_categories cc  ON ei.cost_category_id = cc.id
-       LEFT JOIN cost_types ct       ON ei.cost_type_id = ct.id
-       LEFT JOIN rates r             ON ei.rate_id = r.id
-       LEFT JOIN estimate_contractors ec ON ec.estimate_id = ei.estimate_id AND ec.cost_type_id = ei.cost_type_id
-       LEFT JOIN organizations o     ON ec.contractor_id = o.id
-       LEFT JOIN LATERAL (
-         SELECT json_agg(json_build_object(
-                  'id', em.id,
-                  'item_id', em.item_id,
-                  'material_id', em.material_id,
-                  'description', em.description,
-                  'quantity', em.quantity,
-                  'unit', em.unit,
-                  'unit_price', em.unit_price,
-                  'total', em.total,
-                  'material_name', mc.name
-                ) ORDER BY em.sort_order, em.created_at) AS materials
-         FROM estimate_materials em
-         LEFT JOIN material_catalog mc ON em.material_id = mc.id
-         WHERE em.item_id = ei.id
-       ) m ON true
-       ${whereSql}
-       ${orderSql}
-       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
-      dataValues,
-    );
-
-    return { data: rows, pagination: { page: q.page, pageSize: q.pageSize, total } };
-  });
 
   // === Материалы (под работой) ===
 
