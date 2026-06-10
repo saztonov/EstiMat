@@ -26,6 +26,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { UnitSelect } from '../../../components/UnitSelect';
 import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/estimateSelectionStore';
+import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
+import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
 import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
 import { formatMoney } from './types';
 
@@ -76,6 +78,9 @@ interface WorkEdit {
   unit: string;
   quantity: number;
   unitPrice: number;
+  // Исходные значения — чтобы поймать изменение названия существующей работы
+  originalDescription: string;
+  originalRateId: string | null;
 }
 
 interface MaterialEdit {
@@ -338,6 +343,8 @@ export function CostTypeGroupBlock({
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
   const [saving, setSaving] = useState(false);
+  // Ожидающее сохранение, пока открыта модалка синхронизации названия со справочником
+  const [pendingSync, setPendingSync] = useState<SaveWorkPayload | null>(null);
   const [internalCollapsed, setInternalCollapsed] = useState(collapsible && defaultCollapsed);
   const collapsed = onToggleCollapsed ? !!controlledCollapsed : internalCollapsed;
   const toggleCollapsed = onToggleCollapsed ?? (() => setInternalCollapsed((c) => !c));
@@ -346,6 +353,9 @@ export function CostTypeGroupBlock({
   const selectWork = useEstimateSelectionStore((s) => s.selectWork);
   const activeCostTypeId = useEstimateSelectionStore((s) => s.activeCostTypeId);
   const selectCostType = useEstimateSelectionStore((s) => s.selectCostType);
+  const revealInRatesTree = useEstimateSelectionStore((s) => s.revealInRatesTree);
+  const showArea = useWorkspaceLayoutStore((s) => s.showArea);
+  const openSection = useWorkspaceLayoutStore((s) => s.openSection);
 
   // Контекст вида работ — для активации (клик по шапке/строке) и подсветки.
   const ctx: CostTypeCtx = {
@@ -426,6 +436,33 @@ export function CostTypeGroupBlock({
     }
   }
 
+  // Открыть строку работы на редактирование (кнопка-карандаш или двойной клик).
+  function startEditWork(r: EstimateItem) {
+    setEditing({
+      workId: r.id,
+      rateId: r.rate_id,
+      description: r.description,
+      unit: r.unit,
+      quantity: Number(r.quantity),
+      unitPrice: Number(r.unit_price),
+      originalDescription: r.description,
+      originalRateId: r.rate_id,
+    });
+  }
+
+  async function doSave(payload: SaveWorkPayload, workId: string | null) {
+    setSaving(true);
+    try {
+      if (workId) await onUpdateWork(workId, payload);
+      else await onCreateWork(group.costTypeId, payload);
+      setEditing(null);
+    } catch {
+      /* ошибку покажет мутация */
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function commit() {
     if (!editing || saving) return;
     const description = editing.description.trim();
@@ -443,16 +480,27 @@ export function CostTypeGroupBlock({
       quantity: editing.quantity,
       unitPrice: editing.unitPrice,
     };
-    setSaving(true);
-    try {
-      if (editing.workId) await onUpdateWork(editing.workId, payload);
-      else await onCreateWork(group.costTypeId, payload);
-      setEditing(null);
-    } catch {
-      /* ошибку покажет мутация */
-    } finally {
-      setSaving(false);
+
+    // Название существующей работы изменили вручную (не выбором другой расценки) —
+    // уточняем, как поступить со справочником наименований.
+    if (
+      editing.workId &&
+      description !== editing.originalDescription.trim() &&
+      editing.rateId === editing.originalRateId
+    ) {
+      setPendingSync(payload);
+      return;
     }
+
+    await doSave(payload, editing.workId);
+  }
+
+  // Ответ модалки синхронизации: null — вернуться в редактирование без сохранения.
+  async function resolveSync(resolution: SyncRateNameResolution | null) {
+    const payload = pendingSync;
+    setPendingSync(null);
+    if (!resolution || !payload || !editing) return;
+    await doSave({ ...payload, description: resolution.description, rateId: resolution.rateId }, editing.workId);
   }
 
   const columns: ColumnsType<EstimateItem> = [
@@ -515,7 +563,7 @@ export function CostTypeGroupBlock({
             return (
               <Space size={4}>
                 <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
-                  onClick={() => setEditing({ workId: r.id, rateId: r.rate_id, description: r.description, unit: r.unit, quantity: Number(r.quantity), unitPrice: Number(r.unit_price) })} />
+                  onClick={() => startEditWork(r)} />
                 <Popconfirm title="Удалить работу со всеми материалами?" onConfirm={() => onDeleteWork(r.id)}>
                   <Button type="text" size="small" danger disabled={!!editing} icon={<DeleteOutlined />} />
                 </Popconfirm>
@@ -552,10 +600,17 @@ export function CostTypeGroupBlock({
           cursor: group.costTypeId ? 'pointer' : 'default',
           userSelect: 'none',
         }}
-        title={group.costTypeId ? 'Клик — сделать вид работ активным (наименования из справочника уйдут сюда)' : undefined}
+        title={group.costTypeId ? 'Клик — выделить вид работ; двойной клик — показать в справочнике' : undefined}
         onClick={(e) => {
           if ((e.target as HTMLElement).closest('button, .ant-select, .ant-popover, .ant-popconfirm, .estimat-caret')) return;
           if (group.costTypeId) selectCostType(ctx);
+        }}
+        onDoubleClick={(e) => {
+          if ((e.target as HTMLElement).closest('button, .ant-select, .ant-popover, .ant-popconfirm, .estimat-caret')) return;
+          if (!group.costTypeId) return;
+          showArea('refs');
+          openSection('works');
+          revealInRatesTree(group.costCategoryId, group.costTypeId);
         }}
       >
         {collapsible && (
@@ -598,7 +653,7 @@ export function CostTypeGroupBlock({
         <span style={{ flex: 1 }} />
         <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>
         {editable && (
-          <Button type="primary" size="small" icon={<PlusOutlined />} disabled={!!editing} onClick={() => setEditing({ workId: null, rateId: null, description: '', unit: '', quantity: 1, unitPrice: 0 })}>
+          <Button type="primary" size="small" icon={<PlusOutlined />} disabled={!!editing} onClick={() => setEditing({ workId: null, rateId: null, description: '', unit: '', quantity: 1, unitPrice: 0, originalDescription: '', originalRateId: null })}>
             Работа
           </Button>
         )}
@@ -634,6 +689,17 @@ export function CostTypeGroupBlock({
                     selectWork(r.id, r.description, ctx);
                     setExpandedKeys((keys) => (keys.includes(r.id) ? keys : [...keys, r.id]));
                   },
+                  // Двойной клик по строке — режим редактирования работы
+                  onDoubleClick: (e) => {
+                    if (r.id === DRAFT_ID || isRowInEdit(r) || editing) return;
+                    if (
+                      (e.target as HTMLElement).closest(
+                        '.ant-table-row-expand-icon, button, input, .ant-select, .ant-input-number, .ant-popover, .ant-popconfirm',
+                      )
+                    )
+                      return;
+                    startEditWork(r);
+                  },
                 })
               : undefined
           }
@@ -651,6 +717,19 @@ export function CostTypeGroupBlock({
               />
             ),
           }}
+        />
+      )}
+
+      {editing && (
+        <SyncRateNameModal
+          open={!!pendingSync}
+          oldName={editing.originalDescription}
+          newName={pendingSync?.description ?? editing.description}
+          rateId={editing.rateId}
+          costTypeId={group.costTypeId}
+          unit={pendingSync?.unit ?? editing.unit}
+          unitPrice={pendingSync?.unitPrice ?? editing.unitPrice}
+          onResolve={resolveSync}
         />
       )}
     </div>

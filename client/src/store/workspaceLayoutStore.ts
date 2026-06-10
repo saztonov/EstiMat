@@ -16,9 +16,13 @@ interface WorkspaceLayoutState {
   collapsedSections: Record<RefSectionId, boolean>;
 
   toggleArea: (area: 'ai' | 'refs') => void;
+  /** Принудительно показать область (для программного раскрытия справочников). */
+  showArea: (area: 'ai' | 'refs') => void;
   setAiExpanded: (v: boolean) => void;
   setColSizes: (ids: PanelId[], sizesPx: number[]) => void;
   toggleSection: (id: RefSectionId) => void;
+  /** Принудительно развернуть секцию справочника. */
+  openSection: (id: RefSectionId) => void;
 }
 
 // Splitter отдаёт пиксели — храним проценты (устойчиво к ресайзу окна)
@@ -38,6 +42,9 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutState>()(
       toggleArea: (area) =>
         set((s) => ({ visibility: { ...s.visibility, [area]: !s.visibility[area] } })),
 
+      showArea: (area) =>
+        set((s) => ({ visibility: { ...s.visibility, [area]: true } })),
+
       setAiExpanded: (v) => set({ aiExpanded: v }),
 
       setColSizes: (ids, sizesPx) =>
@@ -53,6 +60,11 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutState>()(
       toggleSection: (id) =>
         set((s) => ({
           collapsedSections: { ...s.collapsedSections, [id]: !s.collapsedSections[id] },
+        })),
+
+      openSection: (id) =>
+        set((s) => ({
+          collapsedSections: { ...s.collapsedSections, [id]: false },
         })),
     }),
     { name: 'estimat:workspace-layout', version: 1 },

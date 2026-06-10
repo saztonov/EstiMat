@@ -12,6 +12,7 @@ import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } fr
 import type { CostTypeGroup } from '../components/types';
 import { formatMoney } from '../components/types';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
+import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { PanelShell } from './PanelShell';
 
 interface Organization {
@@ -75,6 +76,9 @@ export function SmetaPanel({
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
   const selectCategory = useEstimateSelectionStore((s) => s.selectCategory);
   const activeCostCategoryId = useEstimateSelectionStore((s) => s.activeCostCategoryId);
+  const revealInRatesTree = useEstimateSelectionStore((s) => s.revealInRatesTree);
+  const showArea = useWorkspaceLayoutStore((s) => s.showArea);
+  const openSection = useWorkspaceLayoutStore((s) => s.openSection);
 
   // Опции отборов — из самих групп (показываем только то, что есть).
   const categoryOptions = useMemo(() => {
@@ -229,7 +233,14 @@ export function SmetaPanel({
                       if ((e.target as HTMLElement).closest('.estimat-caret')) return;
                       if (sec.id !== NO_CATEGORY) selectCategory(sec.id, sec.name);
                     }}
-                    title={sec.id !== NO_CATEGORY ? 'Клик — сделать категорию активной' : undefined}
+                    onDoubleClick={(e) => {
+                      if ((e.target as HTMLElement).closest('.estimat-caret')) return;
+                      if (sec.id === NO_CATEGORY) return;
+                      showArea('refs');
+                      openSection('works');
+                      revealInRatesTree(sec.id);
+                    }}
+                    title={sec.id !== NO_CATEGORY ? 'Клик — выделить категорию; двойной клик — показать в справочнике' : undefined}
                     style={{
                       display: 'flex',
                       alignItems: 'center',

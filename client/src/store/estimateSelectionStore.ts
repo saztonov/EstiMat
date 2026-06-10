@@ -8,27 +8,39 @@ export interface CostTypeCtx {
   costCategoryName: string | null;
 }
 
+// Запрос «показать в дереве справочника работ»: ключи узлов для раскрытия
+// (формат treeMappers: cat:<id>, type:<id>) и целевой узел для прокрутки.
+export interface RatesTreeReveal {
+  keys: string[];
+  targetKey: string;
+  nonce: number;
+}
+
 // Транзиентное выделение в окне ввода сметы. Нужно для двух сценариев:
 //  - двойной клик по материалу в справочнике → к выделенной работе (selectedWorkId);
-//  - двойной клик по наименованию в справочнике → в активный вид работ (activeCostTypeId).
-// Активный вид/категория задаются кликом в смете (по строке работы, заголовку
-// вида работ или заголовку категории). Не персистится — живёт только в сессии.
+//  - двойной клик по виду/категории в смете → раскрыть это место в дереве справочника.
+// Активный вид/категория (клик в смете) — визуальная подсветка текущего контекста.
+// Не персистится — живёт только в сессии.
 interface EstimateSelectionState {
   selectedWorkId: string | null;
   selectedWorkLabel: string | null;
-  // Активная цель для наименований из справочника
+  // Активный контекст в смете (подсветка вида работ/категории)
   activeCostTypeId: string | null;
   activeCostTypeName: string | null;
   activeCostCategoryId: string | null;
   activeCostCategoryName: string | null;
+  // Запрос раскрытия дерева справочника работ (двойной клик по виду/категории в смете)
+  revealRequest: RatesTreeReveal | null;
 
-  // Клик по строке работы: и работа (для материалов), и её вид (для наименований).
+  // Клик по строке работы: и работа (для материалов), и её вид (для подсветки).
   selectWork: (id: string, label: string, ctx?: CostTypeCtx) => void;
   // Клик по заголовку вида работ: активный вид, конкретная работа сбрасывается.
   selectCostType: (ctx: CostTypeCtx) => void;
   // Клик по заголовку категории: активная категория, вид и работа сбрасываются.
   selectCategory: (id: string, name: string) => void;
   clearWork: () => void;
+  // Двойной клик по виду/категории в смете — раскрыть их в дереве справочника.
+  revealInRatesTree: (categoryId: string | null, costTypeId?: string | null) => void;
 }
 
 export const useEstimateSelectionStore = create<EstimateSelectionState>((set) => ({
@@ -38,6 +50,7 @@ export const useEstimateSelectionStore = create<EstimateSelectionState>((set) =>
   activeCostTypeName: null,
   activeCostCategoryId: null,
   activeCostCategoryName: null,
+  revealRequest: null,
 
   selectWork: (id, label, ctx) =>
     set(
@@ -74,4 +87,20 @@ export const useEstimateSelectionStore = create<EstimateSelectionState>((set) =>
     }),
 
   clearWork: () => set({ selectedWorkId: null, selectedWorkLabel: null }),
+
+  revealInRatesTree: (categoryId, costTypeId) =>
+    set((s) => {
+      const keys: string[] = [];
+      if (categoryId) keys.push(`cat:${categoryId}`);
+      if (costTypeId) keys.push(`type:${costTypeId}`);
+      const targetKey = keys[keys.length - 1];
+      if (!targetKey) return {};
+      return {
+        revealRequest: {
+          keys,
+          targetKey,
+          nonce: (s.revealRequest?.nonce ?? 0) + 1,
+        },
+      };
+    }),
 }));

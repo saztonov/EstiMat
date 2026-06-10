@@ -1,9 +1,10 @@
-import { useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import type { Key, ReactNode } from 'react';
 import { Input, Tree, Button, Tooltip, Spin, Empty } from 'antd';
 import { SearchOutlined, PlusOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
+import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { SectionShell } from './SectionShell';
 import { mapRatesTreeToNodes, filterRateNodes, type RateTreeNode } from './treeMappers';
 import type { RateTreeCategory, RateLeafPayload } from './types';
@@ -35,11 +36,30 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
   const [search, setSearch] = useState('');
   const [userExpanded, setUserExpanded] = useState<Key[]>([]);
   const lastAdd = useRef<{ id: string; ts: number }>({ id: '', ts: 0 });
+  const treeWrapRef = useRef<HTMLDivElement>(null);
+  const lastRevealNonce = useRef(0);
+
+  // Запрос «показать в дереве» (двойной клик по виду/категории в смете)
+  const revealRequest = useEstimateSelectionStore((s) => s.revealRequest);
 
   const { data, isLoading } = useQuery({
     queryKey: ['rates-tree'],
     queryFn: () => api.get<{ data: RateTreeCategory[] }>('/rates/tree'),
   });
+
+  // Раскрыть категорию/вид и прокрутить к целевому узлу.
+  useEffect(() => {
+    if (!revealRequest || revealRequest.nonce === lastRevealNonce.current) return;
+    lastRevealNonce.current = revealRequest.nonce;
+    setSearch('');
+    setUserExpanded((prev) => [...new Set<Key>([...prev, ...revealRequest.keys])]);
+    const target = revealRequest.targetKey;
+    setTimeout(() => {
+      treeWrapRef.current
+        ?.querySelector(`[data-tree-key="${CSS.escape(target)}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 120);
+  }, [revealRequest]);
 
   const nodes = useMemo(() => mapRatesTreeToNodes(data?.data ?? []), [data]);
   const allExpandableKeys = useMemo(() => collectExpandableKeys(nodes), [nodes]);
@@ -92,7 +112,7 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
     }
     const badge = node.nodeKind === 'cat' ? 'Категория' : 'Вид работ';
     return (
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span data-tree-key={String(node.key)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ fontWeight: node.nodeKind === 'cat' ? 600 : 400 }}>{node.title as string}</span>
         <span className="estimat-tree-badge">{badge}</span>
       </span>
@@ -129,17 +149,19 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
       ) : treeData.length === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Ничего не найдено" />
       ) : (
-        <Tree<RateTreeNode>
-          className="estimat-ref-tree"
-          treeData={treeData}
-          blockNode
-          selectable={false}
-          titleRender={titleRender}
-          expandedKeys={searching ? autoExpand : userExpanded}
-          onExpand={(keys) => {
-            if (!searching) setUserExpanded(keys);
-          }}
-        />
+        <div ref={treeWrapRef}>
+          <Tree<RateTreeNode>
+            className="estimat-ref-tree"
+            treeData={treeData}
+            blockNode
+            selectable={false}
+            titleRender={titleRender}
+            expandedKeys={searching ? autoExpand : userExpanded}
+            onExpand={(keys) => {
+              if (!searching) setUserExpanded(keys);
+            }}
+          />
+        </div>
       )}
     </SectionShell>
   );
