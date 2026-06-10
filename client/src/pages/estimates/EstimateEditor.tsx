@@ -122,21 +122,11 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
-  const statusMutation = useMutation({
-    mutationFn: (status: string) => api.put(`/estimates/${estimateId}/status`, { status }),
-    onSuccess: () => {
-      invalidate();
-      message.success('Статус обновлён');
-    },
-    onError: (e: Error) => message.error(e.message),
-  });
-
   const groups = useMemo(
     () => buildCostTypeGroups(estimate.items, estimate.contractors, pendingGroups),
     [estimate, pendingGroups],
   );
 
-  const isDraft = estimate.status === 'draft';
   const totalItems = estimate.items?.length ?? 0;
 
   const handleAddCostType = (payload: CostTypeFormPayload) => {
@@ -207,13 +197,11 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         estimate={estimate}
         groups={groups}
         orgs={orgs}
-        isDraft={isDraft}
         totalItems={totalItems}
         groupCount={groups.length}
         onBack={onBack}
         onEdit={() => setEditEstimateOpen(true)}
         onAddCostType={() => setCostTypeModalOpen(true)}
-        onChangeStatus={(s) => statusMutation.mutate(s)}
         onCreateWork={createWork}
         onUpdateWork={updateWork}
         onDeleteWork={(workId) => deleteWorkMutation.mutate(workId)}

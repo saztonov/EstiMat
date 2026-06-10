@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { ESTIMATE_STATUSES } from '../constants/statuses.js';
 
 export const createEstimateSchema = z.object({
   projectId: z.string().uuid(),
@@ -52,7 +51,6 @@ export const estimateSchema = z.object({
   projectId: z.string().uuid(),
   costCategoryId: z.string().uuid().nullable(),
   workType: z.string().nullable(),
-  status: z.enum(ESTIMATE_STATUSES),
   totalAmount: z.string(),
   createdBy: z.string().uuid(),
   notes: z.string().nullable(),

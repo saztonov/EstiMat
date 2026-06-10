@@ -157,32 +157,6 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     },
   );
 
-  // PUT /api/estimates/:id/status
-  fastify.put<{ Params: { id: string } }>('/:id/status', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
-    const { status } = request.body as { status: string };
-    const updates = status === 'approved'
-      ? 'status = $1, approved_by = $2, approved_at = now()'
-      : 'status = $1';
-    const values = status === 'approved'
-      ? [status, request.currentUser.id, request.params.id]
-      : [status, request.params.id];
-    const paramIdx = status === 'approved' ? 3 : 2;
-
-    const { rows } = await fastify.pool.query(
-      `UPDATE estimates SET ${updates} WHERE id = $${paramIdx} RETURNING *`,
-      values,
-    );
-    if (rows.length === 0) return reply.status(404).send({ error: 'Смета не найдена' });
-
-    await fastify.pool.query(
-      `INSERT INTO audit_log (entity_type, entity_id, action, user_id, changes)
-       VALUES ('estimate', $1, $2, $3, $4)`,
-      [request.params.id, `status_changed_to_${status}`, request.currentUser.id, JSON.stringify({ status })],
-    );
-
-    return { data: rows[0] };
-  });
-
   // === Подрядчик на вид затрат ===
 
   // PUT /api/estimates/:id/contractors — назначить/сменить подрядчика для вида затрат

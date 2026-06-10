@@ -20,13 +20,11 @@ interface Props {
   estimate: EstimateDetail;
   groups: CostTypeGroup[];
   orgs?: Organization[];
-  isDraft: boolean;
   totalItems: number;
   groupCount: number;
   onBack: () => void;
   onEdit: () => void;
   onAddCostType: () => void;
-  onChangeStatus: (status: string) => void;
   onCreateWork: (costTypeId: string | null, payload: SaveWorkPayload) => Promise<void>;
   onUpdateWork: (workId: string, payload: SaveWorkPayload) => Promise<void>;
   onDeleteWork: (workId: string) => void;
@@ -77,7 +75,7 @@ function AiRail({ onClick }: { onClick: () => void }) {
 }
 
 export function EstimateWorkspace(props: Props) {
-  const { estimate, groups, orgs, isDraft, totalItems, groupCount } = props;
+  const { estimate, groups, orgs, totalItems, groupCount } = props;
   const { visibility, aiExpanded, colSizes, setColSizes, setAiExpanded } = useWorkspaceLayoutStore();
 
   // Состав видимых колонок: смета всегда; справочники и ИИ — по тумблерам.
@@ -131,11 +129,9 @@ export function EstimateWorkspace(props: Props) {
         estimate={estimate}
         totalItems={totalItems}
         groupCount={groupCount}
-        isDraft={isDraft}
         onBack={props.onBack}
         onEdit={props.onEdit}
         onAddCostType={props.onAddCostType}
-        onChangeStatus={props.onChangeStatus}
       />
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: 12, background: '#f5f5f5' }}>

@@ -51,7 +51,6 @@ export interface EstimateDetail {
   cost_category_id: string | null;
   cost_category_name: string | null;
   work_type: string | null;
-  status: string;
   total_amount: string;
   notes: string | null;
   items: EstimateItem[];
