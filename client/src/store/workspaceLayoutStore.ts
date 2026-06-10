@@ -24,7 +24,7 @@ interface WorkspaceLayoutState {
 // Splitter отдаёт пиксели — храним проценты (устойчиво к ресайзу окна)
 const toPercents = (px: number[]): number[] => {
   const total = px.reduce((a, b) => a + b, 0) || 1;
-  return px.map((p) => Math.round((p / total) * 1000) / 10);
+  return px.map((p) => Math.round((p / total) * 10000) / 100);
 };
 
 export const useWorkspaceLayoutStore = create<WorkspaceLayoutState>()(

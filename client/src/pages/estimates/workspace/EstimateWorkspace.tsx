@@ -80,8 +80,6 @@ export function EstimateWorkspace(props: Props) {
   const { estimate, groups, orgs, isDraft, totalItems, groupCount } = props;
   const { visibility, aiExpanded, colSizes, setColSizes, setAiExpanded } = useWorkspaceLayoutStore();
 
-  const colDefault = (id: PanelId, fb: string) => (colSizes[id] != null ? `${colSizes[id]}%` : fb);
-
   // Состав видимых колонок: смета всегда; справочники и ИИ — по тумблерам.
   const panels: { id: PanelId; node: ReactNode; min: number; fb: string }[] = [
     {
@@ -121,6 +119,12 @@ export function EstimateWorkspace(props: Props) {
     panels.push({ id: 'ai', min: 300, fb: '30%', node: <AiChatPanel onCollapse={() => setAiExpanded(false)} /> });
   }
 
+  // Управляемые размеры: сохранённые проценты или fallback, нормированные к 100
+  // для текущего набора видимых колонок (Splitter сам не пересчитывает при добавлении панели).
+  const rawPcts = panels.map((p) => colSizes[p.id] ?? parseFloat(p.fb));
+  const pctSum = rawPcts.reduce((a, b) => a + b, 0) || 1;
+  const pcts = rawPcts.map((v) => (v / pctSum) * 100);
+
   return (
     <div style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
       <WorkspaceToolbar
@@ -137,14 +141,10 @@ export function EstimateWorkspace(props: Props) {
       <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: 12, background: '#f5f5f5' }}>
         <Splitter
           style={{ flex: 1, height: '100%' }}
-          onResizeEnd={(sizes) => setColSizes(panels.map((p) => p.id), sizes)}
+          onResize={(sizes) => setColSizes(panels.map((p) => p.id), sizes)}
         >
           {panels.map((p, i) => (
-            <Splitter.Panel
-              key={p.id}
-              min={p.min}
-              defaultSize={i < panels.length - 1 ? colDefault(p.id, p.fb) : undefined}
-            >
+            <Splitter.Panel key={p.id} min={p.min} size={`${pcts[i]}%`}>
               {p.node}
             </Splitter.Panel>
           ))}
