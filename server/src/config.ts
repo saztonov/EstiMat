@@ -38,4 +38,27 @@ export const config = {
     secretKey: process.env.S3_SECRET_KEY || '',
     bucket: process.env.S3_BUCKET || 'estimat-files',
   },
+
+  // Портал РД (RDLOCAL): Supabase PostgREST + Cloudflare R2, только чтение.
+  // Все переменные необязательны — без них секция РД показывает «не настроено».
+  rd: {
+    supabaseUrl: (process.env.RD_SUPABASE_URL || '').replace(/\/+$/, ''),
+    supabaseKey: process.env.RD_SUPABASE_KEY || '',
+    r2: {
+      endpoint: process.env.RD_R2_ENDPOINT || '',
+      accessKeyId: process.env.RD_R2_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.RD_R2_SECRET_ACCESS_KEY || '',
+      bucket: process.env.RD_R2_BUCKET || '',
+    },
+    get enabled(): boolean {
+      return Boolean(
+        this.supabaseUrl &&
+          this.supabaseKey &&
+          this.r2.endpoint &&
+          this.r2.accessKeyId &&
+          this.r2.secretAccessKey &&
+          this.r2.bucket,
+      );
+    },
+  },
 } as const;

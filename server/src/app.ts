@@ -82,6 +82,9 @@ export async function buildApp() {
   // Database plugin
   await app.register(import('./plugins/database.js'));
 
+  // RD portal (RDLOCAL, read-only) — опционально, по env RD_*
+  await app.register(import('./plugins/rd-portal.js'));
+
   // Routes
   await app.register(import('./routes/auth/index.js'), { prefix: '/api/auth' });
   await app.register(import('./routes/organizations/index.js'), { prefix: '/api/organizations' });
@@ -93,6 +96,7 @@ export async function buildApp() {
   await app.register(import('./routes/estimate-items/index.js'), { prefix: '/api/estimate-items' });
   await app.register(import('./routes/users/index.js'), { prefix: '/api/users' });
   await app.register(import('./routes/uploads/index.js'), { prefix: '/api/uploads' });
+  await app.register(import('./routes/rd/index.js'), { prefix: '/api/rd' });
 
   // Health check
   app.get('/api/health', async () => ({ status: 'ok' }));
