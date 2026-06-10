@@ -215,7 +215,29 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
           body.sortOrder,
         ],
       );
-      return reply.status(201).send({ data: rows[0] });
+      const item = rows[0];
+
+      // Типовые материалы расценки добавляются автоматически со статусом
+      // 'suggested' («предложение»): количество = объём работы × коэффициент расхода.
+      let materials: unknown[] = [];
+      if (body.rateId) {
+        const inserted = await fastify.pool.query(
+          `INSERT INTO estimate_materials
+             (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status)
+           SELECT $1, $2, mc.id, mc.name,
+                  ROUND($3::numeric * rm.qty_ratio, 4), mc.unit,
+                  COALESCE(mc.unit_price, 0), rm.sort_order, 'suggested'
+           FROM rate_materials rm
+           JOIN material_catalog mc ON mc.id = rm.material_id
+           WHERE rm.rate_id = $4 AND mc.is_active
+           ORDER BY rm.sort_order
+           RETURNING *`,
+          [item.id, request.params.id, body.quantity, body.rateId],
+        );
+        materials = inserted.rows;
+      }
+
+      return reply.status(201).send({ data: { ...item, materials } });
     },
   );
 

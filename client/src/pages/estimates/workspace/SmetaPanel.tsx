@@ -35,6 +35,7 @@ interface Props {
   onCreateMaterial: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
   onUpdateMaterial: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDeleteMaterial: (materialId: string) => void;
+  onConfirmMaterial: (materialId: string) => void;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;
 }
@@ -67,6 +68,7 @@ export function SmetaPanel({
   onCreateMaterial,
   onUpdateMaterial,
   onDeleteMaterial,
+  onConfirmMaterial,
   onSetContractor,
   onClearContractor,
 }: Props) {
@@ -165,6 +167,7 @@ export function SmetaPanel({
     onCreateMaterial,
     onUpdateMaterial,
     onDeleteMaterial,
+    onConfirmMaterial,
     onSetContractor,
     onClearContractor,
   };

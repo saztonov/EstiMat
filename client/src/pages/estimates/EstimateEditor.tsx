@@ -108,6 +108,17 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
+  // Подтверждение «предложенного» материала (добавлен автоматически по типовому набору расценки)
+  const confirmMaterialMutation = useMutation({
+    mutationFn: (materialId: string) =>
+      api.put(`/estimate-items/materials/${materialId}`, { status: 'confirmed' }),
+    onSuccess: () => {
+      invalidate();
+      message.success('Материал подтверждён');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
   const setContractorMutation = useMutation({
     mutationFn: ({ costTypeId, contractorId }: { costTypeId: string; contractorId: string }) =>
       api.put(`/estimates/${estimateId}/contractors`, { costTypeId, contractorId }),
@@ -208,6 +219,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         onCreateMaterial={createMaterial}
         onUpdateMaterial={updateMaterial}
         onDeleteMaterial={(materialId) => deleteMaterialMutation.mutate(materialId)}
+        onConfirmMaterial={(materialId) => confirmMaterialMutation.mutate(materialId)}
         onSetContractor={(costTypeId, contractorId) =>
           setContractorMutation.mutate({ costTypeId, contractorId })
         }

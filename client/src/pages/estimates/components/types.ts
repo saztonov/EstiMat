@@ -9,6 +9,9 @@ export interface EstimateMaterial {
   total: string;
   sort_order?: number;
   material_name: string | null;
+  /** 'suggested' — добавлен автоматически по типовому набору расценки («предложение»),
+   *  требует подтверждения ✓ или удаления ✗; 'confirmed' — подтверждён. */
+  status: 'suggested' | 'confirmed';
 }
 
 // Строка сметы = работа. Несёт измерения (объект/категория/вид затрат)

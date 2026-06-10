@@ -101,12 +101,14 @@ function MaterialsSubTable({
   onCreate,
   onUpdate,
   onDelete,
+  onConfirm,
 }: {
   work: EstimateItem;
   editable: boolean;
   onCreate: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
   onUpdate: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDelete: (materialId: string) => void;
+  onConfirm: (materialId: string) => void;
 }) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<MaterialEdit | null>(null);
@@ -142,6 +144,7 @@ function MaterialsSubTable({
       unit_price: String(editing.unitPrice),
       total: String(editing.quantity * editing.unitPrice),
       material_name: null,
+      status: 'confirmed',
     });
   }
 
@@ -218,7 +221,12 @@ function MaterialsSubTable({
             />
           );
         }
-        return v;
+        return r.status === 'suggested' ? (
+          <Space size={6}>
+            <span>{v}</span>
+            <Tag color="orange" style={{ marginInlineEnd: 0 }}>предложение</Tag>
+          </Space>
+        ) : v;
       },
     },
     { title: 'Ед.', dataIndex: 'unit', width: 64, align: 'center', render: (v: string, r) =>
@@ -248,6 +256,17 @@ function MaterialsSubTable({
                 <Space size={4}>
                   <Button type="primary" size="small" icon={<CheckOutlined />} loading={saving} onClick={commit} />
                   <Button size="small" icon={<CloseOutlined />} disabled={saving} onClick={() => setEditing(null)} />
+                </Space>
+              );
+            }
+            // Предложенный материал: подтвердить (✓) или отклонить (✗ — удаляется)
+            if (r.status === 'suggested') {
+              return (
+                <Space size={4}>
+                  <Button type="text" size="small" disabled={!!editing} title="Подтвердить материал"
+                    icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => onConfirm(r.id)} />
+                  <Button type="text" size="small" danger disabled={!!editing} title="Отклонить предложение"
+                    icon={<CloseOutlined />} onClick={() => onDelete(r.id)} />
                 </Space>
               );
             }
@@ -307,6 +326,7 @@ interface Props {
   onCreateMaterial?: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
   onUpdateMaterial?: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDeleteMaterial?: (materialId: string) => void;
+  onConfirmMaterial?: (materialId: string) => void;
   onSetContractor?: (costTypeId: string, contractorId: string) => void;
   onClearContractor?: (costTypeId: string) => void;
   collapsible?: boolean;
@@ -333,6 +353,7 @@ export function CostTypeGroupBlock({
   onCreateMaterial = noopAsync,
   onUpdateMaterial = noopAsync,
   onDeleteMaterial = noop,
+  onConfirmMaterial = noop,
   onSetContractor = noop,
   onClearContractor = noop,
   collapsible = false,
@@ -716,6 +737,7 @@ export function CostTypeGroupBlock({
                 onCreate={onCreateMaterial}
                 onUpdate={onUpdateMaterial}
                 onDelete={onDeleteMaterial}
+                onConfirm={onConfirmMaterial}
               />
             ),
           }}

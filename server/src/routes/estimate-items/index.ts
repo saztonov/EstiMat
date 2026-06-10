@@ -25,8 +25,8 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
       const body = createEstimateMaterialSchema.parse(request.body);
       const { rows } = await fastify.pool.query(
         `INSERT INTO estimate_materials
-           (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+           (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
         [
           request.params.itemId,
           work[0].estimate_id,
@@ -36,6 +36,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
           body.unit,
           body.unitPrice,
           body.sortOrder,
+          body.status,
         ],
       );
       return reply.status(201).send({ data: rows[0] });
@@ -58,6 +59,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
       if (body.unit !== undefined) { sets.push(`unit = $${i++}`); values.push(body.unit); }
       if (body.unitPrice !== undefined) { sets.push(`unit_price = $${i++}`); values.push(body.unitPrice); }
       if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
+      if (body.status !== undefined) { sets.push(`status = $${i++}`); values.push(body.status); }
 
       if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
 
