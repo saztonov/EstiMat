@@ -24,6 +24,7 @@ import {
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
+import { UnitSelect } from '../../../components/UnitSelect';
 import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/estimateSelectionStore';
 import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
 import { formatMoney } from './types';
@@ -217,7 +218,7 @@ function MaterialsSubTable({
     },
     { title: 'Ед. изм.', dataIndex: 'unit', width: 100, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
-          <Input size="small" value={editing.unit} onChange={(e) => setEditing({ ...editing, unit: e.target.value })} onPressEnter={commit} />
+          <UnitSelect size="small" style={{ width: '100%' }} value={editing.unit || undefined} onChange={(val) => setEditing({ ...editing, unit: val ?? '' })} />
         ) : v,
     },
     { title: 'Кол-во', dataIndex: 'quantity', width: 110, align: 'right', render: (v: string, r) =>
@@ -483,7 +484,7 @@ export function CostTypeGroupBlock({
     },
     { title: 'Ед. изм.', dataIndex: 'unit', width: 110, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
-          <Input size="small" value={editing.unit} onChange={(e) => setEditing({ ...editing, unit: e.target.value })} onPressEnter={commit} />
+          <UnitSelect size="small" style={{ width: '100%' }} value={editing.unit || undefined} onChange={(val) => setEditing({ ...editing, unit: val ?? '' })} />
         ) : v,
     },
     { title: 'Кол-во', dataIndex: 'quantity', width: 120, align: 'right', render: (v: string, r) =>

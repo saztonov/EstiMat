@@ -3,6 +3,7 @@ import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, App } fr
 import { PlusOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { UnitSelect } from '../../components/UnitSelect';
 
 export function MaterialsPanel() {
   const [modalOpen, setModalOpen] = useState(false);
@@ -119,7 +120,7 @@ export function MaterialsPanel() {
             />
           </Form.Item>
           <Form.Item name="unit" label="Единица измерения" rules={[{ required: true }]}>
-            <Input placeholder="м, шт, кг" />
+            <UnitSelect />
           </Form.Item>
           <Form.Item name="unitPrice" label="Цена, ₽" rules={[{ required: true, type: 'number', min: 0 }]}>
             <InputNumber style={{ width: '100%' }} min={0} step={0.01} decimalSeparator="," />

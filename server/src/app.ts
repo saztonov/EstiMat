@@ -87,6 +87,7 @@ export async function buildApp() {
   await app.register(import('./routes/organizations/index.js'), { prefix: '/api/organizations' });
   await app.register(import('./routes/projects/index.js'), { prefix: '/api/projects' });
   await app.register(import('./routes/materials/index.js'), { prefix: '/api/materials' });
+  await app.register(import('./routes/units/index.js'), { prefix: '/api/units' });
   await app.register(import('./routes/rates/index.js'), { prefix: '/api/rates' });
   await app.register(import('./routes/estimates/index.js'), { prefix: '/api/estimates' });
   await app.register(import('./routes/estimate-items/index.js'), { prefix: '/api/estimate-items' });

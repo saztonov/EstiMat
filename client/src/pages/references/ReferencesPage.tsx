@@ -4,12 +4,14 @@ import { ProjectsPanel } from './ProjectsPanel';
 import { OrganizationsPanel } from './OrganizationsPanel';
 import { MaterialsPanel } from './MaterialsPanel';
 import { RatesPanel } from './RatesPanel';
+import { UnitsPanel } from './UnitsPanel';
 
 const tabs = [
   { key: 'projects', label: 'Проекты', children: <ProjectsPanel /> },
   { key: 'organizations', label: 'Организации', children: <OrganizationsPanel /> },
   { key: 'materials', label: 'Материалы', children: <MaterialsPanel /> },
   { key: 'rates', label: 'Расценки', children: <RatesPanel /> },
+  { key: 'units', label: 'Единицы измерения', children: <UnitsPanel /> },
 ];
 
 export function ReferencesPage() {

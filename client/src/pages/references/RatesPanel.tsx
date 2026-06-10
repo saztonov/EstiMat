@@ -3,6 +3,7 @@ import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfi
 import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined, SearchOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { UnitSelect } from '../../components/UnitSelect';
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile } from 'antd/es/upload';
 
@@ -267,7 +268,7 @@ export function RatesPanel() {
             <Input />
           </Form.Item>
           <Form.Item name="unit" label="Единица измерения" rules={[{ required: true }]}>
-            <Input placeholder="м, шт, кг" />
+            <UnitSelect />
           </Form.Item>
           <Form.Item name="price" label="Цена" rules={[{ required: true, type: 'number', min: 0 }]}>
             <InputNumber style={{ width: '100%' }} />
