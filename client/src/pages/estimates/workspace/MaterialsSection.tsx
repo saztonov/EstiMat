@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { Key, ReactNode } from 'react';
 import { Input, Tree, Spin, Empty, App, Button, Tooltip } from 'antd';
-import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlusOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -65,6 +65,8 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
         })),
       }));
   }, [data]);
+
+  const allGroupKeys = useMemo<Key[]>(() => allNodes.map((g) => g.key as Key), [allNodes]);
 
   const { treeData, autoExpand } = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -141,15 +143,23 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
 
   return (
     <SectionShell title="Материалы" meta={meta} collapsed={collapsed} onToggle={onToggle}>
-      <Input
-        allowClear
-        size="small"
-        prefix={<SearchOutlined />}
-        placeholder="Поиск материала…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ marginBottom: 8 }}
-      />
+      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+        <Input
+          allowClear
+          size="small"
+          prefix={<SearchOutlined />}
+          placeholder="Поиск материала…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1 }}
+        />
+        <Tooltip title="Развернуть всё">
+          <Button size="small" icon={<DownOutlined />} onClick={() => setExpanded(allGroupKeys)} />
+        </Tooltip>
+        <Tooltip title="Свернуть всё">
+          <Button size="small" icon={<UpOutlined />} onClick={() => setExpanded([])} />
+        </Tooltip>
+      </div>
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: 20 }}>
           <Spin />

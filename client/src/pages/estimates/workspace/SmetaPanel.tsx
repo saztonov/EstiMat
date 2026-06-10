@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react';
-import { Button, Empty, Select, Space } from 'antd';
+import { Button, Empty, Select, Space, Tooltip } from 'antd';
 import {
   PlusOutlined,
   TableOutlined,
   CaretRightOutlined,
   CaretDownOutlined,
+  DownOutlined,
+  UpOutlined,
 } from '@ant-design/icons';
 import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import type { CostTypeGroup } from '../components/types';
 import { formatMoney } from '../components/types';
+import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { PanelShell } from './PanelShell';
 
 interface Organization {
@@ -69,6 +72,9 @@ export function SmetaPanel({
   const [categoryFilter, setCategoryFilter] = useState<string | undefined>();
   const [typeFilter, setTypeFilter] = useState<string | undefined>();
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
+  const selectCategory = useEstimateSelectionStore((s) => s.selectCategory);
+  const activeCostCategoryId = useEstimateSelectionStore((s) => s.activeCostCategoryId);
 
   // Опции отборов — из самих групп (показываем только то, что есть).
   const categoryOptions = useMemo(() => {
@@ -124,6 +130,26 @@ export function SmetaPanel({
       return next;
     });
 
+  const typeKey = (g: CostTypeGroup) => g.costTypeId ?? NO_CATEGORY;
+  const toggleType = (id: string | null) =>
+    setCollapsedTypes((prev) => {
+      const next = new Set(prev);
+      const k = id ?? NO_CATEGORY;
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+
+  // Развернуть/свернуть всё дерево сметы (категории + виды работ).
+  const expandAll = () => {
+    setCollapsedCats(new Set());
+    setCollapsedTypes(new Set());
+  };
+  const collapseAll = () => {
+    setCollapsedCats(new Set(groups.map((g) => g.costCategoryId ?? NO_CATEGORY)));
+    setCollapsedTypes(new Set(groups.map(typeKey)));
+  };
+
   const blockProps = {
     editable,
     orgs,
@@ -148,6 +174,18 @@ export function SmetaPanel({
           Работ: {totalItems} · Видов работ: {groupCount} ·{' '}
           <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(total)}</span>
         </>
+      }
+      extra={
+        groups.length > 0 ? (
+          <Space size={2} style={{ marginLeft: 8 }}>
+            <Tooltip title="Развернуть всё">
+              <Button type="text" size="small" icon={<DownOutlined />} onClick={expandAll} />
+            </Tooltip>
+            <Tooltip title="Свернуть всё">
+              <Button type="text" size="small" icon={<UpOutlined />} onClick={collapseAll} />
+            </Tooltip>
+          </Space>
+        ) : undefined
       }
     >
       {groups.length > 0 ? (
@@ -186,7 +224,12 @@ export function SmetaPanel({
               return (
                 <div key={sec.id} style={{ marginBottom: 16 }}>
                   <div
-                    onClick={() => toggleCat(sec.id)}
+                    className={sec.id !== NO_CATEGORY && sec.id === activeCostCategoryId ? 'estimat-cat-active' : undefined}
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest('.estimat-caret')) return;
+                      if (sec.id !== NO_CATEGORY) selectCategory(sec.id, sec.name);
+                    }}
+                    title={sec.id !== NO_CATEGORY ? 'Клик — сделать категорию активной' : undefined}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -195,16 +238,22 @@ export function SmetaPanel({
                       background: '#eef2f7',
                       border: '1px solid #e0e6ee',
                       borderRadius: 8,
-                      cursor: 'pointer',
+                      cursor: sec.id !== NO_CATEGORY ? 'pointer' : 'default',
                       userSelect: 'none',
                       marginBottom: collapsed ? 0 : 12,
                     }}
                   >
-                    {collapsed ? (
-                      <CaretRightOutlined style={{ color: '#8c8c8c' }} />
-                    ) : (
-                      <CaretDownOutlined style={{ color: '#8c8c8c' }} />
-                    )}
+                    <span
+                      className="estimat-caret"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleCat(sec.id);
+                      }}
+                      style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: '#8c8c8c' }}
+                      title={collapsed ? 'Развернуть' : 'Свернуть'}
+                    >
+                      {collapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                    </span>
                     <strong style={{ fontSize: 15 }}>{sec.name}</strong>
                     <span style={{ color: '#8c8c8c', fontSize: 12 }}>Видов работ: {sec.groups.length}</span>
                     <span style={{ flex: 1 }} />
@@ -218,6 +267,8 @@ export function SmetaPanel({
                           key={group.costTypeId ?? '__none__'}
                           group={group}
                           index={i}
+                          collapsed={collapsedTypes.has(typeKey(group))}
+                          onToggleCollapsed={() => toggleType(group.costTypeId)}
                           {...blockProps}
                         />
                       ))}

@@ -1,12 +1,28 @@
 import { useMemo, useState, useRef } from 'react';
 import type { Key, ReactNode } from 'react';
 import { Input, Tree, Button, Tooltip, Spin, Empty } from 'antd';
-import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlusOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
+import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { SectionShell } from './SectionShell';
 import { mapRatesTreeToNodes, filterRateNodes, type RateTreeNode } from './treeMappers';
 import type { RateTreeCategory, RateLeafPayload } from './types';
+
+// Собрать ключи всех раскрываемых узлов (категории + виды работ) — для «развернуть всё».
+function collectExpandableKeys(nodes: RateTreeNode[]): Key[] {
+  const out: Key[] = [];
+  const walk = (list: RateTreeNode[]) => {
+    for (const n of list) {
+      if (n.children?.length) {
+        out.push(n.key as Key);
+        walk(n.children);
+      }
+    }
+  };
+  walk(nodes);
+  return out;
+}
 
 interface Props {
   onAddRate: (payload: RateLeafPayload) => void;
@@ -21,24 +37,43 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
   const [userExpanded, setUserExpanded] = useState<Key[]>([]);
   const lastAdd = useRef<{ id: string; ts: number }>({ id: '', ts: 0 });
 
+  // Активный вид работ (выделен в смете) — цель для добавляемых наименований.
+  const activeCostTypeId = useEstimateSelectionStore((s) => s.activeCostTypeId);
+  const activeCostTypeName = useEstimateSelectionStore((s) => s.activeCostTypeName);
+  const activeCostCategoryId = useEstimateSelectionStore((s) => s.activeCostCategoryId);
+  const activeCostCategoryName = useEstimateSelectionStore((s) => s.activeCostCategoryName);
+
   const { data, isLoading } = useQuery({
     queryKey: ['rates-tree'],
     queryFn: () => api.get<{ data: RateTreeCategory[] }>('/rates/tree'),
   });
 
   const nodes = useMemo(() => mapRatesTreeToNodes(data?.data ?? []), [data]);
+  const allExpandableKeys = useMemo(() => collectExpandableKeys(nodes), [nodes]);
   const { nodes: treeData, expandedKeys: autoExpand } = useMemo(
     () => filterRateNodes(nodes, search),
     [nodes, search],
   );
   const searching = search.trim().length > 0;
 
-  // защита от двойного добавления одной расценки подряд (клик + дабл-клик)
+  // Добавить наименование как работу. Защита от двойного добавления одной
+  // расценки подряд (клик + дабл-клик). Если в смете выделен вид работ —
+  // переопределяем вид/категорию (наименование уйдёт в активный вид);
+  // иначе — в свой вид из каталога.
   function handleAdd(p: RateLeafPayload) {
     const now = Date.now();
     if (lastAdd.current.id === p.rateId && now - lastAdd.current.ts < 600) return;
     lastAdd.current = { id: p.rateId, ts: now };
-    onAddRate(p);
+    const target: RateLeafPayload = activeCostTypeId
+      ? {
+          ...p,
+          costTypeId: activeCostTypeId,
+          costTypeName: activeCostTypeName ?? p.costTypeName,
+          costCategoryId: activeCostCategoryId ?? p.costCategoryId,
+          costCategoryName: activeCostCategoryName ?? p.costCategoryName,
+        }
+      : p;
+    onAddRate(target);
   }
 
   const titleRender = (node: RateTreeNode): ReactNode => {
@@ -81,22 +116,41 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
     );
   };
 
+  // Подсказка цели: куда уйдёт двойной клик по наименованию.
+  const targetMeta = activeCostTypeId
+    ? `→ Вид: ${
+        activeCostTypeName
+          ? activeCostTypeName.length > 30
+            ? activeCostTypeName.slice(0, 30) + '…'
+            : activeCostTypeName
+          : 'активный'
+      }`
+    : 'выделите вид работ в смете';
+
   return (
     <SectionShell
       title="Наименования работ"
-      meta="Категория · Вид работ · Наименование"
+      meta={targetMeta}
       collapsed={collapsed}
       onToggle={onToggle}
     >
-      <Input
-        allowClear
-        size="small"
-        prefix={<SearchOutlined />}
-        placeholder="Поиск работы…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ marginBottom: 8 }}
-      />
+      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+        <Input
+          allowClear
+          size="small"
+          prefix={<SearchOutlined />}
+          placeholder="Поиск работы…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1 }}
+        />
+        <Tooltip title="Развернуть всё">
+          <Button size="small" icon={<DownOutlined />} onClick={() => setUserExpanded(allExpandableKeys)} />
+        </Tooltip>
+        <Tooltip title="Свернуть всё">
+          <Button size="small" icon={<UpOutlined />} onClick={() => setUserExpanded([])} />
+        </Tooltip>
+      </div>
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: 20 }}>
           <Spin />

@@ -24,7 +24,7 @@ import {
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
-import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
+import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/estimateSelectionStore';
 import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
 import { formatMoney } from './types';
 
@@ -304,6 +304,10 @@ interface Props {
   onClearContractor?: (costTypeId: string) => void;
   collapsible?: boolean;
   defaultCollapsed?: boolean;
+  /** Управляемое сворачивание (для «свернуть/развернуть всё»). Если задан onToggleCollapsed —
+   *  состояние берётся из collapsed, иначе используется внутренний стейт. */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   /** Показывать ли категорию в заголовке блока (false — когда категория уже в заголовке секции). */
   showCategoryInTitle?: boolean;
 }
@@ -326,15 +330,30 @@ export function CostTypeGroupBlock({
   onClearContractor = noop,
   collapsible = false,
   defaultCollapsed = false,
+  collapsed: controlledCollapsed,
+  onToggleCollapsed,
   showCategoryInTitle = true,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
   const [saving, setSaving] = useState(false);
-  const [collapsed, setCollapsed] = useState(collapsible && defaultCollapsed);
+  const [internalCollapsed, setInternalCollapsed] = useState(collapsible && defaultCollapsed);
+  const collapsed = onToggleCollapsed ? !!controlledCollapsed : internalCollapsed;
+  const toggleCollapsed = onToggleCollapsed ?? (() => setInternalCollapsed((c) => !c));
   const [expandedKeys, setExpandedKeys] = useState<readonly Key[]>([]);
   const selectedWorkId = useEstimateSelectionStore((s) => s.selectedWorkId);
   const selectWork = useEstimateSelectionStore((s) => s.selectWork);
+  const activeCostTypeId = useEstimateSelectionStore((s) => s.activeCostTypeId);
+  const selectCostType = useEstimateSelectionStore((s) => s.selectCostType);
+
+  // Контекст вида работ — для активации (клик по шапке/строке) и подсветки.
+  const ctx: CostTypeCtx = {
+    costTypeId: group.costTypeId,
+    costTypeName: group.costTypeName,
+    costCategoryId: group.costCategoryId,
+    costCategoryName: group.costCategoryName,
+  };
+  const isActiveType = !!group.costTypeId && group.costTypeId === activeCostTypeId;
 
   const { data: ratesData } = useQuery({
     queryKey: ['rates', group.costTypeId],
@@ -512,6 +531,7 @@ export function CostTypeGroupBlock({
 
   return (
     <div
+      className={isActiveType ? 'estimat-group-active' : undefined}
       style={{ background: '#fff', borderRadius: 8, marginBottom: 16, border: '1px solid #f0f0f0' }}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && editing && !saving) {
@@ -528,19 +548,28 @@ export function CostTypeGroupBlock({
           background: '#fafbfc',
           borderBottom: collapsible && collapsed ? 'none' : '1px solid #f0f0f0',
           gap: 12,
-          cursor: collapsible ? 'pointer' : 'default',
-          userSelect: collapsible ? 'none' : 'auto',
+          cursor: group.costTypeId ? 'pointer' : 'default',
+          userSelect: 'none',
         }}
-        onClick={
-          collapsible
-            ? (e) => {
-                if ((e.target as HTMLElement).closest('button, .ant-select, .ant-popover, .ant-popconfirm')) return;
-                setCollapsed((c) => !c);
-              }
-            : undefined
-        }
+        title={group.costTypeId ? 'Клик — сделать вид работ активным (наименования из справочника уйдут сюда)' : undefined}
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('button, .ant-select, .ant-popover, .ant-popconfirm, .estimat-caret')) return;
+          if (group.costTypeId) selectCostType(ctx);
+        }}
       >
-        {collapsible && (collapsed ? <CaretRightOutlined style={{ color: '#8c8c8c' }} /> : <CaretDownOutlined style={{ color: '#8c8c8c' }} />)}
+        {collapsible && (
+          <span
+            className="estimat-caret"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleCollapsed();
+            }}
+            style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: '#8c8c8c' }}
+            title={collapsed ? 'Развернуть' : 'Свернуть'}
+          >
+            {collapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+          </span>
+        )}
         <strong style={{ fontSize: 15 }}>{index + 1}. {title}</strong>
 
         {editable && group.costTypeId ? (
@@ -601,7 +630,7 @@ export function CostTypeGroupBlock({
                       )
                     )
                       return;
-                    selectWork(r.id, r.description);
+                    selectWork(r.id, r.description, ctx);
                     setExpandedKeys((keys) => (keys.includes(r.id) ? keys : [...keys, r.id]));
                   },
                 })

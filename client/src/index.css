@@ -86,7 +86,7 @@ html, body, #root {
   width: 100%;
 }
 .estimat-tree-add {
-  opacity: 0;
+  opacity: 0.35;
   transition: opacity 0.15s;
   flex-shrink: 0;
 }
@@ -108,4 +108,13 @@ html, body, #root {
 }
 .estimat-row-selected:hover > td {
   background: #d6ebff !important;
+}
+/* Активная цель для наименований из справочника: вид работ и категория */
+.estimat-group-active {
+  border-color: #1677ff !important;
+  box-shadow: 0 0 0 1px #1677ff;
+}
+.estimat-cat-active {
+  border-color: #1677ff !important;
+  background: #e6f0ff !important;
 }
