@@ -4,7 +4,6 @@ import { Input, Tree, Button, Tooltip, Spin, Empty } from 'antd';
 import { SearchOutlined, PlusOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
-import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { SectionShell } from './SectionShell';
 import { mapRatesTreeToNodes, filterRateNodes, type RateTreeNode } from './treeMappers';
 import type { RateTreeCategory, RateLeafPayload } from './types';
@@ -37,12 +36,6 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
   const [userExpanded, setUserExpanded] = useState<Key[]>([]);
   const lastAdd = useRef<{ id: string; ts: number }>({ id: '', ts: 0 });
 
-  // Активный вид работ (выделен в смете) — цель для добавляемых наименований.
-  const activeCostTypeId = useEstimateSelectionStore((s) => s.activeCostTypeId);
-  const activeCostTypeName = useEstimateSelectionStore((s) => s.activeCostTypeName);
-  const activeCostCategoryId = useEstimateSelectionStore((s) => s.activeCostCategoryId);
-  const activeCostCategoryName = useEstimateSelectionStore((s) => s.activeCostCategoryName);
-
   const { data, isLoading } = useQuery({
     queryKey: ['rates-tree'],
     queryFn: () => api.get<{ data: RateTreeCategory[] }>('/rates/tree'),
@@ -56,24 +49,14 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
   );
   const searching = search.trim().length > 0;
 
-  // Добавить наименование как работу. Защита от двойного добавления одной
-  // расценки подряд (клик + дабл-клик). Если в смете выделен вид работ —
-  // переопределяем вид/категорию (наименование уйдёт в активный вид);
-  // иначе — в свой вид из каталога.
+  // Добавить наименование как работу — всегда в его родной вид/категорию из
+  // каталога (вид и раздел появятся в смете автоматически, если их там нет).
+  // Защита от двойного добавления одной расценки подряд (клик + дабл-клик).
   function handleAdd(p: RateLeafPayload) {
     const now = Date.now();
     if (lastAdd.current.id === p.rateId && now - lastAdd.current.ts < 600) return;
     lastAdd.current = { id: p.rateId, ts: now };
-    const target: RateLeafPayload = activeCostTypeId
-      ? {
-          ...p,
-          costTypeId: activeCostTypeId,
-          costTypeName: activeCostTypeName ?? p.costTypeName,
-          costCategoryId: activeCostCategoryId ?? p.costCategoryId,
-          costCategoryName: activeCostCategoryName ?? p.costCategoryName,
-        }
-      : p;
-    onAddRate(target);
+    onAddRate(p);
   }
 
   const titleRender = (node: RateTreeNode): ReactNode => {
@@ -116,21 +99,9 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
     );
   };
 
-  // Подсказка цели: куда уйдёт двойной клик по наименованию.
-  const targetMeta = activeCostTypeId
-    ? `→ Вид: ${
-        activeCostTypeName
-          ? activeCostTypeName.length > 30
-            ? activeCostTypeName.slice(0, 30) + '…'
-            : activeCostTypeName
-          : 'активный'
-      }`
-    : 'выделите вид работ в смете';
-
   return (
     <SectionShell
       title="Наименования работ"
-      meta={targetMeta}
       collapsed={collapsed}
       onToggle={onToggle}
     >
