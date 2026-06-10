@@ -47,6 +47,10 @@ interface MappingEntry {
 
 interface Mapping {
   matched?: MappingEntry[];
+  /** Вероятные совпадения — решение за пользователем; такие работы импорт пропускает,
+   *  чтобы не создать дубль существующей расценки. Решить: перенести в matched
+   *  (с выбранным rateId) либо удалить из probable (тогда работа будет создана). */
+  probable?: { canonicalName: string }[];
 }
 
 const norm = (s: string) =>
@@ -68,6 +72,7 @@ async function main() {
       .filter((m) => m.rateId)
       .map((m) => [norm(m.canonicalName), m.rateId as string]),
   );
+  const probableNames = new Set((mapping.probable ?? []).map((m) => norm(m.canonicalName)));
 
   const client = new pg.Client({
     host: config.db.host,
@@ -98,6 +103,12 @@ async function main() {
     const matByName = new Map(mats.rows.map((r) => [norm(r.name), r]));
 
     for (const work of catalog.works) {
+      // Вероятное совпадение с расценкой БД — ждёт решения пользователя, не импортируем
+      if (probableNames.has(norm(work.canonicalName)) && !matchedByName.has(norm(work.canonicalName))) {
+        stats.skipped.push(`${work.canonicalName} — ожидает решения (probable в mapping.json)`);
+        continue;
+      }
+
       // --- 1. Вид затрат: только существующие (новых видов импорт не создаёт) ---
       const type = typeByName.get(norm(work.costType));
       if (!type) {
