@@ -304,6 +304,8 @@ interface Props {
   onClearContractor?: (costTypeId: string) => void;
   collapsible?: boolean;
   defaultCollapsed?: boolean;
+  /** Показывать ли категорию в заголовке блока (false — когда категория уже в заголовке секции). */
+  showCategoryInTitle?: boolean;
 }
 
 const noopAsync = async () => {};
@@ -324,6 +326,7 @@ export function CostTypeGroupBlock({
   onClearContractor = noop,
   collapsible = false,
   defaultCollapsed = false,
+  showCategoryInTitle = true,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -339,9 +342,10 @@ export function CostTypeGroupBlock({
     enabled: !!editing && !!group.costTypeId,
   });
 
-  const title = group.costCategoryName
-    ? `${group.costCategoryName} / ${group.costTypeName ?? '—'}`
-    : group.costTypeName ?? 'Без вида работ';
+  const title =
+    showCategoryInTitle && group.costCategoryName
+      ? `${group.costCategoryName} / ${group.costTypeName ?? '—'}`
+      : group.costTypeName ?? 'Без вида работ';
 
   const groupTotal = group.works.reduce(
     (acc, w) => acc + Number(w.total ?? 0) + w.materials.reduce((a, m) => a + Number(m.total ?? 0), 0),

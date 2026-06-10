@@ -20,6 +20,62 @@ async function removeLocalUpload(url: string | null | undefined) {
   }
 }
 
+// Полная детализация сметы (как в GET /estimates/:id): работы с измерениями,
+// материалы (вложенно), подрядчики по видам работ. Возвращает null, если нет.
+async function buildEstimateDetail(fastify: FastifyInstance, estimateId: string) {
+  const { rows } = await fastify.pool.query(
+    `SELECT e.*, p.code AS project_code, p.name AS project_name, cc.name AS cost_category_name
+       FROM estimates e
+       JOIN projects p ON e.project_id = p.id
+       LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
+      WHERE e.id = $1`,
+    [estimateId],
+  );
+  if (rows.length === 0) return null;
+
+  const items = await fastify.pool.query(
+    `SELECT ei.*, r.name AS rate_name, r.code AS rate_code,
+            ct.name AS cost_type_name, cc.name AS cost_category_name
+       FROM estimate_items ei
+       LEFT JOIN rates r            ON ei.rate_id = r.id
+       LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
+       LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
+      WHERE ei.estimate_id = $1
+      ORDER BY cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
+    [estimateId],
+  );
+
+  const materials = await fastify.pool.query(
+    `SELECT em.*, mc.name AS material_name
+       FROM estimate_materials em
+       LEFT JOIN material_catalog mc ON em.material_id = mc.id
+      WHERE em.estimate_id = $1
+      ORDER BY em.sort_order, em.created_at`,
+    [estimateId],
+  );
+
+  const contractors = await fastify.pool.query(
+    `SELECT ec.cost_type_id, ec.contractor_id,
+            o.name AS contractor_name, ct.name AS cost_type_name,
+            cc.id AS cost_category_id, cc.name AS cost_category_name
+       FROM estimate_contractors ec
+       LEFT JOIN organizations o    ON ec.contractor_id = o.id
+       LEFT JOIN cost_types ct      ON ec.cost_type_id = ct.id
+       LEFT JOIN cost_categories cc ON ct.category_id = cc.id
+      WHERE ec.estimate_id = $1`,
+    [estimateId],
+  );
+
+  return {
+    ...rows[0],
+    items: items.rows.map((it) => ({
+      ...it,
+      materials: materials.rows.filter((m) => m.item_id === it.id),
+    })),
+    contractors: contractors.rows,
+  };
+}
+
 export default async function projectRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
 
@@ -147,6 +203,62 @@ export default async function projectRoutes(fastify: FastifyInstance) {
       },
     };
   });
+
+  // GET /api/projects/:id/estimate — единая смета на объект.
+  // get-or-create: если смет нет — создаём одну; если несколько — сливаем
+  // позиции/материалы/подрядчиков в самую раннюю (primary), пустые удаляем.
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/estimate',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const projectId = request.params.id;
+      const { rows: projectRows } = await fastify.pool.query(
+        'SELECT id FROM projects WHERE id = $1',
+        [projectId],
+      );
+      if (projectRows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
+
+      const client = await fastify.pool.connect();
+      let primaryId: string;
+      try {
+        await client.query('BEGIN');
+        const { rows: ests } = await client.query(
+          'SELECT id FROM estimates WHERE project_id = $1 ORDER BY created_at ASC',
+          [projectId],
+        );
+        if (ests.length === 0) {
+          const ins = await client.query(
+            'INSERT INTO estimates (project_id, created_by) VALUES ($1, $2) RETURNING id',
+            [projectId, request.currentUser.id],
+          );
+          primaryId = ins.rows[0].id as string;
+        } else {
+          primaryId = ests[0].id as string;
+          if (ests.length > 1) {
+            const others = ests.slice(1).map((e) => e.id as string);
+            await client.query('UPDATE estimate_items SET estimate_id = $1 WHERE estimate_id = ANY($2)', [primaryId, others]);
+            await client.query('UPDATE estimate_materials SET estimate_id = $1 WHERE estimate_id = ANY($2)', [primaryId, others]);
+            await client.query(
+              `INSERT INTO estimate_contractors (estimate_id, cost_type_id, contractor_id)
+               SELECT $1, cost_type_id, contractor_id FROM estimate_contractors WHERE estimate_id = ANY($2)
+               ON CONFLICT (estimate_id, cost_type_id) DO NOTHING`,
+              [primaryId, others],
+            );
+            await client.query('DELETE FROM estimates WHERE id = ANY($1)', [others]);
+          }
+        }
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+
+      const data = await buildEstimateDetail(fastify, primaryId);
+      return { data };
+    },
+  );
 
   // POST /api/projects
   fastify.post('/', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
