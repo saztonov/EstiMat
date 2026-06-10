@@ -109,7 +109,7 @@ html, body, #root {
 .estimat-row-selected:hover > td {
   background: #d6ebff !important;
 }
-/* Активная цель для наименований из справочника: вид работ и категория */
+/* Активный контекст в смете: вид работ и категория */
 .estimat-group-active {
   border-color: #1677ff !important;
   box-shadow: 0 0 0 1px #1677ff;
@@ -117,4 +117,26 @@ html, body, #root {
 .estimat-cat-active {
   border-color: #1677ff !important;
   background: #e6f0ff !important;
+}
+
+/* Компактные таблицы сметной части: минимальные отступы и мелкий шрифт */
+.estimat-compact .ant-table-cell {
+  padding: 2px 6px !important;
+  font-size: 12.5px;
+}
+.estimat-compact .ant-table-thead .ant-table-cell {
+  font-size: 12px;
+  color: #595959;
+}
+/* Количество — компактный чип, как в макете */
+.estimat-qty-chip {
+  display: inline-block;
+  min-width: 32px;
+  border: 1px solid #91caff;
+  border-radius: 4px;
+  background: #f0f8ff;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
 }

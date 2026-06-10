@@ -226,7 +226,7 @@ export function SmetaPanel({
             sections.map((sec) => {
               const collapsed = collapsedCats.has(sec.id);
               return (
-                <div key={sec.id} style={{ marginBottom: 16 }}>
+                <div key={sec.id} style={{ marginBottom: 8 }}>
                   <div
                     className={sec.id !== NO_CATEGORY && sec.id === activeCostCategoryId ? 'estimat-cat-active' : undefined}
                     onClick={(e) => {
@@ -244,14 +244,14 @@ export function SmetaPanel({
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 10,
-                      padding: '8px 12px',
+                      gap: 8,
+                      padding: '4px 10px',
                       background: '#eef2f7',
                       border: '1px solid #e0e6ee',
                       borderRadius: 8,
                       cursor: sec.id !== NO_CATEGORY ? 'pointer' : 'default',
                       userSelect: 'none',
-                      marginBottom: collapsed ? 0 : 12,
+                      marginBottom: collapsed ? 0 : 8,
                     }}
                   >
                     <span
@@ -265,14 +265,14 @@ export function SmetaPanel({
                     >
                       {collapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
                     </span>
-                    <strong style={{ fontSize: 15 }}>{sec.name}</strong>
+                    <strong style={{ fontSize: 13 }}>{sec.name}</strong>
                     <span style={{ color: '#8c8c8c', fontSize: 12 }}>Видов работ: {sec.groups.length}</span>
                     <span style={{ flex: 1 }} />
                     <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupsTotal(sec.groups))}</span>
                   </div>
 
                   {!collapsed && (
-                    <div style={{ paddingLeft: 12 }}>
+                    <div style={{ paddingLeft: 8 }}>
                       {sec.groups.map((group, i) => (
                         <CostTypeGroupBlock
                           key={group.costTypeId ?? '__none__'}
@@ -290,11 +290,6 @@ export function SmetaPanel({
             })
           )}
 
-          {editable && (
-            <Button type="dashed" icon={<PlusOutlined />} onClick={onAddCostType} style={{ width: '100%' }}>
-              Добавить вид работ
-            </Button>
-          )}
         </>
       ) : (
         <Empty description="В смете пока нет работ. Добавьте вид работ или перенесите работу из справочника двойным кликом." style={{ padding: '40px 0' }}>

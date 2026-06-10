@@ -221,27 +221,27 @@ function MaterialsSubTable({
         return v;
       },
     },
-    { title: 'Ед. изм.', dataIndex: 'unit', width: 100, align: 'center', render: (v: string, r) =>
+    { title: 'Ед.', dataIndex: 'unit', width: 64, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
           <UnitSelect size="small" style={{ width: '100%' }} value={editing.unit || undefined} onChange={(val) => setEditing({ ...editing, unit: val ?? '' })} />
         ) : v,
     },
-    { title: 'Кол-во', dataIndex: 'quantity', width: 110, align: 'right', render: (v: string, r) =>
+    { title: 'Кол-во', dataIndex: 'quantity', width: 76, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
           <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
-        ) : Number(v).toLocaleString('ru-RU'),
+        ) : <span className="estimat-qty-chip">{Number(v).toLocaleString('ru-RU')}</span>,
     },
-    { title: 'Цена', dataIndex: 'unit_price', width: 130, align: 'right', render: (v: string, r) =>
+    { title: 'Цена', dataIndex: 'unit_price', width: 90, align: 'right', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
           <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
         ) : formatMoney(v),
     },
-    { title: 'Сумма', dataIndex: 'total', width: 140, align: 'right', render: (v: string, r) =>
+    { title: 'Сумма', dataIndex: 'total', width: 100, align: 'right', render: (v: string, r) =>
         isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
     },
     ...(editable
       ? [{
-          title: '', width: 80,
+          title: '', width: 64,
           render: (_: unknown, r: EstimateMaterial) => {
             if (isRowInEdit(r)) {
               return (
@@ -266,10 +266,11 @@ function MaterialsSubTable({
   ];
 
   return (
-    <div style={{ padding: '4px 0 4px 24px' }}>
+    <div style={{ padding: '2px 0 2px 12px' }}>
       <Table
         rowKey="id"
         size="small"
+        className="estimat-compact"
         columns={columns}
         dataSource={rows}
         pagination={false}
@@ -504,7 +505,7 @@ export function CostTypeGroupBlock({
   }
 
   const columns: ColumnsType<EstimateItem> = [
-    { title: '№', width: 50, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
+    { title: '№', width: 36, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
     {
       title: 'Наименование работы', dataIndex: 'description',
       render: (v: string, r) => {
@@ -530,27 +531,27 @@ export function CostTypeGroupBlock({
         return v;
       },
     },
-    { title: 'Ед. изм.', dataIndex: 'unit', width: 110, align: 'center', render: (v: string, r) =>
+    { title: 'Ед.', dataIndex: 'unit', width: 64, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
           <UnitSelect size="small" style={{ width: '100%' }} value={editing.unit || undefined} onChange={(val) => setEditing({ ...editing, unit: val ?? '' })} />
         ) : v,
     },
-    { title: 'Кол-во', dataIndex: 'quantity', width: 120, align: 'right', render: (v: string, r) =>
+    { title: 'Кол-во', dataIndex: 'quantity', width: 76, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
           <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
-        ) : Number(v).toLocaleString('ru-RU'),
+        ) : <span className="estimat-qty-chip">{Number(v).toLocaleString('ru-RU')}</span>,
     },
-    { title: 'Цена', dataIndex: 'unit_price', width: 140, align: 'right', render: (v: string, r) =>
+    { title: 'Цена', dataIndex: 'unit_price', width: 95, align: 'right', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
           <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
         ) : formatMoney(v),
     },
-    { title: 'Сумма', dataIndex: 'total', width: 150, align: 'right', render: (v: string, r) =>
+    { title: 'Сумма', dataIndex: 'total', width: 105, align: 'right', render: (v: string, r) =>
         isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
     },
     ...(editable
       ? [{
-          title: '', width: 90,
+          title: '', width: 64,
           render: (_: unknown, r: EstimateItem) => {
             if (isRowInEdit(r)) {
               return (
@@ -581,7 +582,7 @@ export function CostTypeGroupBlock({
   return (
     <div
       className={isActiveType ? 'estimat-group-active' : undefined}
-      style={{ background: '#fff', borderRadius: 8, marginBottom: 16, border: '1px solid #f0f0f0' }}
+      style={{ background: '#fff', borderRadius: 8, marginBottom: 8, border: '1px solid #f0f0f0' }}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && editing && !saving) {
           e.stopPropagation();
@@ -593,10 +594,10 @@ export function CostTypeGroupBlock({
         style={{
           display: 'flex',
           alignItems: 'center',
-          padding: '12px 16px',
+          padding: '6px 10px',
           background: '#fafbfc',
           borderBottom: collapsible && collapsed ? 'none' : '1px solid #f0f0f0',
-          gap: 12,
+          gap: 10,
           cursor: group.costTypeId ? 'pointer' : 'default',
           userSelect: 'none',
         }}
@@ -626,7 +627,7 @@ export function CostTypeGroupBlock({
             {collapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
           </span>
         )}
-        <strong style={{ fontSize: 15 }}>{index + 1}. {title}</strong>
+        <strong style={{ fontSize: 13 }}>{index + 1}. {title}</strong>
 
         {editable && group.costTypeId ? (
           <Select
@@ -663,6 +664,7 @@ export function CostTypeGroupBlock({
         <Table
           rowKey="id"
           size="small"
+          className="estimat-compact"
           columns={columns}
           dataSource={rows}
           pagination={false}
