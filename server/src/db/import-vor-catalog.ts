@@ -1,16 +1,19 @@
 /**
- * Импорт каталога типовых работ/материалов, собранного агентным конвейером
- * vor-catalog из ВОР (см. .claude/skills/vor-catalog/SKILL.md), в справочники БД:
- *   - расценки (rates) — в существующие виды затрат по mapping/catalog;
- *   - материалы (material_groups, material_catalog);
- *   - связи «расценка → типовые материалы» (rate_materials, qty_ratio = медиана
- *     расхода материала на единицу работы по исходным ВОР).
+ * Импорт каталога типовых работ/материалов из ВОР (агентный конвейер vor-catalog,
+ * см. .claude/skills/vor-catalog/SKILL.md) в НОВЫЙ справочник (v2):
+ *   - rates_v2 — все типовые работы каталога; иерархия категорий/видов
+ *     переиспользуется из действующего справочника (cost_types);
+ *     legacy_rate_id — ссылка на подходящую расценку старого справочника
+ *     (matched — точно, probable — лучший кандидат, решение за пользователем);
+ *   - materials_v2 — только материалы, участвующие в типовых связях;
+ *   - rate_materials_v2 — только ТИПОВЫЕ пары (isTypical: материал встречается
+ *     более чем в половине проектов И более чем в половине ВОР этой работы).
  *
- * Идемпотемпотентен: повторный запуск обновляет существующие записи (поиск по
- * нормализованному имени), не создаёт дубликатов.
+ * Существующий справочник (rates, material_catalog) НЕ изменяется.
+ * Идемпотентен: повторный запуск обновляет записи (upsert), не плодит дубли.
  *
  * Запуск (на машине с write-доступом к БД, env как у сервера):
- *   npm run db:import-vor -w server -- <путь к catalog.json> [путь к mapping.json]
+ *   npm run db:import-vor -w server -- <catalog_v2.json> [mapping_v2.json]
  */
 import pg from 'pg';
 import { readFileSync } from 'fs';
@@ -19,9 +22,11 @@ import { config } from '../config.js';
 interface CatalogMaterial {
   canonicalName: string;
   unit: string;
-  files: number;
-  ratioMedian: number;
-  aliases?: { name: string; sourceFile: string }[];
+  ratioMedian: number | null;
+  filesCount: number;
+  projectsCount: number;
+  isTypical?: boolean;
+  aliases?: unknown[];
 }
 
 interface CatalogWork {
@@ -29,8 +34,10 @@ interface CatalogWork {
   category: string;
   costType: string;
   unit: string;
-  section?: string;
-  aliases?: { name: string; sourceFile: string }[];
+  projectsCount: number;
+  filesCount: number;
+  aliases?: unknown[];
+  notes?: string | null;
   materials: CatalogMaterial[];
 }
 
@@ -38,19 +45,15 @@ interface Catalog {
   works: CatalogWork[];
 }
 
-/** Запись маппинга: типовая работа каталога ↔ существующая расценка БД. */
 interface MappingEntry {
   canonicalName: string;
   rateId?: string | null;
-  rateName?: string | null;
+  candidates?: { rateId: string }[];
 }
 
 interface Mapping {
   matched?: MappingEntry[];
-  /** Вероятные совпадения — решение за пользователем; такие работы импорт пропускает,
-   *  чтобы не создать дубль существующей расценки. Решить: перенести в matched
-   *  (с выбранным rateId) либо удалить из probable (тогда работа будет создана). */
-  probable?: { canonicalName: string }[];
+  probable?: MappingEntry[];
 }
 
 const norm = (s: string) =>
@@ -59,20 +62,24 @@ const norm = (s: string) =>
 async function main() {
   const [catalogPath, mappingPath] = process.argv.slice(2);
   if (!catalogPath) {
-    console.error('Использование: db:import-vor -- <catalog.json> [mapping.json]');
+    console.error('Использование: db:import-vor -- <catalog_v2.json> [mapping_v2.json]');
     process.exit(1);
   }
 
   const catalog: Catalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
-  const mapping: Mapping = mappingPath
-    ? JSON.parse(readFileSync(mappingPath, 'utf-8'))
-    : {};
-  const matchedByName = new Map(
-    (mapping.matched ?? [])
-      .filter((m) => m.rateId)
-      .map((m) => [norm(m.canonicalName), m.rateId as string]),
-  );
-  const probableNames = new Set((mapping.probable ?? []).map((m) => norm(m.canonicalName)));
+  const mapping: Mapping = mappingPath ? JSON.parse(readFileSync(mappingPath, 'utf-8')) : {};
+
+  // Ссылки на старый справочник: matched — точная, probable — лучший кандидат
+  const legacyByName = new Map<string, { rateId: string; kind: 'matched' | 'probable' }>();
+  for (const m of mapping.matched ?? []) {
+    if (m.rateId) legacyByName.set(norm(m.canonicalName), { rateId: m.rateId, kind: 'matched' });
+  }
+  for (const p of mapping.probable ?? []) {
+    const candidate = p.candidates?.[0]?.rateId;
+    if (candidate && !legacyByName.has(norm(p.canonicalName))) {
+      legacyByName.set(norm(p.canonicalName), { rateId: candidate, kind: 'probable' });
+    }
+  }
 
   const client = new pg.Client({
     host: config.db.host,
@@ -84,32 +91,30 @@ async function main() {
   });
   await client.connect();
 
-  const stats = { ratesCreated: 0, ratesMatched: 0, groupsCreated: 0, materialsCreated: 0, materialsUpdated: 0, links: 0, skipped: [] as string[] };
+  const stats = {
+    works: 0,
+    worksWithLegacy: 0,
+    materials: 0,
+    links: 0,
+    rareSkipped: 0,
+    skipped: [] as string[],
+  };
 
   try {
     await client.query('BEGIN');
 
-    // Справочные индексы БД: категории, виды, расценки, группы, материалы
     const cats = await client.query('SELECT id, name FROM cost_categories');
     const types = await client.query('SELECT id, category_id, name FROM cost_types');
-    const rates = await client.query('SELECT id, cost_type_id, name, unit FROM rates');
-    const groups = await client.query('SELECT id, name FROM material_groups');
-    const mats = await client.query('SELECT id, name, unit FROM material_catalog');
+    const legacyRates = await client.query('SELECT id FROM rates');
 
     const catByName = new Map(cats.rows.map((r) => [norm(r.name), r.id]));
     const typeByName = new Map(types.rows.map((r) => [norm(r.name), r]));
-    const rateByName = new Map(rates.rows.map((r) => [norm(r.name), r]));
-    const groupByName = new Map(groups.rows.map((r) => [norm(r.name), r.id]));
-    const matByName = new Map(mats.rows.map((r) => [norm(r.name), r]));
+    const legacyIds = new Set(legacyRates.rows.map((r) => r.id));
+
+    // materials_v2 — общий справочник, материал может быть типовым у нескольких работ
+    const materialIdByName = new Map<string, string>();
 
     for (const work of catalog.works) {
-      // Вероятное совпадение с расценкой БД — ждёт решения пользователя, не импортируем
-      if (probableNames.has(norm(work.canonicalName)) && !matchedByName.has(norm(work.canonicalName))) {
-        stats.skipped.push(`${work.canonicalName} — ожидает решения (probable в mapping.json)`);
-        continue;
-      }
-
-      // --- 1. Вид затрат: только существующие (новых видов импорт не создаёт) ---
       const type = typeByName.get(norm(work.costType));
       if (!type) {
         stats.skipped.push(`${work.canonicalName} — вид затрат не найден: ${work.costType}`);
@@ -121,60 +126,82 @@ async function main() {
         continue;
       }
 
-      // --- 2. Расценка: из маппинга → по имени → создать ---
-      let rateId = matchedByName.get(norm(work.canonicalName)) ?? null;
-      if (rateId) {
-        stats.ratesMatched++;
-      } else {
-        const existing = rateByName.get(norm(work.canonicalName));
-        if (existing) {
-          rateId = existing.id;
-          stats.ratesMatched++;
-        } else {
-          const ins = await client.query(
-            `INSERT INTO rates (cost_type_id, name, unit, price) VALUES ($1, $2, $3, 0) RETURNING id`,
-            [type.id, work.canonicalName, work.unit],
-          );
-          rateId = ins.rows[0].id;
-          rateByName.set(norm(work.canonicalName), { id: rateId, cost_type_id: type.id, name: work.canonicalName, unit: work.unit });
-          stats.ratesCreated++;
-        }
+      const legacy = legacyByName.get(norm(work.canonicalName));
+      if (legacy && !legacyIds.has(legacy.rateId)) {
+        stats.skipped.push(`${work.canonicalName} — legacy-расценка ${legacy.rateId} не найдена в rates`);
       }
+      const legacyOk = legacy && legacyIds.has(legacy.rateId) ? legacy : null;
 
-      // --- 3. Материалы + связи rate_materials ---
+      const rateRes = await client.query(
+        `INSERT INTO rates_v2
+           (cost_type_id, name, unit, legacy_rate_id, match_kind, source_projects, source_files, aliases, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+         ON CONFLICT (cost_type_id, name) DO UPDATE SET
+           unit = EXCLUDED.unit,
+           legacy_rate_id = EXCLUDED.legacy_rate_id,
+           match_kind = EXCLUDED.match_kind,
+           source_projects = EXCLUDED.source_projects,
+           source_files = EXCLUDED.source_files,
+           aliases = EXCLUDED.aliases,
+           notes = EXCLUDED.notes
+         RETURNING id`,
+        [
+          type.id,
+          work.canonicalName,
+          work.unit,
+          legacyOk?.rateId ?? null,
+          legacyOk?.kind ?? null,
+          work.projectsCount ?? 0,
+          work.filesCount ?? 0,
+          JSON.stringify(work.aliases ?? []),
+          work.notes ?? null,
+        ],
+      );
+      const rateV2Id = rateRes.rows[0].id;
+      stats.works++;
+      if (legacyOk) stats.worksWithLegacy++;
+
       let sortOrder = 0;
       for (const m of work.materials ?? []) {
-        const groupName = work.section || work.costType;
-        let groupId = groupByName.get(norm(groupName));
-        if (!groupId) {
-          const ins = await client.query(
-            `INSERT INTO material_groups (name) VALUES ($1) RETURNING id`,
-            [groupName],
-          );
-          groupId = ins.rows[0].id;
-          groupByName.set(norm(groupName), groupId);
-          stats.groupsCreated++;
+        if (!m.isTypical) {
+          stats.rareSkipped++;
+          continue;
         }
 
-        let mat = matByName.get(norm(m.canonicalName));
-        if (!mat) {
-          const ins = await client.query(
-            `INSERT INTO material_catalog (name, group_id, unit) VALUES ($1, $2, $3) RETURNING id, name, unit`,
-            [m.canonicalName, groupId, m.unit],
+        let materialId = materialIdByName.get(norm(m.canonicalName));
+        if (!materialId) {
+          const matRes = await client.query(
+            `INSERT INTO materials_v2 (name, unit, cost_type_id, source_projects, source_files, aliases)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+             ON CONFLICT (name) DO UPDATE SET
+               unit = EXCLUDED.unit,
+               source_projects = GREATEST(materials_v2.source_projects, EXCLUDED.source_projects),
+               source_files = GREATEST(materials_v2.source_files, EXCLUDED.source_files)
+             RETURNING id`,
+            [
+              m.canonicalName,
+              m.unit,
+              type.id,
+              m.projectsCount ?? 0,
+              m.filesCount ?? 0,
+              JSON.stringify(m.aliases ?? []),
+            ],
           );
-          mat = ins.rows[0];
-          matByName.set(norm(m.canonicalName), mat);
-          stats.materialsCreated++;
-        } else if (mat.unit !== m.unit) {
-          stats.skipped.push(`материал «${m.canonicalName}»: ед. в БД «${mat.unit}» ≠ «${m.unit}» (оставлена БД)`);
+          materialId = matRes.rows[0].id as string;
+          materialIdByName.set(norm(m.canonicalName), materialId);
+          stats.materials++;
         }
 
         await client.query(
-          `INSERT INTO rate_materials (rate_id, material_id, qty_ratio, sort_order)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (rate_id, material_id)
-           DO UPDATE SET qty_ratio = EXCLUDED.qty_ratio, sort_order = EXCLUDED.sort_order`,
-          [rateId, mat.id, m.ratioMedian ?? 1, sortOrder++],
+          `INSERT INTO rate_materials_v2
+             (rate_v2_id, material_v2_id, qty_ratio, files_count, projects_count, sort_order)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (rate_v2_id, material_v2_id) DO UPDATE SET
+             qty_ratio = EXCLUDED.qty_ratio,
+             files_count = EXCLUDED.files_count,
+             projects_count = EXCLUDED.projects_count,
+             sort_order = EXCLUDED.sort_order`,
+          [rateV2Id, materialId, m.ratioMedian ?? 1, m.filesCount ?? 0, m.projectsCount ?? 0, sortOrder++],
         );
         stats.links++;
       }
@@ -189,11 +216,10 @@ async function main() {
     await client.end();
   }
 
-  console.log('Импорт завершён:');
-  console.log(`  расценок создано: ${stats.ratesCreated}, использовано существующих: ${stats.ratesMatched}`);
-  console.log(`  групп материалов создано: ${stats.groupsCreated}`);
-  console.log(`  материалов создано: ${stats.materialsCreated}`);
-  console.log(`  связей rate_materials записано: ${stats.links}`);
+  console.log('Импорт в новый справочник (v2) завершён:');
+  console.log(`  работ: ${stats.works} (со ссылкой на старый справочник: ${stats.worksWithLegacy})`);
+  console.log(`  материалов: ${stats.materials}`);
+  console.log(`  типовых связей: ${stats.links}; редких материалов пропущено: ${stats.rareSkipped}`);
   if (stats.skipped.length) {
     console.log('  Пропуски/замечания:');
     for (const s of stats.skipped) console.log(`   - ${s}`);
