@@ -1,15 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { updateAppSettingsSchema, type AppSettings } from '@estimat/shared';
+import { updateAppSettingsSchema, aiCatalogSourceSchema, type AppSettings } from '@estimat/shared';
 
 // Соответствие полей API ключам в app_settings.
 const SETTING_KEYS: Record<keyof AppSettings, string> = {
   rdSectionEnabled: 'rd_section_enabled',
+  aiCatalogSource: 'ai_catalog_source',
 };
 
 const DEFAULTS: AppSettings = {
   rdSectionEnabled: true,
+  aiCatalogSource: 'v2_first',
 };
 
 export default async function settingsRoutes(fastify: FastifyInstance) {
@@ -21,6 +23,8 @@ export default async function settingsRoutes(fastify: FastifyInstance) {
     const settings = { ...DEFAULTS };
     const rd = byKey.get(SETTING_KEYS.rdSectionEnabled);
     if (typeof rd === 'boolean') settings.rdSectionEnabled = rd;
+    const cat = aiCatalogSourceSchema.safeParse(byKey.get(SETTING_KEYS.aiCatalogSource));
+    if (cat.success) settings.aiCatalogSource = cat.data;
     return settings;
   }
 

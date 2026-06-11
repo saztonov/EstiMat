@@ -1,21 +1,25 @@
 import { useState } from 'react';
-import { Button, Tag, Tooltip } from 'antd';
+import { Button, Segmented, Tag, Tooltip } from 'antd';
 import { RobotOutlined, DoubleRightOutlined } from '@ant-design/icons';
 import { AiMessageList } from './AiMessageList';
 import { AiComposer } from './AiComposer';
+import { AiExtractPanel } from './AiExtractPanel';
 import { runInference, DEFAULT_AI_MODEL } from '../../../services/ai';
 import type { ChatMessage } from './types';
 
+type AiMode = 'chat' | 'extract';
+
 interface Props {
+  estimateId: string;
   onCollapse: () => void;
 }
 
 const newId = () =>
   typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
 
-// ИИ-ассистент. Полностью заглушён: локальный стейт сообщений, без сетевых
-// вызовов. Реальная отправка инкапсулирована в services/ai.ts → runInference.
-export function AiChatPanel({ onCollapse }: Props) {
+// ИИ-ассистент: чат (заглушка) + извлечение работ/материалов из РД.
+export function AiChatPanel({ estimateId, onCollapse }: Props) {
+  const [aiMode, setAiMode] = useState<AiMode>('extract');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [model, setModel] = useState(DEFAULT_AI_MODEL);
   const [input, setInput] = useState('');
@@ -65,24 +69,39 @@ export function AiChatPanel({ onCollapse }: Props) {
       >
         <RobotOutlined style={{ color: '#8c8c8c' }} />
         <span>ИИ-ассистент</span>
-        <Tag color="blue" style={{ marginInlineStart: 4 }}>
-          заглушка
-        </Tag>
+        <Segmented<AiMode>
+          size="small"
+          value={aiMode}
+          onChange={(v) => setAiMode(v)}
+          options={[
+            { label: 'Извлечение РД', value: 'extract' },
+            { label: 'Чат', value: 'chat' },
+          ]}
+          style={{ marginInlineStart: 4 }}
+        />
         <span style={{ flex: 1 }} />
         <Tooltip title="Свернуть в рельс">
           <Button type="text" size="small" icon={<DoubleRightOutlined />} onClick={onCollapse} />
         </Tooltip>
       </div>
 
-      <AiMessageList messages={messages} />
-      <AiComposer
-        model={model}
-        input={input}
-        loading={loading}
-        onModelChange={setModel}
-        onInputChange={setInput}
-        onRun={handleRun}
-      />
+      {aiMode === 'extract' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <AiExtractPanel estimateId={estimateId} />
+        </div>
+      ) : (
+        <>
+          <AiMessageList messages={messages} />
+          <AiComposer
+            model={model}
+            input={input}
+            loading={loading}
+            onModelChange={setModel}
+            onInputChange={setInput}
+            onRun={handleRun}
+          />
+        </>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Button, Empty, Select, Space, Tooltip } from 'antd';
+import { Button, Empty, Select, Space, Switch, Tooltip } from 'antd';
 import {
   PlusOutlined,
   TableOutlined,
@@ -10,7 +10,7 @@ import {
 } from '@ant-design/icons';
 import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import type { CostTypeGroup } from '../components/types';
-import { formatMoney } from '../components/types';
+import { formatMoney, hasUnreconciled } from '../components/types';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { PanelShell } from './PanelShell';
@@ -74,6 +74,7 @@ export function SmetaPanel({
 }: Props) {
   const [categoryFilter, setCategoryFilter] = useState<string | undefined>();
   const [typeFilter, setTypeFilter] = useState<string | undefined>();
+  const [onlyUnreconciled, setOnlyUnreconciled] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
   const selectCategory = useEstimateSelectionStore((s) => s.selectCategory);
@@ -102,15 +103,18 @@ export function SmetaPanel({
       .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
   }, [groups, categoryFilter]);
 
-  const visibleGroups = useMemo(
-    () =>
-      groups.filter(
-        (g) =>
-          (!categoryFilter || g.costCategoryId === categoryFilter) &&
-          (!typeFilter || g.costTypeId === typeFilter),
-      ),
-    [groups, categoryFilter, typeFilter],
-  );
+  const visibleGroups = useMemo(() => {
+    const byFilter = groups.filter(
+      (g) =>
+        (!categoryFilter || g.costCategoryId === categoryFilter) &&
+        (!typeFilter || g.costTypeId === typeFilter),
+    );
+    if (!onlyUnreconciled) return byFilter;
+    // Оставляем только несогласованные работы (с категориями и видами работ).
+    return byFilter
+      .map((g) => ({ ...g, works: g.works.filter(hasUnreconciled) }))
+      .filter((g) => g.works.length > 0);
+  }, [groups, categoryFilter, typeFilter, onlyUnreconciled]);
 
   // Группировка видимых видов работ по категориям (порядок — как пришли,
   // groups уже отсортированы по категории→виду).
@@ -221,6 +225,12 @@ export function SmetaPanel({
               options={typeOptions}
               style={{ width: 240 }}
             />
+            <Tooltip title="Показать только несогласованные позиции (добавленные ИИ или без привязки к справочнику)">
+              <Space size={6}>
+                <Switch size="small" checked={onlyUnreconciled} onChange={setOnlyUnreconciled} />
+                <span style={{ fontSize: 13, color: '#595959' }}>Не согласованные</span>
+              </Space>
+            </Tooltip>
           </Space>
 
           {sections.length === 0 ? (

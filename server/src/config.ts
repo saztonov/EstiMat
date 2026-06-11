@@ -61,4 +61,15 @@ export const config = {
       );
     },
   },
+
+  // Встроенный ИИ-извлекатель (фаза 2): OpenRouter с дешёвой моделью.
+  // Без ключа POST /api/ai/jobs только создаёт задание — его выполняет skill.
+  ai: {
+    apiKey: process.env.AI_OPENROUTER_API_KEY || '',
+    model: process.env.AI_OPENROUTER_MODEL || 'google/gemini-2.5-flash',
+    baseUrl: process.env.AI_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+    get enabled(): boolean {
+      return Boolean(this.apiKey);
+    },
+  },
 } as const;

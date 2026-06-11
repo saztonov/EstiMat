@@ -221,12 +221,17 @@ function MaterialsSubTable({
             />
           );
         }
-        return r.status === 'suggested' ? (
-          <Space size={6}>
-            <span>{v}</span>
-            <Tag color="orange" style={{ marginInlineEnd: 0 }}>предложение</Tag>
-          </Space>
-        ) : v;
+        if (r.status === 'suggested' || r.source === 'ai' || r.needs_review) {
+          return (
+            <Space size={6}>
+              <span>{v}</span>
+              {r.status === 'suggested' && <Tag color="orange" style={{ marginInlineEnd: 0 }}>предложение</Tag>}
+              {r.source === 'ai' && <Tag color="blue" style={{ marginInlineEnd: 0 }}>ИИ</Tag>}
+              {r.needs_review && <Tag color="orange" style={{ marginInlineEnd: 0 }}>не согласовано</Tag>}
+            </Space>
+          );
+        }
+        return v;
       },
     },
     { title: 'Ед.', dataIndex: 'unit', width: 64, align: 'center', render: (v: string, r) =>
@@ -547,6 +552,15 @@ export function CostTypeGroupBlock({
               placeholder="Наименование работы или выбор из справочника"
               autoFocus
             />
+          );
+        }
+        if (r.source === 'ai' || r.needs_review) {
+          return (
+            <Space size={6}>
+              <span>{v}</span>
+              {r.source === 'ai' && <Tag color="blue" style={{ marginInlineEnd: 0 }}>ИИ</Tag>}
+              {r.needs_review && <Tag color="orange" style={{ marginInlineEnd: 0 }}>не согласовано</Tag>}
+            </Space>
           );
         }
         return v;

@@ -116,7 +116,7 @@ export function EstimateWorkspace(props: Props) {
     });
   }
   if (visibility.ai && aiExpanded) {
-    panels.push({ id: 'ai', min: 300, fb: '30%', node: <AiChatPanel onCollapse={() => setAiExpanded(false)} /> });
+    panels.push({ id: 'ai', min: 300, fb: '30%', node: <AiChatPanel estimateId={estimate.id} onCollapse={() => setAiExpanded(false)} /> });
   }
 
   // Управляемые размеры: сохранённые проценты или fallback, нормированные к 100

@@ -12,6 +12,10 @@ export interface EstimateMaterial {
   /** 'suggested' — добавлен автоматически по типовому набору расценки («предложение»),
    *  требует подтверждения ✓ или удаления ✗; 'confirmed' — подтверждён. */
   status: 'suggested' | 'confirmed';
+  /** Источник: 'manual' | 'ai' | 'catalog' (трассировка ИИ-извлечения). */
+  source?: 'manual' | 'ai' | 'catalog';
+  needs_review?: boolean;
+  confidence?: string | number | null;
 }
 
 // Строка сметы = работа. Несёт измерения (объект/категория/вид затрат)
@@ -34,6 +38,15 @@ export interface EstimateItem {
   rate_name: string | null;
   rate_code: string | null;
   materials: EstimateMaterial[];
+  /** Источник: 'manual' | 'ai' | 'catalog' (трассировка ИИ-извлечения). */
+  source?: 'manual' | 'ai' | 'catalog';
+  needs_review?: boolean;
+  confidence?: string | number | null;
+}
+
+/** Есть ли в работе несогласованные позиции (сама работа или её материалы). */
+export function hasUnreconciled(item: EstimateItem): boolean {
+  return !!item.needs_review || item.materials.some((m) => m.needs_review);
 }
 
 // Подрядчик на вид затрат (estimate + cost_type)
