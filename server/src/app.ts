@@ -97,6 +97,7 @@ export async function buildApp() {
   await app.register(import('./routes/users/index.js'), { prefix: '/api/users' });
   await app.register(import('./routes/uploads/index.js'), { prefix: '/api/uploads' });
   await app.register(import('./routes/rd/index.js'), { prefix: '/api/rd' });
+  await app.register(import('./routes/settings/index.js'), { prefix: '/api/settings' });
 
   // Health check
   app.get('/api/health', async () => ({ status: 'ok' }));

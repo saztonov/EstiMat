@@ -5,6 +5,7 @@ import { RdSection } from './RdSection';
 import { WorksTreeSection } from './WorksTreeSection';
 import { MaterialsSection } from './MaterialsSection';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
+import { useAppSettings } from '../../../hooks/useAppSettings';
 import type { SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import type { RateLeafPayload } from './types';
 
@@ -18,6 +19,9 @@ interface Props {
 // развёрнутые делят высоту поровну.
 export function ReferencesPanel({ onAddRate, onAddMaterial }: Props) {
   const { collapsedSections, toggleSection } = useWorkspaceLayoutStore();
+  // Блок РД можно отключить в Администрирование → Настройки.
+  const { data: settings } = useAppSettings();
+  const rdEnabled = settings?.data.rdSectionEnabled ?? true;
 
   const wrap = (id: 'rd' | 'works' | 'mat', node: ReactNode) => {
     const collapsed = collapsedSections[id];
@@ -39,7 +43,8 @@ export function ReferencesPanel({ onAddRate, onAddMaterial }: Props) {
   return (
     <PanelShell icon={<AppstoreOutlined />} title="Справочники" flush>
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-        {wrap('rd', <RdSection collapsed={collapsedSections.rd} onToggle={() => toggleSection('rd')} />)}
+        {rdEnabled &&
+          wrap('rd', <RdSection collapsed={collapsedSections.rd} onToggle={() => toggleSection('rd')} />)}
         {wrap(
           'works',
           <WorksTreeSection

@@ -1,8 +1,10 @@
 import { Card, Tabs } from 'antd';
 import { UsersPanel } from './UsersPanel';
+import { SettingsPanel } from './SettingsPanel';
 
 const tabs = [
   { key: 'users', label: 'Пользователи', children: <UsersPanel /> },
+  { key: 'settings', label: 'Настройки', children: <SettingsPanel /> },
 ];
 
 export function AdministrationPage() {

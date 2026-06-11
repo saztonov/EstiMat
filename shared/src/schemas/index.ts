@@ -6,4 +6,5 @@ export * from './unit.js';
 export * from './estimate.js';
 export * from './rate.js';
 export * from './rd.js';
+export * from './settings.js';
 export * from './user.js';
