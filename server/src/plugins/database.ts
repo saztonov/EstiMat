@@ -45,7 +45,7 @@ async function runMigrations(pool: pg.Pool, log: (msg: string) => void) {
       );
       if (rows.length > 0) continue;
 
-      const sql = readFileSync(join(migrationsDir, file), 'utf-8');
+      const sql = readFileSync(join(migrationsDir, file), 'utf-8').replace(/^﻿/, '');
       log(`Applying migration: ${file}`);
       await client.query(sql);
       await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
