@@ -1,4 +1,7 @@
-const BASE_URL = '/api';
+// При раздельных доменах (app.* / api.*) фронт обращается к API по абсолютному
+// origin из VITE_API_URL (задаётся при сборке). В dev переменная пуста — работает
+// относительный путь через прокси Vite.
+const BASE_URL = `${import.meta.env.VITE_API_URL ?? ''}/api`;
 
 let refreshPromise: Promise<{ ok: boolean; expiresAt: number }> | null = null;
 

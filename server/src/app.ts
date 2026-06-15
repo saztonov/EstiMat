@@ -16,6 +16,9 @@ const UPLOADS_DIR = join(__dirname, '..', 'uploads');
 
 export async function buildApp() {
   const app = Fastify({
+    // За nginx reverse proxy (§3, §23): доверяем X-Forwarded-* —
+    // корректный client IP для rate-limit и протокол для secure-cookies.
+    trustProxy: true,
     logger: {
       level: config.isProduction ? 'info' : 'debug',
       transport: config.isProduction
@@ -82,6 +85,9 @@ export async function buildApp() {
   // Database plugin
   await app.register(import('./plugins/database.js'));
 
+  // S3-хранилище файлов (Cloud.ru) — опционально, по env S3_*
+  await app.register(import('./plugins/s3.js'));
+
   // RD portal (RDLOCAL, read-only) — опционально, по env RD_*
   await app.register(import('./plugins/rd-portal.js'));
 
@@ -101,7 +107,18 @@ export async function buildApp() {
   await app.register(import('./routes/settings/index.js'), { prefix: '/api/settings' });
   await app.register(import('./routes/ai/index.js'), { prefix: '/api/ai' });
 
-  // Health check
+  // Health endpoints (§5) — без auth и без rate-limit, на корне для nginx/uptime.
+  app.get('/health/live', { config: { rateLimit: false } }, async () => ({ status: 'ok' }));
+  app.get('/health/ready', { config: { rateLimit: false } }, async (_req, reply) => {
+    try {
+      await app.pool.query('SELECT 1');
+      return { status: 'ok' };
+    } catch (err) {
+      app.log.error({ err }, 'Readiness check failed');
+      return reply.status(503).send({ status: 'unavailable' });
+    }
+  });
+  // Совместимость со старым health-check.
   app.get('/api/health', async () => ({ status: 'ok' }));
 
   return app;

@@ -37,6 +37,11 @@ export const config = {
     accessKey: process.env.S3_ACCESS_KEY || '',
     secretKey: process.env.S3_SECRET_KEY || '',
     bucket: process.env.S3_BUCKET || 'estimat-files',
+    // Хранилище файлов включено, когда заданы endpoint, ключи и bucket.
+    // Иначе загрузки падают на локальный диск (только для dev).
+    get enabled(): boolean {
+      return Boolean(this.endpoint && this.accessKey && this.secretKey && this.bucket);
+    },
   },
 
   // Портал РД (RDLOCAL): Supabase PostgREST + Cloudflare R2, только чтение.

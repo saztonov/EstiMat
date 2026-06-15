@@ -1,0 +1,23 @@
+# Зависимости и сборочные артефакты — ставятся/собираются внутри образа.
+node_modules
+**/node_modules
+**/dist
+shared/dist
+server/dist
+client/dist
+
+# Локальные загрузки (в проде файлы в S3).
+server/uploads
+
+# VCS, окружение, секреты.
+.git
+.gitignore
+.env
+.env.*
+
+# Прочее, не нужное в образе.
+temp
+.claude
+*.log
+docker-compose.yml
+deploy

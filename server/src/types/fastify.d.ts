@@ -21,6 +21,7 @@ declare module 'fastify' {
     db: import('drizzle-orm/node-postgres').NodePgDatabase;
     pool: import('pg').Pool;
     rdPortal: import('../plugins/rd-portal.js').RdPortal | null;
+    storage: import('../plugins/s3.js').Storage | null;
   }
   interface FastifyRequest {
     currentUser: RequestUser;

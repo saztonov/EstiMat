@@ -67,12 +67,18 @@ export default fp(async (fastify) => {
     ssl: config.db.ssl ? { rejectUnauthorized: false } : false,
   });
 
-  // Автоприменение миграций при старте (идемпотентно)
-  try {
-    await runMigrations(pool, (m) => fastify.log.info(m));
-  } catch (err) {
-    fastify.log.error({ err }, 'Migration failed');
-    throw err;
+  // Автоприменение миграций при старте (идемпотентно) — только в dev.
+  // В production миграции накатываются отдельным шагом (npm run db:migrate:prod,
+  // контейнер `migrate`), а не из API-контейнера — корп. стандарт §8.
+  if (config.isProduction) {
+    fastify.log.info('Production: авто-миграции отключены, накатывайте схему отдельным шагом');
+  } else {
+    try {
+      await runMigrations(pool, (m) => fastify.log.info(m));
+    } catch (err) {
+      fastify.log.error({ err }, 'Migration failed');
+      throw err;
+    }
   }
 
   const db = drizzle(pool);

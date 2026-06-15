@@ -23,6 +23,7 @@ type ProjectRow = Record<string, unknown> & {
   org_id: string;
   address: string | null;
   image_url: string | null;
+  image_src?: string | null;
   status: string;
 };
 
@@ -114,7 +115,7 @@ function ProjectFormModal({ mode, onClose, onSuccess }: ProjectFormModalProps) {
 
   const [fileList, setFileList] = useState<UploadFile[]>(() =>
     isEdit && mode.project.image_url
-      ? [{ uid: '-1', name: 'photo', status: 'done', url: mode.project.image_url }]
+      ? [{ uid: '-1', name: 'photo', status: 'done', url: mode.project.image_src ?? mode.project.image_url ?? undefined }]
       : [],
   );
   const [uploading, setUploading] = useState(false);
@@ -154,8 +155,9 @@ function ProjectFormModal({ mode, onClose, onSuccess }: ProjectFormModalProps) {
     try {
       const fd = new FormData();
       fd.append('file', file as File);
-      const res = await api.upload<{ url: string }>('/uploads/image', fd);
-      form.setFieldValue('imageUrl', res.url);
+      // В форму (→ БД) кладём ключ объекта; res.url — presigned URL для превью.
+      const res = await api.upload<{ key: string; url: string }>('/uploads/image', fd);
+      form.setFieldValue('imageUrl', res.key);
       onUpSuccess?.(res);
     } catch (err) {
       message.error((err as Error).message);

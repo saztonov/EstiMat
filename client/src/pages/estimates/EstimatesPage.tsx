@@ -14,6 +14,7 @@ interface ProjectWithStats {
   address: string | null;
   status: string;
   image_url: string | null;
+  image_src: string | null;
   estimates_count: number;
   estimates_total: string;
 }
@@ -119,8 +120,8 @@ export function EstimatesPage() {
               <Card
                 hoverable
                 cover={
-                  p.image_url
-                    ? <img alt={p.name} src={p.image_url} style={{ height: 140, objectFit: 'cover' }} />
+                  p.image_src ?? p.image_url
+                    ? <img alt={p.name} src={(p.image_src ?? p.image_url) as string} style={{ height: 140, objectFit: 'cover' }} />
                     : placeholderCover(p.code)
                 }
                 onClick={() => navigate(`/projects/${p.id}`)}

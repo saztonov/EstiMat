@@ -9,15 +9,46 @@ import { createProjectSchema, updateProjectSchema } from '@estimat/shared';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UPLOADS_ROOT = join(__dirname, '..', '..', '..', 'uploads');
 
-async function removeLocalUpload(url: string | null | undefined) {
-  if (!url || !url.startsWith('/uploads/projects/')) return;
-  const name = url.slice('/uploads/projects/'.length);
-  if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) return;
-  try {
-    await unlink(join(UPLOADS_ROOT, 'projects', name));
-  } catch {
-    // файл мог быть удалён ранее — игнорируем
+// Легаси-обложки хранились на локальном диске под /uploads/projects/<имя>.
+// Новые — ключи объектов S3 (без префикса /uploads/).
+function isLegacyLocalImage(value: string): boolean {
+  return value.startsWith('/uploads/');
+}
+
+// Удаление прежней обложки при замене: локальный файл — unlink, объект S3 —
+// deleteObject (идемпотентно, §15).
+async function removeUpload(fastify: FastifyInstance, value: string | null | undefined) {
+  if (!value) return;
+  if (isLegacyLocalImage(value)) {
+    if (!value.startsWith('/uploads/projects/')) return;
+    const name = value.slice('/uploads/projects/'.length);
+    if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) return;
+    try {
+      await unlink(join(UPLOADS_ROOT, 'projects', name));
+    } catch {
+      // файл мог быть удалён ранее — игнорируем
+    }
+    return;
   }
+  if (fastify.storage) await fastify.storage.deleteObject(value);
+}
+
+// Обложка проекта (§15): image_url в БД — ключ объекта S3 (или легаси-локальный путь).
+// Для показа добавляем image_src с presigned GET-URL, не меняя сам image_url —
+// чтобы round-trip формы редактирования сохранял ключ, а не протухший URL.
+async function withImageSrc<T extends { image_url?: string | null }>(
+  fastify: FastifyInstance,
+  row: T,
+): Promise<T & { image_src: string | null }> {
+  const img = row.image_url ?? null;
+  if (img && fastify.storage && !isLegacyLocalImage(img)) {
+    try {
+      return { ...row, image_src: await fastify.storage.presignGet(img) };
+    } catch {
+      return { ...row, image_src: null };
+    }
+  }
+  return { ...row, image_src: img };
 }
 
 // Полная детализация сметы (как в GET /estimates/:id): работы с измерениями,
@@ -84,7 +115,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     const { rows } = await fastify.pool.query(
       'SELECT * FROM projects ORDER BY code',
     );
-    return { data: rows };
+    return { data: await Promise.all(rows.map((r) => withImageSrc(fastify, r))) };
   });
 
   // GET /api/projects/with-stats — для галереи объектов на странице «Сметы»
@@ -98,7 +129,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
          GROUP BY p.id
          ORDER BY p.code`,
     );
-    return { data: rows };
+    return { data: await Promise.all(rows.map((r) => withImageSrc(fastify, r))) };
   });
 
   // GET /api/projects/:id
@@ -108,7 +139,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
       [request.params.id],
     );
     if (rows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
-    return { data: rows[0] };
+    return { data: await withImageSrc(fastify, rows[0]) };
   });
 
   // GET /api/projects/:id/summary — сводная смета по объекту
@@ -197,7 +228,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
     return {
       data: {
-        project: projectRows[0],
+        project: await withImageSrc(fastify, projectRows[0]),
         estimates: estimatesWithItems,
         grandTotal,
       },
@@ -317,10 +348,10 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     if (rows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
 
     if (body.imageUrl !== undefined && previousImageUrl && previousImageUrl !== body.imageUrl) {
-      await removeLocalUpload(previousImageUrl);
+      await removeUpload(fastify, previousImageUrl);
     }
 
-    return { data: rows[0] };
+    return { data: await withImageSrc(fastify, rows[0]) };
   });
 
   // GET /api/projects/:id/members

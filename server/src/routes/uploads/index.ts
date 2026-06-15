@@ -39,11 +39,21 @@ export default async function uploadsRoutes(fastify: FastifyInstance) {
         return reply.status(400).send({ error: 'Файл больше 10 МБ' });
       }
 
+      // S3-хранилище (§15): ключ генерирует бэкенд, в БД пишется ключ объекта,
+      // на показ возвращаем presigned GET-URL.
+      if (fastify.storage) {
+        const key = `projects/${randomUUID()}.${ext}`;
+        await fastify.storage.putObject(key, buffer, file.mimetype);
+        const url = await fastify.storage.presignGet(key);
+        return reply.status(201).send({ key, url });
+      }
+
+      // Фолбэк для локальной разработки без S3 — запись на диск.
       const name = `${randomUUID()}.${ext}`;
       await mkdir(PROJECTS_DIR, { recursive: true });
       await writeFile(join(PROJECTS_DIR, name), buffer);
-
-      return reply.status(201).send({ url: `/uploads/projects/${name}` });
+      const localUrl = `/uploads/projects/${name}`;
+      return reply.status(201).send({ key: localUrl, url: localUrl });
     },
   );
 }
