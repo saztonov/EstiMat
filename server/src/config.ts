@@ -18,6 +18,9 @@ export const config = {
     user: env('DB_USER', 'estimat'),
     password: env('DB_PASSWORD', 'estimat_secret'),
     ssl: process.env.DB_SSL === 'true',
+    // Размер пула задаётся явно (§7): при нескольких порталах на одной VPS
+    // connection budget Managed PostgreSQL считается до добавления портала.
+    poolMax: Number(env('DB_POOL_MAX', '20')),
   },
 
   jwt: {

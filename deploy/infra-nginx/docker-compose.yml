@@ -1,0 +1,37 @@
+# Host-level ingress: общий nginx reverse proxy + certbot на ВСЕ порталы VPS (§3, §4, §19).
+# Разворачивается ОДИН раз на хост в /opt/infra/nginx и обновляется независимо от порталов.
+# В идеале живёт в отдельном infra-standards репозитории (§24); здесь — эталон.
+#
+#   docker compose -p infra-nginx up -d
+#
+# Каждый портал кладёт свой server-блок в ./conf.d/<portal>.conf и делает nginx -s reload.
+# Сеть edge — общая со всеми порталами (docker network create edge).
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: infra-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    networks: [edge]
+
+  certbot:
+    image: certbot/certbot
+    container_name: infra-certbot
+    restart: unless-stopped
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    # Автопродление сертификатов всех порталов (webroot). После обновления
+    # nginx нужно перечитать конфиг — reload по cron (см. deploy/README.md).
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+
+networks:
+  edge:
+    external: true

@@ -1,150 +1,179 @@
-# EstiMat — деплой на VPS (single-VPS baseline)
+# EstiMat — деплой на VPS (single-VPS baseline, multi-portal)
 
 Развёртывание по корпоративному стандарту v3.1 (`temp/corp_standard_full_single_vps.md`),
 этап 1 — быстрый запуск. Keycloak/мониторинг/SES/Lockbox/Container Registry — этап 2.
 
-Плейсхолдеры доменов: `app.estimat.example` (SPA) и `api.estimat.example` (API) — замените на свои.
+На одной VPS размещается **несколько корпоративных порталов** (§4): общий ingress (nginx) и Keycloak
+разворачиваются отдельно и обслуживают все порталы, а каждый портал — изолированный compose-проект.
+Деплой одного портала не затрагивает соседние, nginx и Keycloak (§19).
 
-## Архитектура этапа 1
+Плейсхолдеры: `<IP>` — публичный адрес VPS; домены портала EstiMat — `app.estimat.example` (SPA) и
+`api.estimat.example` (API). Замените на свои.
+
+## Архитектура
 
 ```
-Пользователи ─HTTPS─▶ nginx (infra, :80/:443) ─┬─ app.estimat.example ─▶ estimat-web (SPA)
-                                                └─ api.estimat.example ─▶ estimat-api (Fastify :3000)
-                                                                              │
-                              Yandex Managed PostgreSQL (TLS) ◀──────────────┤
-                              S3 Cloud.ru (файлы, presigned) ◀───────────────┘
+                          VPS (один публичный IP)
+Пользователи ─HTTPS─▶ /opt/infra/nginx  (общий nginx + certbot, проект infra-nginx)
+                          ├─ app.estimat.example ─▶ estimat-web   ┐
+                          ├─ api.estimat.example ─▶ estimat-api   ├─ /opt/portals/estimat  (проект estimat)
+                          ├─ app.portal-b.example ─▶ portalb-web  ┘
+                          └─ ...                                   ─ /opt/portals/portal-b  (проект portal-b)
+                                  сеть edge (общая)
+   Yandex Managed PostgreSQL (БД на портал)        S3 Cloud.ru (bucket на портал)
 ```
 
-- Два независимых compose-проекта: `estimat` (портал) и `nginx` (ingress), общая сеть `edge`.
-- БД — внешний Yandex Managed PostgreSQL (на VPS БД нет).
-- Файлы — S3 Cloud.ru (backend stateless, локального диска под загрузки нет).
-- Auth — standalone JWT в httpOnly-cookie (этап 2: Keycloak/AD).
+- **Host-level (один раз на VPS):** docker-сеть `edge`, общий nginx+certbot в `/opt/infra/nginx`.
+- **Per-portal:** `/opt/portals/<portal>` — отдельный compose-проект, своя БД, свой bucket, свои домены,
+  свой `*.conf` в общем nginx.
+- Файлы — в S3 (backend stateless). Auth — standalone JWT в cookie (этап 2: Keycloak/AD).
 
-> Отступление от стандарта (этап 1): образы собираются **на VPS** (`docker compose build`),
-> а не в CI с пушем в Yandex Container Registry (§19). Переход на registry — отдельный шаг.
+> Отступление от стандарта (этап 1): образы собираются **на VPS** (`docker compose build`), а не в CI
+> с пушем в Yandex Container Registry (§19). Переход на registry — отдельный шаг.
 
-## Предпосылки
+---
 
-- VPS в Yandex Compute Cloud, Docker + docker compose plugin.
-- Firewall/security-group: наружу только `80/tcp` и `443/tcp`; SSH — через VPN/IP allowlist.
-- DNS A-записи `app.estimat.example` и `api.estimat.example` → публичный IP VPS.
-- Доступ к Yandex Managed PostgreSQL разрешён с IP VPS.
-- Bucket в S3 Cloud.ru + сервисные ключи.
+# ЧАСТЬ 1. Настройка хоста (один раз на VPS)
 
-## 1. Yandex Managed PostgreSQL (§7, §8)
+Выполняется при подготовке VPS к первому порталу. Для последующих порталов — пропускается.
 
+### 1.1. Базовое
+- ОС Ubuntu 22.04/24.04, пользователь с `sudo`.
+- Firewall: наружу только `80/443`, SSH (`22`) — с доверенных IP/через VPN.
+- Установлены Docker Engine + compose plugin.
+(Подробные команды для свежей машины — в `deploy/VPS-SETUP.md`.)
+
+### 1.2. Общая docker-сеть
+```bash
+docker network create edge
+```
+
+### 1.3. Общий ingress (nginx + certbot)
+Эталон лежит в репо первого портала (`deploy/infra-nginx/`); по стандарту (§24) позже выносится
+в отдельный infra-репозиторий.
+```bash
+sudo mkdir -p /opt/infra/nginx
+sudo cp -r /opt/portals/estimat/deploy/infra-nginx/. /opt/infra/nginx/
+cd /opt/infra/nginx
+mkdir -p certbot/conf certbot/www
+docker compose -p infra-nginx up -d        # поднимется с дефолтным конфигом (только :80 + ACME)
+docker compose -p infra-nginx ps
+```
+
+---
+
+# ЧАСТЬ 2. Развёртывание портала EstiMat
+
+### 2.1. Внешние ресурсы портала
+
+**Yandex Managed PostgreSQL (§7, §8)** — отдельная БД и пользователи на каждый портал:
 ```sql
--- БД и пользователи
 CREATE DATABASE estimat;
-CREATE USER estimat_runtime   WITH PASSWORD '...';   -- права на данные (DML)
+CREATE USER estimat_runtime   WITH PASSWORD '...';   -- DML
 CREATE USER estimat_migration WITH PASSWORD '...';   -- DDL для миграций
-
--- Расширения включаются вручную ДО миграций (миграции не делают CREATE EXTENSION):
 \c estimat
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```
+- **Connection budget:** `conn_limit` runtime-пользователя ≥ `DB_POOL_MAX` (20) + резерв. Суммарно по всем
+  порталам `Σ conn_limit ≤ max_connections − резервы`. Пересчитывайте ДО добавления нового портала.
+- Включить backups; PITR при наличии; доступ к PG — только с IP VPS.
 
-- `conn_limit` runtime-пользователя ≥ pool.max (20) + резерв; для single-VPS `runtime_instance_count = 1`.
-- Включить backups; PITR при наличии.
+**S3 Cloud.ru (§15):** bucket `estimat-files` (объекты приватные) + сервисный ключ.
 
-## 2. Bucket S3 Cloud.ru (§15)
+**DNS:** A-записи `app.estimat.example` и `api.estimat.example` → `<IP>`.
 
-Создать bucket `estimat-files` (объекты приватные — доступ только через presigned URL).
-Сервисный ключ положить в `S3_ACCESS_KEY` / `S3_SECRET_KEY`.
-
-## 3. Первый деплой портала
-
+### 2.2. Код и окружение
 ```bash
-# Каталоги и сеть
-sudo mkdir -p /opt/portals && cd /opt/portals
-git clone <repo-url> estimat && cd estimat
-docker network create edge      # один раз на хост
+sudo mkdir -p /opt/portals && sudo chown $USER:$USER /opt/portals
+cd /opt/portals
+git clone <repo-url> estimat           # либо перенос кода (см. VPS-SETUP.md)
+cd estimat
 
-# Окружение (права 600, не коммитится)
 cp .env.production.example .env.production
 chmod 600 .env.production
-nano .env.production             # заполнить DB/JWT/CORS/S3
-
-# Origin API для сборки фронта
-export VITE_API_URL=https://api.estimat.example
-
-# Сборка образов на VPS
-docker compose -f deploy/docker-compose.prod.yml -p estimat build
-
-# Миграции — отдельным шагом (§8). Нужны DDL-права (estimat_migration):
-#   вариант: временный .env с DB_USER=estimat_migration
-docker compose -f deploy/docker-compose.prod.yml -p estimat run --rm migrate
-
-# Запуск API + SPA (порты наружу не публикуются)
-docker compose -f deploy/docker-compose.prod.yml -p estimat up -d estimat-api estimat-web
+openssl rand -base64 48                 # сгенерировать JWT-секреты (дважды)
+nano .env.production                    # DB(Managed PG, DB_SSL=true), JWT, CORS_ORIGIN=https://app..., S3
 ```
 
-## 4. Инфраструктурный nginx + TLS
-
+### 2.3. Сборка, миграции, запуск (portal-scoped)
 ```bash
-cd /opt/portals/estimat/deploy/infra/nginx
-mkdir -p certbot/conf certbot/www
+export VITE_API_URL=https://api.estimat.example
+docker compose -f deploy/docker-compose.prod.yml -p estimat build
 
-# В conf.d/estimat.conf заменить app.estimat.example / api.estimat.example на свои домены.
+# Миграции отдельным шагом (§8). Нужны DDL-права (estimat_migration):
+# временно укажите его в .env.production, накатите, верните estimat_runtime.
+docker compose -f deploy/docker-compose.prod.yml -p estimat run --rm migrate
 
-# Выпуск сертификата (nginx ещё не запущен — certbot слушает :80 сам):
-docker run --rm -p 80:80 \
-  -v "$PWD/certbot/conf:/etc/letsencrypt" \
-  -v "$PWD/certbot/www:/var/www/certbot" \
-  certbot/certbot certonly --standalone \
+docker compose -f deploy/docker-compose.prod.yml -p estimat up -d estimat-api estimat-web
+docker compose -p estimat ps
+docker compose -p estimat logs --tail=50 estimat-api
+```
+
+### 2.4. Подключение портала к общему ingress
+```bash
+# 1) Выпустить сертификат (webroot, общий nginx уже работает и обслуживает ACME):
+docker run --rm \
+  -v /opt/infra/nginx/certbot/conf:/etc/letsencrypt \
+  -v /opt/infra/nginx/certbot/www:/var/www/certbot \
+  certbot/certbot certonly --webroot -w /var/www/certbot \
   -d app.estimat.example -d api.estimat.example \
   --email admin@estimat.example --agree-tos --no-eff-email
 
-# Старт ingress (nginx + автопродление certbot)
-docker compose -p nginx up -d
+# 2) Подключить server-блоки портала (заменив домены) и перечитать nginx:
+sed 's/app.estimat.example/app.estimat.example/; s/api.estimat.example/api.estimat.example/' \
+  /opt/portals/estimat/deploy/nginx/estimat.conf | sudo tee /opt/infra/nginx/conf.d/estimat.conf >/dev/null
+#   (или просто скопируйте и отредактируйте домены: nano /opt/infra/nginx/conf.d/estimat.conf)
+docker exec infra-nginx nginx -t
+docker exec infra-nginx nginx -s reload
 ```
 
-Продление сертификатов идёт автоматически (certbot renew, webroot). После обновления nginx
-должен перечитать конфиг — добавьте перезагрузку по расписанию (cron, ежедневно):
-
+Если на хосте ещё не настроен ежедневный reload после автопродления сертификатов — добавьте (один раз):
 ```bash
-0 3 * * * docker exec infra-nginx nginx -s reload
+(crontab -l 2>/dev/null; echo "0 3 * * * docker exec infra-nginx nginx -s reload") | crontab -
 ```
 
-## 5. Проверка
-
+### 2.5. Проверка
 ```bash
-curl -fsS https://api.estimat.example/health/live    # {"status":"ok"}
-curl -fsS https://api.estimat.example/health/ready   # {"status":"ok"} (есть связь с БД)
-# SPA открывается на https://app.estimat.example, логин/refresh работают,
-# обложки проектов грузятся из S3, http → https редиректит.
+curl -fsS https://api.estimat.example/health/live     # {"status":"ok"}
+curl -fsS https://api.estimat.example/health/ready    # {"status":"ok"} — есть связь с БД
 ```
+Откройте `https://app.estimat.example` — интерфейс грузится, логин/refresh работают, обложки проектов
+отдаются из S3, HTTP редиректит на HTTPS.
 
-## Обновление (portal-scoped, §19)
+---
 
+## Обновление портала (portal-scoped, §19)
 ```bash
-cd /opt/portals/estimat
-git pull
+cd /opt/portals/estimat && git pull
 export VITE_API_URL=https://api.estimat.example
 docker compose -f deploy/docker-compose.prod.yml -p estimat build
-# если есть новые миграции:
+# при новых миграциях:
 docker compose -f deploy/docker-compose.prod.yml -p estimat run --rm migrate
 docker compose -f deploy/docker-compose.prod.yml -p estimat up -d estimat-api estimat-web
 curl -fsS https://api.estimat.example/health/ready
 ```
-
-Деплой не трогает соседние сервисы, nginx и Keycloak. Запрещены глобальные destructive-команды
+Не трогает соседние порталы, nginx и Keycloak. Запрещены глобальные destructive-команды
 (`docker system prune -a`, `compose down --volumes`, `rm -rf /opt/portals/*`).
 
-## Backup / Restore (§26)
+## Добавление ещё одного портала
+Часть 1 уже сделана. Для нового портала повторите Часть 2 с его значениями: каталог
+`/opt/portals/<portal>`, проект `-p <portal>`, своя БД/bucket/домены, свой `conf.d/<portal>.conf`.
+Имена сервисов в сети `edge` должны быть уникальны (`estimat-api`, `portalb-api`, …).
 
-- **PostgreSQL:** managed-бэкапы Yandex + при необходимости логический дамп:
-  `pg_dump --host=$DB_HOST --username=estimat_migration --dbname=estimat -Fc > estimat.dump`
-  Restore: `pg_restore --clean --if-exists -d estimat estimat.dump`.
-- **S3 Cloud.ru:** объекты `estimat-files` — версионирование/репликация bucket средствами Cloud.ru.
-- **Конфигурация:** `.env.production` (вне git, бэкапить отдельно в secret storage),
-  `deploy/infra/nginx/certbot/conf` (сертификаты), `conf.d/`.
-- **Rebuild VPS:** Docker + `git clone` + восстановить `.env.production` и certbot/conf → пункты 3–4.
+## Backup / Restore (§26)
+- **PostgreSQL:** managed-бэкапы Yandex + логический дамп при необходимости:
+  `pg_dump --host=$DB_HOST --username=estimat_migration --dbname=estimat -Fc > estimat.dump`;
+  restore: `pg_restore --clean --if-exists -d estimat estimat.dump`.
+- **S3 Cloud.ru:** объекты `estimat-files` — версионирование/репликация средствами Cloud.ru.
+- **Конфигурация:** `.env.production` каждого портала (вне git → secret storage),
+  `/opt/infra/nginx/certbot/conf` (сертификаты) и `/opt/infra/nginx/conf.d` (конфиги).
+- **Rebuild VPS:** Docker + сеть `edge` → восстановить `/opt/infra/nginx` (Часть 1) → по каждому
+  порталу: `git clone` + `.env.production` → Часть 2.
 
 ## Этап 2 (после быстрого запуска)
-
-Keycloak + AD/LDAP (§9–§12), Sentry/Prometheus/Grafana/Uptime (§20–§22), Amazon SES/Yandex Postbox
-(§17), Yandex Lockbox (§18), Yandex Container Registry + CI вместо сборки на VPS (§19),
-полный presigned-PUT upload flow (§15), переход к HA (вторая VPS + L7-балансировщик).
+Keycloak + AD/LDAP (§9–§12) в `/opt/infra/keycloak` (общий, отдельный compose), Sentry/Prometheus/
+Grafana/Uptime (§20–§22), SES/Postbox (§17), Yandex Lockbox (§18), Yandex Container Registry + CI
+вместо сборки на VPS (§19), полный presigned-PUT upload flow (§15), переход к HA.
+Усиление: верификация TLS-CA Managed PostgreSQL (сейчас `rejectUnauthorized:false`; §18 — путь к CA-сертификату).

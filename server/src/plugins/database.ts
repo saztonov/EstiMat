@@ -63,7 +63,7 @@ export default fp(async (fastify) => {
     database: config.db.database,
     user: config.db.user,
     password: config.db.password,
-    max: 20,
+    max: config.db.poolMax,
     ssl: config.db.ssl ? { rejectUnauthorized: false } : false,
   });
 
