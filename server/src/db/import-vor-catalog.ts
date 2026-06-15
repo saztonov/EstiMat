@@ -17,10 +17,16 @@
  */
 import pg from 'pg';
 import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { config } from '../config.js';
 
+// server/src/db/ → корень монорепо (три уровня вверх)
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const projectRoot = resolve(__dirname, '..', '..', '..');
+
 interface CatalogMaterial {
-  canonicalName: string;
+  name: string;
   unit: string;
   ratioMedian: number | null;
   filesCount: number;
@@ -30,7 +36,7 @@ interface CatalogMaterial {
 }
 
 interface CatalogWork {
-  canonicalName: string;
+  name: string;
   category: string;
   costType: string;
   unit: string;
@@ -45,19 +51,21 @@ interface Catalog {
   works: CatalogWork[];
 }
 
-interface MappingEntry {
-  canonicalName: string;
-  rateId?: string | null;
+interface MappingByNameEntry {
+  kind: 'matched' | 'probable' | 'toCreate';
+  rateId?: string;
   candidates?: { rateId: string }[];
 }
 
 interface Mapping {
-  matched?: MappingEntry[];
-  probable?: MappingEntry[];
+  byName?: Record<string, MappingByNameEntry>;
 }
 
 const norm = (s: string) =>
   s.toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+
+// Разрешает относительный путь от корня монорепо, абсолютный оставляет как есть
+const resolvePath = (p: string) => (resolve(p) === p ? p : resolve(projectRoot, p));
 
 async function main() {
   const [catalogPath, mappingPath] = process.argv.slice(2);
@@ -66,18 +74,19 @@ async function main() {
     process.exit(1);
   }
 
-  const catalog: Catalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
-  const mapping: Mapping = mappingPath ? JSON.parse(readFileSync(mappingPath, 'utf-8')) : {};
+  const catalog: Catalog = JSON.parse(readFileSync(resolvePath(catalogPath), 'utf-8'));
+  const mapping: Mapping = mappingPath
+    ? JSON.parse(readFileSync(resolvePath(mappingPath), 'utf-8'))
+    : {};
 
-  // Ссылки на старый справочник: matched — точная, probable — лучший кандидат
+  // Ссылки на старый справочник: matched — точная, probable — лучший кандидат.
+  // mapping_v2.json: { byName: { "Имя работы": { kind, rateId?, candidates? } } }
   const legacyByName = new Map<string, { rateId: string; kind: 'matched' | 'probable' }>();
-  for (const m of mapping.matched ?? []) {
-    if (m.rateId) legacyByName.set(norm(m.canonicalName), { rateId: m.rateId, kind: 'matched' });
-  }
-  for (const p of mapping.probable ?? []) {
-    const candidate = p.candidates?.[0]?.rateId;
-    if (candidate && !legacyByName.has(norm(p.canonicalName))) {
-      legacyByName.set(norm(p.canonicalName), { rateId: candidate, kind: 'probable' });
+  for (const [workName, entry] of Object.entries(mapping.byName ?? {})) {
+    if (entry.kind === 'matched' && entry.rateId) {
+      legacyByName.set(norm(workName), { rateId: entry.rateId, kind: 'matched' });
+    } else if (entry.kind === 'probable' && entry.candidates?.[0]?.rateId) {
+      legacyByName.set(norm(workName), { rateId: entry.candidates[0].rateId, kind: 'probable' });
     }
   }
 
@@ -117,18 +126,18 @@ async function main() {
     for (const work of catalog.works) {
       const type = typeByName.get(norm(work.costType));
       if (!type) {
-        stats.skipped.push(`${work.canonicalName} — вид затрат не найден: ${work.costType}`);
+        stats.skipped.push(`${work.name} — вид затрат не найден: ${work.costType}`);
         continue;
       }
       const expectedCatId = catByName.get(norm(work.category));
       if (expectedCatId && type.category_id !== expectedCatId) {
-        stats.skipped.push(`${work.canonicalName} — вид «${work.costType}» в другой категории`);
+        stats.skipped.push(`${work.name} — вид «${work.costType}» в другой категории`);
         continue;
       }
 
-      const legacy = legacyByName.get(norm(work.canonicalName));
+      const legacy = legacyByName.get(norm(work.name));
       if (legacy && !legacyIds.has(legacy.rateId)) {
-        stats.skipped.push(`${work.canonicalName} — legacy-расценка ${legacy.rateId} не найдена в rates`);
+        stats.skipped.push(`${work.name} — legacy-расценка ${legacy.rateId} не найдена в rates`);
       }
       const legacyOk = legacy && legacyIds.has(legacy.rateId) ? legacy : null;
 
@@ -147,7 +156,7 @@ async function main() {
          RETURNING id`,
         [
           type.id,
-          work.canonicalName,
+          work.name,
           work.unit,
           legacyOk?.rateId ?? null,
           legacyOk?.kind ?? null,
@@ -168,7 +177,7 @@ async function main() {
           continue;
         }
 
-        let materialId = materialIdByName.get(norm(m.canonicalName));
+        let materialId = materialIdByName.get(norm(m.name));
         if (!materialId) {
           const matRes = await client.query(
             `INSERT INTO materials_v2 (name, unit, cost_type_id, source_projects, source_files, aliases)
@@ -179,7 +188,7 @@ async function main() {
                source_files = GREATEST(materials_v2.source_files, EXCLUDED.source_files)
              RETURNING id`,
             [
-              m.canonicalName,
+              m.name,
               m.unit,
               type.id,
               m.projectsCount ?? 0,
@@ -188,7 +197,7 @@ async function main() {
             ],
           );
           materialId = matRes.rows[0].id as string;
-          materialIdByName.set(norm(m.canonicalName), materialId);
+          materialIdByName.set(norm(m.name), materialId);
           stats.materials++;
         }
 
