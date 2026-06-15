@@ -1,4 +1,5 @@
 import { Card, Tabs } from 'antd';
+import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { UsersPanel } from './UsersPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { CatalogComparePanel } from './CatalogComparePanel';
@@ -10,13 +11,15 @@ const tabs = [
 ];
 
 export function AdministrationPage() {
+  const [activeTab, setActiveTab] = usePersistedTab('estimat:administration-tab', 'users');
+
   return (
     <Card
       title="Администрирование"
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
       styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '0 24px 24px' } }}
     >
-      <Tabs items={tabs} />
+      <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabs} />
     </Card>
   );
 }

@@ -1,5 +1,5 @@
-import { useSearchParams } from 'react-router';
 import { Card, Tabs } from 'antd';
+import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { ProjectsPanel } from './ProjectsPanel';
 import { OrganizationsPanel } from './OrganizationsPanel';
 import { MaterialsPanel } from './MaterialsPanel';
@@ -15,8 +15,7 @@ const tabs = [
 ];
 
 export function ReferencesPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') || 'projects';
+  const [activeTab, setActiveTab] = usePersistedTab('estimat:references-tab', 'projects');
 
   return (
     <Card
@@ -26,7 +25,7 @@ export function ReferencesPage() {
     >
       <Tabs
         activeKey={activeTab}
-        onChange={(key) => setSearchParams({ tab: key })}
+        onChange={setActiveTab}
         items={tabs}
         style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
       />

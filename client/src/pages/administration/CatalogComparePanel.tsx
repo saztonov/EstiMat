@@ -227,10 +227,16 @@ export function CatalogComparePanel() {
                     const n = node as V2TreeNode;
                     if (!n.v2) return <span>{n.title as string}</span>;
                     const match = n.v2.match_kind ? MATCH_TAG[n.v2.match_kind] : null;
+                    const isNew = !n.v2.legacy_rate_id && !n.v2.match_kind;
                     return (
                       <Space size={6}>
                         <span>{n.v2.name}</span>
                         <Tag style={{ marginInlineEnd: 0 }}>{n.v2.unit}</Tag>
+                        {isNew && (
+                          <Tag color="red" style={{ marginInlineEnd: 0 }}>
+                            новая
+                          </Tag>
+                        )}
                         {n.v2.materials_count > 0 && (
                           <Tag color="blue" style={{ marginInlineEnd: 0 }}>
                             мат.: {n.v2.materials_count}
