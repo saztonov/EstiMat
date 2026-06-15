@@ -112,26 +112,30 @@ async function main() {
   try {
     await client.query('BEGIN');
 
-    const cats = await client.query('SELECT id, name FROM cost_categories');
-    const types = await client.query('SELECT id, category_id, name FROM cost_types');
+    const types = await client.query(`
+      SELECT ct.id, ct.category_id, ct.name, cc.name AS category_name
+      FROM cost_types ct
+      JOIN cost_categories cc ON cc.id = ct.category_id
+    `);
     const legacyRates = await client.query('SELECT id FROM rates');
 
-    const catByName = new Map(cats.rows.map((r) => [norm(r.name), r.id]));
-    const typeByName = new Map(types.rows.map((r) => [norm(r.name), r]));
+    // Составной ключ "категория::вид" исключает дубли — одни виды затрат существуют
+    // в нескольких категориях (напр. «Электрика - освещение» в ВИС и в ОТДЕЛКА MR BASE)
+    const typeByName = new Map(
+      types.rows.map((r) => [`${norm(r.category_name)}::${norm(r.name)}`, r]),
+    );
     const legacyIds = new Set(legacyRates.rows.map((r) => r.id));
 
     // materials_v2 — общий справочник, материал может быть типовым у нескольких работ
     const materialIdByName = new Map<string, string>();
 
     for (const work of catalog.works) {
-      const type = typeByName.get(norm(work.costType));
+      const compositeKey = `${norm(work.category)}::${norm(work.costType)}`;
+      const type = typeByName.get(compositeKey);
       if (!type) {
-        stats.skipped.push(`${work.name} — вид затрат не найден: ${work.costType}`);
-        continue;
-      }
-      const expectedCatId = catByName.get(norm(work.category));
-      if (expectedCatId && type.category_id !== expectedCatId) {
-        stats.skipped.push(`${work.name} — вид «${work.costType}» в другой категории`);
+        stats.skipped.push(
+          `${work.name} — вид затрат не найден: ${work.costType} (категория: ${work.category})`,
+        );
         continue;
       }
 
