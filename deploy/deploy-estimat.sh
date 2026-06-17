@@ -21,7 +21,11 @@ VITE_API_URL="$(grep -E '^VITE_API_URL=' "$ENV_FILE" | head -n1 | cut -d= -f2-)"
 export VITE_API_URL
 
 echo "==> git pull"
-git -C "$PORTAL_DIR" pull --ff-only
+if git -C "$PORTAL_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  git -C "$PORTAL_DIR" pull --ff-only
+else
+  echo "git upstream не настроен — пропускаю pull"
+fi
 
 echo "==> build"
 "${COMPOSE[@]}" build
@@ -35,5 +39,10 @@ echo "==> up"
 "${COMPOSE[@]}" up -d estimat-api estimat-web
 
 echo "==> health"
-curl -fsS "${VITE_API_URL%/}/health/ready" && echo
+# Некритично: при первом запуске nginx/TLS ещё не настроены — это нормально.
+if curl -fsS "${VITE_API_URL%/}/health/ready" >/dev/null 2>&1; then
+  echo "health: ok"
+else
+  echo "health: недоступен по ${VITE_API_URL%/}/health/ready — проверьте nginx/TLS (см. README, шаг ingress)"
+fi
 echo "Готово."
