@@ -1,0 +1,2 @@
+# Shell-скрипты всегда с LF — иначе ломается shebang при запуске на Linux (VPS).
+*.sh text eol=lf

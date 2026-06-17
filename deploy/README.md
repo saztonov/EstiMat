@@ -28,6 +28,18 @@
   свой `*.conf` в общем nginx.
 - Файлы — в S3 (backend stateless). Auth — standalone JWT в cookie (этап 2: Keycloak/AD).
 
+**Раскладка на хосте (контейнеры + FHS-гибрид):**
+
+| Путь | Что лежит |
+|---|---|
+| `/opt/portals/estimat` | код портала + сборка образов (git-чекаут) |
+| `/etc/estimat/estimat.env` | конфиг и секреты (FHS host-config, `640 root:docker`) |
+| `/usr/local/bin/deploy-estimat` | симлинк на деплой-скрипт `deploy/deploy-estimat.sh` |
+| `/opt/infra/nginx` | общий ingress хоста (nginx + certbot + сертификаты) |
+
+Статика — в образе `estimat-web`, состояние — в S3+Managed PG, логи — `docker logs`/journald
+(каталоги `/srv`, `/var/lib`, `/var/log` не вводятся — это контейнерная модель).
+
 > Отступление от стандарта (этап 1): образы собираются **на VPS** (`docker compose build`), а не в CI
 > с пушем в Yandex Container Registry (§19). Переход на registry — отдельный шаг.
 
@@ -91,25 +103,28 @@ cd /opt/portals
 git clone <repo-url> estimat           # либо перенос кода (см. VPS-SETUP.md)
 cd estimat
 
-cp .env.production.example .env.production
-chmod 600 .env.production
+# Конфиг и секреты — host-specific, в /etc/estimat/estimat.env (FHS, права 640 root:docker):
+sudo mkdir -p /etc/estimat
+sudo install -m 640 -o root -g docker .env.production.example /etc/estimat/estimat.env
 openssl rand -base64 48                 # сгенерировать JWT-секреты (дважды)
-nano .env.production                    # DB(Managed PG, DB_SSL=true), JWT, CORS_ORIGIN=https://app..., S3
+sudo nano /etc/estimat/estimat.env      # DB(Managed PG, DB_SSL=true), JWT, CORS_ORIGIN=https://app..., S3, VITE_API_URL
+
+# Деплой-скрипт в PATH (симлинк на версионируемый скрипт в репо):
+sudo ln -sf /opt/portals/estimat/deploy/deploy-estimat.sh /usr/local/bin/deploy-estimat
 ```
 
 ### 2.3. Сборка, миграции, запуск (portal-scoped)
 ```bash
-export VITE_API_URL=https://api.estimat.example
-docker compose -f deploy/docker-compose.prod.yml -p estimat build
+# Первый запуск с миграциями (нужны DDL-права — временно укажите estimat_migration
+# в /etc/estimat/estimat.env, накатите, верните estimat_runtime):
+deploy-estimat --migrate
 
-# Миграции отдельным шагом (§8). Нужны DDL-права (estimat_migration):
-# временно укажите его в .env.production, накатите, верните estimat_runtime.
-docker compose -f deploy/docker-compose.prod.yml -p estimat run --rm migrate
-
-docker compose -f deploy/docker-compose.prod.yml -p estimat up -d estimat-api estimat-web
-docker compose -p estimat ps
-docker compose -p estimat logs --tail=50 estimat-api
+docker compose -f deploy/docker-compose.prod.yml -p estimat ps
+docker compose -f deploy/docker-compose.prod.yml -p estimat logs --tail=50 estimat-api
 ```
+> `deploy-estimat` читает `/etc/estimat/estimat.env`, экспортирует `VITE_API_URL`, делает
+> `git pull` + `build` + (`--migrate`) + `up -d`. Ручной путь без скрипта:
+> `export VITE_API_URL=…; docker compose -f deploy/docker-compose.prod.yml -p estimat build && … up -d`.
 
 ### 2.4. Подключение портала к общему ingress
 ```bash
@@ -146,13 +161,8 @@ curl -fsS https://api.estimat.example/health/ready    # {"status":"ok"} — ес
 
 ## Обновление портала (portal-scoped, §19)
 ```bash
-cd /opt/portals/estimat && git pull
-export VITE_API_URL=https://api.estimat.example
-docker compose -f deploy/docker-compose.prod.yml -p estimat build
-# при новых миграциях:
-docker compose -f deploy/docker-compose.prod.yml -p estimat run --rm migrate
-docker compose -f deploy/docker-compose.prod.yml -p estimat up -d estimat-api estimat-web
-curl -fsS https://api.estimat.example/health/ready
+deploy-estimat              # git pull + build + up + health
+deploy-estimat --migrate    # то же + накат новых миграций (нужны DDL-права в estimat.env)
 ```
 Не трогает соседние порталы, nginx и Keycloak. Запрещены глобальные destructive-команды
 (`docker system prune -a`, `compose down --volumes`, `rm -rf /opt/portals/*`).
@@ -167,10 +177,10 @@ curl -fsS https://api.estimat.example/health/ready
   `pg_dump --host=$DB_HOST --username=estimat_migration --dbname=estimat -Fc > estimat.dump`;
   restore: `pg_restore --clean --if-exists -d estimat estimat.dump`.
 - **S3 Cloud.ru:** объекты `estimat-files` — версионирование/репликация средствами Cloud.ru.
-- **Конфигурация:** `.env.production` каждого портала (вне git → secret storage),
+- **Конфигурация:** `/etc/<portal>/<portal>.env` каждого портала (вне git → secret storage),
   `/opt/infra/nginx/certbot/conf` (сертификаты) и `/opt/infra/nginx/conf.d` (конфиги).
 - **Rebuild VPS:** Docker + сеть `edge` → восстановить `/opt/infra/nginx` (Часть 1) → по каждому
-  порталу: `git clone` + `.env.production` → Часть 2.
+  порталу: `git clone` + `/etc/<portal>/<portal>.env` + симлинк `deploy-<portal>` → Часть 2.
 
 ## Этап 2 (после быстрого запуска)
 Keycloak + AD/LDAP (§9–§12) в `/opt/infra/keycloak` (общий, отдельный compose), Sentry/Prometheus/

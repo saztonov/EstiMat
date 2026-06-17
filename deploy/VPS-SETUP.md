@@ -57,6 +57,11 @@ docker compose -p infra-nginx up -d
 ---
 
 Дальше — развёртывание конкретного портала: **`deploy/README.md`, Часть 2**.
+
+Раскладка для каждого портала (контейнеры + FHS-гибрид): код — `/opt/portals/<portal>`, конфиг и
+секреты — `/etc/<portal>/<portal>.env` (`640 root:docker`), деплой-скрипт — симлинк в
+`/usr/local/bin/deploy-<portal>`. Общий ingress (`/opt/infra/nginx`) — один на хост.
+
 Перенос кода без git (если нет remote): WinSCP или `pscp` из комплекта PuTTY, например
 `pscp -r C:\Users\Usr\EstiMat <user>@<IP>:/opt/portals/estimat` (предварительно исключив
 `node_modules` и `dist`).

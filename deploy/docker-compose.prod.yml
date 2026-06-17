@@ -1,13 +1,14 @@
 # EstiMat — portal compose project (§4, §19).
-# Запуск из корня репозитория на VPS:
+# Обычно запускается через /usr/local/bin/deploy-estimat; вручную из корня репо на VPS:
 #   docker compose -f deploy/docker-compose.prod.yml -p estimat up -d estimat-api estimat-web
 #
 # БД — внешний Yandex Managed PostgreSQL (в этом compose НЕТ postgres).
 # Образы собираются на VPS (этап 1). Сеть edge — общая с инфраструктурным nginx,
 # создаётся один раз: docker network create edge
 #
-# VITE_API_URL для сборки фронта берётся из окружения оболочки, напр.:
-#   export VITE_API_URL=https://api.estimat.example
+# Конфиг/секреты — в /etc/estimat/estimat.env (FHS, права 640 root:docker), env_file ниже.
+# VITE_API_URL для сборки фронта берётся из того же файла (deploy-estimat его экспортирует),
+# либо вручную: export VITE_API_URL=https://api.estimat.example
 
 services:
   estimat-api:
@@ -16,7 +17,7 @@ services:
       dockerfile: server/Dockerfile
     image: estimat-api:latest
     restart: unless-stopped
-    env_file: ../.env.production
+    env_file: /etc/estimat/estimat.env
     networks: [edge]
     healthcheck:
       test:
@@ -47,7 +48,7 @@ services:
       dockerfile: server/Dockerfile
     image: estimat-api:latest
     profiles: ["migrate"]
-    env_file: ../.env.production
+    env_file: /etc/estimat/estimat.env
     networks: [edge]
     command: ["node", "dist/db/migrate.js"]
 
