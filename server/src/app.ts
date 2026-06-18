@@ -74,13 +74,17 @@ export async function buildApp() {
     limits: { fileSize: 10 * 1024 * 1024 },
   });
 
-  // Static files (user uploads)
-  await mkdir(join(UPLOADS_DIR, 'projects'), { recursive: true });
-  await app.register(fastifyStatic, {
-    root: UPLOADS_DIR,
-    prefix: '/uploads/',
-    decorateReply: false,
-  });
+  // Static files (user uploads) — только dev-фолбэк без S3.
+  // В проде файлы в S3 (§15): локальный каталог не создаём (контейнер под non-root
+  // не имеет прав на /app/server) и статику не монтируем — backend stateless (§4).
+  if (!config.s3.enabled) {
+    await mkdir(join(UPLOADS_DIR, 'projects'), { recursive: true });
+    await app.register(fastifyStatic, {
+      root: UPLOADS_DIR,
+      prefix: '/uploads/',
+      decorateReply: false,
+    });
+  }
 
   // Database plugin
   await app.register(import('./plugins/database.js'));
