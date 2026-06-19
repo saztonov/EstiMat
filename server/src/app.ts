@@ -51,10 +51,12 @@ export async function buildApp() {
     timeWindow: '1 minute',
   });
 
-  // CORS
+  // CORS. methods задаём явно: дефолт @fastify/cors — только GET,HEAD,POST,
+  // из-за чего preflight для PUT/PATCH/DELETE блокировался на раздельных доменах.
   await app.register(cors, {
     origin: config.cors.origin,
     credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
   });
 
   // Cookies
