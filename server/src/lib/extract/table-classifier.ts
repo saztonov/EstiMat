@@ -71,6 +71,58 @@ function matchRole(
   return aliases.some((a) => h.includes(norm(a)));
 }
 
+/** Роли, по которым опознаём «настоящую» строку заголовков. */
+const SCAN_ROLES: ColumnRole[] = ['name', 'quantity', 'unit', 'mark', 'gost'];
+
+/** Сколько ячеек строки совпали с известными ролями колонок. */
+function headerRoleScore(cells: string[], extraAliases: Record<string, string[]>): number {
+  let score = 0;
+  for (const c of cells) {
+    if (SCAN_ROLES.some((role) => matchRole(c, role, extraAliases))) score++;
+  }
+  return score;
+}
+
+/** Строка нумерации колонок («1 | 2 | 3 | …») — служебная, не данные. */
+function isNumberingRow(cells: string[]): boolean {
+  const filled = cells.filter((c) => c.trim() !== '');
+  if (filled.length < 2) return false;
+  return filled.every((c) => /^\d{1,2}$/.test(c.trim()));
+}
+
+/**
+ * Нормализация шапки спец-таблицы РД: в распознанных таблицах настоящая шапка
+ * часто НЕ в первой строке (сверху пустая строка `| | | |`), а сразу под шапкой
+ * идёт строка нумерации колонок «1 2 3 …». Находим реальную шапку среди первых
+ * строк (по совпадению ячеек с ролями) и отбрасываем строку нумерации.
+ */
+export function normalizeTableHeader(
+  headers: string[],
+  rows: string[][],
+  rules: ExtractRules = {},
+): { headers: string[]; rows: string[][] } {
+  const extraAliases = rules.columnAliases ?? {};
+  const nonEmptyHeader = headers.filter((h) => h.trim() !== '').length;
+
+  // Шапка вырождена (пустая/без ролей) → ищем настоящую среди первых строк.
+  if (headerRoleScore(headers, extraAliases) < 2 || nonEmptyHeader < 2) {
+    const limit = Math.min(rows.length, 4);
+    for (let r = 0; r < limit; r++) {
+      const candidate = rows[r];
+      if (candidate && headerRoleScore(candidate, extraAliases) >= 2) {
+        let dataRows = rows.slice(r + 1);
+        if (dataRows.length && isNumberingRow(dataRows[0]!)) dataRows = dataRows.slice(1);
+        return { headers: candidate, rows: dataRows };
+      }
+    }
+  }
+
+  // Шапка в первой строке — отбросить возможную строку нумерации в начале данных.
+  let dataRows = rows;
+  if (dataRows.length && isNumberingRow(dataRows[0]!)) dataRows = dataRows.slice(1);
+  return { headers, rows: dataRows };
+}
+
 export function classifyTable(
   headers: string[],
   rows: string[][],
@@ -78,6 +130,11 @@ export function classifyTable(
 ): TableClassification {
   const extraAliases = rules.columnAliases ?? {};
   const columns: ColumnMap = { name: null, quantity: null, unit: null, mark: null, gost: null };
+
+  // Приоритет наименования: явный столбец «наименование» важнее «обозначения»/«марки»
+  // (в спецификациях заполнения проёмов рядом стоят «Обозначение» (ГОСТ) и «Наименование»).
+  const explicitName = headers.findIndex((h) => norm(h).includes('наименование'));
+  if (explicitName >= 0) columns.name = explicitName;
 
   headers.forEach((h, idx) => {
     // Назначаем первую подходящую роль, не перезаписывая уже найденную.

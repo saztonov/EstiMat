@@ -7,11 +7,17 @@ export interface AppSettings {
   rdSectionEnabled: boolean;
   /** Источник справочника для ИИ-сопоставления извлечённых позиций */
   aiCatalogSource: AiCatalogSource;
+  /** Список доступных LLM-моделей (id OpenRouter, напр. 'anthropic/claude-opus-4-8') */
+  aiModels: string[];
+  /** Модель по умолчанию для ИИ-извлечения (должна быть из aiModels) */
+  aiModelDefault: string;
 }
 
 export const updateAppSettingsSchema = z.object({
   rdSectionEnabled: z.boolean().optional(),
   aiCatalogSource: aiCatalogSourceSchema.optional(),
+  aiModels: z.array(z.string().min(1)).optional(),
+  aiModelDefault: z.string().optional(),
 });
 
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;

@@ -3,6 +3,7 @@ import {
   Table,
   Button,
   Popconfirm,
+  Popover,
   Space,
   Tag,
   AutoComplete,
@@ -21,6 +22,7 @@ import {
   UserOutlined,
   CaretRightOutlined,
   CaretDownOutlined,
+  SwapOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -102,6 +104,8 @@ function MaterialsSubTable({
   onUpdate,
   onDelete,
   onConfirm,
+  onReassign,
+  works = [],
 }: {
   work: EstimateItem;
   editable: boolean;
@@ -109,6 +113,8 @@ function MaterialsSubTable({
   onUpdate: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDelete: (materialId: string) => void;
   onConfirm: (materialId: string) => void;
+  onReassign?: (materialId: string, itemId: string) => void;
+  works?: { id: string; label: string; costTypeName: string | null }[];
 }) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<MaterialEdit | null>(null);
@@ -199,6 +205,35 @@ function MaterialsSubTable({
     }
   }
 
+  const canReassign = !!onReassign && works.length > 1;
+  // Кнопка переноса материала к другой работе (для ревью ИИ-извлечения).
+  const reassignBtn = (r: EstimateMaterial) =>
+    canReassign ? (
+      <Popover
+        trigger="click"
+        title="Перенести материал к работе"
+        content={
+          <Select
+            showSearch
+            size="small"
+            autoFocus
+            style={{ width: 300 }}
+            placeholder="Выберите работу"
+            optionFilterProp="label"
+            options={works
+              .filter((w) => w.id !== work.id)
+              .map((w) => ({
+                value: w.id,
+                label: w.costTypeName ? `${w.costTypeName}: ${w.label}` : w.label,
+              }))}
+            onSelect={(val: string) => onReassign!(r.id, val)}
+          />
+        }
+      >
+        <Button type="text" size="small" title="Перенести к другой работе" icon={<SwapOutlined />} disabled={!!editing} />
+      </Popover>
+    ) : null;
+
   const columns: ColumnsType<EstimateMaterial> = [
     { title: 'Материал', dataIndex: 'description', render: (v: string, r) => {
         if (isRowInEdit(r) && editing) {
@@ -270,6 +305,7 @@ function MaterialsSubTable({
                 <Space size={4}>
                   <Button type="text" size="small" disabled={!!editing} title="Подтвердить материал"
                     icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => onConfirm(r.id)} />
+                  {reassignBtn(r)}
                   <Button type="text" size="small" danger disabled={!!editing} title="Отклонить предложение"
                     icon={<CloseOutlined />} onClick={() => onDelete(r.id)} />
                 </Space>
@@ -279,6 +315,7 @@ function MaterialsSubTable({
               <Space size={4}>
                 <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
                   onClick={() => setEditing({ materialId: r.id, refMaterialId: r.material_id, description: r.description, unit: r.unit, quantity: Number(r.quantity), unitPrice: Number(r.unit_price) })} />
+                {reassignBtn(r)}
                 <Popconfirm title="Удалить материал?" onConfirm={() => onDelete(r.id)}>
                   <Button type="text" size="small" danger disabled={!!editing} icon={<DeleteOutlined />} />
                 </Popconfirm>
@@ -332,6 +369,9 @@ interface Props {
   onUpdateMaterial?: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDeleteMaterial?: (materialId: string) => void;
   onConfirmMaterial?: (materialId: string) => void;
+  onReassignMaterial?: (materialId: string, itemId: string) => void;
+  /** Все работы сметы — для выбора цели при переносе материала. */
+  allWorks?: { id: string; label: string; costTypeName: string | null }[];
   onSetContractor?: (costTypeId: string, contractorId: string) => void;
   onClearContractor?: (costTypeId: string) => void;
   collapsible?: boolean;
@@ -359,6 +399,8 @@ export function CostTypeGroupBlock({
   onUpdateMaterial = noopAsync,
   onDeleteMaterial = noop,
   onConfirmMaterial = noop,
+  onReassignMaterial,
+  allWorks = [],
   onSetContractor = noop,
   onClearContractor = noop,
   collapsible = false,
@@ -752,6 +794,8 @@ export function CostTypeGroupBlock({
                 onUpdate={onUpdateMaterial}
                 onDelete={onDeleteMaterial}
                 onConfirm={onConfirmMaterial}
+                onReassign={onReassignMaterial}
+                works={allWorks}
               />
             ),
           }}

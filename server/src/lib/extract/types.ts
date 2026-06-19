@@ -29,6 +29,8 @@ export type RawBlock =
       sectionPath: string[];
       sourceSnippet: string;
       line: number;
+      /** Параграф — распознанный текст блока-изображения (поле «Текст на чертеже»). */
+      isDrawingText?: boolean;
     };
 
 // ============================================================
@@ -82,6 +84,18 @@ export interface CatalogEntry {
 
 /** Откуда брать справочник для сопоставления (настройка в Администрировании). */
 export type CatalogSourceMode = 'v2_first' | 'legacy' | 'both';
+
+/**
+ * Область подбора работ, заданная сметчиком в фильтрах. Сужает справочник РАБОТ
+ * (rates) при загрузке среза: если costTypeIds непуст — по видам, иначе по
+ * разделам (categoryIds). Материалы областью не сужаются.
+ */
+export interface SectionScope {
+  /** cost_categories.id — выбранные разделы (≥1). */
+  categoryIds: string[];
+  /** cost_types.id — выбранные виды (опц.; пусто = все виды выбранных разделов). */
+  costTypeIds: string[];
+}
 
 export interface CatalogSnapshot {
   rates: CatalogEntry[];
@@ -184,12 +198,26 @@ export interface ExtractRules {
 export interface LlmExtractContext {
   sectionPath: string[];
   rules: ExtractRules;
+  /** Тип фрагмента: проза или распознанный текст чертежа (строчная спецификация). */
+  kind?: 'prose' | 'drawing';
 }
 
 export interface LlmMatchCandidate {
   id: string;
   name: string;
   unit: string | null;
+}
+
+/** Контекст подбора работ из суженного справочника по содержанию документа. */
+export interface LlmSuggestWorksContext {
+  scope: SectionScope;
+  rules: ExtractRules;
+}
+
+/** Работа, предложенная LLM из списка кандидатов (id — rate из candidates). */
+export interface LlmSuggestedWork {
+  id: string;
+  confidence: number;
 }
 
 /**
@@ -204,4 +232,14 @@ export interface LlmPort {
     item: RawSpecItem,
     candidates: LlmMatchCandidate[],
   ): Promise<{ id: string; confidence: number } | null>;
+  /**
+   * Гибридный подбор работ: из списка кандидатов (суженный по scope справочник
+   * расценок) выбрать работы, нужные для систем/решений, описанных в документе.
+   * Не выдумывать работ вне списка. Возвращает выбранные id с уверенностью.
+   */
+  suggestWorks(
+    documentDigest: string,
+    candidates: LlmMatchCandidate[],
+    ctx: LlmSuggestWorksContext,
+  ): Promise<LlmSuggestedWork[]>;
 }

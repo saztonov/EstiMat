@@ -7,7 +7,14 @@ import { applyExtraction } from '../../lib/extract/apply.js';
 import { loadCatalogSnapshot } from '../../lib/extract/catalog-source.js';
 import { runExtraction } from '../../lib/extract/pipeline.js';
 import { createOpenRouterPort } from '../../lib/extract/llm/openrouter.js';
-import type { CatalogSourceMode } from '../../lib/extract/types.js';
+import type { CatalogSourceMode, SectionScope } from '../../lib/extract/types.js';
+
+/** Модель LLM: дефолт из настроек (app_settings.ai_model_default), иначе из env. */
+async function resolveAiModel(fastify: FastifyInstance): Promise<string> {
+  const r = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_model_default'`);
+  const v = r.rows[0]?.value;
+  return typeof v === 'string' && v.trim() ? v.trim() : config.ai.model;
+}
 
 // Фаза 2: фоновое извлечение встроенным движком (OpenRouter). Берёт markdown из
 // ai_jobs.input.markdown (UI кладёт его и для rd_document, и для upload_md),
@@ -18,14 +25,16 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
   if (!job) return;
   const markdown: string | null = job.input?.markdown ?? null;
   if (!markdown) return; // catalog_query без markdown — оставляем skill'у
+  const scope: SectionScope | undefined = job.input?.sectionScope ?? undefined;
 
   try {
     await fastify.pool.query(`UPDATE ai_jobs SET status = 'running' WHERE id = $1`, [jobId]);
     const cfg = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_catalog_source'`);
     const mode = (cfg.rows[0]?.value as CatalogSourceMode) ?? 'v2_first';
-    const catalog = await loadCatalogSnapshot(fastify.pool, mode);
-    const port = createOpenRouterPort({ apiKey: config.ai.apiKey, model: config.ai.model, baseUrl: config.ai.baseUrl });
-    const result = await runExtraction(markdown, catalog, {}, port);
+    const catalog = await loadCatalogSnapshot(fastify.pool, mode, scope);
+    const model = await resolveAiModel(fastify);
+    const port = createOpenRouterPort({ apiKey: config.ai.apiKey, model, baseUrl: config.ai.baseUrl });
+    const result = await runExtraction(markdown, catalog, {}, port, scope);
 
     const client = await fastify.pool.connect();
     try {
@@ -33,7 +42,7 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
       await client.query(`UPDATE ai_jobs SET status = 'ready', result = $2::jsonb, model = $3 WHERE id = $1`, [
         jobId,
         JSON.stringify(result),
-        `openrouter:${config.ai.model}`,
+        `openrouter:${model}`,
       ]);
       await applyExtraction(
         client,
@@ -80,6 +89,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
       markdown: body.markdown ?? null,
       query: body.query ?? null,
       sourceRef: body.sourceRef ?? null,
+      sectionScope: body.sectionScope ?? null,
     };
 
     const { rows } = await fastify.pool.query(

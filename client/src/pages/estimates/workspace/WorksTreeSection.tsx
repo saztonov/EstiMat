@@ -5,8 +5,9 @@ import { SearchOutlined, PlusOutlined, DownOutlined, UpOutlined } from '@ant-des
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
+import { useWorkScopeStore } from '../../../store/workScopeStore';
 import { SectionShell } from './SectionShell';
-import { mapRatesTreeToNodes, filterRateNodes, type RateTreeNode } from './treeMappers';
+import { mapRatesTreeToNodes, filterRateNodes, filterRateNodesByScope, type RateTreeNode } from './treeMappers';
 import type { RateTreeCategory, RateLeafPayload } from './types';
 
 // Собрать ключи всех раскрываемых узлов (категории + виды работ) — для «развернуть всё».
@@ -61,7 +62,16 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
     }, 120);
   }, [revealRequest]);
 
-  const nodes = useMemo(() => mapRatesTreeToNodes(data?.data ?? []), [data]);
+  // Область подбора, выбранная в панели ИИ — сужает дерево для ручного добора.
+  const scopeCategoryIds = useWorkScopeStore((s) => s.categoryIds);
+  const scopeCostTypeIds = useWorkScopeStore((s) => s.costTypeIds);
+
+  const allNodes = useMemo(() => mapRatesTreeToNodes(data?.data ?? []), [data]);
+  const nodes = useMemo(
+    () => filterRateNodesByScope(allNodes, scopeCategoryIds, scopeCostTypeIds),
+    [allNodes, scopeCategoryIds, scopeCostTypeIds],
+  );
+  const scopeActive = scopeCategoryIds.length > 0 || scopeCostTypeIds.length > 0;
   const allExpandableKeys = useMemo(() => collectExpandableKeys(nodes), [nodes]);
   const { nodes: treeData, expandedKeys: autoExpand } = useMemo(
     () => filterRateNodes(nodes, search),
@@ -142,12 +152,20 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
           <Button size="small" icon={<UpOutlined />} onClick={() => setUserExpanded([])} />
         </Tooltip>
       </div>
+      {scopeActive && (
+        <div style={{ fontSize: 12, color: '#8c8c8c', marginBottom: 6 }}>
+          Сужено по выбранным разделам (область подбора в панели ИИ).
+        </div>
+      )}
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: 20 }}>
           <Spin />
         </div>
       ) : treeData.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Ничего не найдено" />
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={scopeActive ? 'Нет работ в выбранных разделах' : 'Ничего не найдено'}
+        />
       ) : (
         <div ref={treeWrapRef}>
           <Tree<RateTreeNode>

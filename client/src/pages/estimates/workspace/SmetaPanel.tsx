@@ -36,6 +36,7 @@ interface Props {
   onUpdateMaterial: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDeleteMaterial: (materialId: string) => void;
   onConfirmMaterial: (materialId: string) => void;
+  onReassignMaterial: (materialId: string, itemId: string) => void;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;
 }
@@ -69,6 +70,7 @@ export function SmetaPanel({
   onUpdateMaterial,
   onDeleteMaterial,
   onConfirmMaterial,
+  onReassignMaterial,
   onSetContractor,
   onClearContractor,
 }: Props) {
@@ -160,6 +162,17 @@ export function SmetaPanel({
     setCollapsedTypes(new Set(groups.map(typeKey)));
   };
 
+  // Плоский список работ сметы — для выбора цели при переносе материала.
+  const allWorks = useMemo(
+    () =>
+      groups.flatMap((g) =>
+        g.works
+          .filter((w) => w.id)
+          .map((w) => ({ id: w.id, label: w.description, costTypeName: g.costTypeName })),
+      ),
+    [groups],
+  );
+
   const blockProps = {
     editable,
     orgs,
@@ -172,6 +185,8 @@ export function SmetaPanel({
     onUpdateMaterial,
     onDeleteMaterial,
     onConfirmMaterial,
+    onReassignMaterial,
+    allWorks,
     onSetContractor,
     onClearContractor,
   };

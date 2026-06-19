@@ -23,6 +23,15 @@ export const aiJobStatusSchema = z.enum([
 /** Откуда брать справочник при сопоставлении (настройка приложения). */
 export const aiCatalogSourceSchema = z.enum(['v2_first', 'legacy', 'both']);
 
+/**
+ * Область подбора работ: разделы (cost_categories) и опционально виды (cost_types).
+ * Сужает справочник расценок для ИИ-подбора и ручного добора из дерева.
+ */
+export const sectionScopeSchema = z.object({
+  categoryIds: z.array(z.string().uuid()).default([]),
+  costTypeIds: z.array(z.string().uuid()).default([]),
+});
+
 export const createAiJobSchema = z
   .object({
     estimateId: z.string().uuid(),
@@ -33,6 +42,8 @@ export const createAiJobSchema = z
     markdown: z.string().optional(),
     /** Текстовая задача (для catalog_query). */
     query: z.string().optional(),
+    /** Область подбора работ (разделы/виды), выбранная сметчиком. */
+    sectionScope: sectionScopeSchema.optional(),
   })
   .refine(
     (v) =>
@@ -115,6 +126,7 @@ export const aiJobSchema = z.object({
 export type AiJobSourceKind = z.infer<typeof aiJobSourceKindSchema>;
 export type AiJobStatus = z.infer<typeof aiJobStatusSchema>;
 export type AiCatalogSource = z.infer<typeof aiCatalogSourceSchema>;
+export type SectionScopeInput = z.infer<typeof sectionScopeSchema>;
 export type CreateAiJobInput = z.infer<typeof createAiJobSchema>;
 export type MatchResultDto = z.infer<typeof matchResultSchema>;
 export type ExtractedMaterialDto = z.infer<typeof extractedMaterialSchema>;

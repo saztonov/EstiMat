@@ -51,6 +51,26 @@ export function mapRatesTreeToNodes(tree: RateTreeCategory[]): RateTreeNode[] {
   }));
 }
 
+// Сужение дерева по области подбора (разделы/виды), выбранной сметчиком.
+// Пусто — возвращаем как есть. Иначе оставляем выбранные категории и (если заданы)
+// только выбранные виды внутри них.
+export function filterRateNodesByScope(
+  nodes: RateTreeNode[],
+  categoryIds: string[],
+  costTypeIds: string[],
+): RateTreeNode[] {
+  if (categoryIds.length === 0 && costTypeIds.length === 0) return nodes;
+  const catSet = new Set(categoryIds.map((id) => `cat:${id}`));
+  const typeSet = new Set(costTypeIds.map((id) => `type:${id}`));
+  return nodes
+    .filter((c) => catSet.size === 0 || catSet.has(String(c.key)))
+    .map((c) => ({
+      ...c,
+      children: (c.children ?? []).filter((t) => typeSet.size === 0 || typeSet.has(String(t.key))),
+    }))
+    .filter((c) => (c.children?.length ?? 0) > 0);
+}
+
 // Фильтрация дерева по подстроке: сохраняем категории/виды, если есть
 // подходящие потомки, и листья, совпадающие напрямую. Возвращаем также
 // ключи, которые надо раскрыть, чтобы показать совпадения.

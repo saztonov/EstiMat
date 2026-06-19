@@ -119,6 +119,17 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
+  // Перенос материала к другой работе (ревью ИИ-извлечения) — снимает needs_review на сервере.
+  const reassignMaterialMutation = useMutation({
+    mutationFn: ({ materialId, itemId }: { materialId: string; itemId: string }) =>
+      api.patch(`/estimate-items/materials/${materialId}/reassign`, { itemId }),
+    onSuccess: () => {
+      invalidate();
+      message.success('Материал перенесён к работе');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
   const setContractorMutation = useMutation({
     mutationFn: ({ costTypeId, contractorId }: { costTypeId: string; contractorId: string }) =>
       api.put(`/estimates/${estimateId}/contractors`, { costTypeId, contractorId }),
@@ -220,6 +231,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         onUpdateMaterial={updateMaterial}
         onDeleteMaterial={(materialId) => deleteMaterialMutation.mutate(materialId)}
         onConfirmMaterial={(materialId) => confirmMaterialMutation.mutate(materialId)}
+        onReassignMaterial={(materialId, itemId) => reassignMaterialMutation.mutate({ materialId, itemId })}
         onSetContractor={(costTypeId, contractorId) =>
           setContractorMutation.mutate({ costTypeId, contractorId })
         }

@@ -15,10 +15,12 @@ import type {
   ExtractedMaterial,
   ExtractedWork,
   LlmPort,
+  RawBlock,
   RawSpecItem,
+  SectionScope,
 } from './types.js';
 import { parseMarkdown } from './markdown-parser.js';
-import { classifyTable } from './table-classifier.js';
+import { classifyTable, normalizeTableHeader } from './table-classifier.js';
 import { extractSpecTable } from './spec-extractor.js';
 import { matchItem } from './matcher.js';
 import { norm } from './normalize.js';
@@ -27,6 +29,29 @@ const CONFIDENCE_REVIEW = 0.8;
 
 function dedupeKey(item: RawSpecItem): string {
   return `${norm(item.rawName)}|${item.quantity ?? ''}|${item.unit ?? ''}|${item.sectionPath.join('>')}`;
+}
+
+const DIGEST_LIMIT = 8000;
+
+/**
+ * Сжатая выжимка документа для LLM-подбора работ: заголовки разделов + проза +
+ * шапки таблиц, обрезанная по бюджету (экономия токенов — не шлём весь markdown).
+ */
+function buildDocumentDigest(blocks: RawBlock[]): string {
+  const parts: string[] = [];
+  let len = 0;
+  for (const b of blocks) {
+    const piece =
+      b.type === 'heading'
+        ? `# ${b.text}`
+        : b.type === 'paragraph'
+          ? b.text
+          : `[таблица: ${b.headers.join(' | ')}]`;
+    parts.push(piece);
+    len += piece.length + 1;
+    if (len > DIGEST_LIMIT) break;
+  }
+  return parts.join('\n').slice(0, DIGEST_LIMIT);
 }
 
 /** Подобрать наименование работы для раздела по правилу sectionToWork. */
@@ -45,6 +70,7 @@ export async function runExtraction(
   catalog: CatalogSnapshot,
   rules: ExtractRules = {},
   llm?: LlmPort,
+  scope?: SectionScope,
 ): Promise<ExtractionResult> {
   const blocks = parseMarkdown(markdown);
   const anomalies: string[] = [];
@@ -55,11 +81,14 @@ export async function runExtraction(
   for (const block of blocks) {
     if (block.type === 'table') {
       tableCount++;
-      const cls = classifyTable(block.headers, block.rows, rules);
+      // Нормализация шапки: реальная шапка спецификации РД часто не в первой строке
+      // (пустая строка-шапка, ниже — строка нумерации колонок «1..9»).
+      const tbl = normalizeTableHeader(block.headers, block.rows, rules);
+      const cls = classifyTable(tbl.headers, tbl.rows, rules);
       if (cls.kind === 'spec' && cls.confident) {
         const { items, anomalies: a } = extractSpecTable(
-          block.headers,
-          block.rows,
+          tbl.headers,
+          tbl.rows,
           cls.columns,
           block.sectionPath,
           rules,
@@ -76,12 +105,29 @@ export async function runExtraction(
       } else if (cls.kind === 'ambiguous') {
         anomalies.push(`Таблица не разобрана (нет LLM): ${cls.reason} — раздел «${block.sectionPath.join(' › ')}»`);
       }
+    } else if (block.type === 'paragraph' && block.isDrawingText) {
+      // Распознанный текст спецификации-изображения (ПД): строчная спецификация
+      // оборудования. Только LLM; без него — не теряем молча (anomaly).
+      if (llm) {
+        const items = await llm.extractItems(block.text, {
+          sectionPath: block.sectionPath,
+          rules,
+          kind: 'drawing',
+        });
+        llmItemCount += items.length;
+        rawItems.push(...items);
+      } else {
+        anomalies.push(
+          `Текст чертежа (спецификация-изображение) не разобран без LLM — раздел «${block.sectionPath.join(' › ')}»`,
+        );
+      }
     } else if (block.type === 'paragraph' && llm) {
       // Проза разбирается LLM только если есть числа (потенциальные объёмы).
       if (/\d/.test(block.text) && block.text.length > 20) {
         const items = await llm.extractItems(block.sourceSnippet, {
           sectionPath: block.sectionPath,
           rules,
+          kind: 'prose',
         });
         llmItemCount += items.length;
         rawItems.push(...items);
@@ -170,6 +216,45 @@ export async function runExtraction(
       match: workMatch,
       materials,
     });
+  }
+
+  // Гибридный подбор работ: ИИ выбирает работы из суженного scope-среза справочника
+  // расценок по содержанию документа. Все предложенные — needs_review (сметчик
+  // подтверждает/дополняет вручную). РД не содержит работ, поэтому это основной их источник.
+  if (llm && scope && catalog.rates.length > 0) {
+    const digest = buildDocumentDigest(blocks);
+    const candidates = catalog.rates.map((e) => ({ id: e.id, name: e.name, unit: e.unit }));
+    const suggested = await llm.suggestWorks(digest, candidates, { scope, rules });
+    const seenRate = new Set(works.map((w) => w.rateId).filter(Boolean));
+    for (const s of suggested) {
+      const entry = catalog.rates.find((e) => e.id === s.id);
+      if (!entry || seenRate.has(entry.id)) continue;
+      seenRate.add(entry.id);
+      matchedCount++;
+      needsReviewCount++;
+      works.push({
+        description: entry.name,
+        rateId: entry.id,
+        costTypeId: entry.costTypeId,
+        quantity: 1,
+        unit: entry.unit ?? 'компл.',
+        unitPrice: entry.price ?? 0,
+        confidence: s.confidence,
+        needsReview: true,
+        sourceSnippet: null,
+        match: {
+          catalogId: entry.id,
+          matchedName: entry.name,
+          unitPrice: entry.price,
+          unit: entry.unit,
+          costTypeId: entry.costTypeId,
+          decision: 'matched',
+          via: 'llm',
+          confidence: s.confidence,
+        },
+        materials: [],
+      });
+    }
   }
 
   return {

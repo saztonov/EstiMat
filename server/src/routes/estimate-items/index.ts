@@ -60,6 +60,9 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
       if (body.unitPrice !== undefined) { sets.push(`unit_price = $${i++}`); values.push(body.unitPrice); }
       if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
       if (body.status !== undefined) { sets.push(`status = $${i++}`); values.push(body.status); }
+      // Снятие «не согласовано»: явный needsReview либо подтверждение материала (status='confirmed').
+      if (body.needsReview !== undefined) { sets.push(`needs_review = $${i++}`); values.push(body.needsReview); }
+      else if (body.status === 'confirmed') { sets.push('needs_review = false'); }
 
       if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
 
@@ -67,6 +70,33 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
       const { rows } = await fastify.pool.query(
         `UPDATE estimate_materials SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
         values,
+      );
+      if (rows.length === 0) return reply.status(404).send({ error: 'Материал не найден' });
+      return { data: rows[0] };
+    },
+  );
+
+  // PATCH /api/estimate-items/materials/:id/reassign — перенести материал к другой работе.
+  // Привязка материала к работе — действие ревью, поэтому снимаем needs_review.
+  fastify.patch<{ Params: { id: string }; Body: { itemId?: string } }>(
+    '/materials/:id/reassign',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const itemId = request.body?.itemId;
+      if (!itemId || typeof itemId !== 'string') {
+        return reply.status(400).send({ error: 'itemId обязателен' });
+      }
+      const { rows: work } = await fastify.pool.query(
+        'SELECT estimate_id FROM estimate_items WHERE id = $1',
+        [itemId],
+      );
+      if (work.length === 0) return reply.status(404).send({ error: 'Целевая работа не найдена' });
+
+      const { rows } = await fastify.pool.query(
+        `UPDATE estimate_materials
+            SET item_id = $1, estimate_id = $2, needs_review = false
+          WHERE id = $3 RETURNING *`,
+        [itemId, work[0].estimate_id, request.params.id],
       );
       if (rows.length === 0) return reply.status(404).send({ error: 'Материал не найден' });
       return { data: rows[0] };

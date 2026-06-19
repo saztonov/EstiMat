@@ -1,4 +1,6 @@
-import { Checkbox, Radio, Spin, Typography, App } from 'antd';
+import { useState } from 'react';
+import { Button, Checkbox, Input, Radio, Space, Spin, Typography, App } from 'antd';
+import { DeleteOutlined } from '@ant-design/icons';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { AppSettingsResponse, UpdateAppSettingsInput } from '@estimat/shared';
 import { api } from '../../services/api';
@@ -9,6 +11,7 @@ export function SettingsPanel() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const { data, isLoading } = useAppSettings();
+  const [newModel, setNewModel] = useState('');
 
   const updateMutation = useMutation({
     mutationFn: (values: UpdateAppSettingsInput) =>
@@ -31,6 +34,24 @@ export function SettingsPanel() {
   }
 
   const settings = data?.data;
+  const models = settings?.aiModels ?? [];
+  const defaultModel = settings?.aiModelDefault ?? '';
+
+  function addModel() {
+    const id = newModel.trim();
+    setNewModel('');
+    if (!id || models.includes(id)) return;
+    const next = [...models, id];
+    // Первая добавленная модель становится дефолтом, если он ещё не задан.
+    updateMutation.mutate(defaultModel ? { aiModels: next } : { aiModels: next, aiModelDefault: id });
+  }
+
+  function removeModel(id: string) {
+    const next = models.filter((m) => m !== id);
+    const patch: UpdateAppSettingsInput = { aiModels: next };
+    if (defaultModel === id) patch.aiModelDefault = next[0] ?? '';
+    updateMutation.mutate(patch);
+  }
 
   return (
     <div style={{ padding: '16px 0', maxWidth: 640 }}>
@@ -67,6 +88,48 @@ export function SettingsPanel() {
         Какой справочник использует ИИ-агент при сопоставлении извлечённых из РД работ и материалов.
         Цена подставляется из выбранного справочника, если она там есть.
       </Typography.Paragraph>
+
+      <Typography.Title level={5}>Модель ИИ</Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 8 }}>
+        Список доступных моделей (id OpenRouter) и модель по умолчанию для ИИ-извлечения из РД.
+        Выбранная точкой модель используется встроенным движком (фаза 2).
+      </Typography.Paragraph>
+      <Radio.Group
+        value={defaultModel}
+        disabled={updateMutation.isPending}
+        onChange={(e) => updateMutation.mutate({ aiModelDefault: e.target.value })}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          {models.length === 0 && (
+            <Typography.Text type="secondary">Список моделей пуст — добавьте модель ниже.</Typography.Text>
+          )}
+          {models.map((m) => (
+            <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Radio value={m}>{m}</Radio>
+              <Button
+                size="small"
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                disabled={updateMutation.isPending}
+                onClick={() => removeModel(m)}
+              />
+            </div>
+          ))}
+        </Space>
+      </Radio.Group>
+      <Space.Compact style={{ marginTop: 8, width: '100%', maxWidth: 480 }}>
+        <Input
+          placeholder="например, anthropic/claude-opus-4-8"
+          value={newModel}
+          onChange={(e) => setNewModel(e.target.value)}
+          onPressEnter={addModel}
+          disabled={updateMutation.isPending}
+        />
+        <Button onClick={addModel} disabled={updateMutation.isPending || !newModel.trim()}>
+          Добавить
+        </Button>
+      </Space.Compact>
     </div>
   );
 }

@@ -60,7 +60,15 @@ export function extractSpecTable(
 
   for (const row of rows) {
     const rawName = cell(row, columns.name);
-    if (!rawName) continue;
+    if (!rawName) {
+      // Строка без наименования, но с количеством — вероятно подпозиция/типоразмер
+      // под предыдущим наименованием (например, сечения кабеля). Не теряем молча.
+      const qtyOrphan = cell(row, columns.quantity);
+      if (qtyOrphan && parseRuNumber(qtyOrphan) !== null) {
+        anomalies.push(`Строка без наименования с количеством (подпозиция?): ${row.join(' | ')}`);
+      }
+      continue;
+    }
 
     const nameNorm = norm(rawName);
     if (SKIP_ROW_HINTS.some((h) => nameNorm.startsWith(h))) continue;

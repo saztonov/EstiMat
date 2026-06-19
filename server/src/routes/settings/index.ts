@@ -7,11 +7,15 @@ import { updateAppSettingsSchema, aiCatalogSourceSchema, type AppSettings } from
 const SETTING_KEYS: Record<keyof AppSettings, string> = {
   rdSectionEnabled: 'rd_section_enabled',
   aiCatalogSource: 'ai_catalog_source',
+  aiModels: 'ai_models',
+  aiModelDefault: 'ai_model_default',
 };
 
 const DEFAULTS: AppSettings = {
   rdSectionEnabled: true,
   aiCatalogSource: 'v2_first',
+  aiModels: ['google/gemini-2.5-flash'],
+  aiModelDefault: 'google/gemini-2.5-flash',
 };
 
 export default async function settingsRoutes(fastify: FastifyInstance) {
@@ -25,6 +29,12 @@ export default async function settingsRoutes(fastify: FastifyInstance) {
     if (typeof rd === 'boolean') settings.rdSectionEnabled = rd;
     const cat = aiCatalogSourceSchema.safeParse(byKey.get(SETTING_KEYS.aiCatalogSource));
     if (cat.success) settings.aiCatalogSource = cat.data;
+    const models = byKey.get(SETTING_KEYS.aiModels);
+    if (Array.isArray(models) && models.every((m) => typeof m === 'string')) {
+      settings.aiModels = models as string[];
+    }
+    const def = byKey.get(SETTING_KEYS.aiModelDefault);
+    if (typeof def === 'string' && def) settings.aiModelDefault = def;
     return settings;
   }
 

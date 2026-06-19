@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Segmented, Tree, Input, Button, Upload, Alert, Steps, Spin, Empty, App, Typography } from 'antd';
+import { Segmented, Tree, Input, Button, Upload, Alert, Steps, Spin, Empty, App, Typography, Select } from 'antd';
 import { FileTextOutlined, InboxOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { RdTreeResponse, AiJobSourceKind } from '@estimat/shared';
 import { api } from '../../../services/api';
 import { createAiJob, getAiJob, getRdMarkdown } from '../../../services/aiExtract';
 import { mapRdTreeToNodes, filterRdNodes, type RdDataNode } from './rdTreeMappers';
+import { useWorkScopeStore } from '../../../store/workScopeStore';
 
 interface Props {
   estimateId: string;
@@ -35,6 +36,28 @@ export function AiExtractPanel({ estimateId }: Props) {
   const [query, setQuery] = useState('');
   const [jobId, setJobId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+
+  // Область подбора работ (разделы/виды) — общая со справочником работ.
+  const categoryIds = useWorkScopeStore((s) => s.categoryIds);
+  const costTypeIds = useWorkScopeStore((s) => s.costTypeIds);
+  const setScope = useWorkScopeStore((s) => s.setScope);
+
+  const { data: catsData } = useQuery({
+    queryKey: ['rate-categories'],
+    queryFn: () => api.get<{ data: { id: string; name: string }[] }>('/rates/categories'),
+    staleTime: 5 * 60_000,
+  });
+  const { data: typesData } = useQuery({
+    queryKey: ['rate-types-all'],
+    queryFn: () => api.get<{ data: { id: string; name: string; category_id: string }[] }>('/rates/types'),
+    staleTime: 5 * 60_000,
+  });
+  const categoryOptions = (catsData?.data ?? []).map((c) => ({ value: c.id, label: c.name }));
+  const typeOptions = (typesData?.data ?? [])
+    .filter((t) => categoryIds.length === 0 || categoryIds.includes(t.category_id))
+    .map((t) => ({ value: t.id, label: t.name }));
+
+  const sectionScope = categoryIds.length ? { categoryIds, costTypeIds } : undefined;
 
   const { data: rdData, isLoading: rdLoading } = useQuery({
     queryKey: ['rd-tree'],
@@ -98,6 +121,7 @@ export function AiExtractPanel({ estimateId }: Props) {
           sourceKind: 'rd_document',
           sourceRef: selectedDoc.nodeId,
           markdown: md.content,
+          sectionScope,
         });
       } else if (mode === 'upload_md' && uploaded) {
         res = await createAiJob({
@@ -105,9 +129,10 @@ export function AiExtractPanel({ estimateId }: Props) {
           sourceKind: 'upload_md',
           sourceRef: uploaded.name,
           markdown: uploaded.content,
+          sectionScope,
         });
       } else if (mode === 'catalog_query') {
-        res = await createAiJob({ estimateId, sourceKind: 'catalog_query', query: query.trim() });
+        res = await createAiJob({ estimateId, sourceKind: 'catalog_query', query: query.trim(), sectionScope });
       }
       if (res) {
         setJobId(res.data.id);
@@ -191,6 +216,43 @@ export function AiExtractPanel({ estimateId }: Props) {
           onChange={(e) => setQuery(e.target.value)}
         />
       )}
+
+      <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
+        <Typography.Text strong style={{ fontSize: 13 }}>Область подбора работ</Typography.Text>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '2px 0 8px' }}>
+          Работы подбираются из справочника только в выбранных разделах. Так же сужается дерево
+          «Наименования работ» для ручного добора. Материалы извлекаются из спецификаций РД.
+        </Typography.Paragraph>
+        <Select
+          mode="multiple"
+          allowClear
+          size="small"
+          placeholder="Разделы работ"
+          style={{ width: '100%', marginBottom: 6 }}
+          value={categoryIds}
+          options={categoryOptions}
+          optionFilterProp="label"
+          onChange={(vals) => {
+            // При смене разделов отбрасываем виды, не входящие в выбранные разделы.
+            const allowed = new Set(
+              (typesData?.data ?? []).filter((t) => vals.includes(t.category_id)).map((t) => t.id),
+            );
+            setScope(vals, costTypeIds.filter((id) => allowed.has(id)));
+          }}
+        />
+        <Select
+          mode="multiple"
+          allowClear
+          size="small"
+          placeholder="Виды работ (опционально)"
+          style={{ width: '100%' }}
+          value={costTypeIds}
+          options={typeOptions}
+          optionFilterProp="label"
+          disabled={categoryIds.length === 0}
+          onChange={(vals) => setScope(categoryIds, vals)}
+        />
+      </div>
 
       <Button type="primary" icon={<ThunderboltOutlined />} loading={creating} disabled={!canCreate} onClick={handleCreate}>
         Извлечь и добавить в смету

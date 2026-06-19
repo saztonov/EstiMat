@@ -47,14 +47,23 @@ export function parseMarkdown(markdown: string): RawBlock[] {
   let paragraphStart = 0;
 
   const flushParagraph = () => {
-    const text = paragraphBuf.join('\n').trim();
+    let text = paragraphBuf.join('\n').trim();
     if (text) {
+      // Параграф-«Текст на чертеже» — распознанный текст блока-изображения
+      // (часто строчная спецификация оборудования). Помечаем и снимаем маркер.
+      let isDrawingText = false;
+      const m = text.match(/^\*\*\s*Текст на чертеже:?\s*\*\*\s*/i);
+      if (m) {
+        isDrawingText = true;
+        text = text.slice(m[0].length).trim();
+      }
       blocks.push({
         type: 'paragraph',
         text,
         sectionPath: sectionPath(),
         sourceSnippet: snippet(paragraphBuf, sectionPath()),
         line: paragraphStart,
+        ...(isDrawingText ? { isDrawingText: true } : {}),
       });
     }
     paragraphBuf = [];

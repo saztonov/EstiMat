@@ -10,9 +10,14 @@ import type {
   LlmPort,
   LlmExtractContext,
   LlmMatchCandidate,
+  LlmSuggestWorksContext,
+  LlmSuggestedWork,
   RawSpecItem,
   SpecKind,
 } from '../types.js';
+
+/** Мягкий предел кандидатов в промпте подбора работ (защита от раздувания токенов). */
+const SUGGEST_CANDIDATE_LIMIT = 300;
 
 export interface OpenRouterOptions {
   apiKey: string;
@@ -92,15 +97,27 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
     'kind: "material" | "equipment" | "work". Числа — числами (русские «1 250» → 1250). ' +
     'Не выдумывай позиций, бери только явно присутствующие в тексте. Если позиций нет — верни [].';
 
+  // Распознанный текст чертежа-спецификации: данные идут «в строку» без табличной
+  // структуры (обозначение системы → кол-во систем → марка → мощность кВт …).
+  const EXTRACT_DRAWING_SYSTEM =
+    'Ты извлекаешь оборудование/материалы из РАСПОЗНАННОГО ТЕКСТА чертежа-спецификации ' +
+    '(строительство, ОВиК/электрика). Данные набраны В СТРОКУ без таблицы: обычно ' +
+    'обозначение системы, кол-во систем, наименование/помещение, марка оборудования, ' +
+    'технические параметры (L м³/ч, P Па, N кВт). Раздели на отдельные позиции оборудования. ' +
+    'Верни ТОЛЬКО JSON-массив {rawName, quantity, unit, mark, gost, kind}. rawName — марка/наименование ' +
+    'оборудования; mark — обозначение системы (П1ас, В1пуи…); quantity — «кол-во систем» (число); ' +
+    'kind обычно "equipment". Числа — числами. Не выдумывай — бери только явно присутствующее. Нет позиций — верни [].';
+
   return {
     async extractItems(blockText: string, ctx: LlmExtractContext): Promise<RawSpecItem[]> {
       const lessons = (ctx.rules.lessons ?? []).slice(0, 5).join('\n');
+      const system = ctx.kind === 'drawing' ? EXTRACT_DRAWING_SYSTEM : EXTRACT_SYSTEM;
       const user =
         `Раздел: ${ctx.sectionPath.join(' › ') || '(без раздела)'}\n` +
         (lessons ? `Подсказки:\n${lessons}\n` : '') +
         `\nФрагмент:\n${blockText}`;
       const raw = await chat([
-        { role: 'system', content: EXTRACT_SYSTEM },
+        { role: 'system', content: system },
         { role: 'user', content: user },
       ]);
       const parsed = extractJson(raw);
@@ -153,6 +170,44 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
       if (!candidates.some((c) => c.id === id)) return null;
       const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.6;
       return { id, confidence };
+    },
+
+    async suggestWorks(
+      documentDigest: string,
+      candidates: LlmMatchCandidate[],
+      ctx: LlmSuggestWorksContext,
+    ): Promise<LlmSuggestedWork[]> {
+      if (candidates.length === 0) return [];
+      const pool = candidates.slice(0, SUGGEST_CANDIDATE_LIMIT);
+      const byId = new Set(pool.map((c) => c.id));
+      const list = pool.map((c) => `[${c.id}] ${c.name} (${c.unit ?? '—'})`).join('\n');
+      const lessons = (ctx.rules.lessons ?? []).slice(0, 5).join('\n');
+      const raw = await chat([
+        {
+          role: 'system',
+          content:
+            'Ты инженер-сметчик. По выжимке рабочей/проектной документации (строительство) выбери из ' +
+            'СПИСКА КАНДИДАТОВ работы, необходимые для описанных в документе систем и решений. ' +
+            'Выбирай ТОЛЬКО из списка по их id — не выдумывай работ, которых нет в списке. ' +
+            'Верни ТОЛЬКО JSON-массив объектов {id, confidence} (confidence 0..1). Если подходящих нет — верни [].',
+        },
+        {
+          role: 'user',
+          content:
+            `Документ (выжимка):\n${documentDigest}\n\n` +
+            (lessons ? `Подсказки:\n${lessons}\n\n` : '') +
+            `Кандидаты работ (выбирай только из них):\n${list}`,
+        },
+      ]);
+      const parsed = extractJson(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+        .map((p) => {
+          const conf = typeof p.confidence === 'number' ? p.confidence : Number(p.confidence);
+          return { id: String(p.id ?? ''), confidence: Number.isFinite(conf) ? conf : 0.6 };
+        })
+        .filter((w) => byId.has(w.id));
     },
   };
 }
