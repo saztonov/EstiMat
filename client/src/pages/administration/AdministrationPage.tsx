@@ -2,12 +2,10 @@ import { Card, Tabs } from 'antd';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { UsersPanel } from './UsersPanel';
 import { SettingsPanel } from './SettingsPanel';
-import { CatalogComparePanel } from './CatalogComparePanel';
 
 const tabs = [
   { key: 'users', label: 'Пользователи', children: <UsersPanel /> },
   { key: 'settings', label: 'Настройки', children: <SettingsPanel /> },
-  { key: 'catalog-compare', label: 'Сравнение справочников', children: <CatalogComparePanel /> },
 ];
 
 export function AdministrationPage() {

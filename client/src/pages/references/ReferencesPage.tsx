@@ -5,6 +5,7 @@ import { OrganizationsPanel } from './OrganizationsPanel';
 import { MaterialsPanel } from './MaterialsPanel';
 import { RatesPanel } from './RatesPanel';
 import { UnitsPanel } from './UnitsPanel';
+import { CatalogComparePanel } from './CatalogComparePanel';
 
 const tabs = [
   { key: 'projects', label: 'Проекты', children: <ProjectsPanel /> },
@@ -12,6 +13,7 @@ const tabs = [
   { key: 'materials', label: 'Материалы', children: <MaterialsPanel /> },
   { key: 'rates', label: 'Расценки', children: <RatesPanel /> },
   { key: 'units', label: 'Единицы измерения', children: <UnitsPanel /> },
+  { key: 'catalog-compare', label: 'Сравнение справочников', children: <CatalogComparePanel /> },
 ];
 
 export function ReferencesPage() {
