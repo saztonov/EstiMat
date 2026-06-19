@@ -16,7 +16,8 @@ export function RegisterPage() {
     setLoading(true);
     try {
       await register(values.email, values.password, values.fullName, values.phone);
-      navigate('/', { replace: true });
+      message.success('Регистрация отправлена. Вход станет возможен после активации администратором.');
+      navigate('/login', { replace: true });
     } catch (err) {
       message.error((err as Error).message);
     }

@@ -44,41 +44,16 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
     const passwordHash = await bcrypt.hash(body.password, 10);
 
-    const result = await fastify.pool.query(
-      `INSERT INTO users (email, password_hash, full_name, phone, role)
-       VALUES ($1, $2, $3, $4, 'engineer')
-       RETURNING id, email, full_name, org_id, role, is_active`,
+    // Самостоятельная регистрация создаёт неактивного пользователя — вход возможен
+    // только после того, как администратор включит ему флаг is_active.
+    await fastify.pool.query(
+      `INSERT INTO users (email, password_hash, full_name, phone, role, is_active)
+       VALUES ($1, $2, $3, $4, 'engineer', false)`,
       [body.email, passwordHash, body.fullName, body.phone || null],
     );
 
-    const user = result.rows[0];
-
-    const accessToken = fastify.jwt.sign(
-      { sub: user.id, role: user.role },
-      { expiresIn: config.jwt.accessTtl },
-    );
-    const refreshToken = fastify.jwt.sign(
-      { sub: user.id, type: 'refresh' },
-      { expiresIn: config.jwt.refreshTtl, key: config.jwt.refreshSecret },
-    );
-
-    reply
-      .setCookie('access_token', accessToken, accessTokenCookie(config.isProduction))
-      .setCookie('refresh_token', refreshToken, refreshTokenCookie(config.isProduction));
-
-    const decoded = fastify.jwt.decode<{ exp: number }>(accessToken);
-
-    return {
-      user: {
-        id: user.id,
-        email: user.email,
-        fullName: user.full_name,
-        orgId: user.org_id,
-        role: user.role,
-        isActive: user.is_active,
-      },
-      accessTokenExpiresAt: decoded ? decoded.exp * 1000 : 0,
-    };
+    // Токены не выдаём — пользователь не авторизуется до активации администратором.
+    return reply.status(201).send({ pendingActivation: true });
   });
 
   // POST /api/auth/login
@@ -97,7 +72,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
     }
 
     if (!user.is_active) {
-      return reply.status(401).send({ error: 'Аккаунт деактивирован' });
+      return reply.status(401).send({ error: 'Аккаунт ещё не активирован администратором' });
     }
 
     const valid = await bcrypt.compare(body.password, user.password_hash);

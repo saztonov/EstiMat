@@ -48,13 +48,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   register: async (email, password, fullName, phone) => {
     set({ isLoading: true, error: null });
     try {
-      const data = await api.post<AuthResponse>('/auth/register', { email, password, fullName, phone });
-      set({
-        user: data.user,
-        isAuthenticated: true,
-        isLoading: false,
-        accessTokenExpiresAt: data.accessTokenExpiresAt,
-      });
+      // Регистрация не авторизует: аккаунт создаётся неактивным и ждёт активации админом.
+      await api.post('/auth/register', { email, password, fullName, phone });
+      set({ isLoading: false });
     } catch (err) {
       set({ isLoading: false, error: (err as Error).message });
       throw err;

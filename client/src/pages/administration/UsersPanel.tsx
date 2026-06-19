@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, App } from 'antd';
+import { Table, Button, Modal, Form, Input, Select, Tag, Switch, Space, Popconfirm, App } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, LockOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -73,6 +73,16 @@ export function UsersPanel() {
     onError: (err: Error) => message.error(err.message),
   });
 
+  const toggleActiveMutation = useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+      api.put(`/users/${id}`, { isActive }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      message.success('Статус обновлён');
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
   const changePasswordMutation = useMutation({
     mutationFn: ({ id, newPassword }: { id: string; newPassword: string }) =>
       api.put(`/users/${id}/password`, { newPassword }),
@@ -125,7 +135,13 @@ export function UsersPanel() {
       title: 'Активен',
       dataIndex: 'is_active',
       width: 100,
-      render: (v: boolean) => v ? <Tag color="green">Да</Tag> : <Tag color="red">Нет</Tag>,
+      render: (v: boolean, record: User) => (
+        <Switch
+          checked={v}
+          loading={toggleActiveMutation.isPending}
+          onChange={(checked) => toggleActiveMutation.mutate({ id: record.id, isActive: checked })}
+        />
+      ),
     },
     {
       title: 'Действия',
