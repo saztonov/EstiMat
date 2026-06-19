@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import type { FastifyError } from 'fastify';
+import { ZodError } from 'zod';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -127,6 +129,23 @@ export async function buildApp() {
   });
   // Совместимость со старым health-check.
   app.get('/api/health', async () => ({ status: 'ok' }));
+
+  // Глобальный обработчик ошибок. Хендлеры используют schema.parse(request.body)
+  // без try/catch — без этого хука ZodError уходил бы в дефолт Fastify как 500.
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    if (error instanceof ZodError) {
+      const message = error.issues
+        .map((i) => `${i.path.join('.') || 'поле'}: ${i.message}`)
+        .join('; ');
+      return reply.status(400).send({ error: message });
+    }
+    // Клиентские ошибки (rate-limit 429, и пр.) — отдаём как есть с тем же статусом.
+    if (error.statusCode && error.statusCode < 500) {
+      return reply.status(error.statusCode).send({ error: error.message });
+    }
+    request.log.error({ err: error }, 'Необработанная ошибка');
+    return reply.status(500).send({ error: 'Внутренняя ошибка сервера' });
+  });
 
   return app;
 }

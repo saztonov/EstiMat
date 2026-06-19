@@ -3,10 +3,12 @@ import { ORG_TYPES } from '../constants/statuses.js';
 
 export const createOrganizationSchema = z.object({
   name: z.string().min(1, 'Название обязательно'),
-  inn: z.string().optional(),
+  // Необязательные поля допускают null: при редактировании форма (Ant Design)
+  // присылает NULL-значения из БД для незаполненных колонок.
+  inn: z.string().nullish(),
   type: z.enum(ORG_TYPES),
-  contacts: z.record(z.string()).optional(),
-  address: z.string().optional(),
+  contacts: z.record(z.string()).nullish(),
+  address: z.string().nullish(),
 });
 
 export const updateOrganizationSchema = createOrganizationSchema.partial();
