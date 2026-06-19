@@ -8,7 +8,9 @@ function accessTokenCookie(isProduction: boolean) {
   return {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'strict' as const,
+    // Раздельные домены SPA/API (estimat.* и api.*): для кросс-origin XHR cookie
+    // нужен SameSite=None; Secure. В dev (http, один origin) — lax.
+    sameSite: (isProduction ? 'none' : 'lax') as 'none' | 'lax',
     path: '/',
     maxAge: config.jwt.accessTtl,
   };
@@ -18,7 +20,9 @@ function refreshTokenCookie(isProduction: boolean) {
   return {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'strict' as const,
+    // Раздельные домены SPA/API (estimat.* и api.*): для кросс-origin XHR cookie
+    // нужен SameSite=None; Secure. В dev (http, один origin) — lax.
+    sameSite: (isProduction ? 'none' : 'lax') as 'none' | 'lax',
     path: '/api/auth/refresh',
     maxAge: config.jwt.refreshTtl,
   };
