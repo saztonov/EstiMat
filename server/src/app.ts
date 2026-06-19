@@ -51,12 +51,13 @@ export async function buildApp() {
     timeWindow: '1 minute',
   });
 
-  // CORS. methods задаём явно: дефолт @fastify/cors — только GET,HEAD,POST,
-  // из-за чего preflight для PUT/PATCH/DELETE блокировался на раздельных доменах.
+  // CORS (раздельные домены SPA/API) — все параметры заданы явно.
   await app.register(cors, {
-    origin: config.cors.origin,
-    credentials: true,
-    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    origin: config.cors.origin, // адрес: только https://estimat.su10.ru (из CORS_ORIGIN), не wildcard
+    credentials: true, // разрешить cookie (httpOnly JWT)
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'], // дефолт @fastify/cors — лишь GET,HEAD,POST
+    allowedHeaders: ['Content-Type'], // заголовки запроса; Authorization не нужен — токен в cookie
+    maxAge: 86400, // время кэша preflight в браузере, сек (24 ч) — меньше лишних OPTIONS
   });
 
   // Cookies
