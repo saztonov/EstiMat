@@ -44,11 +44,23 @@ export function trigramSimilarity(a: string, b: string): number {
   return (2 * inter) / (ta.size + tb.size);
 }
 
-/** Нормализация единицы измерения по словарю вариантов. */
+/** Базовые алиасы единиц (применяются всегда, и в сервере, и в CLI). */
+export const DEFAULT_UNIT_ALIASES: Record<string, string> = {
+  'м.п': 'м',
+  'пог.м': 'м',
+  'пог. м': 'м',
+  компл: 'компл.',
+  м2: 'м²',
+  м3: 'м³',
+  шт: 'шт',
+};
+
+/** Нормализация единицы измерения по словарю вариантов (поверх дефолтов). */
 export function normUnit(unit: string | null, aliases: Record<string, string> = {}): string | null {
   if (!unit) return null;
   const n = norm(unit).replace(/\.$/, '');
-  return aliases[n] ?? n;
+  const merged = { ...DEFAULT_UNIT_ALIASES, ...aliases };
+  return merged[n] ?? n;
 }
 
 /** Совпадают ли единицы измерения после нормализации. */

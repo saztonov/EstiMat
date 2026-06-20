@@ -18,6 +18,19 @@ import type {
 
 /** Мягкий предел кандидатов в промпте подбора работ (защита от раздувания токенов). */
 const SUGGEST_CANDIDATE_LIMIT = 300;
+/** Порог уверенности: подобранные работы ниже него отбрасываются. */
+const SUGGEST_CONFIDENCE_FLOOR = 0.45;
+/** Предел материалов в одном вызове распределения по работам. */
+const ASSIGN_MATERIAL_LIMIT = 300;
+
+// Роль и общие запреты сметчика — префикс ко всем промптам извлечения.
+const SMETCHIK_ROLE =
+  'Ты — ведущий инженер-сметчик с 20-летним опытом. Ты безошибочно отличаешь реальные ' +
+  'строительные материалы/оборудование и работы от служебного содержания чертежей. ' +
+  'НИКОГДА не считай позицией: обозначения осей/секций/корпусов (К1, П.1, 6.А, 3.Л), ' +
+  'этажность (48эт.), зоны (Лобби, Подземная автостоянка, Пристройка), экспликации помещений, ' +
+  'ведомости отделки, маркировочные планы и их легенды, общие указания, штампы/рамки, ' +
+  'номера листов и страниц, ссылки на ГОСТ/СП без конкретного изделия, реквизиты организаций.';
 
 export interface OpenRouterOptions {
   apiKey: string;
@@ -95,21 +108,23 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
   }
 
   const EXTRACT_SYSTEM =
-    'Ты извлекаешь позиции спецификации из фрагмента рабочей документации (строительство). ' +
+    SMETCHIK_ROLE +
+    ' Извлеки из фрагмента ТОЛЬКО реальные материалы/оборудование спецификации. ' +
     'Верни ТОЛЬКО JSON-массив объектов {rawName, quantity, unit, mark, gost, kind}. ' +
-    'kind: "material" | "equipment" | "work". Числа — числами (русские «1 250» → 1250). ' +
-    'Не выдумывай позиций, бери только явно присутствующие в тексте. Если позиций нет — верни [].';
+    'kind: "material" | "equipment". Числа — числами (русские «1 250» → 1250). ' +
+    'Бери только явно присутствующие позиции. Если это не спецификация материалов/оборудования ' +
+    '(а экспликация, ведомость, общие указания, маркировка и т.п.) — верни [].';
 
   // Распознанный текст чертежа-спецификации: данные идут «в строку» без табличной
   // структуры (обозначение системы → кол-во систем → марка → мощность кВт …).
   const EXTRACT_DRAWING_SYSTEM =
-    'Ты извлекаешь оборудование/материалы из РАСПОЗНАННОГО ТЕКСТА чертежа-спецификации ' +
-    '(строительство, ОВиК/электрика). Данные набраны В СТРОКУ без таблицы: обычно ' +
-    'обозначение системы, кол-во систем, наименование/помещение, марка оборудования, ' +
-    'технические параметры (L м³/ч, P Па, N кВт). Раздели на отдельные позиции оборудования. ' +
-    'Верни ТОЛЬКО JSON-массив {rawName, quantity, unit, mark, gost, kind}. rawName — марка/наименование ' +
-    'оборудования; mark — обозначение системы (П1ас, В1пуи…); quantity — «кол-во систем» (число); ' +
-    'kind обычно "equipment". Числа — числами. Не выдумывай — бери только явно присутствующее. Нет позиций — верни [].';
+    SMETCHIK_ROLE +
+    ' Перед тобой РАСПОЗНАННЫЙ ТЕКСТ чертежа. Извлекай оборудование/материалы ТОЛЬКО если это ' +
+    'настоящая спецификация оборудования (есть марки и технические параметры: L м³/ч, P Па, N кВт, ' +
+    'тип/модель). Данные могут идти В СТРОКУ: обозначение системы, кол-во, наименование, марка, ' +
+    'параметры. Верни ТОЛЬКО JSON-массив {rawName, quantity, unit, mark, gost, kind} (kind обычно ' +
+    '"equipment"; rawName — марка/наименование; mark — обозначение системы). ВАЖНО: если это легенда ' +
+    'маркировочного плана, перечень осей/корпусов/этажности, экспликация или просто подписи на плане — верни [].';
 
   return {
     async extractItems(blockText: string, ctx: LlmExtractContext): Promise<RawSpecItem[]> {
@@ -189,10 +204,11 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
         {
           role: 'system',
           content:
-            'Ты инженер-сметчик. По выжимке рабочей/проектной документации (строительство) выбери из ' +
-            'СПИСКА КАНДИДАТОВ работы, необходимые для описанных в документе систем и решений. ' +
-            'Выбирай ТОЛЬКО из списка по их id — не выдумывай работ, которых нет в списке. ' +
-            'Верни ТОЛЬКО JSON-массив объектов {id, confidence} (confidence 0..1). Если подходящих нет — верни [].',
+            SMETCHIK_ROLE +
+            ' По выжимке документации выбери из СПИСКА КАНДИДАТОВ (справочник работ) работы, реально ' +
+            'необходимые для состава, описанного в спецификациях. Выбирай ТОЛЬКО из списка по их id — ' +
+            'НЕ выдумывай работ, которых нет в списке. Не предлагай работы по штампам/маркировкам/ ' +
+            'экспликациям/общим указаниям. Верни ТОЛЬКО JSON-массив {id, confidence} (0..1). Нет подходящих — [].',
         },
         {
           role: 'user',
@@ -210,7 +226,53 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
           const conf = typeof p.confidence === 'number' ? p.confidence : Number(p.confidence);
           return { id: String(p.id ?? ''), confidence: Number.isFinite(conf) ? conf : 0.6 };
         })
-        .filter((w) => byId.has(w.id));
+        // Пост-валидация: только id из списка кандидатов и уверенность не ниже порога.
+        .filter((w) => byId.has(w.id) && w.confidence >= SUGGEST_CONFIDENCE_FLOOR);
+    },
+
+    async assignMaterials(
+      materials: { index: number; name: string; unit: string | null; section: string | null }[],
+      works: { id: string; name: string }[],
+      ctx: { rules: { lessons?: string[] } },
+    ): Promise<{ index: number; workId: string | null }[]> {
+      if (materials.length === 0 || works.length === 0) {
+        return materials.map((m) => ({ index: m.index, workId: null }));
+      }
+      const pool = materials.slice(0, ASSIGN_MATERIAL_LIMIT);
+      const workById = new Set(works.map((w) => w.id));
+      const worksList = works.map((w) => `[${w.id}] ${w.name}`).join('\n');
+      const matsList = pool.map((m) => `${m.index}: ${m.name} (${m.unit ?? '—'})`).join('\n');
+      const lessons = (ctx.rules.lessons ?? []).slice(0, 4).join('\n');
+      const raw = await chat([
+        {
+          role: 'system',
+          content:
+            SMETCHIK_ROLE +
+            ' Распредели каждый МАТЕРИАЛ под наиболее подходящую РАБОТУ из списка по строительному ' +
+            'смыслу (материал монтируется/используется в рамках этой работы). Если подходящей работы ' +
+            'в списке НЕТ — workId=null (не придумывай). Верни ТОЛЬКО JSON-массив {index, workId}.',
+        },
+        {
+          role: 'user',
+          content:
+            (lessons ? `Подсказки:\n${lessons}\n\n` : '') +
+            `Работы (id — наименование):\n${worksList}\n\nМатериалы (index: наименование):\n${matsList}`,
+        },
+      ]);
+      const parsed = extractJson(raw);
+      const map = new Map<number, string | null>();
+      if (Array.isArray(parsed)) {
+        for (const p of parsed) {
+          if (!p || typeof p !== 'object') continue;
+          const rec = p as Record<string, unknown>;
+          const idx = typeof rec.index === 'number' ? rec.index : Number(rec.index);
+          if (!Number.isInteger(idx)) continue;
+          const wid = rec.workId == null ? null : String(rec.workId);
+          map.set(idx, wid && workById.has(wid) ? wid : null);
+        }
+      }
+      // Материалы без ответа модели (или вне лимита) → null (в общий список).
+      return materials.map((m) => ({ index: m.index, workId: map.get(m.index) ?? null }));
     },
   };
 }

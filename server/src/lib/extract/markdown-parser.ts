@@ -34,6 +34,16 @@ function snippet(lines: string[], sectionPath: string[]): string {
   return (head + body).slice(0, MAX_SNIPPET);
 }
 
+/** Служебный заголовок-каркас RDLOCAL (не является контекстом раздела). */
+function isScaffoldingHeading(level: number, text: string): boolean {
+  if (level === 1) return true; // H1 — путь/название документа (хлебные крошки)
+  const t = text.trim();
+  if (/^СТРАНИЦА\s+\d+/i.test(t)) return true;
+  if (/^BLOCK\s*\[/i.test(t)) return true;
+  if (/^РАБОЧАЯ ДОКУМЕНТАЦИЯ$/i.test(t)) return true;
+  return false;
+}
+
 export function parseMarkdown(markdown: string): RawBlock[] {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   const blocks: RawBlock[] = [];
@@ -79,6 +89,13 @@ export function parseMarkdown(markdown: string): RawBlock[] {
       flushParagraph();
       const level = (heading[1] ?? '#').length;
       const text = (heading[2] ?? '').trim();
+      // Служебные заголовки RDLOCAL — не контекст раздела: H1-путь документа,
+      // «СТРАНИЦА N», «BLOCK [TYPE]: id», шапка «РАБОЧАЯ ДОКУМЕНТАЦИЯ». Игнорируем
+      // (в sectionPath/digest/названия не попадают), контент под ними остаётся.
+      if (isScaffoldingHeading(level, text)) {
+        i++;
+        continue;
+      }
       let top = headingStack[headingStack.length - 1];
       while (top && top.level >= level) {
         headingStack.pop();

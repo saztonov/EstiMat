@@ -2,11 +2,13 @@
  * Оркестратор ядра извлечения. Чистая функция: markdown + срез справочников +
  * правила (+ опционально LLM-порт) → ExtractionResult.
  *
- * Без LLM-порта работает чисто rule-based (структурные спец-таблицы). С портом
- * дополнительно разбирает неоднозначные таблицы/прозу и доматчивает остаток.
- *
- * Группировка: позиции спецификации — материалы; работа выводится из раздела
- * (sectionPath) по правилу sectionToWork либо как контейнер с именем раздела.
+ * Принципы (ведущий сметчик):
+ *  - РАБОТЫ берутся ТОЛЬКО из справочника (suggestWorks); работы из текста РД не
+ *    синтезируются (никаких контейнеров-разделов).
+ *  - МАТЕРИАЛЫ извлекаются только из настоящих спецификаций (rule-based + сметчик-
+ *    gated LLM), служебное содержание (маркировки/экспликации/штампы/общие указания)
+ *    отбраковывается. ИИ распределяет материалы по подобранным работам; без подходящей
+ *    работы — в единый контейнер MATERIALS_BUCKET.
  */
 import type {
   CatalogEntry,
@@ -20,9 +22,10 @@ import type {
   RawSpecItem,
   SectionScope,
 } from './types.js';
+import { MATERIALS_BUCKET } from './types.js';
 import { parseMarkdown } from './markdown-parser.js';
 import { classifyTable, normalizeTableHeader } from './table-classifier.js';
-import { extractSpecTable } from './spec-extractor.js';
+import { extractSpecTable, isNoiseSpecName } from './spec-extractor.js';
 import { matchItem } from './matcher.js';
 import { norm, trigramSimilarity } from './normalize.js';
 
@@ -39,10 +42,17 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error('aborted');
 }
 
+/** Артефакт распознавания RDLOCAL (метаданные блока-изображения) — не позиция сметы. */
+function isRdlocalArtifact(text: string): boolean {
+  const t = text.trimStart();
+  if (/^\*\*\s*(Сущности|Краткое описание|Описание|Текст на чертеже)\s*:?\s*\*\*/i.test(t)) return true;
+  if (/^\*\*\[ИЗОБРАЖЕНИЕ\]\*\*/i.test(t)) return true;
+  return false;
+}
+
 /**
  * Ранжировать расценки по релевантности документу (макс. триграммная близость
  * имени/алиасов к терминам документа — заголовкам разделов) и вернуть top-K.
- * Так подбор работ из всего справочника (без раздела) не зависит от порядка в БД.
  */
 function rankRatesByDocument(rates: CatalogEntry[], terms: string[], topK: number): CatalogEntry[] {
   if (rates.length <= topK || terms.length === 0) return rates.slice(0, topK);
@@ -58,10 +68,7 @@ function rankRatesByDocument(rates: CatalogEntry[], terms: string[], topK: numbe
 
 const DIGEST_LIMIT = 8000;
 
-/**
- * Сжатая выжимка документа для LLM-подбора работ: заголовки разделов + проза +
- * шапки таблиц, обрезанная по бюджету (экономия токенов — не шлём весь markdown).
- */
+/** Сжатая выжимка документа для LLM-подбора работ (экономия токенов). */
 function buildDocumentDigest(blocks: RawBlock[]): string {
   const parts: string[] = [];
   let len = 0;
@@ -79,17 +86,6 @@ function buildDocumentDigest(blocks: RawBlock[]): string {
   return parts.join('\n').slice(0, DIGEST_LIMIT);
 }
 
-/** Подобрать наименование работы для раздела по правилу sectionToWork. */
-function workNameForSection(sectionPath: string[], rules: ExtractRules): string | null {
-  const map = rules.sectionToWork ?? {};
-  const hay = sectionPath.map((s) => norm(s));
-  for (const [needle, work] of Object.entries(map)) {
-    const n = norm(needle);
-    if (hay.some((s) => s.includes(n))) return work;
-  }
-  return null;
-}
-
 export async function runExtraction(
   markdown: string,
   catalog: CatalogSnapshot,
@@ -104,151 +100,80 @@ export async function runExtraction(
   let tableCount = 0;
   let llmItemCount = 0;
 
+  // 1–3. Сбор материалов-кандидатов из настоящих спецификаций.
   for (const block of blocks) {
     throwIfAborted(signal);
     if (block.type === 'table') {
       tableCount++;
-      // Нормализация шапки: реальная шапка спецификации РД часто не в первой строке
-      // (пустая строка-шапка, ниже — строка нумерации колонок «1..9»).
       const tbl = normalizeTableHeader(block.headers, block.rows, rules);
       const cls = classifyTable(tbl.headers, tbl.rows, rules);
       if (cls.kind === 'spec' && cls.confident) {
-        const { items, anomalies: a } = extractSpecTable(
-          tbl.headers,
-          tbl.rows,
-          cls.columns,
-          block.sectionPath,
-          rules,
-        );
+        const { items, anomalies: a } = extractSpecTable(tbl.headers, tbl.rows, cls.columns, block.sectionPath, rules);
         rawItems.push(...items);
         anomalies.push(...a);
       } else if (cls.kind === 'ambiguous' && llm) {
-        const items = await llm.extractItems(block.sourceSnippet, {
-          sectionPath: block.sectionPath,
-          rules,
-        });
+        const items = await llm.extractItems(block.sourceSnippet, { sectionPath: block.sectionPath, rules });
         llmItemCount += items.length;
         rawItems.push(...items);
       } else if (cls.kind === 'ambiguous') {
         anomalies.push(`Таблица не разобрана (нет LLM): ${cls.reason} — раздел «${block.sectionPath.join(' › ')}»`);
       }
+      // cls.kind === 'skip' — служебная/не-спецификация, игнорируем.
     } else if (block.type === 'paragraph' && block.isDrawingText) {
-      // Распознанный текст спецификации-изображения (ПД): строчная спецификация
-      // оборудования. Только LLM; без него — не теряем молча (anomaly).
+      // Распознанный текст чертежа: только LLM-сметчик (отбракует легенды/маркировки).
       if (llm) {
-        const items = await llm.extractItems(block.text, {
-          sectionPath: block.sectionPath,
-          rules,
-          kind: 'drawing',
-        });
+        const items = await llm.extractItems(block.text, { sectionPath: block.sectionPath, rules, kind: 'drawing' });
         llmItemCount += items.length;
         rawItems.push(...items);
       } else {
-        anomalies.push(
-          `Текст чертежа (спецификация-изображение) не разобран без LLM — раздел «${block.sectionPath.join(' › ')}»`,
-        );
+        anomalies.push(`Текст чертежа не разобран без LLM — раздел «${block.sectionPath.join(' › ')}»`);
       }
     } else if (block.type === 'paragraph' && llm) {
-      // Проза разбирается LLM только если есть числа (потенциальные объёмы).
-      if (/\d/.test(block.text) && block.text.length > 20) {
-        const items = await llm.extractItems(block.sourceSnippet, {
-          sectionPath: block.sectionPath,
-          rules,
-          kind: 'prose',
-        });
+      // Проза: пропускаем RDLOCAL-артефакты (Сущности/Описание/изображения); прочее с числами — в LLM.
+      if (!isRdlocalArtifact(block.text) && /\d/.test(block.text) && block.text.length > 20) {
+        const items = await llm.extractItems(block.sourceSnippet, { sectionPath: block.sectionPath, rules, kind: 'prose' });
         llmItemCount += items.length;
         rawItems.push(...items);
       }
     }
   }
 
-  // Дедупликация полностью одинаковых позиций.
+  // Дедуп + сметчицкий фильтр шума (маркировки/оси/этажность) — на всё, включая LLM.
   const seen = new Set<string>();
   const deduped = rawItems.filter((it) => {
+    if (!it.rawName || isNoiseSpecName(it.rawName, it.unit)) return false;
     const k = dedupeKey(it);
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
 
-  // Группировка по разделу (sectionPath) → работа + её материалы.
-  const groups = new Map<string, RawSpecItem[]>();
-  for (const item of deduped) {
-    const key = item.sectionPath.join(' › ') || '(без раздела)';
-    const arr = groups.get(key) ?? [];
-    arr.push(item);
-    groups.set(key, arr);
-  }
-
-  const works: ExtractedWork[] = [];
+  // 4. Материалы-кандидаты (плоско): матчинг к справочнику материалов.
   let matchedCount = 0;
   let needsReviewCount = 0;
-  let materialCount = 0;
-
-  for (const [sectionKey, items] of groups) {
-    const sectionPath = items[0]?.sectionPath ?? [];
-    const workName = workNameForSection(sectionPath, rules) ?? sectionKey;
-
-    // Привязка работы к справочнику расценок.
-    const workProbe: RawSpecItem = {
-      rawName: workName,
-      construction: null,
-      quantity: 1,
-      unit: null,
-      mark: null,
-      gost: null,
-      sourceSnippet: sectionKey,
-      kind: 'work',
-      confidence: 0.5,
-      sectionPath,
-    };
-    const workMatch = await matchItem(workProbe, catalog.rates, rules, llm);
-    const workMatched = workMatch.decision === 'matched';
-    if (workMatched) matchedCount++;
-
-    // Материалы группы.
-    const materials: ExtractedMaterial[] = [];
-    for (const item of items) {
-      const m = await matchItem(item, catalog.materials, rules, llm);
-      const matched = m.decision === 'matched';
-      if (matched) matchedCount++;
-      const needsReview = !matched || item.quantity === null || m.confidence < CONFIDENCE_REVIEW;
-      if (needsReview) needsReviewCount++;
-      materialCount++;
-      materials.push({
-        description: m.matchedName ?? item.rawName,
-        materialId: m.catalogId,
-        quantity: item.quantity ?? 1,
-        unit: m.unit ?? item.unit ?? 'шт',
-        unitPrice: m.unitPrice ?? 0,
-        confidence: m.confidence,
-        needsReview,
-        sourceSnippet: item.sourceSnippet,
-        match: m,
-      });
-    }
-
-    const workNeedsReview = !workMatched;
-    if (workNeedsReview) needsReviewCount++;
-    works.push({
-      description: workMatch.matchedName ?? workName,
-      rateId: workMatch.catalogId,
-      costTypeId: workMatch.costTypeId,
-      quantity: 1,
-      unit: workMatch.unit ?? 'компл.',
-      unitPrice: workMatch.unitPrice ?? 0,
-      confidence: workMatch.confidence,
-      needsReview: workNeedsReview,
-      sourceSnippet: sectionKey,
-      match: workMatch,
-      materials,
+  const materials: ExtractedMaterial[] = [];
+  for (const item of deduped) {
+    throwIfAborted(signal);
+    const m = await matchItem(item, catalog.materials, rules, llm);
+    const matched = m.decision === 'matched';
+    if (matched) matchedCount++;
+    const needsReview = !matched || item.quantity === null || m.confidence < CONFIDENCE_REVIEW;
+    if (needsReview) needsReviewCount++;
+    materials.push({
+      description: m.matchedName ?? item.rawName,
+      materialId: m.catalogId,
+      quantity: item.quantity ?? 1,
+      unit: m.unit ?? item.unit ?? 'шт',
+      unitPrice: m.unitPrice ?? 0,
+      confidence: m.confidence,
+      needsReview,
+      sourceSnippet: item.sourceSnippet,
+      match: m,
     });
   }
 
-  // Гибридный подбор работ: ИИ выбирает работы из справочника по содержанию документа.
-  // При выбранном разделе справочник уже сужен; без раздела — берём весь, но ранжируем
-  // кандидатов по релевантности (а не по порядку в БД). Все предложенные — needs_review.
-  // РД не содержит работ, поэтому это основной их источник.
+  // 5. Работы — ТОЛЬКО из справочника (suggestWorks). Контейнеры-разделы не создаём.
+  const works: ExtractedWork[] = [];
   if (llm && catalog.rates.length > 0) {
     throwIfAborted(signal);
     const effectiveScope: SectionScope = scope ?? { categoryIds: [], costTypeIds: [] };
@@ -257,16 +182,15 @@ export async function runExtraction(
     const terms = [...new Set(blocks.flatMap((b) => (b.type === 'heading' ? [b.text] : [])))];
     const ranked = noScope ? rankRatesByDocument(catalog.rates, terms, SUGGEST_TOPK) : catalog.rates;
     if (noScope) {
-      anomalies.push(
-        `Подбор работ по всему справочнику (${catalog.rates.length} расценок); для точности выберите раздел.`,
-      );
+      anomalies.push(`Подбор работ по всему справочнику (${catalog.rates.length} расценок); для точности выберите раздел.`);
     }
     const candidates = ranked.map((e) => ({ id: e.id, name: e.name, unit: e.unit }));
     const suggested = await llm.suggestWorks(digest, candidates, { scope: effectiveScope, rules });
-    const seenRate = new Set(works.map((w) => w.rateId).filter(Boolean));
+    const seenRate = new Set<string>();
     for (const s of suggested) {
       const entry = catalog.rates.find((e) => e.id === s.id);
-      if (!entry || seenRate.has(entry.id)) continue;
+      // Инвариант: работа создаётся только из реальной расценки с видом затрат.
+      if (!entry || !entry.costTypeId || seenRate.has(entry.id)) continue;
       seenRate.add(entry.id);
       matchedCount++;
       needsReviewCount++;
@@ -295,6 +219,45 @@ export async function runExtraction(
     }
   }
 
+  // 6–7. Распределение материалов по работам (ИИ); без работ/LLM — в общий список.
+  const byRate = new Map<string, ExtractedWork>(works.map((w) => [w.rateId as string, w]));
+  const bucketMaterials: ExtractedMaterial[] = [];
+  if (materials.length > 0) {
+    let assignment: { index: number; workId: string | null }[] = materials.map((_, i) => ({ index: i, workId: null }));
+    if (llm && works.length > 0) {
+      throwIfAborted(signal);
+      assignment = await llm.assignMaterials(
+        materials.map((m, i) => ({ index: i, name: m.description, unit: m.unit, section: null })),
+        works.map((w) => ({ id: w.rateId as string, name: w.description })),
+        { rules },
+      );
+    }
+    const widByIndex = new Map(assignment.map((a) => [a.index, a.workId]));
+    materials.forEach((m, i) => {
+      const wid = widByIndex.get(i) ?? null;
+      const w = wid ? byRate.get(wid) : undefined;
+      if (w) w.materials.push(m);
+      else bucketMaterials.push(m);
+    });
+  }
+
+  // Единственная допустимая «работа» без rateId — контейнер нераспределённых материалов.
+  if (bucketMaterials.length > 0) {
+    works.push({
+      description: MATERIALS_BUCKET,
+      rateId: null,
+      costTypeId: null,
+      quantity: 1,
+      unit: 'компл.',
+      unitPrice: 0,
+      confidence: 0,
+      needsReview: true,
+      sourceSnippet: null,
+      match: { catalogId: null, matchedName: null, unitPrice: null, unit: null, costTypeId: null, decision: 'unmatched', via: 'none', confidence: 0 },
+      materials: bucketMaterials,
+    });
+  }
+
   return {
     works,
     stats: {
@@ -303,7 +266,7 @@ export async function runExtraction(
       ruleItems: deduped.length - llmItemCount,
       llmItems: llmItemCount,
       works: works.length,
-      materials: materialCount,
+      materials: materials.length,
       matched: matchedCount,
       needsReview: needsReviewCount,
     },

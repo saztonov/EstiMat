@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { createAiJobSchema, extractionResultSchema } from '@estimat/shared';
@@ -7,7 +9,30 @@ import { applyExtraction } from '../../lib/extract/apply.js';
 import { loadCatalogSnapshot } from '../../lib/extract/catalog-source.js';
 import { runExtraction } from '../../lib/extract/pipeline.js';
 import { createOpenRouterPort } from '../../lib/extract/llm/openrouter.js';
-import type { CatalogSourceMode, SectionScope } from '../../lib/extract/types.js';
+import type { CatalogSourceMode, SectionScope, ExtractRules } from '../../lib/extract/types.js';
+
+// Накопленные правила (sectionToWork/lessons/синонимы) — поверх вшитых дефолтов кода.
+// Best-effort: критичные алиасы уже в коде, файла может не быть в прод-образе.
+let cachedRules: ExtractRules | null = null;
+function loadExtractRules(): ExtractRules {
+  if (cachedRules) return cachedRules;
+  const candidates = [
+    join(process.cwd(), 'scripts', 'ai-extract', 'rules.json'),
+    join(process.cwd(), '..', 'scripts', 'ai-extract', 'rules.json'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) {
+        cachedRules = JSON.parse(readFileSync(p, 'utf-8')) as ExtractRules;
+        return cachedRules;
+      }
+    } catch {
+      /* ignore — используем дефолты кода */
+    }
+  }
+  cachedRules = {};
+  return cachedRules;
+}
 
 // Реестр выполняющихся заданий для остановки (AbortController на задание).
 // Корректно при одном инстансе API (текущий прод single-VPS). Гонку «отмена vs
@@ -52,7 +77,7 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
       baseUrl: config.ai.baseUrl,
       signal: controller.signal,
     });
-    const result = await runExtraction(markdown, catalog, {}, port, scope, controller.signal);
+    const result = await runExtraction(markdown, catalog, loadExtractRules(), port, scope, controller.signal);
     if (controller.signal.aborted) throw new Error('aborted');
 
     const client = await fastify.pool.connect();

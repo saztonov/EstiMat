@@ -7,6 +7,7 @@
  */
 import type { Queryable } from './catalog-source.js';
 import type { ExtractionResult } from './types.js';
+import { MATERIALS_BUCKET } from './types.js';
 
 export interface ApplyOptions {
   estimateId: string;
@@ -29,6 +30,10 @@ export async function applyExtraction(
   let materials = 0;
 
   for (const work of result.works) {
+    // Защитный инвариант: в смету идут только работы из справочника (rateId).
+    // Единственное исключение — системный контейнер нераспределённых материалов.
+    if (!work.rateId && work.description !== MATERIALS_BUCKET) continue;
+
     const { rows } = await db.query(
       `INSERT INTO estimate_items
          (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,

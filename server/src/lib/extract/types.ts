@@ -172,6 +172,13 @@ export interface ExtractionResult {
   anomalies: string[];
 }
 
+/**
+ * Системный контейнер для материалов, которые ИИ не смог отнести к конкретной
+ * подобранной работе. Единственная допустимая «работа» без rateId — apply.ts
+ * пропускает только её, остальные работы без справочной привязки отбрасывает.
+ */
+export const MATERIALS_BUCKET = 'Материалы из РД (распределить)';
+
 // ============================================================
 // Накопленные правила (scripts/ai-extract/rules.json)
 // ============================================================
@@ -220,6 +227,20 @@ export interface LlmSuggestedWork {
   confidence: number;
 }
 
+/** Материал для распределения по работам. */
+export interface LlmMaterialInput {
+  index: number;
+  name: string;
+  unit: string | null;
+  section: string | null;
+}
+
+/** Ссылка на подобранную работу (id = rateId справочника). */
+export interface LlmWorkRef {
+  id: string;
+  name: string;
+}
+
 /**
  * Порт LLM. Если не передан в pipeline — LLM-стадии пропускаются (чистый
  * rule-based прогон). Реализации: файловый обмен (skill) и OpenRouter (фаза 2).
@@ -242,4 +263,13 @@ export interface LlmPort {
     candidates: LlmMatchCandidate[],
     ctx: LlmSuggestWorksContext,
   ): Promise<LlmSuggestedWork[]>;
+  /**
+   * Распределить материалы по подобранным работам (сметчик): каждому материалу —
+   * наиболее подходящая работа из списка (id) либо null (нет подходящей).
+   */
+  assignMaterials(
+    materials: LlmMaterialInput[],
+    works: LlmWorkRef[],
+    ctx: { rules: ExtractRules },
+  ): Promise<{ index: number; workId: string | null }[]>;
 }
