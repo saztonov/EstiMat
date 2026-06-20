@@ -23,6 +23,8 @@ export interface OpenRouterOptions {
   apiKey: string;
   model: string;
   baseUrl: string;
+  /** Сигнал отмены: прерывает in-flight запрос при остановке задания. */
+  signal?: AbortSignal;
 }
 
 interface ChatMessage {
@@ -64,6 +66,7 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       const res = await fetch(`${opts.baseUrl}/chat/completions`, {
         method: 'POST',
+        signal: opts.signal,
         headers: {
           Authorization: `Bearer ${opts.apiKey}`,
           'Content-Type': 'application/json',

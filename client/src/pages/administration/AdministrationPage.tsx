@@ -2,9 +2,11 @@ import { Card, Tabs } from 'antd';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { UsersPanel } from './UsersPanel';
 import { SettingsPanel } from './SettingsPanel';
+import { AiJobsPanel } from './AiJobsPanel';
 
 const tabs = [
   { key: 'users', label: 'Пользователи', children: <UsersPanel /> },
+  { key: 'ai-jobs', label: 'Задания ИИ', children: <AiJobsPanel /> },
   { key: 'settings', label: 'Настройки', children: <SettingsPanel /> },
 ];
 

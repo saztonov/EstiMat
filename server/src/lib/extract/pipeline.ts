@@ -9,6 +9,7 @@
  * (sectionPath) по правилу sectionToWork либо как контейнер с именем раздела.
  */
 import type {
+  CatalogEntry,
   CatalogSnapshot,
   ExtractionResult,
   ExtractRules,
@@ -23,12 +24,36 @@ import { parseMarkdown } from './markdown-parser.js';
 import { classifyTable, normalizeTableHeader } from './table-classifier.js';
 import { extractSpecTable } from './spec-extractor.js';
 import { matchItem } from './matcher.js';
-import { norm } from './normalize.js';
+import { norm, trigramSimilarity } from './normalize.js';
 
 const CONFIDENCE_REVIEW = 0.8;
+/** Сколько кандидатов-расценок отдаём LLM для подбора работ (после ранжирования). */
+const SUGGEST_TOPK = 200;
 
 function dedupeKey(item: RawSpecItem): string {
   return `${norm(item.rawName)}|${item.quantity ?? ''}|${item.unit ?? ''}|${item.sectionPath.join('>')}`;
+}
+
+/** Прервать выполнение, если задание остановлено (AbortSignal). */
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error('aborted');
+}
+
+/**
+ * Ранжировать расценки по релевантности документу (макс. триграммная близость
+ * имени/алиасов к терминам документа — заголовкам разделов) и вернуть top-K.
+ * Так подбор работ из всего справочника (без раздела) не зависит от порядка в БД.
+ */
+function rankRatesByDocument(rates: CatalogEntry[], terms: string[], topK: number): CatalogEntry[] {
+  if (rates.length <= topK || terms.length === 0) return rates.slice(0, topK);
+  const scored = rates.map((e) => {
+    const names = [e.name, ...e.aliases];
+    let best = 0;
+    for (const t of terms) for (const n of names) best = Math.max(best, trigramSimilarity(t, n));
+    return { e, best };
+  });
+  scored.sort((a, b) => b.best - a.best);
+  return scored.slice(0, topK).map((s) => s.e);
 }
 
 const DIGEST_LIMIT = 8000;
@@ -71,6 +96,7 @@ export async function runExtraction(
   rules: ExtractRules = {},
   llm?: LlmPort,
   scope?: SectionScope,
+  signal?: AbortSignal,
 ): Promise<ExtractionResult> {
   const blocks = parseMarkdown(markdown);
   const anomalies: string[] = [];
@@ -79,6 +105,7 @@ export async function runExtraction(
   let llmItemCount = 0;
 
   for (const block of blocks) {
+    throwIfAborted(signal);
     if (block.type === 'table') {
       tableCount++;
       // Нормализация шапки: реальная шапка спецификации РД часто не в первой строке
@@ -218,13 +245,24 @@ export async function runExtraction(
     });
   }
 
-  // Гибридный подбор работ: ИИ выбирает работы из суженного scope-среза справочника
-  // расценок по содержанию документа. Все предложенные — needs_review (сметчик
-  // подтверждает/дополняет вручную). РД не содержит работ, поэтому это основной их источник.
-  if (llm && scope && catalog.rates.length > 0) {
+  // Гибридный подбор работ: ИИ выбирает работы из справочника по содержанию документа.
+  // При выбранном разделе справочник уже сужен; без раздела — берём весь, но ранжируем
+  // кандидатов по релевантности (а не по порядку в БД). Все предложенные — needs_review.
+  // РД не содержит работ, поэтому это основной их источник.
+  if (llm && catalog.rates.length > 0) {
+    throwIfAborted(signal);
+    const effectiveScope: SectionScope = scope ?? { categoryIds: [], costTypeIds: [] };
+    const noScope = effectiveScope.categoryIds.length === 0 && effectiveScope.costTypeIds.length === 0;
     const digest = buildDocumentDigest(blocks);
-    const candidates = catalog.rates.map((e) => ({ id: e.id, name: e.name, unit: e.unit }));
-    const suggested = await llm.suggestWorks(digest, candidates, { scope, rules });
+    const terms = [...new Set(blocks.flatMap((b) => (b.type === 'heading' ? [b.text] : [])))];
+    const ranked = noScope ? rankRatesByDocument(catalog.rates, terms, SUGGEST_TOPK) : catalog.rates;
+    if (noScope) {
+      anomalies.push(
+        `Подбор работ по всему справочнику (${catalog.rates.length} расценок); для точности выберите раздел.`,
+      );
+    }
+    const candidates = ranked.map((e) => ({ id: e.id, name: e.name, unit: e.unit }));
+    const suggested = await llm.suggestWorks(digest, candidates, { scope: effectiveScope, rules });
     const seenRate = new Set(works.map((w) => w.rateId).filter(Boolean));
     for (const s of suggested) {
       const entry = catalog.rates.find((e) => e.id === s.id);

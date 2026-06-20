@@ -9,6 +9,11 @@ import { runExtraction } from '../../lib/extract/pipeline.js';
 import { createOpenRouterPort } from '../../lib/extract/llm/openrouter.js';
 import type { CatalogSourceMode, SectionScope } from '../../lib/extract/types.js';
 
+// Реестр выполняющихся заданий для остановки (AbortController на задание).
+// Корректно при одном инстансе API (текущий прод single-VPS). Гонку «отмена vs
+// запуск» дополнительно закрывают УСЛОВНЫЕ переходы статуса (WHERE status=...).
+const runningJobs = new Map<string, AbortController>();
+
 /** Модель LLM: дефолт из настроек (app_settings.ai_model_default), иначе из env. */
 async function resolveAiModel(fastify: FastifyInstance): Promise<string> {
   const r = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_model_default'`);
@@ -17,39 +22,57 @@ async function resolveAiModel(fastify: FastifyInstance): Promise<string> {
 }
 
 // Фаза 2: фоновое извлечение встроенным движком (OpenRouter). Берёт markdown из
-// ai_jobs.input.markdown (UI кладёт его и для rd_document, и для upload_md),
-// прогоняет ядро, пишет результат и применяет позиции в смету.
+// ai_jobs.input.markdown, прогоняет ядро, пишет результат и применяет позиции в смету.
+// Переходы статуса условные, чтобы отмена (cancel) не перетиралась раннером.
 async function runJobInBackground(fastify: FastifyInstance, jobId: string): Promise<void> {
   const { rows } = await fastify.pool.query('SELECT * FROM ai_jobs WHERE id = $1', [jobId]);
   const job = rows[0];
   if (!job) return;
   const markdown: string | null = job.input?.markdown ?? null;
-  if (!markdown) return; // catalog_query без markdown — оставляем skill'у
+  if (!markdown) return; // без markdown движок не запускаем
   const scope: SectionScope | undefined = job.input?.sectionScope ?? undefined;
 
+  // pending → running (условно). Если задание уже отменили — выходим.
+  const claim = await fastify.pool.query(
+    `UPDATE ai_jobs SET status = 'running' WHERE id = $1 AND status = 'pending' RETURNING id`,
+    [jobId],
+  );
+  if (claim.rowCount === 0) return;
+
+  const controller = new AbortController();
+  runningJobs.set(jobId, controller);
   try {
-    await fastify.pool.query(`UPDATE ai_jobs SET status = 'running' WHERE id = $1`, [jobId]);
     const cfg = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_catalog_source'`);
     const mode = (cfg.rows[0]?.value as CatalogSourceMode) ?? 'v2_first';
     const catalog = await loadCatalogSnapshot(fastify.pool, mode, scope);
     const model = await resolveAiModel(fastify);
-    const port = createOpenRouterPort({ apiKey: config.ai.apiKey, model, baseUrl: config.ai.baseUrl });
-    const result = await runExtraction(markdown, catalog, {}, port, scope);
+    const port = createOpenRouterPort({
+      apiKey: config.ai.apiKey,
+      model,
+      baseUrl: config.ai.baseUrl,
+      signal: controller.signal,
+    });
+    const result = await runExtraction(markdown, catalog, {}, port, scope, controller.signal);
+    if (controller.signal.aborted) throw new Error('aborted');
 
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`UPDATE ai_jobs SET status = 'ready', result = $2::jsonb, model = $3 WHERE id = $1`, [
-        jobId,
-        JSON.stringify(result),
-        `openrouter:${model}`,
-      ]);
+      // running → applied (условно). Если отменили во время прогона — откат, apply не выполняем.
+      const upd = await client.query(
+        `UPDATE ai_jobs SET status = 'applied', result = $2::jsonb, model = $3
+         WHERE id = $1 AND status = 'running' RETURNING id`,
+        [jobId, JSON.stringify(result), `openrouter:${model}`],
+      );
+      if (upd.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return; // отменено — позиции не добавляем
+      }
       await applyExtraction(
         client,
         { estimateId: job.estimate_id, aiJobId: job.id, sourceDocId: job.source_ref ?? null },
         result,
       );
-      await client.query(`UPDATE ai_jobs SET status = 'applied' WHERE id = $1`, [jobId]);
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -58,30 +81,33 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
       client.release();
     }
   } catch (err) {
-    fastify.log.error({ err, jobId }, 'ai job background failed');
-    await fastify.pool
-      .query(`UPDATE ai_jobs SET status = 'failed', error = $2 WHERE id = $1`, [
-        jobId,
-        err instanceof Error ? err.message : String(err),
-      ])
-      .catch(() => {});
+    if (controller.signal.aborted) {
+      await fastify.pool
+        .query(`UPDATE ai_jobs SET status = 'cancelled' WHERE id = $1 AND status = 'running'`, [jobId])
+        .catch(() => {});
+    } else {
+      fastify.log.error({ err, jobId }, 'ai job background failed');
+      await fastify.pool
+        .query(`UPDATE ai_jobs SET status = 'failed', error = $2 WHERE id = $1 AND status = 'running'`, [
+          jobId,
+          err instanceof Error ? err.message : String(err),
+        ])
+        .catch(() => {});
+    }
+  } finally {
+    runningJobs.delete(jobId);
   }
 }
 
-// Задания ИИ-извлечения работ/материалов из РД.
-//
-// Фаза 1 (текущая): POST /jobs создаёт задание 'pending'. Извлечение выполняет
-// skill estimate-extract (Claude Code), он пишет result и применяет позиции.
-// Фаза 2 (позже): POST /jobs запускает ядро с OpenRouter-портом в фоне и сам
-// доводит задание до 'applied' — UI и схема при этом не меняются.
+// Задания ИИ-извлечения работ/материалов из РД. Встроенный движок (OpenRouter)
+// запускается автоматически при создании задания, если задан ключ OpenRouter.
 export default async function aiRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
 
-  // POST /api/ai/jobs — создать задание извлечения
+  // POST /api/ai/jobs — создать задание извлечения (и сразу запустить движок)
   fastify.post('/jobs', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
     const body = createAiJobSchema.parse(request.body);
 
-    // Смета должна существовать.
     const est = await fastify.pool.query('SELECT id FROM estimates WHERE id = $1', [body.estimateId]);
     if (est.rows.length === 0) return reply.status(404).send({ error: 'Смета не найдена' });
 
@@ -96,18 +122,11 @@ export default async function aiRoutes(fastify: FastifyInstance) {
       `INSERT INTO ai_jobs (estimate_id, source_kind, source_ref, input, status, created_by)
        VALUES ($1, $2, $3, $4::jsonb, 'pending', $5)
        RETURNING *`,
-      [
-        body.estimateId,
-        body.sourceKind,
-        body.sourceRef ?? null,
-        JSON.stringify(input),
-        request.currentUser.id,
-      ],
+      [body.estimateId, body.sourceKind, body.sourceRef ?? null, JSON.stringify(input), request.currentUser.id],
     );
     const job = rows[0];
 
-    // Фаза 2: если встроенный движок настроен (есть ключ OpenRouter) и есть
-    // markdown — запускаем извлечение в фоне. Иначе задание ждёт skill.
+    // Встроенный движок: при наличии ключа OpenRouter и markdown — запускаем извлечение в фоне.
     if (config.ai.enabled && body.markdown) {
       void runJobInBackground(fastify, job.id);
     }
@@ -115,19 +134,33 @@ export default async function aiRoutes(fastify: FastifyInstance) {
     return reply.status(201).send({ data: job });
   });
 
-  // GET /api/ai/jobs?estimateId= — список заданий сметы
-  fastify.get('/jobs', async (request) => {
+  // GET /api/ai/jobs?estimateId= — задания сметы; без estimateId — админский список всех заданий
+  fastify.get('/jobs', async (request, reply) => {
     const { estimateId } = request.query as { estimateId?: string };
-    const values: string[] = [];
-    let where = '';
     if (estimateId) {
-      where = 'WHERE estimate_id = $1';
-      values.push(estimateId);
+      const { rows } = await fastify.pool.query(
+        `SELECT id, estimate_id, source_kind, source_ref, status, error, model, created_by, created_at, updated_at
+         FROM ai_jobs WHERE estimate_id = $1 ORDER BY created_at DESC`,
+        [estimateId],
+      );
+      return { data: rows };
+    }
+    if (request.currentUser.role !== 'admin') {
+      return reply.status(403).send({ error: 'Доступ только администратору' });
     }
     const { rows } = await fastify.pool.query(
-      `SELECT id, estimate_id, source_kind, source_ref, status, error, model, created_by, created_at, updated_at
-       FROM ai_jobs ${where} ORDER BY created_at DESC`,
-      values,
+      `SELECT j.id, j.estimate_id, j.source_kind, j.source_ref, j.status, j.error, j.model,
+              j.created_at, j.updated_at,
+              u.full_name AS created_by_name,
+              p.name      AS project_name,
+              (j.result->'stats'->>'works')::int     AS works_count,
+              (j.result->'stats'->>'materials')::int AS materials_count
+       FROM ai_jobs j
+       LEFT JOIN users u      ON j.created_by = u.id
+       LEFT JOIN estimates e  ON j.estimate_id = e.id
+       LEFT JOIN projects p   ON e.project_id = p.id
+       ORDER BY j.created_at DESC
+       LIMIT 200`,
     );
     return { data: rows };
   });
@@ -139,8 +172,43 @@ export default async function aiRoutes(fastify: FastifyInstance) {
     return { data: rows[0] };
   });
 
-  // POST /api/ai/jobs/:id/apply — применить готовый результат к смете
-  // (используется UI и будущим встроенным маршрутом фазы 2).
+  // POST /api/ai/jobs/:id/cancel — остановить задание (отмена выполнения)
+  fastify.post<{ Params: { id: string } }>(
+    '/jobs/:id/cancel',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const { id } = request.params;
+      const exists = await fastify.pool.query('SELECT id FROM ai_jobs WHERE id = $1', [id]);
+      if (exists.rows.length === 0) return reply.status(404).send({ error: 'Задание не найдено' });
+
+      // Условный перевод в cancelled (только из активных статусов) + прерывание in-flight прогона.
+      const upd = await fastify.pool.query(
+        `UPDATE ai_jobs SET status = 'cancelled' WHERE id = $1 AND status IN ('pending', 'running') RETURNING id`,
+        [id],
+      );
+      runningJobs.get(id)?.abort();
+      if (upd.rowCount === 0) return reply.status(409).send({ error: 'Задание уже завершено' });
+      return { data: { id, status: 'cancelled' } };
+    },
+  );
+
+  // DELETE /api/ai/jobs/:id — удалить запись задания (только терминальное; позиции в смете
+  // остаются — FK ai_job_id это ON DELETE SET NULL). Активное удалять нельзя — сначала остановить.
+  fastify.delete<{ Params: { id: string } }>(
+    '/jobs/:id',
+    { preHandler: [requireRole('admin')] },
+    async (request, reply) => {
+      const { rows } = await fastify.pool.query('SELECT status FROM ai_jobs WHERE id = $1', [request.params.id]);
+      if (rows.length === 0) return reply.status(404).send({ error: 'Задание не найдено' });
+      if (rows[0].status === 'pending' || rows[0].status === 'running') {
+        return reply.status(409).send({ error: 'Сначала остановите задание' });
+      }
+      await fastify.pool.query('DELETE FROM ai_jobs WHERE id = $1', [request.params.id]);
+      return { success: true };
+    },
+  );
+
+  // POST /api/ai/jobs/:id/apply — применить ГОТОВЫЙ результат к смете (только из статуса 'ready').
   fastify.post<{ Params: { id: string } }>(
     '/jobs/:id/apply',
     { preHandler: [requireRole('admin', 'engineer')] },
@@ -148,7 +216,9 @@ export default async function aiRoutes(fastify: FastifyInstance) {
       const { rows } = await fastify.pool.query('SELECT * FROM ai_jobs WHERE id = $1', [request.params.id]);
       const job = rows[0];
       if (!job) return reply.status(404).send({ error: 'Задание не найдено' });
-      if (job.status === 'applied') return reply.status(409).send({ error: 'Задание уже применено' });
+      if (job.status !== 'ready') {
+        return reply.status(409).send({ error: 'Задание не в статусе «готово»' });
+      }
 
       const parsed = extractionResultSchema.safeParse(job.result);
       if (!parsed.success) return reply.status(400).send({ error: 'Результат задания отсутствует или некорректен' });
@@ -156,12 +226,20 @@ export default async function aiRoutes(fastify: FastifyInstance) {
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
+        // ready → applied (условно).
+        const upd = await client.query(
+          `UPDATE ai_jobs SET status = 'applied' WHERE id = $1 AND status = 'ready' RETURNING id`,
+          [job.id],
+        );
+        if (upd.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({ error: 'Задание уже не в статусе «готово»' });
+        }
         const stats = await applyExtraction(
           client,
           { estimateId: job.estimate_id, aiJobId: job.id, sourceDocId: job.source_ref ?? null },
           parsed.data,
         );
-        await client.query(`UPDATE ai_jobs SET status = 'applied' WHERE id = $1`, [job.id]);
         await client.query('COMMIT');
         return { data: { ...stats } };
       } catch (err) {
