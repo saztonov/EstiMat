@@ -4,6 +4,7 @@ import type {
   AiChatApplyInput,
   ApplySectionInput,
   ApplyResult,
+  SectionScopeInput,
 } from '@estimat/shared';
 import { api } from './api';
 
@@ -21,10 +22,10 @@ export function getChatMessages(sessionId: string) {
   return api.get<{ data: ChatMessage[] }>(`/ai-chat/sessions/${sessionId}/messages`);
 }
 
-export function sendChatMessage(sessionId: string, content: string) {
+export function sendChatMessage(sessionId: string, content: string, sectionScope?: SectionScopeInput) {
   return api.post<{ data: { user: ChatMessage; assistant: ChatMessage } }>(
     `/ai-chat/sessions/${sessionId}/messages`,
-    { content },
+    { content, sectionScope },
   );
 }
 

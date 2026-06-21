@@ -18,6 +18,8 @@ export interface RunAgentArgs {
   history: { role: 'user' | 'assistant'; content: string }[];
   userText: string;
   ctx: AgentContext;
+  /** Доп. строка к системному промпту (напр. подсказка об активной области подбора). */
+  scopeNote?: string;
   onStep?: (steps: ChatStep[], cards: ChatCard[]) => Promise<void> | void;
 }
 
@@ -25,8 +27,9 @@ export async function runAgentTurn(args: RunAgentArgs): Promise<AgentTurnResult>
   const { llm, ctx, userText } = args;
   const history = args.history.slice(-HISTORY_LIMIT);
 
+  const systemContent = args.scopeNote ? `${CHAT_SYSTEM_PROMPT}\n\n${args.scopeNote}` : CHAT_SYSTEM_PROMPT;
   const messages: ChatTurnMessage[] = [
-    { role: 'system', content: CHAT_SYSTEM_PROMPT },
+    { role: 'system', content: systemContent },
     ...history.map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: userText },
   ];

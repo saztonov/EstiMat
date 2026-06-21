@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Segmented, Tree, Input, Button, Upload, Alert, Steps, Spin, Empty, App, Typography, Select, Space } from 'antd';
+import { Segmented, Tree, Input, Button, Upload, Alert, Steps, Spin, Empty, App, Typography, Space } from 'antd';
 import { FileTextOutlined, InboxOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { RdTreeResponse, AiJobSourceKind } from '@estimat/shared';
@@ -8,6 +8,7 @@ import { api } from '../../../services/api';
 import { createAiJob, getAiJob, getRdMarkdown, cancelAiJob } from '../../../services/aiExtract';
 import { mapRdTreeToNodes, filterRdNodes, type RdDataNode } from './rdTreeMappers';
 import { useWorkScopeStore } from '../../../store/workScopeStore';
+import { WorkScopeSelect } from './WorkScopeSelect';
 
 interface Props {
   estimateId: string;
@@ -49,25 +50,9 @@ export function AiExtractPanel({ estimateId }: Props) {
   const submittedKey = useRef('');
   const lastSource = useRef<JobSource | null>(null);
 
-  // Область подбора работ (разделы/виды) — общая со справочником работ.
+  // Область подбора работ (разделы/виды) — общая со справочником работ и чатом.
   const categoryIds = useWorkScopeStore((s) => s.categoryIds);
   const costTypeIds = useWorkScopeStore((s) => s.costTypeIds);
-  const setScope = useWorkScopeStore((s) => s.setScope);
-
-  const { data: catsData } = useQuery({
-    queryKey: ['rate-categories'],
-    queryFn: () => api.get<{ data: { id: string; name: string }[] }>('/rates/categories'),
-    staleTime: 5 * 60_000,
-  });
-  const { data: typesData } = useQuery({
-    queryKey: ['rate-types-all'],
-    queryFn: () => api.get<{ data: { id: string; name: string; category_id: string }[] }>('/rates/types'),
-    staleTime: 5 * 60_000,
-  });
-  const categoryOptions = (catsData?.data ?? []).map((c) => ({ value: c.id, label: c.name }));
-  const typeOptions = (typesData?.data ?? [])
-    .filter((t) => categoryIds.length === 0 || categoryIds.includes(t.category_id))
-    .map((t) => ({ value: t.id, label: t.name }));
 
   const { data: rdData, isLoading: rdLoading } = useQuery({
     queryKey: ['rd-tree'],
@@ -235,35 +220,7 @@ export function AiExtractPanel({ estimateId }: Props) {
           подбираются из справочника в выбранных разделах; без выбора — из всего справочника.
           Материалы извлекаются из спецификаций РД.
         </Typography.Paragraph>
-        <Select
-          mode="multiple"
-          allowClear
-          size="small"
-          placeholder="Разделы работ (опционально)"
-          style={{ width: '100%', marginBottom: 6 }}
-          value={categoryIds}
-          options={categoryOptions}
-          optionFilterProp="label"
-          onChange={(vals) => {
-            // При смене разделов отбрасываем виды, не входящие в выбранные разделы.
-            const allowed = new Set(
-              (typesData?.data ?? []).filter((t) => vals.includes(t.category_id)).map((t) => t.id),
-            );
-            setScope(vals, costTypeIds.filter((id) => allowed.has(id)));
-          }}
-        />
-        <Select
-          mode="multiple"
-          allowClear
-          size="small"
-          placeholder="Виды работ (опционально)"
-          style={{ width: '100%' }}
-          value={costTypeIds}
-          options={typeOptions}
-          optionFilterProp="label"
-          disabled={categoryIds.length === 0}
-          onChange={(vals) => setScope(categoryIds, vals)}
-        />
+        <WorkScopeSelect />
       </div>
 
       {lastSource.current && (

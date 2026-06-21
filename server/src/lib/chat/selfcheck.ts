@@ -8,6 +8,7 @@
  */
 import { estimateQuantity } from './calc.js';
 import { TOOL_DEFS } from './tools.js';
+import { costTypePredicate, isScopeActive, normalizeCostTypeIdToScope } from './search.js';
 
 let failed = 0;
 function check(name: string, cond: boolean): void {
@@ -34,6 +35,34 @@ check('имена инструментов уникальны', new Set(names).s
 check('у каждого инструмента есть parameters.object', TOOL_DEFS.every((t) => (t.function.parameters as any)?.type === 'object'));
 check('есть поиск работ и материалов', names.includes('search_catalog_works') && names.includes('search_catalog_materials'));
 check('есть поиск похожих в чужих сметах', names.includes('search_similar_works') && names.includes('search_similar_materials'));
+
+console.log('sectionScope — costTypePredicate:');
+check('без области → null', costTypePredicate(undefined, 'c.ct', 5) === null);
+check('пустая область → null', costTypePredicate({ categoryIds: [], costTypeIds: [] }, 'c.ct', 5) === null);
+const pTypes = costTypePredicate({ categoryIds: [], costTypeIds: ['a', 'b'] }, 'rv.cost_type_id', 5);
+check('виды → "= ANY($5)"', pTypes?.pred === 'rv.cost_type_id = ANY($5)');
+check('виды → value = costTypeIds', JSON.stringify(pTypes?.value) === JSON.stringify(['a', 'b']));
+const pCats = costTypePredicate({ categoryIds: ['x'], costTypeIds: [] }, 'mv.cost_type_id', 3);
+check(
+  'разделы → подзапрос по category_id с $3',
+  pCats?.pred === 'mv.cost_type_id IN (SELECT id FROM cost_types WHERE category_id = ANY($3))',
+);
+check('разделы → value = categoryIds', JSON.stringify(pCats?.value) === JSON.stringify(['x']));
+check('виды приоритетнее разделов', costTypePredicate({ categoryIds: ['x'], costTypeIds: ['a'] }, 'c', 1)?.pred === 'c = ANY($1)');
+
+console.log('sectionScope — isScopeActive:');
+check('пустая область неактивна', !isScopeActive({ categoryIds: [], costTypeIds: [] }));
+check('область с разделом активна', isScopeActive({ categoryIds: ['x'], costTypeIds: [] }));
+check('область с видом активна', isScopeActive({ categoryIds: [], costTypeIds: ['a'] }));
+
+console.log('sectionScope — normalizeCostTypeIdToScope (costTypeId от LLM):');
+check('без области — оставить как есть', normalizeCostTypeIdToScope(undefined, 'a').costTypeId === 'a');
+check('null costTypeId — не ignored', normalizeCostTypeIdToScope({ categoryIds: ['x'], costTypeIds: [] }, null).ignored === false);
+check('вид в области — оставить', normalizeCostTypeIdToScope({ categoryIds: [], costTypeIds: ['a', 'b'] }, 'a').costTypeId === 'a');
+const outOfScope = normalizeCostTypeIdToScope({ categoryIds: [], costTypeIds: ['a'] }, 'z');
+check('вид вне области — обнулить + ignored', outOfScope.costTypeId === null && outOfScope.ignored === true);
+const onlyCats = normalizeCostTypeIdToScope({ categoryIds: ['x'], costTypeIds: [] }, 'a');
+check('область только по разделам — вид LLM обнулить', onlyCats.costTypeId === null && onlyCats.ignored === true);
 
 if (failed > 0) {
   console.error(`\nself-check: провалено ${failed}`);

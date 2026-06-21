@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { sectionScopeSchema } from './ai.js';
 
 // ============================================================
 // ИИ-ассистент сметчика в режиме «Чат».
@@ -179,6 +180,8 @@ export const createChatSessionSchema = z.object({
 
 export const sendChatMessageSchema = z.object({
   content: z.string().min(1, 'Сообщение пустое').max(4000, 'Слишком длинное сообщение'),
+  /** Область подбора (разделы/виды), выбранная в чате. Сужает поиск по справочнику. */
+  sectionScope: sectionScopeSchema.optional(),
 });
 
 /**

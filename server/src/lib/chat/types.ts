@@ -1,6 +1,6 @@
 /** Общие типы агентного ядра ИИ-чата. */
 import type { Role } from '@estimat/shared';
-import type { CatalogSourceMode } from '../extract/types.js';
+import type { CatalogSourceMode, SectionScope } from '../extract/types.js';
 import type { ChatStep, ChatCard } from '@estimat/shared';
 
 /** Минимальный интерфейс к БД (pg.Pool/Client). */
@@ -24,6 +24,12 @@ export interface AgentContext {
   user: ChatUser;
   /** Источник справочника (настройка ai_catalog_source). */
   catalogMode: CatalogSourceMode;
+  /**
+   * Область подбора (разделы/виды), выбранная сметчиком в чате. Сужает поиск по
+   * справочнику (работы и материалы). Имя `sectionScope`, а не `scope`, чтобы не
+   * путать с параметром `scope: 'other_projects'|...` поиска похожих позиций.
+   */
+  sectionScope?: SectionScope;
   /** Доступен ли pg_trgm (иначе поиск деградирует на ILIKE + TS). */
   hasTrgm: boolean;
   signal?: AbortSignal;

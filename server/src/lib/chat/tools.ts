@@ -12,6 +12,7 @@ import {
   searchCatalogMaterials,
   searchSimilarWorks,
   searchSimilarMaterials,
+  normalizeCostTypeIdToScope,
 } from './search.js';
 import { getTypicalMaterials } from './typical.js';
 import { getEstimateContext, listCostCategories, previewSection } from './context.js';
@@ -229,15 +230,20 @@ export async function executeTool(ctx: AgentContext, name: string, rawArgs: unkn
       }
       case 'search_catalog_works': {
         const a = searchWorksArgs.parse(rawArgs);
-        const items = await searchCatalogWorks(ctx, { query: a.query, costTypeId: a.costTypeId ?? null, limit: a.limit });
+        // costTypeId от LLM действует только внутри активной области подбора.
+        const norm = normalizeCostTypeIdToScope(ctx.sectionScope, a.costTypeId ?? null);
+        const items = await searchCatalogWorks(ctx, { query: a.query, costTypeId: norm.costTypeId, limit: a.limit });
         const result = items.map((c) => ({
           source: c.source, catalogId: c.catalogId, name: c.name, unit: c.unit, price: c.price,
           costTypeName: c.costTypeName, duplicate: c.duplicateOfItemId != null, typicalMaterials: c.typicalMaterialsCount,
         }));
+        const label = norm.ignored
+          ? `Поиск работ: «${a.query}» — ${items.length} (costTypeId вне выбранной области — игнорирован)`
+          : `Поиск работ: «${a.query}» — ${items.length}`;
         return {
           ok: true,
           result,
-          step: step('search_works', `Поиск работ: «${a.query}» — ${items.length}`, { query: a.query, resultCount: items.length }),
+          step: step('search_works', label, { query: a.query, resultCount: items.length }),
           cards: items.length ? [{ type: 'work_candidates', items }] : [],
         };
       }

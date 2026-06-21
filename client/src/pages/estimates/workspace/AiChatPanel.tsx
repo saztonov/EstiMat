@@ -6,6 +6,7 @@ import type { ApplyItem } from '@estimat/shared';
 import { AiMessageList } from './AiMessageList';
 import { AiComposer } from './AiComposer';
 import { AiExtractPanel } from './AiExtractPanel';
+import { WorkScopeSelect } from './WorkScopeSelect';
 import {
   listChatSessions,
   createChatSession,
@@ -18,6 +19,7 @@ import {
 } from '../../../services/aiChat';
 import { useAiChatStore } from '../../../store/aiChatStore';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
+import { useWorkScopeStore } from '../../../store/workScopeStore';
 
 type AiMode = 'chat' | 'extract';
 
@@ -35,6 +37,9 @@ export function AiChatPanel({ estimateId, onCollapse }: Props) {
 
   const { activeSessionByEstimate, setActiveSession } = useAiChatStore();
   const revealEstimateItem = useEstimateSelectionStore((s) => s.revealEstimateItem);
+  // Область подбора (разделы/виды) — общая с режимом РД и деревом работ.
+  const scopeCategoryIds = useWorkScopeStore((s) => s.categoryIds);
+  const scopeCostTypeIds = useWorkScopeStore((s) => s.costTypeIds);
 
   const sessionsQuery = useQuery({
     queryKey: ['ai-chat-sessions', estimateId],
@@ -67,7 +72,11 @@ export function AiChatPanel({ estimateId, onCollapse }: Props) {
         const s = await createChatSession(estimateId);
         sid = s.data.id;
       }
-      const res = await sendChatMessage(sid, text);
+      // Область подбора отправляется только при выбранной категории (иначе — весь справочник).
+      const sectionScope = scopeCategoryIds.length
+        ? { categoryIds: scopeCategoryIds, costTypeIds: scopeCostTypeIds }
+        : undefined;
+      const res = await sendChatMessage(sid, text, sectionScope);
       return { sid, res };
     },
     onSuccess: ({ sid }) => {
@@ -167,6 +176,10 @@ export function AiChatPanel({ estimateId, onCollapse }: Props) {
             )}
           </div>
 
+          <div style={scopeBar}>
+            <WorkScopeSelect compact />
+          </div>
+
           <AiMessageList
             messages={messages}
             applying={applyMut.isPending || applySectionMut.isPending}
@@ -216,6 +229,12 @@ const sessionBar: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 6,
+  padding: '8px 10px',
+  borderBottom: '1px solid #f5f5f5',
+};
+
+const scopeBar: React.CSSProperties = {
+  flexShrink: 0,
   padding: '8px 10px',
   borderBottom: '1px solid #f5f5f5',
 };

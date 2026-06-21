@@ -9,11 +9,12 @@ import {
 } from '@estimat/shared';
 import type { ChatMessage, ChatSession, ChatStep, ChatCard } from '@estimat/shared';
 import { config } from '../../config.js';
-import type { CatalogSourceMode } from '../../lib/extract/types.js';
+import type { CatalogSourceMode, SectionScope } from '../../lib/extract/types.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import { runAgentTurn } from '../../lib/chat/agent.js';
+import { CHAT_SCOPE_NOTE } from '../../lib/chat/prompt.js';
 import { applySelected, applySection, type ApplyContext } from '../../lib/chat/apply.js';
-import { hasPgTrgm, searchCatalogWorks } from '../../lib/chat/search.js';
+import { hasPgTrgm, searchCatalogWorks, isScopeActive } from '../../lib/chat/search.js';
 import type { AgentContext, ChatUser } from '../../lib/chat/types.js';
 
 // Реестр выполняющихся ходов агента (AbortController на сообщение). Корректно
@@ -82,9 +83,10 @@ async function runChatTurn(
     user: ChatUser;
     userText: string;
     model: string;
+    sectionScope?: SectionScope;
   },
 ): Promise<void> {
-  const { assistantId, userMsgId, chatId, estimateId, projectId, user, userText, model } = params;
+  const { assistantId, userMsgId, chatId, estimateId, projectId, user, userText, model, sectionScope } = params;
   const controller = new AbortController();
   runningChats.set(assistantId, controller);
   try {
@@ -106,6 +108,7 @@ async function runChatTurn(
       chatId,
       user,
       catalogMode: mode,
+      sectionScope,
       hasTrgm,
       signal: controller.signal,
     };
@@ -119,6 +122,7 @@ async function runChatTurn(
       history,
       userText,
       ctx,
+      scopeNote: isScopeActive(sectionScope) ? CHAT_SCOPE_NOTE : undefined,
       onStep: async (steps, cards) => {
         await fastify.pool
           .query(
@@ -263,7 +267,8 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
         const mode = await resolveCatalogMode(fastify);
         const ctx: AgentContext = {
           db: fastify.pool, estimateId: chat.estimateId, projectId: chat.projectId,
-          chatId: chat.id, user: chatUser(request.currentUser), catalogMode: mode, hasTrgm,
+          chatId: chat.id, user: chatUser(request.currentUser), catalogMode: mode,
+          sectionScope: body.sectionScope, hasTrgm,
         };
         const items = await searchCatalogWorks(ctx, { query: body.content, limit: 8 });
         const cards: ChatCard[] = items.length ? [{ type: 'work_candidates', items }] : [];
@@ -298,6 +303,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
         user: chatUser(request.currentUser),
         userText: body.content,
         model,
+        sectionScope: body.sectionScope,
       });
 
       return reply.status(201).send({ data: { user: mapMessage(userRow), assistant: mapMessage(asstRow) } });
