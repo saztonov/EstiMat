@@ -21,10 +21,10 @@ import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { config } from '../../server/src/config.js';
-import { loadCatalogSnapshot } from '../../server/src/lib/extract/catalog-source.js';
+import { loadLegacyWorksSnapshot } from '../../server/src/lib/extract/catalog-source.js';
 import { runExtraction } from '../../server/src/lib/extract/pipeline.js';
 import { applyExtraction } from '../../server/src/lib/extract/apply.js';
-import type { ExtractRules, CatalogSourceMode, SectionScope } from '../../server/src/lib/extract/types.js';
+import type { ExtractRules, SectionScope } from '../../server/src/lib/extract/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -82,15 +82,13 @@ async function main() {
       process.exit(1);
     }
 
-    // Настройка источника справочника.
-    const cfg = await client.query(`SELECT value FROM app_settings WHERE key = 'ai_catalog_source'`);
-    const mode = (cfg.rows[0]?.value as CatalogSourceMode) ?? 'v2_first';
     // Область подбора (разделы/виды), выбранная сметчиком — сужает срез расценок.
     const scope: SectionScope | undefined = input.sectionScope ?? undefined;
 
     await client.query(`UPDATE ai_jobs SET status = 'running' WHERE id = $1`, [jobId]);
 
-    const catalog = await loadCatalogSnapshot(client, mode, scope);
+    // Источник для AI фиксирован: только legacy-справочник работ; материалы — из РД.
+    const catalog = await loadLegacyWorksSnapshot(client, scope);
     const rules = loadRules();
     const result = await runExtraction(markdown, catalog, rules, undefined, scope);
 

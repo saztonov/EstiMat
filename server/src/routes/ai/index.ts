@@ -6,10 +6,10 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { createAiJobSchema, extractionResultSchema } from '@estimat/shared';
 import { config } from '../../config.js';
 import { applyExtraction } from '../../lib/extract/apply.js';
-import { loadCatalogSnapshot } from '../../lib/extract/catalog-source.js';
+import { loadLegacyWorksSnapshot } from '../../lib/extract/catalog-source.js';
 import { runExtraction } from '../../lib/extract/pipeline.js';
 import { createOpenRouterPort } from '../../lib/extract/llm/openrouter.js';
-import type { CatalogSourceMode, SectionScope, ExtractRules } from '../../lib/extract/types.js';
+import type { SectionScope, ExtractRules } from '../../lib/extract/types.js';
 
 // Накопленные правила (sectionToWork/lessons/синонимы) — поверх вшитых дефолтов кода.
 // Best-effort: критичные алиасы уже в коде, файла может не быть в прод-образе.
@@ -67,9 +67,9 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
   const controller = new AbortController();
   runningJobs.set(jobId, controller);
   try {
-    const cfg = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_catalog_source'`);
-    const mode = (cfg.rows[0]?.value as CatalogSourceMode) ?? 'v2_first';
-    const catalog = await loadCatalogSnapshot(fastify.pool, mode, scope);
+    // Источник для AI-извлечения фиксирован: только legacy-справочник работ
+    // (настройка ai_catalog_source AI-блок не управляет). Материалы — из РД.
+    const catalog = await loadLegacyWorksSnapshot(fastify.pool, scope);
     const model = await resolveAiModel(fastify);
     const port = createOpenRouterPort({
       apiKey: config.ai.apiKey,

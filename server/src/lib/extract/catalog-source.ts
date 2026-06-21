@@ -100,10 +100,17 @@ async function loadV2Materials(db: Queryable): Promise<CatalogEntry[]> {
 
 async function loadLegacyRates(db: Queryable, scope?: SectionScope): Promise<CatalogEntry[]> {
   const f = rateScopeFilter(scope, 'r.cost_type_id');
+  // JOIN cost_types/cost_categories — для заголовков чанков и стабильного порядка
+  // обхода «фундамент → отделка» (cat.sort → type.sort → имя расценки).
   const { rows } = await db.query(
-    `SELECT r.id, r.name, r.unit, r.price, r.cost_type_id
+    `SELECT r.id, r.name, r.unit, r.price, r.cost_type_id,
+            ct.name AS cost_type_name, ct.sort_order AS type_sort,
+            cc.name AS category_name, cc.sort_order AS cat_sort
      FROM rates r${f.join}
-     WHERE r.is_active = true${f.where}`,
+     JOIN cost_types ct ON ct.id = r.cost_type_id
+     LEFT JOIN cost_categories cc ON cc.id = ct.category_id
+     WHERE r.is_active = true${f.where}
+     ORDER BY cc.sort_order, cc.name, ct.sort_order, ct.name, r.name, r.id`,
     f.values,
   );
   return rows.map((r) => ({
@@ -114,6 +121,9 @@ async function loadLegacyRates(db: Queryable, scope?: SectionScope): Promise<Cat
     aliases: [],
     costTypeId: r.cost_type_id ?? null,
     source: 'legacy' as const,
+    categoryName: r.category_name ?? null,
+    costTypeName: r.cost_type_name ?? null,
+    sortKey: (num(r.cat_sort) ?? 0) * 1_000_000 + (num(r.type_sort) ?? 0) * 1_000,
   }));
 }
 
@@ -162,4 +172,18 @@ export async function loadCatalogSnapshot(
   }
 
   return { rates, materials, mode };
+}
+
+/**
+ * Срез справочника для AI-извлечения из РД: ТОЛЬКО legacy-работы (`rates`), в
+ * стабильном порядке обхода. Материалы из справочника НЕ грузятся — в смету они
+ * попадают только из самого РД (см. pipeline), ручным вводом или из других смет.
+ * Источник для AI фиксирован legacy — настройка `ai_catalog_source` не влияет.
+ */
+export async function loadLegacyWorksSnapshot(
+  db: Queryable,
+  scope?: SectionScope,
+): Promise<CatalogSnapshot> {
+  const rates = await loadLegacyRates(db, scope);
+  return { rates, materials: [], mode: 'legacy' };
 }

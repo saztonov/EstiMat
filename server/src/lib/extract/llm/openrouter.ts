@@ -10,6 +10,7 @@ import type {
   LlmPort,
   LlmExtractContext,
   LlmMatchCandidate,
+  LlmMaterialInput,
   LlmSuggestWorksContext,
   LlmSuggestedWork,
   RawSpecItem,
@@ -273,6 +274,98 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
       }
       // Материалы без ответа модели (или вне лимита) → null (в общий список).
       return materials.map((m) => ({ index: m.index, workId: map.get(m.index) ?? null }));
+    },
+
+    async sweepWorks(
+      chunkTitle: string,
+      chunk: LlmMatchCandidate[],
+      documentDigest: string,
+      materials: string[],
+      ctx: LlmSuggestWorksContext,
+    ): Promise<LlmSuggestedWork[]> {
+      if (chunk.length === 0) return [];
+      const byId = new Set(chunk.map((c) => c.id));
+      const list = chunk.map((c) => `[${c.id}] ${c.name} (${c.unit ?? '—'})`).join('\n');
+      const lessons = (ctx.rules.lessons ?? []).slice(0, 5).join('\n');
+      const mats = materials.slice(0, 80);
+      const raw = await chat([
+        {
+          role: 'system',
+          content:
+            SMETCHIK_ROLE +
+            ' Перед тобой ОДИН РАЗДЕЛ справочника работ. Определи, какие из перечисленных работ ' +
+            'реально применимы к данному РД — по выжимке документа и списку извлечённых материалов. ' +
+            'Выбирай ТОЛЬКО из списка по их id, НЕ выдумывай работ вне списка. Сомневаешься — НЕ ' +
+            'включай. Верни ТОЛЬКО JSON-массив {id, confidence} (0..1). Нет подходящих — [].',
+        },
+        {
+          role: 'user',
+          content:
+            `Раздел справочника: ${chunkTitle}\n\n` +
+            `Документ (выжимка):\n${documentDigest}\n\n` +
+            (mats.length ? `Извлечённые материалы из РД:\n${mats.join('\n')}\n\n` : '') +
+            (lessons ? `Подсказки:\n${lessons}\n\n` : '') +
+            `Работы раздела (выбирай только из них):\n${list}`,
+        },
+      ]);
+      const parsed = extractJson(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+        .map((p) => {
+          const conf = typeof p.confidence === 'number' ? p.confidence : Number(p.confidence);
+          return { id: String(p.id ?? ''), confidence: Number.isFinite(conf) ? conf : 0.6 };
+        })
+        .filter((w) => byId.has(w.id) && w.confidence >= SUGGEST_CONFIDENCE_FLOOR);
+    },
+
+    async sweepMaterialToWork(
+      chunkTitle: string,
+      chunk: LlmMatchCandidate[],
+      materials: LlmMaterialInput[],
+      ctx: { rules: { lessons?: string[] } },
+    ): Promise<{ materialIndex: number; workId: string }[]> {
+      if (chunk.length === 0 || materials.length === 0) return [];
+      const byId = new Set(chunk.map((c) => c.id));
+      const idxSet = new Set(materials.map((m) => m.index));
+      const worksList = chunk.map((c) => `[${c.id}] ${c.name} (${c.unit ?? '—'})`).join('\n');
+      const matsList = materials
+        .slice(0, ASSIGN_MATERIAL_LIMIT)
+        .map((m) => `${m.index}: ${m.name} (${m.unit ?? '—'})`)
+        .join('\n');
+      const lessons = (ctx.rules.lessons ?? []).slice(0, 4).join('\n');
+      const raw = await chat([
+        {
+          role: 'system',
+          content:
+            SMETCHIK_ROLE +
+            ' Перед тобой ОДИН РАЗДЕЛ справочника работ и список НЕРАСПРЕДЕЛЁННЫХ материалов из РД. ' +
+            'Для каждого материала, который по строительному смыслу относится к одной из работ этого ' +
+            'раздела (монтируется/используется в её рамках), верни пару {materialIndex, workId}. ' +
+            'Если материал НЕ относится ни к одной работе раздела — НЕ включай его. Не выдумывай id ' +
+            'и индексы. Верни ТОЛЬКО JSON-массив {materialIndex, workId}.',
+        },
+        {
+          role: 'user',
+          content:
+            `Раздел справочника: ${chunkTitle}\n\nРаботы раздела:\n${worksList}\n\n` +
+            (lessons ? `Подсказки:\n${lessons}\n\n` : '') +
+            `Материалы (index: наименование):\n${matsList}`,
+        },
+      ]);
+      const parsed = extractJson(raw);
+      if (!Array.isArray(parsed)) return [];
+      const out: { materialIndex: number; workId: string }[] = [];
+      for (const p of parsed) {
+        if (!p || typeof p !== 'object') continue;
+        const rec = p as Record<string, unknown>;
+        const idx = typeof rec.materialIndex === 'number' ? rec.materialIndex : Number(rec.materialIndex);
+        const wid = rec.workId == null ? '' : String(rec.workId);
+        if (Number.isInteger(idx) && idxSet.has(idx) && byId.has(wid)) {
+          out.push({ materialIndex: idx, workId: wid });
+        }
+      }
+      return out;
     },
   };
 }

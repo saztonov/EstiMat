@@ -130,10 +130,87 @@ async function test3() {
   check(inserted.includes(MATERIALS_BUCKET), 'контейнер материалов вставлен');
 }
 
+// ── Тест 4: полный обход справочника (Pass 1) + Pass 2 (материал тянет работу) ──
+const sweepLlm: LlmPort = {
+  async extractItems() {
+    return [];
+  },
+  async matchCandidate() {
+    return null;
+  },
+  async suggestWorks() {
+    return [];
+  },
+  async assignMaterials(materials, works) {
+    const has = (id: string) => works.some((w) => w.id === id);
+    return materials.map((m) => {
+      const n = m.name.toLowerCase();
+      if (n.includes('кабель') && has('r-cable')) return { index: m.index, workId: 'r-cable' };
+      if (n.includes('светильник') && has('r-lamp')) return { index: m.index, workId: 'r-lamp' };
+      return { index: m.index, workId: null };
+    });
+  },
+  async sweepWorks(_title, chunk) {
+    const ids = new Set(chunk.map((c) => c.id));
+    // r-cable намеренно дублируется — проверяем дедуп по seenRate.
+    if (ids.has('r-cable')) return [{ id: 'r-cable', confidence: 0.9 }, { id: 'r-cable', confidence: 0.8 }];
+    if (ids.has('r-lamp')) return [{ id: 'r-lamp', confidence: 0.9 }];
+    return []; // отделочный раздел Pass 1 не выбирает — работа придёт из Pass 2
+  },
+  async sweepMaterialToWork(_title, chunk, materials) {
+    const ids = new Set(chunk.map((c) => c.id));
+    if (!ids.has('r-paint')) return [];
+    return materials
+      .filter((m) => m.name.toLowerCase().includes('краска'))
+      .map((m) => ({ materialIndex: m.index, workId: 'r-paint' }));
+  },
+};
+
+async function test4() {
+  console.log('Тест 4: полный обход legacy (Pass 1) + Pass 2 (материал тянет работу)');
+  const catalog: CatalogSnapshot = {
+    mode: 'legacy',
+    materials: [],
+    rates: [
+      { id: 'r-cable', name: 'Прокладка кабеля', unit: 'м', price: 50, aliases: [], costTypeId: 'ct-el', source: 'legacy', categoryName: 'Электромонтаж', costTypeName: 'Кабельные работы', sortKey: 1000 },
+      { id: 'r-lamp', name: 'Монтаж светильника', unit: 'шт', price: 80, aliases: [], costTypeId: 'ct-el2', source: 'legacy', categoryName: 'Электромонтаж', costTypeName: 'Освещение', sortKey: 2000 },
+      { id: 'r-paint', name: 'Окраска стен', unit: 'кг', price: 30, aliases: [], costTypeId: 'ct-fin', source: 'legacy', categoryName: 'Отделка', costTypeName: 'Малярные работы', sortKey: 3000 },
+    ],
+  };
+  const md = `
+## Спецификация ЭОМ
+
+| Наименование | Кол-во | Ед.изм. |
+|---|---|---|
+| Кабель ВВГнг 3х2.5 | 100 | м |
+| Светильник LED 36Вт | 10 | шт |
+| Дюбель 6х40 | 200 | шт |
+| Краска ВД белая | 5 | кг |
+`;
+  const rules = { anchorStopList: ['дюбель'] };
+  const r = await runExtraction(md, catalog, rules, sweepLlm);
+  const workIds = r.works.map((w) => w.rateId);
+  check(workIds.filter((id) => id === 'r-cable').length === 1, 'дедуп: r-cable добавлена один раз');
+  check(workIds.includes('r-lamp'), 'Pass 1: r-lamp подобрана обходом');
+  check(workIds.includes('r-paint'), 'Pass 2: r-paint вытянута материалом «краска»');
+  const paint = r.works.find((w) => w.rateId === 'r-paint');
+  check(paint?.reviewReason === 'pass2_added', 'вытянутая работа помечена pass2_added');
+  check(!!paint && paint.materials.some((m) => m.description.toLowerCase().includes('краска')), 'краска привязана к окраске стен');
+  const bucket = r.works.find((w) => w.description === MATERIALS_BUCKET);
+  check(!!bucket && bucket.materials.some((m) => m.description.toLowerCase().includes('дюбель')), 'дюбель (стоп-лист) остался в bucket — работу не вытянул');
+  const allMats = r.works.flatMap((w) => w.materials);
+  check(allMats.length > 0 && allMats.every((m) => m.materialId === null), 'материалы из РД без справочного id');
+  check(allMats.some((m) => m.description.toLowerCase().includes('кабель ввгнг')), 'имя материала — из РД, не подменено справочником');
+  check(r.works.every((w) => w.needsReview), 'все работы автоподбора — на согласование');
+  check((r.stats.worksFromSweep ?? 0) === 2, 'worksFromSweep = 2 (Pass 1)');
+  check((r.stats.materialsSweepAssigned ?? 0) === 1, 'materialsSweepAssigned = 1 (Pass 2)');
+}
+
 async function main() {
   await test1();
   await test2();
   await test3();
+  await test4();
   if (failed > 0) {
     console.error(`\n${failed} проверок провалено.`);
     process.exit(1);

@@ -80,6 +80,12 @@ export interface CatalogEntry {
   costTypeId: string | null;
   /** Из какого справочника пришла запись. */
   source: 'v2' | 'legacy';
+  /** Раздел (cost_categories.name) — для группировки чанков обхода. */
+  categoryName?: string | null;
+  /** Вид затрат (cost_types.name) — заголовок чанка обхода. */
+  costTypeName?: string | null;
+  /** Композитный порядок «фундамент → отделка» (cat.sort, type.sort, rate). */
+  sortKey?: number;
 }
 
 /** Откуда брать справочник для сопоставления (настройка в Администрировании). */
@@ -128,6 +134,9 @@ export interface MatchResult {
 // Результат извлечения (пишется в ai_jobs.result, применяется apply.ts)
 // ============================================================
 
+/** Причина пометки needs_review (для очереди разбора сметчиком). */
+export type ReviewReason = 'pass1_context' | 'pass2_added' | 'qty_unknown';
+
 export interface ExtractedMaterial {
   description: string;
   materialId: string | null;
@@ -136,6 +145,7 @@ export interface ExtractedMaterial {
   unitPrice: number;
   confidence: number;
   needsReview: boolean;
+  reviewReason?: ReviewReason;
   sourceSnippet: string | null;
   match: MatchResult;
 }
@@ -149,6 +159,7 @@ export interface ExtractedWork {
   unitPrice: number;
   confidence: number;
   needsReview: boolean;
+  reviewReason?: ReviewReason;
   sourceSnippet: string | null;
   match: MatchResult;
   materials: ExtractedMaterial[];
@@ -163,6 +174,10 @@ export interface ExtractionStats {
   materials: number;
   matched: number;
   needsReview: number;
+  /** Работ добавлено полным обходом справочника (Pass 1). */
+  worksFromSweep?: number;
+  /** Материалов, «вытянувших» работу обходом по нераспределённому пулу (Pass 2). */
+  materialsSweepAssigned?: number;
 }
 
 export interface ExtractionResult {
@@ -194,6 +209,11 @@ export interface ExtractRules {
   unitAliases?: Record<string, string>;
   /** Синонимы материалов: вариант → канон. */
   materialSynonyms?: Record<string, string>;
+  /**
+   * Не-якорные материалы (крепёж/расходники/СИЗ): подстроки наименований, которые
+   * НЕ должны «вытягивать» работу в Pass 2 (сопровождают любую работу).
+   */
+  anchorStopList?: string[];
   /** Уроки формата РД (текстовые заметки для LLM-агентов). */
   lessons?: string[];
 }
@@ -272,4 +292,28 @@ export interface LlmPort {
     works: LlmWorkRef[],
     ctx: { rules: ExtractRules },
   ): Promise<{ index: number; workId: string | null }[]>;
+  /**
+   * Pass 1 — систематический обход справочника. Для ОДНОГО раздела-чанка работ
+   * (один вид затрат) выбрать работы, реально применимые к данному РД (по выжимке
+   * документа и списку извлечённых материалов). Возвращает id ТОЛЬКО из chunk.
+   * Опционально: порт без метода → pipeline идёт по fallback-пути suggestWorks.
+   */
+  sweepWorks?(
+    chunkTitle: string,
+    chunk: LlmMatchCandidate[],
+    documentDigest: string,
+    materials: string[],
+    ctx: LlmSuggestWorksContext,
+  ): Promise<LlmSuggestedWork[]>;
+  /**
+   * Pass 2 — обход справочника по нераспределённым материалам. Для ОДНОГО чанка
+   * работ вернуть привязки {materialIndex, workId} для материалов, относящихся по
+   * смыслу к работе чанка. Материал без привязки в ответе не упоминается.
+   */
+  sweepMaterialToWork?(
+    chunkTitle: string,
+    chunk: LlmMatchCandidate[],
+    materials: LlmMaterialInput[],
+    ctx: { rules: ExtractRules },
+  ): Promise<{ materialIndex: number; workId: string }[]>;
 }
