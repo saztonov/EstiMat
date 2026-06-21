@@ -25,10 +25,12 @@ type AiMode = 'chat' | 'extract';
 
 interface Props {
   estimateId: string;
+  /** Инвалидация кэшей сметы после применения ИИ-позиций (учитывает маршрут загрузки). */
+  onEstimateChanged: () => void;
   onCollapse: () => void;
 }
 
-export function AiChatPanel({ estimateId, onCollapse }: Props) {
+export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props) {
   const { message } = App.useApp();
   const qc = useQueryClient();
   const [aiMode, setAiMode] = useState<AiMode>('extract');
@@ -95,7 +97,7 @@ export function AiChatPanel({ estimateId, onCollapse }: Props) {
       const { works, materials } = res.data.added;
       message.success(`Добавлено: работ ${works}, материалов ${materials}`);
       if (res.data.skipped.length) message.info(`Пропущено дублей: ${res.data.skipped.length}`);
-      qc.invalidateQueries({ queryKey: ['estimate', estimateId] });
+      onEstimateChanged();
       if (res.data.addedItemIds[0]) revealEstimateItem(res.data.addedItemIds[0]);
     },
     onError: (e: Error) => message.error(e.message),
@@ -106,7 +108,7 @@ export function AiChatPanel({ estimateId, onCollapse }: Props) {
       applySectionApi({ chatId: sessionId as string, sourceEstimateId: p.sourceEstimateId, costTypeId: p.costTypeId, override: false }),
     onSuccess: (res) => {
       message.success(`Скопировано работ: ${res.data.added.works}`);
-      qc.invalidateQueries({ queryKey: ['estimate', estimateId] });
+      onEstimateChanged();
     },
     onError: (e: Error) => message.error(e.message),
   });
@@ -153,7 +155,7 @@ export function AiChatPanel({ estimateId, onCollapse }: Props) {
 
       {aiMode === 'extract' ? (
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          <AiExtractPanel estimateId={estimateId} />
+          <AiExtractPanel estimateId={estimateId} onEstimateChanged={onEstimateChanged} />
         </div>
       ) : (
         <>

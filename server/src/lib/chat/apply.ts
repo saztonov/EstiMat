@@ -11,14 +11,18 @@ import type { ApplyItem } from '@estimat/shared';
 import { findWorkDuplicate, findMaterialDuplicate } from './duplicates.js';
 import { getTypicalMaterials } from './typical.js';
 import type { Queryable } from './types.js';
+import { recordAuditBatch, type AuditInput } from '../audit.js';
 
 export interface ApplyContext {
   estimateId: string;
+  projectId: string | null;
   chatId: string;
   userId: string;
   model: string | null;
   /** Текст задачи пользователя — в source_snippet и ai_jobs.input. */
   prompt: string;
+  /** Связь сводной и row-level записей журнала + realtime-события. */
+  correlationId: string;
 }
 
 export interface ApplyResultInternal {
@@ -115,14 +119,36 @@ async function insertMaterialRow(
   ctx: ApplyContext,
   aiJobId: string,
   m: { materialId: string | null; name: string; unit: string | null; price: number; quantity: number; sort: number },
-): Promise<void> {
-  await db.query(
+): Promise<string> {
+  const { rows } = await db.query(
     `INSERT INTO estimate_materials
        (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status,
-        source, ai_job_id, ai_chat_id, needs_review, source_snippet)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'suggested', 'ai', $9, $10, true, $11)`,
-    [itemId, ctx.estimateId, m.materialId, m.name, m.quantity, m.unit, m.price, m.sort, aiJobId, ctx.chatId, ctx.prompt],
+        source, ai_job_id, ai_chat_id, needs_review, source_snippet, created_by, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'suggested', 'ai', $9, $10, true, $11, $12, $12)
+     RETURNING id`,
+    [itemId, ctx.estimateId, m.materialId, m.name, m.quantity, m.unit, m.price, m.sort, aiJobId, ctx.chatId, ctx.prompt, ctx.userId],
   );
+  return rows[0].id as string;
+}
+
+// Аудит-запись на добавленную ИИ-строку (общая для applySelected/applySection).
+function aiCreateAudit(
+  ctx: ApplyContext,
+  aiJobId: string,
+  entityType: 'estimate_item' | 'estimate_material',
+  entityId: string,
+  after: Record<string, unknown>,
+): AuditInput {
+  return {
+    estimateId: ctx.estimateId,
+    projectId: ctx.projectId,
+    entityType,
+    entityId,
+    action: 'create',
+    userId: ctx.userId,
+    correlationId: ctx.correlationId,
+    changes: { source: 'ai', aiJobId, aiChatId: ctx.chatId, after },
+  };
 }
 
 export async function applySelected(
@@ -141,6 +167,7 @@ export async function applySelected(
   const skipped: { catalogId: string; reason: string }[] = [];
   const applied: unknown[] = [];
   const addedItemIds: string[] = [];
+  const audits: AuditInput[] = [];
   let works = 0;
   let materials = 0;
 
@@ -160,28 +187,31 @@ export async function applySelected(
       const { rows } = await db.query(
         `INSERT INTO estimate_items
            (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
-            source, ai_job_id, ai_chat_id, needs_review, source_snippet)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ai', $9, $10, true, $11)
+            source, ai_job_id, ai_chat_id, needs_review, source_snippet, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ai', $9, $10, true, $11, $12, $12)
          RETURNING id`,
-        [ctx.estimateId, canon.costTypeId, canon.applyRateId, canon.name, item.quantity, canon.unit, canon.price, sort, aiJobId, ctx.chatId, ctx.prompt],
+        [ctx.estimateId, canon.costTypeId, canon.applyRateId, canon.name, item.quantity, canon.unit, canon.price, sort, aiJobId, ctx.chatId, ctx.prompt, ctx.userId],
       );
       const itemId: string = rows[0].id;
       works++;
       addedItemIds.push(itemId);
       applied.push({ kind: 'work', source: item.source, catalogId: item.catalogId, itemId, rateId: canon.applyRateId });
+      audits.push(aiCreateAudit(ctx, aiJobId, 'estimate_item', itemId, { description: canon.name, quantity: item.quantity, unit: canon.unit, unitPrice: canon.price }));
 
       if (item.addTypicalMaterials) {
         const typ = await getTypicalMaterials(db, item.source, item.catalogId);
         let ms = 0;
         for (const t of typ) {
-          await insertMaterialRow(db, itemId, ctx, aiJobId, {
+          const qty = Math.round(item.quantity * t.qtyRatio * 10000) / 10000;
+          const matId = await insertMaterialRow(db, itemId, ctx, aiJobId, {
             materialId: t.applyMaterialId,
             name: t.name,
             unit: t.unit,
             price: t.price,
-            quantity: Math.round(item.quantity * t.qtyRatio * 10000) / 10000,
+            quantity: qty,
             sort: ms++,
           });
+          audits.push(aiCreateAudit(ctx, aiJobId, 'estimate_material', matId, { description: t.name, quantity: qty, unit: t.unit, unitPrice: t.price }));
           materials++;
         }
       }
@@ -206,7 +236,7 @@ export async function applySelected(
         continue;
       }
       const sort = await nextMaterialSort(db, item.targetItemId);
-      await insertMaterialRow(db, item.targetItemId, ctx, aiJobId, {
+      const matId = await insertMaterialRow(db, item.targetItemId, ctx, aiJobId, {
         materialId: canon.applyMaterialId,
         name: canon.name,
         unit: canon.unit,
@@ -214,6 +244,7 @@ export async function applySelected(
         quantity: item.quantity,
         sort,
       });
+      audits.push(aiCreateAudit(ctx, aiJobId, 'estimate_material', matId, { description: canon.name, quantity: item.quantity, unit: canon.unit, unitPrice: canon.price }));
       materials++;
       addedItemIds.push(item.targetItemId);
       applied.push({ kind: 'material', source: item.source, catalogId: item.catalogId, targetItemId: item.targetItemId });
@@ -224,6 +255,19 @@ export async function applySelected(
     `UPDATE ai_jobs SET result = $2::jsonb, status = 'applied' WHERE id = $1`,
     [aiJobId, JSON.stringify({ prompt: ctx.prompt, applied, skipped, counts: { works, materials } })],
   );
+
+  // Сводная запись + row-level история по каждой добавленной позиции.
+  audits.push({
+    estimateId: ctx.estimateId,
+    projectId: ctx.projectId,
+    entityType: 'estimate',
+    entityId: ctx.estimateId,
+    action: 'ai_apply',
+    userId: ctx.userId,
+    correlationId: ctx.correlationId,
+    changes: { works, materials, aiJobId, aiChatId: ctx.chatId, source: 'ai' },
+  });
+  await recordAuditBatch(db, audits);
 
   return { aiJobId, added: { works, materials }, addedItemIds: [...new Set(addedItemIds)], skipped };
 }
@@ -259,6 +303,7 @@ export async function applySection(
 
   const skipped: { catalogId: string; reason: string }[] = [];
   const addedItemIds: string[] = [];
+  const audits: AuditInput[] = [];
   let works = 0;
   let materials = 0;
   let sort = await nextWorkSort(db, ctx.estimateId, costTypeId);
@@ -272,14 +317,15 @@ export async function applySection(
     const { rows } = await db.query(
       `INSERT INTO estimate_items
          (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
-          source, ai_job_id, ai_chat_id, needs_review, source_snippet)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ai', $9, $10, true, $11)
+          source, ai_job_id, ai_chat_id, needs_review, source_snippet, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ai', $9, $10, true, $11, $12, $12)
        RETURNING id`,
-      [ctx.estimateId, costTypeId, w.rate_id ?? null, w.description, num(w.quantity), w.unit, num(w.unit_price), sort++, aiJobId, ctx.chatId, ctx.prompt],
+      [ctx.estimateId, costTypeId, w.rate_id ?? null, w.description, num(w.quantity), w.unit, num(w.unit_price), sort++, aiJobId, ctx.chatId, ctx.prompt, ctx.userId],
     );
     const newItemId: string = rows[0].id;
     works++;
     addedItemIds.push(newItemId);
+    audits.push(aiCreateAudit(ctx, aiJobId, 'estimate_item', newItemId, { description: w.description, quantity: num(w.quantity), unit: w.unit, unitPrice: num(w.unit_price) }));
 
     const { rows: srcMats } = await db.query(
       `SELECT material_id, description, quantity, unit, unit_price
@@ -288,7 +334,7 @@ export async function applySection(
     );
     let ms = 0;
     for (const m of srcMats) {
-      await insertMaterialRow(db, newItemId, ctx, aiJobId, {
+      const matId = await insertMaterialRow(db, newItemId, ctx, aiJobId, {
         materialId: m.material_id ?? null,
         name: m.description,
         unit: m.unit,
@@ -296,6 +342,7 @@ export async function applySection(
         quantity: num(m.quantity),
         sort: ms++,
       });
+      audits.push(aiCreateAudit(ctx, aiJobId, 'estimate_material', matId, { description: m.description, quantity: num(m.quantity), unit: m.unit, unitPrice: num(m.unit_price) }));
       materials++;
     }
   }
@@ -304,6 +351,18 @@ export async function applySection(
     aiJobId,
     JSON.stringify({ prompt: ctx.prompt, sourceEstimateId, costTypeId, counts: { works, materials }, skipped }),
   ]);
+
+  audits.push({
+    estimateId: ctx.estimateId,
+    projectId: ctx.projectId,
+    entityType: 'estimate',
+    entityId: ctx.estimateId,
+    action: 'ai_apply',
+    userId: ctx.userId,
+    correlationId: ctx.correlationId,
+    changes: { works, materials, aiJobId, aiChatId: ctx.chatId, source: 'ai' },
+  });
+  await recordAuditBatch(db, audits);
 
   return { aiJobId, added: { works, materials }, addedItemIds, skipped };
 }

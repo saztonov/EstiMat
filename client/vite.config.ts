@@ -28,6 +28,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,
+        ws: true, // проксировать WebSocket (/api/realtime) на бэкенд
       },
       '/uploads': {
         target: 'http://localhost:3000',

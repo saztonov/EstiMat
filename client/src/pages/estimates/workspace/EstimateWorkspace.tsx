@@ -1,10 +1,11 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Splitter } from 'antd';
 import { RobotOutlined, LeftOutlined } from '@ant-design/icons';
 import { WorkspaceToolbar } from './WorkspaceToolbar';
 import { SmetaPanel } from './SmetaPanel';
 import { ReferencesPanel } from './ReferencesPanel';
 import { AiChatPanel } from './AiChatPanel';
+import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import { useWorkspaceLayoutStore, type PanelId } from '../../../store/workspaceLayoutStore';
 import type { SaveWorkPayload, SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import type { CostTypeGroup, EstimateDetail } from '../components/types';
@@ -25,6 +26,8 @@ interface Props {
   onBack: () => void;
   onEdit: () => void;
   onAddCostType: () => void;
+  /** Инвалидация кэшей сметы — пробрасывается в ИИ-панели для обновления после применения. */
+  onEstimateChanged: () => void;
   onCreateWork: (costTypeId: string | null, payload: SaveWorkPayload) => Promise<void>;
   onUpdateWork: (workId: string, payload: SaveWorkPayload) => Promise<void>;
   onDeleteWork: (workId: string) => void;
@@ -83,6 +86,7 @@ function AiRail({ onClick }: { onClick: () => void }) {
 export function EstimateWorkspace(props: Props) {
   const { estimate, groups, orgs, totalItems, groupCount } = props;
   const { visibility, aiExpanded, colSizes, setColSizes, setAiExpanded } = useWorkspaceLayoutStore();
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // Состав видимых колонок: смета всегда; справочники и ИИ — по тумблерам.
   const panels: { id: PanelId; node: ReactNode; min: number; fb: string }[] = [
@@ -126,7 +130,7 @@ export function EstimateWorkspace(props: Props) {
     });
   }
   if (visibility.ai && aiExpanded) {
-    panels.push({ id: 'ai', min: 300, fb: '30%', node: <AiChatPanel estimateId={estimate.id} onCollapse={() => setAiExpanded(false)} /> });
+    panels.push({ id: 'ai', min: 300, fb: '30%', node: <AiChatPanel estimateId={estimate.id} onEstimateChanged={props.onEstimateChanged} onCollapse={() => setAiExpanded(false)} /> });
   }
 
   // Управляемые размеры: сохранённые проценты или fallback, нормированные к 100
@@ -144,6 +148,13 @@ export function EstimateWorkspace(props: Props) {
         onBack={props.onBack}
         onEdit={props.onEdit}
         onAddCostType={props.onAddCostType}
+        onHistory={() => setHistoryOpen(true)}
+      />
+
+      <EstimateHistoryDrawer
+        estimateId={estimate.id}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
       />
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: 12, background: '#f5f5f5' }}>

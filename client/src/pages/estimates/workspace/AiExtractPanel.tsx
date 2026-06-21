@@ -12,6 +12,8 @@ import { WorkScopeSelect } from './WorkScopeSelect';
 
 interface Props {
   estimateId: string;
+  /** Инвалидация кэшей сметы после применения извлечённых позиций (учитывает маршрут загрузки). */
+  onEstimateChanged: () => void;
 }
 
 // Портал: доступны только источники с документом (catalog_query — отдельная будущая фича).
@@ -36,7 +38,7 @@ const ACTIVE = (s?: string) => s === 'pending' || s === 'running';
 
 // Панель ИИ-извлечения работ/материалов из РД. Документ загружается/выбирается,
 // задание создаётся и обрабатывается автоматически; результат добавляется в смету.
-export function AiExtractPanel({ estimateId }: Props) {
+export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<Mode>('rd_document');
@@ -76,11 +78,11 @@ export function AiExtractPanel({ estimateId }: Props) {
   });
   const job = jobData?.data;
 
-  // Когда задание применено — обновляем смету.
+  // Когда задание применено — обновляем смету (через стабильный колбэк, учитывающий маршрут загрузки).
   const applied = job?.status === 'applied';
   useEffect(() => {
-    if (applied) queryClient.invalidateQueries({ queryKey: ['estimate', estimateId] });
-  }, [applied, estimateId, queryClient]);
+    if (applied) onEstimateChanged();
+  }, [applied, onEstimateChanged]);
 
   // Создать задание (авто-запуск при появлении markdown). force — игнорировать дедуп («Запустить заново»).
   const startJob = useCallback(

@@ -21,6 +21,7 @@ export function ProjectDetailPage() {
     queryKey: ['project-estimate', id],
     queryFn: () => api.get<{ data: EstimateDetail }>(`/projects/${id}/estimate`),
     enabled: !!id,
+    refetchOnWindowFocus: true, // fallback к realtime: обновить при возврате на вкладку
   });
 
   const { data: orgsData } = useQuery({

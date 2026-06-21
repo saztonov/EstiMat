@@ -1,11 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { createAiJobSchema, extractionResultSchema } from '@estimat/shared';
 import { config } from '../../config.js';
 import { applyExtraction } from '../../lib/extract/apply.js';
+import { makeEstimateEvent } from '../../lib/realtime/bus.js';
 import { loadLegacyWorksSnapshot } from '../../lib/extract/catalog-source.js';
 import { runExtraction } from '../../lib/extract/pipeline.js';
 import { createOpenRouterPort } from '../../lib/extract/llm/openrouter.js';
@@ -80,7 +82,10 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
     const result = await runExtraction(markdown, catalog, loadExtractRules(), port, scope, controller.signal);
     if (controller.signal.aborted) throw new Error('aborted');
 
+    const projectId = (await fastify.pool.query('SELECT project_id FROM estimates WHERE id = $1', [job.estimate_id])).rows[0]?.project_id ?? null;
+    const correlationId = randomUUID();
     const client = await fastify.pool.connect();
+    let applied = false;
     try {
       await client.query('BEGIN');
       // running → applied (условно). Если отменили во время прогона — откат, apply не выполняем.
@@ -95,15 +100,29 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
       }
       await applyExtraction(
         client,
-        { estimateId: job.estimate_id, aiJobId: job.id, sourceDocId: job.source_ref ?? null },
+        {
+          estimateId: job.estimate_id,
+          projectId,
+          aiJobId: job.id,
+          sourceDocId: job.source_ref ?? null,
+          actorUserId: job.created_by ?? null,
+          correlationId,
+        },
         result,
       );
       await client.query('COMMIT');
+      applied = true;
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
     } finally {
       client.release();
+    }
+    // Realtime-эмит после COMMIT (видно всем открывшим смету, в т.ч. коллегам).
+    if (applied) {
+      await fastify.publishEstimateChanged(
+        makeEstimateEvent({ estimateId: job.estimate_id, projectId, reason: 'ai_applied', actorUserId: job.created_by ?? null, correlationId }),
+      );
     }
   } catch (err) {
     if (controller.signal.aborted) {
@@ -248,6 +267,8 @@ export default async function aiRoutes(fastify: FastifyInstance) {
       const parsed = extractionResultSchema.safeParse(job.result);
       if (!parsed.success) return reply.status(400).send({ error: 'Результат задания отсутствует или некорректен' });
 
+      const projectId = (await fastify.pool.query('SELECT project_id FROM estimates WHERE id = $1', [job.estimate_id])).rows[0]?.project_id ?? null;
+      const correlationId = randomUUID();
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
@@ -262,10 +283,20 @@ export default async function aiRoutes(fastify: FastifyInstance) {
         }
         const stats = await applyExtraction(
           client,
-          { estimateId: job.estimate_id, aiJobId: job.id, sourceDocId: job.source_ref ?? null },
+          {
+            estimateId: job.estimate_id,
+            projectId,
+            aiJobId: job.id,
+            sourceDocId: job.source_ref ?? null,
+            actorUserId: request.currentUser.id,
+            correlationId,
+          },
           parsed.data,
         );
         await client.query('COMMIT');
+        await fastify.publishEstimateChanged(
+          makeEstimateEvent({ estimateId: job.estimate_id, projectId, reason: 'ai_applied', actorUserId: request.currentUser.id, correlationId }),
+        );
         return { data: { ...stats } };
       } catch (err) {
         await client.query('ROLLBACK');

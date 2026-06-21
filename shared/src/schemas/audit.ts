@@ -1,0 +1,58 @@
+import { z } from 'zod';
+
+// Действие в журнале изменений.
+export const auditActionSchema = z.enum([
+  'create',
+  'update',
+  'delete',
+  'reassign',
+  'confirm',
+  'ai_apply',
+]);
+export type AuditAction = z.infer<typeof auditActionSchema>;
+
+// Тип сущности журнала.
+export const auditEntitySchema = z.enum([
+  'estimate',
+  'estimate_item',
+  'estimate_material',
+  'estimate_contractor',
+]);
+export type AuditEntity = z.infer<typeof auditEntitySchema>;
+
+// Структура поля changes (JSONB): снимки до/после, изменённые поля и трассировка ИИ.
+export const auditChangesSchema = z
+  .object({
+    before: z.record(z.string(), z.unknown()).nullable().optional(),
+    after: z.record(z.string(), z.unknown()).nullable().optional(),
+    changedFields: z.array(z.string()).optional(),
+    source: z.string().optional(),
+    reason: z.string().optional(),
+    aiJobId: z.string().uuid().nullable().optional(),
+    aiChatId: z.string().uuid().nullable().optional(),
+    // Для переноса материала.
+    oldItemId: z.string().uuid().nullable().optional(),
+    newItemId: z.string().uuid().nullable().optional(),
+    // Для сводной записи ai_apply.
+    works: z.number().int().optional(),
+    materials: z.number().int().optional(),
+  })
+  .passthrough();
+export type AuditChanges = z.infer<typeof auditChangesSchema>;
+
+// Запись истории (read-модель для ленты «История»). action/entityType хранятся как
+// строки в БД — на чтении не валидируем жёстко enum'ом, чтобы пережить legacy-значения.
+export const auditLogEntrySchema = z.object({
+  id: z.string().uuid(),
+  estimateId: z.string().uuid().nullable(),
+  projectId: z.string().uuid().nullable(),
+  entityType: z.string(),
+  entityId: z.string().uuid(),
+  action: z.string(),
+  userId: z.string().uuid().nullable(),
+  userName: z.string().nullable().optional(),
+  correlationId: z.string().uuid().nullable().optional(),
+  changes: auditChangesSchema.nullable(),
+  createdAt: z.string(),
+});
+export type AuditLogEntry = z.infer<typeof auditLogEntrySchema>;

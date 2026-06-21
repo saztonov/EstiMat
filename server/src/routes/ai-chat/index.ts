@@ -16,6 +16,8 @@ import { CHAT_SCOPE_NOTE } from '../../lib/chat/prompt.js';
 import { applySelected, applySection, type ApplyContext } from '../../lib/chat/apply.js';
 import { hasPgTrgm, searchCatalogWorks, isScopeActive } from '../../lib/chat/search.js';
 import type { AgentContext, ChatUser } from '../../lib/chat/types.js';
+import { randomUUID } from 'node:crypto';
+import { makeEstimateEvent } from '../../lib/realtime/bus.js';
 
 // Реестр выполняющихся ходов агента (AbortController на сообщение). Корректно
 // при одном инстансе API (single-VPS). Переходы статуса условные (WHERE status=...).
@@ -339,12 +341,15 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
     }
 
     const model = await resolveChatModel(fastify);
+    const correlationId = randomUUID();
     const applyCtx: ApplyContext = {
       estimateId: chat.estimateId,
+      projectId: chat.projectId,
       chatId: chat.id,
       userId: request.currentUser.id,
       model,
       prompt: 'Добавлено из ИИ-чата',
+      correlationId,
     };
 
     const client = await fastify.pool.connect();
@@ -352,6 +357,9 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
       await client.query('BEGIN');
       const res = await applySelected(client, applyCtx, body.items, body.override);
       await client.query('COMMIT');
+      await fastify.publishEstimateChanged(
+        makeEstimateEvent({ estimateId: chat.estimateId, projectId: chat.projectId, reason: 'ai_applied', actorUserId: request.currentUser.id, correlationId }),
+      );
       return { data: { added: res.added, addedItemIds: res.addedItemIds, skipped: res.skipped } };
     } catch (err) {
       await client.query('ROLLBACK');
@@ -377,15 +385,19 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
     }
 
     const model = await resolveChatModel(fastify);
+    const correlationId = randomUUID();
     const applyCtx: ApplyContext = {
-      estimateId: chat.estimateId, chatId: chat.id, userId: request.currentUser.id, model,
-      prompt: 'Копирование раздела из ИИ-чата',
+      estimateId: chat.estimateId, projectId: chat.projectId, chatId: chat.id, userId: request.currentUser.id, model,
+      prompt: 'Копирование раздела из ИИ-чата', correlationId,
     };
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
       const res = await applySection(client, applyCtx, body.sourceEstimateId, body.costTypeId, body.override);
       await client.query('COMMIT');
+      await fastify.publishEstimateChanged(
+        makeEstimateEvent({ estimateId: chat.estimateId, projectId: chat.projectId, reason: 'ai_applied', actorUserId: request.currentUser.id, correlationId }),
+      );
       return { data: { added: res.added, addedItemIds: res.addedItemIds, skipped: res.skipped } };
     } catch (err) {
       await client.query('ROLLBACK');

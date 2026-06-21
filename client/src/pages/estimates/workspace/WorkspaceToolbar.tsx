@@ -7,6 +7,7 @@ import {
   TableOutlined,
   RobotOutlined,
   AppstoreOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import type { EstimateDetail } from '../components/types';
 import { formatMoney } from '../components/types';
@@ -19,6 +20,7 @@ interface Props {
   onBack: () => void;
   onEdit: () => void;
   onAddCostType: () => void;
+  onHistory: () => void;
 }
 
 // Кнопка-переключатель области («горящая» когда активна)
@@ -56,6 +58,7 @@ export function WorkspaceToolbar({
   onBack,
   onEdit,
   onAddCostType,
+  onHistory,
 }: Props) {
   const { visibility, toggleArea } = useWorkspaceLayoutStore();
   const title = estimate.work_type || 'Смета';
@@ -97,6 +100,9 @@ export function WorkspaceToolbar({
       <Button type="dashed" icon={<PlusOutlined />} onClick={onAddCostType}>
         Вид работ
       </Button>
+      <Tooltip title="История изменений">
+        <Button type="text" icon={<HistoryOutlined />} onClick={onHistory} />
+      </Tooltip>
       <Button type="text" icon={<EditOutlined />} onClick={onEdit} />
 
       <span style={{ width: 1, height: 22, background: '#f0f0f0', margin: '0 2px' }} />

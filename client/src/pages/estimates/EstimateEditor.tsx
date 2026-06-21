@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { App } from 'antd';
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { invalidateEstimateQueries } from '../../lib/estimateQueries';
+import { useEstimateRealtime } from '../../hooks/useEstimateRealtime';
 import type { SaveWorkPayload, SaveMaterialPayload } from './components/CostTypeGroupBlock';
 import { AddCostTypeModal, type CostTypeFormPayload } from './components/AddCostTypeModal';
 import { EditEstimateModal, type EditEstimatePayload } from './components/EditEstimateModal';
@@ -34,11 +36,18 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   const [pendingGroups, setPendingGroups] = useState<CostTypeGroup[]>([]);
 
   const estimateId = estimate.id;
+  const projectId = estimate.project_id;
 
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: refetchKey });
-    queryClient.invalidateQueries({ queryKey: ['projects-with-stats'] });
-  };
+  // refetchKey приходит сырым массивом (нестабильная identity) — держим в ref, чтобы колбэк
+  // оставался стабильным и не плодил повторные инвалидации в эффектах дочерних панелей.
+  const refetchKeyRef = useRef(refetchKey);
+  refetchKeyRef.current = refetchKey;
+  const invalidate = useCallback(() => {
+    invalidateEstimateQueries(queryClient, { estimateId, projectId, refetchKey: refetchKeyRef.current });
+  }, [queryClient, estimateId, projectId]);
+
+  // Realtime: изменения коллег (и ИИ) подтягиваются без перезагрузки страницы.
+  useEstimateRealtime(estimateId, projectId);
 
   const editEstimateMutation = useMutation({
     mutationFn: (payload: EditEstimatePayload) => api.put(`/estimates/${estimateId}`, payload),
@@ -261,6 +270,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         estimate={estimate}
         groups={groups}
         orgs={orgs}
+        onEstimateChanged={invalidate}
         totalItems={totalItems}
         groupCount={groups.length}
         onBack={onBack}

@@ -22,6 +22,7 @@ declare module 'fastify' {
     pool: import('pg').Pool;
     rdPortal: import('../plugins/rd-portal.js').RdPortal | null;
     storage: import('../plugins/s3.js').Storage | null;
+    publishEstimateChanged(event: import('@estimat/shared').EstimateChangedEvent): Promise<void>;
   }
   interface FastifyRequest {
     currentUser: RequestUser;

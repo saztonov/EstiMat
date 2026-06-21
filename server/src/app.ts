@@ -100,6 +100,10 @@ export async function buildApp() {
   // RD portal (RDLOCAL, read-only) — опционально, по env RD_*
   await app.register(import('./plugins/rd-portal.js'));
 
+  // Realtime: WS /api/realtime + LISTEN/NOTIFY (декорирует publishEstimateChanged).
+  // Регистрируется до роутов, которые публикуют события.
+  await app.register(import('./plugins/realtime.js'));
+
   // Routes
   await app.register(import('./routes/auth/index.js'), { prefix: '/api/auth' });
   await app.register(import('./routes/organizations/index.js'), { prefix: '/api/organizations' });
