@@ -33,8 +33,7 @@ export function isScopeActive(scope: SectionScope | undefined): scope is Section
 /**
  * Bare-предикат принадлежности колонки вида затрат активной области; ссылается на
  * параметр `$idx` (один массив). `null` — если область пуста. Значение параметра
- * возвращается отдельно (`value`), чтобы один `$idx` можно было переиспользовать в
- * нескольких местах запроса (см. EXISTS у материалов v2).
+ * возвращается отдельно (`value`).
  */
 export function costTypePredicate(
   scope: SectionScope | undefined,
@@ -51,39 +50,14 @@ export function costTypePredicate(
   };
 }
 
-/** ` AND (<predicate>)` для работ (прямой фильтр по cost_type_id) либо `''`. */
-function workScopeClause(scope: SectionScope | undefined, col: string, idx: number): { sql: string; values: unknown[] } {
+/**
+ * ` AND (<predicate>)` — прямой фильтр работ по виду затрат, либо `''`. Сужаются ТОЛЬКО работы:
+ * материалы в чате не подбираются из справочника по области (вручную/из РД), поэтому их поиск
+ * областью не ограничивается.
+ */
+function directScopeClause(scope: SectionScope | undefined, col: string, idx: number): { sql: string; values: unknown[] } {
   const p = costTypePredicate(scope, col, idx);
   return p ? { sql: ` AND (${p.pred})`, values: [p.value] } : { sql: '', values: [] };
-}
-
-/**
- * Фильтр материалов v2 по области: прямой `mv.cost_type_id` ИЛИ связь с расценкой
- * выбранной области (один материал может быть типовым у работ разных видов, а его
- * `cost_type_id` указывает лишь на первый — см. импортёр). Оба предиката делят `$idx`.
- */
-function materialV2ScopeClause(scope: SectionScope | undefined, idx: number): { sql: string; values: unknown[] } {
-  const pMv = costTypePredicate(scope, 'mv.cost_type_id', idx);
-  if (!pMv) return { sql: '', values: [] };
-  const pRv = costTypePredicate(scope, 'rv.cost_type_id', idx)!;
-  return {
-    sql: ` AND (${pMv.pred} OR EXISTS (
-      SELECT 1 FROM rate_materials_v2 rm JOIN rates_v2 rv ON rv.id = rm.rate_v2_id
-      WHERE rm.material_v2_id = mv.id AND ${pRv.pred}))`,
-    values: [pMv.value],
-  };
-}
-
-/** Фильтр legacy-материалов (без cost_type) — только через типовые связи с расценками области. */
-function materialLegacyScopeClause(scope: SectionScope | undefined, idx: number): { sql: string; values: unknown[] } {
-  const p = costTypePredicate(scope, 'r.cost_type_id', idx);
-  if (!p) return { sql: '', values: [] };
-  return {
-    sql: ` AND EXISTS (
-      SELECT 1 FROM rate_materials rm JOIN rates r ON r.id = rm.rate_id
-      WHERE rm.material_id = material_catalog.id AND ${p.pred})`,
-    values: [p.value],
-  };
 }
 
 /**
@@ -185,7 +159,7 @@ async function searchWorksV2(
   const where = `rv.is_active = true AND ($2::uuid IS NULL OR rv.cost_type_id = $2)`;
 
   if (ctx.hasTrgm) {
-    const sc = workScopeClause(ctx.sectionScope, 'rv.cost_type_id', 5);
+    const sc = directScopeClause(ctx.sectionScope, 'rv.cost_type_id', 5);
     const { rows } = await ctx.db.query(
       `SELECT * FROM (
          SELECT ${select},
@@ -202,7 +176,7 @@ async function searchWorksV2(
     return rows.map(mapWorkRow('v2'));
   }
 
-  const sc = workScopeClause(ctx.sectionScope, 'rv.cost_type_id', 3);
+  const sc = directScopeClause(ctx.sectionScope, 'rv.cost_type_id', 3);
   const { rows } = await ctx.db.query(
     `SELECT ${select}, rv.aliases ${from} WHERE ${where}${sc.sql}`,
     [query, costTypeId, ...sc.values],
@@ -224,7 +198,7 @@ async function searchWorksLegacy(
   const where = `r.is_active = true AND ($2::uuid IS NULL OR r.cost_type_id = $2)`;
 
   if (ctx.hasTrgm) {
-    const sc = workScopeClause(ctx.sectionScope, 'r.cost_type_id', 5);
+    const sc = directScopeClause(ctx.sectionScope, 'r.cost_type_id', 5);
     const { rows } = await ctx.db.query(
       `SELECT * FROM (
          SELECT ${select}, similarity(${simExpr('r.name')}, ${simExpr('$1')}) AS sim
@@ -235,7 +209,7 @@ async function searchWorksLegacy(
     return rows.map(mapWorkRow('legacy'));
   }
 
-  const sc = workScopeClause(ctx.sectionScope, 'r.cost_type_id', 3);
+  const sc = directScopeClause(ctx.sectionScope, 'r.cost_type_id', 3);
   const { rows } = await ctx.db.query(`SELECT ${select} ${from} WHERE ${where}${sc.sql}`, [query, costTypeId, ...sc.values]);
   return rescoreWorks(rows, query, 'legacy', limit);
 }
@@ -326,7 +300,6 @@ async function searchMaterialsV2(ctx: AgentContext, query: string, limit: number
   const from = `FROM materials_v2 mv LEFT JOIN material_catalog mc ON mc.id = mv.legacy_material_id`;
   const where = `mv.is_active = true`;
   if (ctx.hasTrgm) {
-    const sc = materialV2ScopeClause(ctx.sectionScope, 4);
     const { rows } = await ctx.db.query(
       `SELECT * FROM (
          SELECT ${select},
@@ -335,34 +308,31 @@ async function searchMaterialsV2(ctx: AgentContext, query: string, limit: number
              COALESCE((SELECT MAX(similarity(${simExpr('a')}, ${simExpr('$1')}))
                        FROM jsonb_array_elements_text(mv.aliases) a), 0)
            ) AS sim
-         ${from} WHERE ${where}${sc.sql}
+         ${from} WHERE ${where}
        ) t WHERE t.sim >= $2 ORDER BY t.sim DESC LIMIT $3`,
-      [query, SIM_THRESHOLD, limit, ...sc.values],
+      [query, SIM_THRESHOLD, limit],
     );
     return rows.map(mapMaterialRow('v2'));
   }
-  const sc = materialV2ScopeClause(ctx.sectionScope, 2);
-  const { rows } = await ctx.db.query(`SELECT ${select}, mv.aliases ${from} WHERE ${where}${sc.sql}`, [query, ...sc.values]);
+  const { rows } = await ctx.db.query(`SELECT ${select}, mv.aliases ${from} WHERE ${where}`, [query]);
   return rescoreMaterials(rows, query, 'v2', limit);
 }
 
 async function searchMaterialsLegacy(ctx: AgentContext, query: string, limit: number): Promise<MaterialRow[]> {
   const select = `id AS catalog_id, id AS apply_material_id, name, unit, unit_price AS price`;
   if (ctx.hasTrgm) {
-    const sc = materialLegacyScopeClause(ctx.sectionScope, 4);
     const { rows } = await ctx.db.query(
       `SELECT * FROM (
          SELECT ${select}, similarity(${simExpr('name')}, ${simExpr('$1')}) AS sim
-         FROM material_catalog WHERE is_active = true${sc.sql}
+         FROM material_catalog WHERE is_active = true
        ) t WHERE t.sim >= $2 ORDER BY t.sim DESC LIMIT $3`,
-      [query, SIM_THRESHOLD, limit, ...sc.values],
+      [query, SIM_THRESHOLD, limit],
     );
     return rows.map(mapMaterialRow('legacy'));
   }
-  const sc = materialLegacyScopeClause(ctx.sectionScope, 2);
   const { rows } = await ctx.db.query(
-    `SELECT ${select} FROM material_catalog WHERE is_active = true${sc.sql}`,
-    [query, ...sc.values],
+    `SELECT ${select} FROM material_catalog WHERE is_active = true`,
+    [query],
   );
   return rescoreMaterials(rows, query, 'legacy', limit);
 }
