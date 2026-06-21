@@ -21,7 +21,13 @@ export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('estimat:sidebar-collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
 
   const menuItems = useMemo(() => {
     const items = [
@@ -103,7 +109,17 @@ export function AppLayout() {
           <Button
             type="text"
             icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            onClick={() => setCollapsed(!collapsed)}
+            onClick={() => {
+              setCollapsed((prev) => {
+                const next = !prev;
+                try {
+                  localStorage.setItem('estimat:sidebar-collapsed', next ? '1' : '0');
+                } catch {
+                  /* localStorage недоступен — игнорируем */
+                }
+                return next;
+              });
+            }}
             style={{
               color: 'rgba(255,255,255,0.65)',
               width: '100%',
