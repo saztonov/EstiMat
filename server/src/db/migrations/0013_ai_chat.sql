@@ -9,25 +9,29 @@
 -- ============================================================
 -- 1. Нечёткий поиск (pg_trgm)
 -- ============================================================
--- Расширение доступно на Managed PostgreSQL. Применяется пользователем с
--- write-доступом. Если у роли нет прав — этот шаг упадёт; поиск тогда деградирует
--- на ILIKE + TS-rescoring (стартап-чек hasPgTrgm в server/src/lib/chat/search.ts).
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-
--- Expression-индексы по lower(...): запросы ассистента используют lower(name)/
--- lower(description), чтобы поиск был регистронезависимым.
-CREATE INDEX IF NOT EXISTS idx_rates_name_trgm
-  ON rates USING gin (lower(name) gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_rates_v2_name_trgm
-  ON rates_v2 USING gin (lower(name) gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_materials_v2_name_trgm
-  ON materials_v2 USING gin (lower(name) gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_material_catalog_name_trgm
-  ON material_catalog USING gin (lower(name) gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_estimate_items_desc_trgm
-  ON estimate_items USING gin (lower(description) gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_estimate_materials_desc_trgm
-  ON estimate_materials USING gin (lower(description) gin_trgm_ops);
+-- Расширение pg_trgm включается ВРУЧНУЮ через личный кабинет Managed PostgreSQL:
+-- роль приложения не суперпользователь, поэтому CREATE EXTENSION недоступен —
+-- миграция его НЕ создаёт. Trgm-индексы создаются только если расширение уже
+-- включено; иначе шаг пропускается без ошибки, а поиск деградирует на
+-- ILIKE + TS-rescoring (стартап-чек hasPgTrgm в server/src/lib/chat/search.ts).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+    -- Expression-индексы по lower(...): запросы ассистента регистронезависимы.
+    CREATE INDEX IF NOT EXISTS idx_rates_name_trgm
+      ON rates USING gin (lower(name) gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_rates_v2_name_trgm
+      ON rates_v2 USING gin (lower(name) gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_materials_v2_name_trgm
+      ON materials_v2 USING gin (lower(name) gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_material_catalog_name_trgm
+      ON material_catalog USING gin (lower(name) gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_estimate_items_desc_trgm
+      ON estimate_items USING gin (lower(description) gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_estimate_materials_desc_trgm
+      ON estimate_materials USING gin (lower(description) gin_trgm_ops);
+  END IF;
+END $$;
 
 -- ============================================================
 -- 2. Сессии чата
