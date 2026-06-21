@@ -116,13 +116,36 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
-  // Подтверждение «предложенного» материала (добавлен автоматически по типовому набору расценки)
+  // Подтверждение «предложенного» материала (добавлен автоматически по типовому набору расценки).
+  // Для ИИ-материала ({status:'confirmed'}) сервер также снимает needs_review — используется и
+  // при согласовании кликом по тегу «не согласовано».
   const confirmMaterialMutation = useMutation({
     mutationFn: (materialId: string) =>
       api.put(`/estimate-items/materials/${materialId}`, { status: 'confirmed' }),
     onSuccess: () => {
       invalidate();
       message.success('Материал подтверждён');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  // Согласование ИИ-работы кликом по тегу «не согласовано» — снимает needs_review.
+  const confirmWorkMutation = useMutation({
+    mutationFn: (workId: string) =>
+      api.put(`/estimates/items/${workId}`, { needsReview: false }),
+    onSuccess: () => {
+      invalidate();
+      message.success('Работа согласована');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  // Массовое согласование всех ИИ-позиций сметы (кнопка «Согласовать всё» в шапке).
+  const confirmAllMutation = useMutation({
+    mutationFn: () => api.post<{ works: number; materials: number }>(`/estimates/${estimateId}/confirm-all`),
+    onSuccess: (res) => {
+      invalidate();
+      message.success(`Согласовано: работ ${res.works}, материалов ${res.materials}`);
     },
     onError: (e: Error) => message.error(e.message),
   });
@@ -250,6 +273,8 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         onUpdateMaterial={updateMaterial}
         onDeleteMaterial={(materialId) => deleteMaterialMutation.mutate(materialId)}
         onConfirmMaterial={(materialId) => confirmMaterialMutation.mutate(materialId)}
+        onConfirmWork={(workId) => confirmWorkMutation.mutate(workId)}
+        onConfirmAll={() => confirmAllMutation.mutateAsync().then(() => undefined)}
         onReassignMaterial={(materialId, itemId) => reassignMaterialMutation.mutate({ materialId, itemId })}
         onReassignMaterials={(materialIds, itemId) =>
           reassignMaterialsBulkMutation.mutateAsync({ materialIds, itemId }).then(() => undefined)}

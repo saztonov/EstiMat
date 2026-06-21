@@ -10,6 +10,7 @@ import {
   Input,
   InputNumber,
   Select,
+  Tooltip,
   App,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -259,13 +260,26 @@ function MaterialsSubTable({
             />
           );
         }
-        if (r.status === 'suggested' || r.source === 'ai' || r.needs_review) {
+        // «предложение» (suggested) — отдельный механизм со своими кнопками ✓/✗.
+        // Теги «ИИ» и «не согласовано» показываем только пока материал не согласован;
+        // клик по «не согласовано» снимает needs_review (оба тега исчезают).
+        if (r.status === 'suggested' || r.needs_review) {
           return (
             <Space size={6}>
               <span>{v}</span>
               {r.status === 'suggested' && <Tag color="orange" style={{ marginInlineEnd: 0 }}>предложение</Tag>}
-              {r.source === 'ai' && <Tag color="blue" style={{ marginInlineEnd: 0 }}>ИИ</Tag>}
-              {r.needs_review && <Tag color="orange" style={{ marginInlineEnd: 0 }}>не согласовано</Tag>}
+              {r.source === 'ai' && r.needs_review && <Tag color="blue" style={{ marginInlineEnd: 0 }}>ИИ</Tag>}
+              {r.needs_review && (
+                editable ? (
+                  <Tooltip title="Согласовать — снять «не согласовано»">
+                    <Tag color="orange" style={{ marginInlineEnd: 0, cursor: 'pointer' }} onClick={() => onConfirm(r.id)}>
+                      не согласовано
+                    </Tag>
+                  </Tooltip>
+                ) : (
+                  <Tag color="orange" style={{ marginInlineEnd: 0 }}>не согласовано</Tag>
+                )
+              )}
             </Space>
           );
         }
@@ -385,6 +399,8 @@ interface Props {
   onUpdateMaterial?: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDeleteMaterial?: (materialId: string) => void;
   onConfirmMaterial?: (materialId: string) => void;
+  /** Согласование ИИ-работы кликом по тегу «не согласовано» (снимает needs_review). */
+  onConfirmWork?: (workId: string) => void;
   onReassignMaterial?: (materialId: string, itemId: string) => void;
   /** Все работы сметы — для выбора цели при переносе материала. */
   allWorks?: WorkOption[];
@@ -423,6 +439,7 @@ export function CostTypeGroupBlock({
   onUpdateMaterial = noopAsync,
   onDeleteMaterial = noop,
   onConfirmMaterial = noop,
+  onConfirmWork = noop,
   onReassignMaterial,
   allWorks = [],
   selectionMode = false,
@@ -631,12 +648,22 @@ export function CostTypeGroupBlock({
             />
           );
         }
-        if (r.source === 'ai' || r.needs_review) {
+        // Теги «ИИ» и «не согласовано» показываем только пока работа не согласована.
+        // Клик по «не согласовано» снимает needs_review (оба тега исчезают).
+        if (r.needs_review) {
           return (
             <Space size={6}>
               <span>{v}</span>
               {r.source === 'ai' && <Tag color="blue" style={{ marginInlineEnd: 0 }}>ИИ</Tag>}
-              {r.needs_review && <Tag color="orange" style={{ marginInlineEnd: 0 }}>не согласовано</Tag>}
+              {editable ? (
+                <Tooltip title="Согласовать — снять «не согласовано»">
+                  <Tag color="orange" style={{ marginInlineEnd: 0, cursor: 'pointer' }} onClick={() => onConfirmWork(r.id)}>
+                    не согласовано
+                  </Tag>
+                </Tooltip>
+              ) : (
+                <Tag color="orange" style={{ marginInlineEnd: 0 }}>не согласовано</Tag>
+              )}
             </Space>
           );
         }

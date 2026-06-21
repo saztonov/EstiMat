@@ -32,6 +32,8 @@ interface Props {
   onUpdateMaterial: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDeleteMaterial: (materialId: string) => void;
   onConfirmMaterial: (materialId: string) => void;
+  onConfirmWork: (workId: string) => void;
+  onConfirmAll: () => Promise<void>;
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
@@ -104,6 +106,8 @@ export function EstimateWorkspace(props: Props) {
           onUpdateMaterial={props.onUpdateMaterial}
           onDeleteMaterial={props.onDeleteMaterial}
           onConfirmMaterial={props.onConfirmMaterial}
+          onConfirmWork={props.onConfirmWork}
+          onConfirmAll={props.onConfirmAll}
           onReassignMaterial={props.onReassignMaterial}
           onReassignMaterials={props.onReassignMaterials}
           onBulkDelete={props.onBulkDelete}

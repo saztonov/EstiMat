@@ -257,6 +257,8 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     if (body.unit !== undefined) { sets.push(`unit = $${i++}`); values.push(body.unit); }
     if (body.unitPrice !== undefined) { sets.push(`unit_price = $${i++}`); values.push(body.unitPrice); }
     if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
+    // Снятие «не согласовано» (согласование ИИ-позиции) — отдельным флагом needsReview.
+    if (body.needsReview !== undefined) { sets.push(`needs_review = $${i++}`); values.push(body.needsReview); }
 
     if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
 
@@ -267,6 +269,30 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     );
     if (rows.length === 0) return reply.status(404).send({ error: 'Позиция не найдена' });
     return { data: rows[0] };
+  });
+
+  // POST /api/estimates/:id/confirm-all — согласовать все ИИ-позиции сметы (снять needs_review
+  // с работ и материалов). Одна транзакция: works и materials по estimate_id.
+  fastify.post<{ Params: { id: string } }>('/:id/confirm-all', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const works = await client.query(
+        'UPDATE estimate_items SET needs_review = false WHERE estimate_id = $1 AND needs_review = true',
+        [request.params.id],
+      );
+      const materials = await client.query(
+        'UPDATE estimate_materials SET needs_review = false WHERE estimate_id = $1 AND needs_review = true',
+        [request.params.id],
+      );
+      await client.query('COMMIT');
+      return reply.send({ works: works.rowCount ?? 0, materials: materials.rowCount ?? 0 });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   });
 
   // DELETE /api/estimates/items/:id — удалить работу (материалы удалятся каскадом)

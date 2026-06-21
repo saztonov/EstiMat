@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Empty, Popover, Select, Space, Switch, Tooltip } from 'antd';
+import { App, Button, Empty, Popconfirm, Popover, Select, Space, Switch, Tooltip } from 'antd';
 import {
   PlusOutlined,
   TableOutlined,
@@ -9,6 +9,7 @@ import {
   UpOutlined,
   SwapOutlined,
   DeleteOutlined,
+  CheckCircleOutlined,
 } from '@ant-design/icons';
 import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import { WorkTreeSelect } from '../components/WorkTreeSelect';
@@ -40,6 +41,8 @@ interface Props {
   onUpdateMaterial: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDeleteMaterial: (materialId: string) => void;
   onConfirmMaterial: (materialId: string) => void;
+  onConfirmWork: (workId: string) => void;
+  onConfirmAll: () => Promise<void>;
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
@@ -79,6 +82,8 @@ export function SmetaPanel({
   onUpdateMaterial,
   onDeleteMaterial,
   onConfirmMaterial,
+  onConfirmWork,
+  onConfirmAll,
   onReassignMaterial,
   onReassignMaterials,
   onBulkDelete,
@@ -98,6 +103,7 @@ export function SmetaPanel({
   const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set()); // выбранные работы (только delete)
   const [reassigning, setReassigning] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
 
   // Массовое удаление разрешено сервером только admin/engineer — кнопку остальным не показываем.
   const role = useAuthStore((s) => s.user?.role);
@@ -240,6 +246,30 @@ export function SmetaPanel({
     [groups],
   );
 
+  // Число несогласованных позиций (работы + материалы с needs_review) — для кнопки «Согласовать всё».
+  const unreconciledCount = useMemo(() => {
+    let n = 0;
+    for (const g of groups)
+      for (const w of g.works) {
+        if (w.needs_review) n++;
+        for (const m of w.materials) if (m.needs_review) n++;
+      }
+    return n;
+  }, [groups]);
+
+  // Массовое согласование всех ИИ-позиций сметы (снятие «не согласовано»).
+  const handleConfirmAll = async () => {
+    if (confirmingAll) return;
+    setConfirmingAll(true);
+    try {
+      await onConfirmAll();
+    } catch {
+      /* ошибку покажет мутация */
+    } finally {
+      setConfirmingAll(false);
+    }
+  };
+
   // Сопоставление материал → работа: для удаления исключаем материалы выбранных работ (уйдут каскадом).
   const materialOwner = useMemo(() => {
     const m = new Map<string, string>();
@@ -292,6 +322,7 @@ export function SmetaPanel({
     onUpdateMaterial,
     onDeleteMaterial,
     onConfirmMaterial,
+    onConfirmWork,
     onReassignMaterial,
     allWorks,
     onSetContractor,
@@ -362,6 +393,25 @@ export function SmetaPanel({
             )}
             {editable && mode === 'none' && (
               <>
+                {unreconciledCount > 0 && (
+                  <Popconfirm
+                    title="Согласовать все позиции?"
+                    description={`Снять «не согласовано» с ${unreconciledCount} поз. (работы и материалы).`}
+                    okText="Согласовать"
+                    cancelText="Отмена"
+                    onConfirm={handleConfirmAll}
+                  >
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<CheckCircleOutlined />}
+                      loading={confirmingAll}
+                      style={{ marginRight: 4 }}
+                    >
+                      Согласовать всё ({unreconciledCount})
+                    </Button>
+                  </Popconfirm>
+                )}
                 <Tooltip title="Массовый перенос материалов: выбрать чекбоксами и перенести к работе">
                   <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setMode('reassign')} />
                 </Tooltip>
