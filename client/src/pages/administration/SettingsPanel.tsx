@@ -36,20 +36,25 @@ export function SettingsPanel() {
   const settings = data?.data;
   const models = settings?.aiModels ?? [];
   const defaultModel = settings?.aiModelDefault ?? '';
+  const chatModel = settings?.aiChatModelDefault ?? '';
 
   function addModel() {
     const id = newModel.trim();
     setNewModel('');
     if (!id || models.includes(id)) return;
     const next = [...models, id];
-    // Первая добавленная модель становится дефолтом, если он ещё не задан.
-    updateMutation.mutate(defaultModel ? { aiModels: next } : { aiModels: next, aiModelDefault: id });
+    // Первая добавленная модель становится дефолтом РД и чата, если он ещё не задан.
+    const patch: UpdateAppSettingsInput = { aiModels: next };
+    if (!defaultModel) patch.aiModelDefault = id;
+    if (!chatModel) patch.aiChatModelDefault = id;
+    updateMutation.mutate(patch);
   }
 
   function removeModel(id: string) {
     const next = models.filter((m) => m !== id);
     const patch: UpdateAppSettingsInput = { aiModels: next };
     if (defaultModel === id) patch.aiModelDefault = next[0] ?? '';
+    if (chatModel === id) patch.aiChatModelDefault = next[0] ?? '';
     updateMutation.mutate(patch);
   }
 
@@ -89,35 +94,30 @@ export function SettingsPanel() {
         Цена подставляется из выбранного справочника, если она там есть.
       </Typography.Paragraph>
 
-      <Typography.Title level={5}>Модель ИИ</Typography.Title>
+      <Typography.Title level={5}>Модели ИИ</Typography.Title>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 8 }}>
-        Список доступных моделей (id OpenRouter) и модель по умолчанию для ИИ-извлечения из РД.
-        Выбранная точкой модель используется встроенным движком (фаза 2).
+        Список доступных моделей (id OpenRouter). Ниже отдельно выбираются модель для
+        ИИ-извлечения из РД и модель для ИИ-ассистента в режиме чата — они могут совпадать
+        или различаться.
       </Typography.Paragraph>
-      <Radio.Group
-        value={defaultModel}
-        disabled={updateMutation.isPending}
-        onChange={(e) => updateMutation.mutate({ aiModelDefault: e.target.value })}
-      >
-        <Space direction="vertical" style={{ width: '100%' }}>
-          {models.length === 0 && (
-            <Typography.Text type="secondary">Список моделей пуст — добавьте модель ниже.</Typography.Text>
-          )}
-          {models.map((m) => (
-            <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Radio value={m}>{m}</Radio>
-              <Button
-                size="small"
-                type="text"
-                danger
-                icon={<DeleteOutlined />}
-                disabled={updateMutation.isPending}
-                onClick={() => removeModel(m)}
-              />
-            </div>
-          ))}
-        </Space>
-      </Radio.Group>
+      <Space direction="vertical" style={{ width: '100%' }}>
+        {models.length === 0 && (
+          <Typography.Text type="secondary">Список моделей пуст — добавьте модель ниже.</Typography.Text>
+        )}
+        {models.map((m) => (
+          <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Typography.Text style={{ flex: 1 }}>{m}</Typography.Text>
+            <Button
+              size="small"
+              type="text"
+              danger
+              icon={<DeleteOutlined />}
+              disabled={updateMutation.isPending}
+              onClick={() => removeModel(m)}
+            />
+          </div>
+        ))}
+      </Space>
       <Space.Compact style={{ marginTop: 8, width: '100%', maxWidth: 480 }}>
         <Input
           placeholder="например, anthropic/claude-opus-4-8"
@@ -130,6 +130,36 @@ export function SettingsPanel() {
           Добавить
         </Button>
       </Space.Compact>
+
+      {models.length > 0 && (
+        <>
+          <Typography.Title level={5}>Модель для извлечения РД</Typography.Title>
+          <Radio.Group
+            value={defaultModel}
+            disabled={updateMutation.isPending}
+            onChange={(e) => updateMutation.mutate({ aiModelDefault: e.target.value })}
+          >
+            <Space direction="vertical">
+              {models.map((m) => (
+                <Radio key={m} value={m}>{m}</Radio>
+              ))}
+            </Space>
+          </Radio.Group>
+
+          <Typography.Title level={5}>Модель для ИИ-чата</Typography.Title>
+          <Radio.Group
+            value={chatModel}
+            disabled={updateMutation.isPending}
+            onChange={(e) => updateMutation.mutate({ aiChatModelDefault: e.target.value })}
+          >
+            <Space direction="vertical">
+              {models.map((m) => (
+                <Radio key={m} value={m}>{m}</Radio>
+              ))}
+            </Space>
+          </Radio.Group>
+        </>
+      )}
     </div>
   );
 }

@@ -53,11 +53,3 @@ export interface MaterialGroupRef {
   parent_id: string | null;
   code: string | null;
 }
-
-// ---- ИИ-чат (заглушка) ----
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  ts: number;
-}

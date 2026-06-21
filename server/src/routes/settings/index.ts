@@ -9,6 +9,7 @@ const SETTING_KEYS: Record<keyof AppSettings, string> = {
   aiCatalogSource: 'ai_catalog_source',
   aiModels: 'ai_models',
   aiModelDefault: 'ai_model_default',
+  aiChatModelDefault: 'ai_chat_model_default',
 };
 
 const DEFAULTS: AppSettings = {
@@ -16,6 +17,7 @@ const DEFAULTS: AppSettings = {
   aiCatalogSource: 'v2_first',
   aiModels: ['google/gemini-2.5-flash'],
   aiModelDefault: 'google/gemini-2.5-flash',
+  aiChatModelDefault: 'google/gemini-2.5-flash',
 };
 
 export default async function settingsRoutes(fastify: FastifyInstance) {
@@ -35,6 +37,8 @@ export default async function settingsRoutes(fastify: FastifyInstance) {
     }
     const def = byKey.get(SETTING_KEYS.aiModelDefault);
     if (typeof def === 'string' && def) settings.aiModelDefault = def;
+    const chatDef = byKey.get(SETTING_KEYS.aiChatModelDefault);
+    if (typeof chatDef === 'string' && chatDef) settings.aiChatModelDefault = chatDef;
     return settings;
   }
 

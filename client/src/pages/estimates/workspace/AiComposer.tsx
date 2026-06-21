@@ -1,17 +1,16 @@
-import { Input, Select, Button } from 'antd';
-import { SendOutlined } from '@ant-design/icons';
-import { AI_MODELS } from '../../../services/ai';
+import { Input, Button } from 'antd';
+import { SendOutlined, StopOutlined } from '@ant-design/icons';
 
 interface Props {
-  model: string;
   input: string;
   loading: boolean;
-  onModelChange: (v: string) => void;
+  busy: boolean;
   onInputChange: (v: string) => void;
   onRun: () => void;
+  onStop?: () => void;
 }
 
-export function AiComposer({ model, input, loading, onModelChange, onInputChange, onRun }: Props) {
+export function AiComposer({ input, loading, busy, onInputChange, onRun, onStop }: Props) {
   return (
     <div
       style={{
@@ -27,8 +26,9 @@ export function AiComposer({ model, input, loading, onModelChange, onInputChange
       <Input.TextArea
         value={input}
         onChange={(e) => onInputChange(e.target.value)}
-        placeholder="Опишите задачу для ИИ… (например: подобрать работы по разделу РД)"
+        placeholder="Опишите задачу для ИИ… (например: подбери работы по устройству кровли)"
         autoSize={{ minRows: 2, maxRows: 5 }}
+        disabled={busy}
         onPressEnter={(e) => {
           if (!e.shiftKey) {
             e.preventDefault();
@@ -37,15 +37,13 @@ export function AiComposer({ model, input, loading, onModelChange, onInputChange
         }}
       />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Select
-          size="middle"
-          value={model}
-          onChange={onModelChange}
-          options={AI_MODELS}
-          style={{ minWidth: 180 }}
-        />
         <span style={{ flex: 1 }} />
-        <Button type="primary" icon={<SendOutlined />} loading={loading} onClick={onRun}>
+        {busy && onStop && (
+          <Button danger icon={<StopOutlined />} onClick={onStop}>
+            Остановить
+          </Button>
+        )}
+        <Button type="primary" icon={<SendOutlined />} loading={loading} disabled={busy} onClick={onRun}>
           Пуск
         </Button>
       </div>

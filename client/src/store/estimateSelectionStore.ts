@@ -16,6 +16,12 @@ export interface RatesTreeReveal {
   nonce: number;
 }
 
+// Запрос «прокрутить к работе в смете» (например, из ИИ-чата после добавления).
+export interface EstimateItemReveal {
+  itemId: string;
+  nonce: number;
+}
+
 // Транзиентное выделение в окне ввода сметы. Нужно для двух сценариев:
 //  - двойной клик по материалу в справочнике → к выделенной работе (selectedWorkId);
 //  - двойной клик по виду/категории в смете → раскрыть это место в дереве справочника.
@@ -31,6 +37,8 @@ interface EstimateSelectionState {
   activeCostCategoryName: string | null;
   // Запрос раскрытия дерева справочника работ (двойной клик по виду/категории в смете)
   revealRequest: RatesTreeReveal | null;
+  // Запрос прокрутки к работе в смете (из ИИ-чата)
+  estimateRevealRequest: EstimateItemReveal | null;
 
   // Клик по строке работы: и работа (для материалов), и её вид (для подсветки).
   selectWork: (id: string, label: string, ctx?: CostTypeCtx) => void;
@@ -41,6 +49,8 @@ interface EstimateSelectionState {
   clearWork: () => void;
   // Двойной клик по виду/категории в смете — раскрыть их в дереве справочника.
   revealInRatesTree: (categoryId: string | null, costTypeId?: string | null) => void;
+  // Прокрутить/подсветить работу в смете (по id) — из ИИ-чата.
+  revealEstimateItem: (itemId: string) => void;
 }
 
 export const useEstimateSelectionStore = create<EstimateSelectionState>((set) => ({
@@ -51,6 +61,7 @@ export const useEstimateSelectionStore = create<EstimateSelectionState>((set) =>
   activeCostCategoryId: null,
   activeCostCategoryName: null,
   revealRequest: null,
+  estimateRevealRequest: null,
 
   selectWork: (id, label, ctx) =>
     set(
@@ -103,4 +114,9 @@ export const useEstimateSelectionStore = create<EstimateSelectionState>((set) =>
         },
       };
     }),
+
+  revealEstimateItem: (itemId) =>
+    set((s) => ({
+      estimateRevealRequest: { itemId, nonce: (s.estimateRevealRequest?.nonce ?? 0) + 1 },
+    })),
 }));

@@ -9,8 +9,10 @@ export interface AppSettings {
   aiCatalogSource: AiCatalogSource;
   /** Список доступных LLM-моделей (id OpenRouter, напр. 'anthropic/claude-opus-4-8') */
   aiModels: string[];
-  /** Модель по умолчанию для ИИ-извлечения (должна быть из aiModels) */
+  /** Модель по умолчанию для ИИ-извлечения из РД (должна быть из aiModels) */
   aiModelDefault: string;
+  /** Модель по умолчанию для ИИ-ассистента в режиме чата (должна быть из aiModels) */
+  aiChatModelDefault: string;
 }
 
 export const updateAppSettingsSchema = z.object({
@@ -18,6 +20,7 @@ export const updateAppSettingsSchema = z.object({
   aiCatalogSource: aiCatalogSourceSchema.optional(),
   aiModels: z.array(z.string().min(1)).optional(),
   aiModelDefault: z.string().optional(),
+  aiChatModelDefault: z.string().optional(),
 });
 
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;

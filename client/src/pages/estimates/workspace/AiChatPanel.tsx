@@ -1,11 +1,23 @@
 import { useState } from 'react';
-import { Button, Segmented, Tag, Tooltip } from 'antd';
-import { RobotOutlined, DoubleRightOutlined } from '@ant-design/icons';
+import { App, Button, Popconfirm, Segmented, Select, Tooltip } from 'antd';
+import { RobotOutlined, DoubleRightOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ApplyItem } from '@estimat/shared';
 import { AiMessageList } from './AiMessageList';
 import { AiComposer } from './AiComposer';
 import { AiExtractPanel } from './AiExtractPanel';
-import { runInference, DEFAULT_AI_MODEL } from '../../../services/ai';
-import type { ChatMessage } from './types';
+import {
+  listChatSessions,
+  createChatSession,
+  getChatMessages,
+  sendChatMessage,
+  applySelected as applySelectedApi,
+  applySection as applySectionApi,
+  cancelChatTurn,
+  deleteChatSession,
+} from '../../../services/aiChat';
+import { useAiChatStore } from '../../../store/aiChatStore';
+import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 
 type AiMode = 'chat' | 'extract';
 
@@ -14,59 +26,104 @@ interface Props {
   onCollapse: () => void;
 }
 
-const newId = () =>
-  typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-
-// ИИ-ассистент: чат (заглушка) + извлечение работ/материалов из РД.
 export function AiChatPanel({ estimateId, onCollapse }: Props) {
+  const { message } = App.useApp();
+  const qc = useQueryClient();
   const [aiMode, setAiMode] = useState<AiMode>('extract');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [model, setModel] = useState(DEFAULT_AI_MODEL);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [newChat, setNewChat] = useState(false);
 
-  async function handleRun() {
+  const { activeSessionByEstimate, setActiveSession } = useAiChatStore();
+  const revealEstimateItem = useEstimateSelectionStore((s) => s.revealEstimateItem);
+
+  const sessionsQuery = useQuery({
+    queryKey: ['ai-chat-sessions', estimateId],
+    queryFn: () => listChatSessions(estimateId),
+    enabled: aiMode === 'chat',
+  });
+  const sessions = sessionsQuery.data?.data ?? [];
+
+  const stored = activeSessionByEstimate[estimateId] ?? null;
+  const sessionId = newChat
+    ? null
+    : stored && sessions.some((s) => s.id === stored)
+      ? stored
+      : (sessions[0]?.id ?? null);
+
+  const messagesQuery = useQuery({
+    queryKey: ['ai-chat-messages', sessionId],
+    queryFn: () => getChatMessages(sessionId as string),
+    enabled: aiMode === 'chat' && !!sessionId,
+    refetchInterval: (q) => ((q.state.data?.data ?? []).some((m) => m.status === 'running') ? 1500 : false),
+  });
+  const messages = messagesQuery.data?.data ?? [];
+  const busy = messages.some((m) => m.status === 'running');
+  const runningId = messages.find((m) => m.status === 'running')?.id ?? null;
+
+  const sendMut = useMutation({
+    mutationFn: async (text: string) => {
+      let sid = sessionId;
+      if (!sid) {
+        const s = await createChatSession(estimateId);
+        sid = s.data.id;
+      }
+      const res = await sendChatMessage(sid, text);
+      return { sid, res };
+    },
+    onSuccess: ({ sid }) => {
+      setNewChat(false);
+      setActiveSession(estimateId, sid);
+      setInput('');
+      qc.invalidateQueries({ queryKey: ['ai-chat-sessions', estimateId] });
+      qc.invalidateQueries({ queryKey: ['ai-chat-messages', sid] });
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const applyMut = useMutation({
+    mutationFn: (items: ApplyItem[]) => applySelectedApi({ chatId: sessionId as string, items, override: false }),
+    onSuccess: (res) => {
+      const { works, materials } = res.data.added;
+      message.success(`Добавлено: работ ${works}, материалов ${materials}`);
+      if (res.data.skipped.length) message.info(`Пропущено дублей: ${res.data.skipped.length}`);
+      qc.invalidateQueries({ queryKey: ['estimate', estimateId] });
+      if (res.data.addedItemIds[0]) revealEstimateItem(res.data.addedItemIds[0]);
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const applySectionMut = useMutation({
+    mutationFn: (p: { sourceEstimateId: string; costTypeId: string }) =>
+      applySectionApi({ chatId: sessionId as string, sourceEstimateId: p.sourceEstimateId, costTypeId: p.costTypeId, override: false }),
+    onSuccess: (res) => {
+      message.success(`Скопировано работ: ${res.data.added.works}`);
+      qc.invalidateQueries({ queryKey: ['estimate', estimateId] });
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (sid: string) => deleteChatSession(sid),
+    onSuccess: () => {
+      setActiveSession(estimateId, null);
+      qc.invalidateQueries({ queryKey: ['ai-chat-sessions', estimateId] });
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  function handleRun() {
     const text = input.trim();
-    if (!text || loading) return;
-    const userMsg: ChatMessage = { id: newId(), role: 'user', text, ts: Date.now() };
-    const history = [...messages, userMsg];
-    setMessages(history);
-    setInput('');
-    setLoading(true);
-    try {
-      const reply = await runInference(model, history);
-      setMessages((m) => [...m, { id: newId(), role: 'assistant', text: reply, ts: Date.now() }]);
-    } finally {
-      setLoading(false);
-    }
+    if (!text || busy || sendMut.isPending) return;
+    sendMut.mutate(text);
+  }
+
+  function handleStop() {
+    if (runningId) cancelChatTurn(runningId).then(() => qc.invalidateQueries({ queryKey: ['ai-chat-messages', sessionId] }));
   }
 
   return (
-    <div
-      style={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: 0,
-        overflow: 'hidden',
-        background: '#fff',
-        border: '1px solid #f0f0f0',
-        borderRadius: 8,
-      }}
-    >
-      <div
-        style={{
-          flexShrink: 0,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 9,
-          padding: '9px 13px',
-          borderBottom: '1px solid #f0f0f0',
-          background: '#fafbfc',
-          fontWeight: 600,
-          fontSize: 13.5,
-        }}
-      >
+    <div style={panelBox}>
+      <div style={header}>
         <RobotOutlined style={{ color: '#8c8c8c' }} />
         <span>ИИ-ассистент</span>
         <Segmented<AiMode>
@@ -91,17 +148,74 @@ export function AiChatPanel({ estimateId, onCollapse }: Props) {
         </div>
       ) : (
         <>
-          <AiMessageList messages={messages} />
+          <div style={sessionBar}>
+            <Select
+              size="small"
+              style={{ flex: 1 }}
+              placeholder="Новый чат"
+              value={sessionId ?? undefined}
+              onChange={(v) => { setNewChat(false); setActiveSession(estimateId, v); }}
+              options={sessions.map((s) => ({ value: s.id, label: s.title ?? 'Без названия' }))}
+            />
+            <Tooltip title="Новый чат">
+              <Button size="small" icon={<PlusOutlined />} onClick={() => { setNewChat(true); setActiveSession(estimateId, null); }} />
+            </Tooltip>
+            {sessionId && (
+              <Popconfirm title="Удалить чат?" onConfirm={() => deleteMut.mutate(sessionId)} okText="Удалить" cancelText="Отмена">
+                <Button size="small" danger icon={<DeleteOutlined />} />
+              </Popconfirm>
+            )}
+          </div>
+
+          <AiMessageList
+            messages={messages}
+            applying={applyMut.isPending || applySectionMut.isPending}
+            onApplyItems={(items) => applyMut.mutate(items)}
+            onApplySection={(sourceEstimateId, costTypeId) => applySectionMut.mutate({ sourceEstimateId, costTypeId })}
+            onExampleClick={(text) => setInput(text)}
+          />
           <AiComposer
-            model={model}
             input={input}
-            loading={loading}
-            onModelChange={setModel}
+            loading={sendMut.isPending}
+            busy={busy}
             onInputChange={setInput}
             onRun={handleRun}
+            onStop={handleStop}
           />
         </>
       )}
     </div>
   );
 }
+
+const panelBox: React.CSSProperties = {
+  height: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+  minHeight: 0,
+  overflow: 'hidden',
+  background: '#fff',
+  border: '1px solid #f0f0f0',
+  borderRadius: 8,
+};
+
+const header: React.CSSProperties = {
+  flexShrink: 0,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 9,
+  padding: '9px 13px',
+  borderBottom: '1px solid #f0f0f0',
+  background: '#fafbfc',
+  fontWeight: 600,
+  fontSize: 13.5,
+};
+
+const sessionBar: React.CSSProperties = {
+  flexShrink: 0,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '8px 10px',
+  borderBottom: '1px solid #f5f5f5',
+};

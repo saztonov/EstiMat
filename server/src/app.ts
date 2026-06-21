@@ -115,6 +115,7 @@ export async function buildApp() {
   await app.register(import('./routes/rd/index.js'), { prefix: '/api/rd' });
   await app.register(import('./routes/settings/index.js'), { prefix: '/api/settings' });
   await app.register(import('./routes/ai/index.js'), { prefix: '/api/ai' });
+  await app.register(import('./routes/ai-chat/index.js'), { prefix: '/api/ai-chat' });
 
   // Health endpoints (§5) — без auth и без rate-limit, на корне для nginx/uptime.
   app.get('/health/live', { config: { rateLimit: false } }, async () => ({ status: 'ok' }));
