@@ -4,6 +4,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import {
   createEstimateMaterialSchema,
   updateEstimateMaterialSchema,
+  reassignMaterialsSchema,
 } from '@estimat/shared';
 
 export default async function estimateItemsRoutes(fastify: FastifyInstance) {
@@ -100,6 +101,55 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
       );
       if (rows.length === 0) return reply.status(404).send({ error: 'Материал не найден' });
       return { data: rows[0] };
+    },
+  );
+
+  // PATCH /api/estimate-items/materials/reassign-bulk — массовый перенос материалов к одной работе.
+  // All-or-nothing в транзакции: переносим только в пределах той же сметы, что у целевой работы.
+  fastify.patch(
+    '/materials/reassign-bulk',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const { itemId, materialIds } = reassignMaterialsSchema.parse(request.body);
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const { rows: work } = await client.query(
+          'SELECT estimate_id FROM estimate_items WHERE id = $1',
+          [itemId],
+        );
+        if (work.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({ error: 'Целевая работа не найдена' });
+        }
+        const targetEstimateId = work[0].estimate_id;
+
+        // estimate_id = $2 запрещает перенос материала из другой сметы (или несуществующего)
+        const { rows } = await client.query(
+          `UPDATE estimate_materials
+              SET item_id = $1, estimate_id = $2, needs_review = false
+            WHERE id = ANY($3::uuid[]) AND estimate_id = $2
+            RETURNING id`,
+          [itemId, targetEstimateId, materialIds],
+        );
+
+        if (rows.length !== materialIds.length) {
+          await client.query('ROLLBACK');
+          return reply
+            .status(400)
+            .send({ error: 'Часть материалов не найдена или относится к другой смете' });
+        }
+
+        await client.query('COMMIT');
+        return { data: rows, count: rows.length };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
     },
   );
 

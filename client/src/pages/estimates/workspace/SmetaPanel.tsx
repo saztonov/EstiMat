@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Button, Empty, Select, Space, Switch, Tooltip } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { App, Button, Empty, Popover, Select, Space, Switch, Tooltip } from 'antd';
 import {
   PlusOutlined,
   TableOutlined,
@@ -7,12 +7,15 @@ import {
   CaretDownOutlined,
   DownOutlined,
   UpOutlined,
+  SwapOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import type { CostTypeGroup } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
+import { useAuthStore } from '../../../store/authStore';
 import { PanelShell } from './PanelShell';
 
 interface Organization {
@@ -37,9 +40,14 @@ interface Props {
   onDeleteMaterial: (materialId: string) => void;
   onConfirmMaterial: (materialId: string) => void;
   onReassignMaterial: (materialId: string, itemId: string) => void;
+  onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
+  onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;
 }
+
+// Режим выбора в шапке: перенос материалов или массовое удаление позиций.
+type SelectionMode = 'none' | 'reassign' | 'delete';
 
 const NO_CATEGORY = '__none__';
 
@@ -71,14 +79,65 @@ export function SmetaPanel({
   onDeleteMaterial,
   onConfirmMaterial,
   onReassignMaterial,
+  onReassignMaterials,
+  onBulkDelete,
   onSetContractor,
   onClearContractor,
 }: Props) {
+  const { message } = App.useApp();
   const [categoryFilter, setCategoryFilter] = useState<string | undefined>();
   const [typeFilter, setTypeFilter] = useState<string | undefined>();
   const [onlyUnreconciled, setOnlyUnreconciled] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
+  // Единый режим выбора с чекбоксами: перенос материалов ('reassign') или удаление ('delete').
+  const [mode, setMode] = useState<SelectionMode>('none');
+  const selectionMode = mode !== 'none'; // чекбоксы материалов видны в обоих режимах
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // выбранные материалы (общий набор)
+  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set()); // выбранные работы (только delete)
+  const [reassigning, setReassigning] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Массовое удаление разрешено сервером только admin/engineer — кнопку остальным не показываем.
+  const role = useAuthStore((s) => s.user?.role);
+  const canBulkDelete = editable && (role === 'admin' || role === 'engineer');
+
+  const toggleMaterial = (id: string, selected: boolean) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (selected) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  const toggleWork = (id: string, selected: boolean) =>
+    setSelectedWorkIds((prev) => {
+      const next = new Set(prev);
+      if (selected) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  const cancelSelection = () => {
+    setSelectedIds(new Set());
+    setSelectedWorkIds(new Set());
+    setMode('none');
+  };
+
+  // Перенос выбранных материалов к работе. Выделение сбрасываем только после успеха.
+  const handleBulkReassign = async (targetItemId: string) => {
+    if (selectedIds.size === 0 || reassigning) return;
+    setReassigning(true);
+    try {
+      await onReassignMaterials([...selectedIds], targetItemId);
+      setSelectedIds(new Set());
+      setMode('none');
+    } catch {
+      /* ошибку покажет мутация; выделение сохраняется */
+    } finally {
+      setReassigning(false);
+    }
+  };
   const selectCategory = useEstimateSelectionStore((s) => s.selectCategory);
   const activeCostCategoryId = useEstimateSelectionStore((s) => s.activeCostCategoryId);
   const revealInRatesTree = useEstimateSelectionStore((s) => s.revealInRatesTree);
@@ -173,6 +232,46 @@ export function SmetaPanel({
     [groups],
   );
 
+  // Сопоставление материал → работа: для удаления исключаем материалы выбранных работ (уйдут каскадом).
+  const materialOwner = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of groups) for (const w of g.works) for (const mat of w.materials) m.set(mat.id, w.id);
+    return m;
+  }, [groups]);
+
+  const effectiveMaterialIds = useMemo(
+    () =>
+      [...selectedIds].filter((mid) => {
+        const owner = materialOwner.get(mid);
+        return !(owner && selectedWorkIds.has(owner));
+      }),
+    [selectedIds, selectedWorkIds, materialOwner],
+  );
+  const deleteCount = selectedWorkIds.size + effectiveMaterialIds.length;
+
+  // Удаление выбранных работ (с каскадом материалов) и отдельных материалов. Сброс — только после успеха.
+  const handleBulkDelete = async () => {
+    if (deleteCount === 0 || deleting) return;
+    setDeleting(true);
+    try {
+      await onBulkDelete([...selectedWorkIds], effectiveMaterialIds);
+      message.success(`Удалено: работ ${selectedWorkIds.size}, материалов ${effectiveMaterialIds.length}`);
+      setSelectedIds(new Set());
+      setSelectedWorkIds(new Set());
+      setMode('none');
+    } catch {
+      /* ошибку покажет мутация; выделение сохраняется */
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Смена фильтра не должна оставлять выбранными скрытые строки — иначе можно удалить/перенести невидимое.
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setSelectedWorkIds(new Set());
+  }, [categoryFilter, typeFilter, onlyUnreconciled]);
+
   const blockProps = {
     editable,
     orgs,
@@ -189,6 +288,12 @@ export function SmetaPanel({
     allWorks,
     onSetContractor,
     onClearContractor,
+    selectionMode,
+    selectedIds,
+    onToggleMaterial: toggleMaterial,
+    deleteMode: mode === 'delete',
+    selectedWorkIds,
+    onToggleWork: toggleWork,
   };
 
   return (
@@ -204,6 +309,82 @@ export function SmetaPanel({
       extra={
         groups.length > 0 ? (
           <Space size={2} style={{ marginLeft: 8 }}>
+            {editable && mode === 'reassign' && (
+              <Space size={6} style={{ marginRight: 4 }}>
+                <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {selectedIds.size}</span>
+                <Popover
+                  trigger="click"
+                  title="Перенести материалы к работе"
+                  content={
+                    <Select
+                      showSearch
+                      size="small"
+                      autoFocus
+                      style={{ width: 320 }}
+                      placeholder="Выберите работу"
+                      optionFilterProp="label"
+                      disabled={reassigning}
+                      options={allWorks.map((w) => ({
+                        value: w.id,
+                        label: w.costTypeName ? `${w.costTypeName}: ${w.label}` : w.label,
+                      }))}
+                      onSelect={(val: string) => handleBulkReassign(val)}
+                    />
+                  }
+                >
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<SwapOutlined />}
+                    disabled={selectedIds.size === 0 || reassigning}
+                    loading={reassigning}
+                  >
+                    Перенести
+                  </Button>
+                </Popover>
+                <Button size="small" disabled={reassigning} onClick={cancelSelection}>
+                  Отмена
+                </Button>
+              </Space>
+            )}
+            {editable && mode === 'delete' && (
+              <Space size={6} style={{ marginRight: 4 }}>
+                <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {deleteCount}</span>
+                <Button
+                  danger
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  disabled={deleteCount === 0 || deleting}
+                  loading={deleting}
+                  onClick={handleBulkDelete}
+                >
+                  Подтвердить удаление
+                </Button>
+                <Button size="small" disabled={deleting} onClick={cancelSelection}>
+                  Отмена
+                </Button>
+              </Space>
+            )}
+            {editable && mode === 'none' && (
+              <>
+                <Tooltip title="Массовый перенос материалов: выбрать чекбоксами и перенести к работе">
+                  <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setMode('reassign')} />
+                </Tooltip>
+                {canBulkDelete && (
+                  <Tooltip title="Массовое удаление работ и материалов: выбрать чекбоксами и подтвердить">
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() => setMode('delete')}
+                    >
+                      Удалить несколько
+                    </Button>
+                  </Tooltip>
+                )}
+              </>
+            )}
             <Tooltip title="Развернуть всё">
               <Button type="text" size="small" icon={<DownOutlined />} onClick={expandAll} />
             </Tooltip>

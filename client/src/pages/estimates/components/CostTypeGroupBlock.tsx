@@ -1,4 +1,4 @@
-import { useState, type Key } from 'react';
+import { useEffect, useState, type Key } from 'react';
 import {
   Table,
   Button,
@@ -106,6 +106,11 @@ function MaterialsSubTable({
   onConfirm,
   onReassign,
   works = [],
+  selectionMode = false,
+  selectedIds,
+  onToggleMaterial,
+  deleteMode = false,
+  workSelected = false,
 }: {
   work: EstimateItem;
   editable: boolean;
@@ -115,10 +120,21 @@ function MaterialsSubTable({
   onConfirm: (materialId: string) => void;
   onReassign?: (materialId: string, itemId: string) => void;
   works?: { id: string; label: string; costTypeName: string | null }[];
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleMaterial?: (id: string, selected: boolean) => void;
+  /** Режим массового удаления: скрывает действия материалов; чекбоксы материалов выбранной работы недоступны. */
+  deleteMode?: boolean;
+  workSelected?: boolean;
 }) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<MaterialEdit | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // При входе в режим выбора (перенос/удаление) закрываем незавершённое редактирование/черновик.
+  useEffect(() => {
+    if (selectionMode) setEditing(null);
+  }, [selectionMode]);
 
   const { data: materialsData } = useQuery({
     queryKey: ['materials'],
@@ -287,7 +303,7 @@ function MaterialsSubTable({
     { title: 'Сумма', dataIndex: 'total', width: 100, align: 'right', render: (v: string, r) =>
         isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
     },
-    ...(editable
+    ...(editable && !deleteMode
       ? [{
           title: '', width: 64,
           render: (_: unknown, r: EstimateMaterial) => {
@@ -337,8 +353,21 @@ function MaterialsSubTable({
         pagination={false}
         locale={{ emptyText: editable ? 'Материалов нет. Нажмите «Материал».' : 'Материалов нет.' }}
         rowClassName={(r) => (isRowInEdit(r) ? 'estimat-row-editing' : '')}
+        rowSelection={
+          selectionMode && editable && !editing
+            ? {
+                selectedRowKeys: work.materials.filter((m) => selectedIds?.has(m.id)).map((m) => m.id) as Key[],
+                onChange: (keys: Key[]) => {
+                  const set = new Set(keys.map(String));
+                  work.materials.forEach((m) => onToggleMaterial?.(m.id, set.has(m.id)));
+                },
+                // В режиме удаления материалы выбранной работы уйдут каскадом — их выбор недоступен.
+                getCheckboxProps: (r) => ({ disabled: r.id === DRAFT_ID || (deleteMode && workSelected) }),
+              }
+            : undefined
+        }
       />
-      {editable && (
+      {editable && !deleteMode && (
         <Button
           type="link"
           size="small"
@@ -372,6 +401,14 @@ interface Props {
   onReassignMaterial?: (materialId: string, itemId: string) => void;
   /** Все работы сметы — для выбора цели при переносе материала. */
   allWorks?: { id: string; label: string; costTypeName: string | null }[];
+  /** Режим выбора (перенос/удаление): показывает чекбоксы у материалов. */
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleMaterial?: (id: string, selected: boolean) => void;
+  /** Режим массового удаления: добавляет чекбоксы у работ и скрывает действия строк. */
+  deleteMode?: boolean;
+  selectedWorkIds?: Set<string>;
+  onToggleWork?: (id: string, selected: boolean) => void;
   onSetContractor?: (costTypeId: string, contractorId: string) => void;
   onClearContractor?: (costTypeId: string) => void;
   collapsible?: boolean;
@@ -401,6 +438,12 @@ export function CostTypeGroupBlock({
   onConfirmMaterial = noop,
   onReassignMaterial,
   allWorks = [],
+  selectionMode = false,
+  selectedIds,
+  onToggleMaterial,
+  deleteMode = false,
+  selectedWorkIds,
+  onToggleWork,
   onSetContractor = noop,
   onClearContractor = noop,
   collapsible = false,
@@ -412,6 +455,11 @@ export function CostTypeGroupBlock({
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // При входе в режим выбора (перенос/удаление) закрываем незавершённое редактирование/черновик работы.
+  useEffect(() => {
+    if (selectionMode) setEditing(null);
+  }, [selectionMode]);
   // Ожидающее сохранение, пока открыта модалка синхронизации названия со справочником
   const [pendingSync, setPendingSync] = useState<SaveWorkPayload | null>(null);
   const [internalCollapsed, setInternalCollapsed] = useState(collapsible && defaultCollapsed);
@@ -626,7 +674,7 @@ export function CostTypeGroupBlock({
     { title: 'Сумма', dataIndex: 'total', width: 105, align: 'right', render: (v: string, r) =>
         isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
     },
-    ...(editable
+    ...(editable && !deleteMode
       ? [{
           title: '', width: 64,
           render: (_: unknown, r: EstimateItem) => {
@@ -730,7 +778,7 @@ export function CostTypeGroupBlock({
 
         <span style={{ flex: 1 }} />
         <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>
-        {editable && (
+        {editable && !deleteMode && (
           <Button type="primary" size="small" icon={<PlusOutlined />} disabled={!!editing} onClick={() => setEditing({ workId: null, rateId: null, description: '', unit: '', quantity: 1, unitPrice: 0, originalDescription: '', originalRateId: null })}>
             Работа
           </Button>
@@ -754,8 +802,20 @@ export function CostTypeGroupBlock({
               .filter(Boolean)
               .join(' ')
           }
+          rowSelection={
+            deleteMode && editable && !editing
+              ? {
+                  selectedRowKeys: group.works.filter((w) => selectedWorkIds?.has(w.id)).map((w) => w.id) as Key[],
+                  onChange: (keys: Key[]) => {
+                    const set = new Set(keys.map(String));
+                    group.works.forEach((w) => onToggleWork?.(w.id, set.has(w.id)));
+                  },
+                  getCheckboxProps: (r) => ({ disabled: r.id === DRAFT_ID }),
+                }
+              : undefined
+          }
           onRow={
-            editable
+            editable && !deleteMode
               ? (r) => ({
                   onClick: (e) => {
                     if (r.id === DRAFT_ID || isRowInEdit(r)) return;
@@ -796,6 +856,11 @@ export function CostTypeGroupBlock({
                 onConfirm={onConfirmMaterial}
                 onReassign={onReassignMaterial}
                 works={allWorks}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggleMaterial={onToggleMaterial}
+                deleteMode={deleteMode}
+                workSelected={!!selectedWorkIds?.has(r.id)}
               />
             ),
           }}

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import {
@@ -7,6 +8,7 @@ import {
   createEstimateItemSchema,
   updateEstimateItemSchema,
   setEstimateContractorSchema,
+  bulkDeleteEstimateItemsSchema,
 } from '@estimat/shared';
 
 export default async function estimateRoutes(fastify: FastifyInstance) {
@@ -276,4 +278,45 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     if (rowCount === 0) return reply.status(404).send({ error: 'Позиция не найдена' });
     return { success: true };
   });
+
+  // POST /api/estimates/:id/bulk-delete — массовое удаление работ (с каскадом материалов) и материалов.
+  // Одна транзакция: сначала работы (их материалы уходят каскадом), затем оставшиеся материалы.
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/bulk-delete',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const estimateId = z.string().uuid().safeParse(request.params.id);
+      if (!estimateId.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
+      const { workIds, materialIds } = bulkDeleteEstimateItemsSchema.parse(request.body);
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        let deletedWorks = 0;
+        let deletedMaterials = 0;
+        if (workIds.length) {
+          const r = await client.query(
+            'DELETE FROM estimate_items WHERE id = ANY($1::uuid[]) AND estimate_id = $2',
+            [workIds, estimateId.data],
+          );
+          deletedWorks = r.rowCount ?? 0;
+        }
+        if (materialIds.length) {
+          // Материалы выбранных работ уже удалены каскадом — сюда попадут только явно выбранные.
+          const r = await client.query(
+            'DELETE FROM estimate_materials WHERE id = ANY($1::uuid[]) AND estimate_id = $2',
+            [materialIds, estimateId.data],
+          );
+          deletedMaterials = r.rowCount ?? 0;
+        }
+        await client.query('COMMIT');
+        return { success: true, deletedWorks, deletedMaterials };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
 }

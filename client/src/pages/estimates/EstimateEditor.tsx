@@ -108,6 +108,14 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
+  // Массовое удаление работ (с каскадом материалов) и отдельных материалов — одним атомарным запросом.
+  const bulkDeleteMutation = useMutation({
+    mutationFn: ({ workIds, materialIds }: { workIds: string[]; materialIds: string[] }) =>
+      api.post(`/estimates/${estimateId}/bulk-delete`, { workIds, materialIds }),
+    onSuccess: () => invalidate(),
+    onError: (e: Error) => message.error(e.message),
+  });
+
   // Подтверждение «предложенного» материала (добавлен автоматически по типовому набору расценки)
   const confirmMaterialMutation = useMutation({
     mutationFn: (materialId: string) =>
@@ -126,6 +134,17 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onSuccess: () => {
       invalidate();
       message.success('Материал перенесён к работе');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  // Массовый перенос материалов к одной работе — снимает needs_review на сервере.
+  const reassignMaterialsBulkMutation = useMutation({
+    mutationFn: ({ materialIds, itemId }: { materialIds: string[]; itemId: string }) =>
+      api.patch<{ count: number }>('/estimate-items/materials/reassign-bulk', { materialIds, itemId }),
+    onSuccess: (res) => {
+      invalidate();
+      message.success(`Перенесено материалов: ${res.count}`);
     },
     onError: (e: Error) => message.error(e.message),
   });
@@ -232,6 +251,10 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         onDeleteMaterial={(materialId) => deleteMaterialMutation.mutate(materialId)}
         onConfirmMaterial={(materialId) => confirmMaterialMutation.mutate(materialId)}
         onReassignMaterial={(materialId, itemId) => reassignMaterialMutation.mutate({ materialId, itemId })}
+        onReassignMaterials={(materialIds, itemId) =>
+          reassignMaterialsBulkMutation.mutateAsync({ materialIds, itemId }).then(() => undefined)}
+        onBulkDelete={(workIds, materialIds) =>
+          bulkDeleteMutation.mutateAsync({ workIds, materialIds })}
         onSetContractor={(costTypeId, contractorId) =>
           setContractorMutation.mutate({ costTypeId, contractorId })
         }

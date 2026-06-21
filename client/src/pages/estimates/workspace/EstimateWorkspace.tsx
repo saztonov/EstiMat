@@ -33,6 +33,8 @@ interface Props {
   onDeleteMaterial: (materialId: string) => void;
   onConfirmMaterial: (materialId: string) => void;
   onReassignMaterial: (materialId: string, itemId: string) => void;
+  onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
+  onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;
   onAddRate: (payload: RateLeafPayload) => void;
@@ -103,6 +105,8 @@ export function EstimateWorkspace(props: Props) {
           onDeleteMaterial={props.onDeleteMaterial}
           onConfirmMaterial={props.onConfirmMaterial}
           onReassignMaterial={props.onReassignMaterial}
+          onReassignMaterials={props.onReassignMaterials}
+          onBulkDelete={props.onBulkDelete}
           onSetContractor={props.onSetContractor}
           onClearContractor={props.onClearContractor}
         />

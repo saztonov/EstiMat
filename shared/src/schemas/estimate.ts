@@ -55,6 +55,30 @@ export const createEstimateMaterialSchema = z.object({
 
 export const updateEstimateMaterialSchema = createEstimateMaterialSchema.partial();
 
+// Массовый перенос материалов к другой работе (within one estimate).
+// materialIds дедуплицируются; пустой список и >500 элементов отклоняются.
+export const reassignMaterialsSchema = z.object({
+  itemId: z.string().uuid(),
+  materialIds: z
+    .array(z.string().uuid())
+    .min(1, 'Список материалов пуст')
+    .max(500, 'Слишком много материалов за один перенос')
+    .transform((ids) => [...new Set(ids)]),
+});
+
+// === Массовое удаление работ и материалов сметы ===
+// Оба списка дедуплицируются; пустой запрос (0 позиций) и >1000 id отклоняются.
+const bulkDeleteIds = z
+  .array(z.string().uuid())
+  .max(1000, 'Слишком много позиций за одно удаление')
+  .default([])
+  .transform((ids) => [...new Set(ids)]);
+export const bulkDeleteEstimateItemsSchema = z
+  .object({ workIds: bulkDeleteIds, materialIds: bulkDeleteIds })
+  .refine((d) => d.workIds.length + d.materialIds.length > 0, {
+    message: 'Не выбрано ни одной позиции',
+  });
+
 // === Подрядчик на вид затрат (estimate + cost_type) ===
 export const setEstimateContractorSchema = z.object({
   costTypeId: z.string().uuid(),
@@ -80,6 +104,8 @@ export type CreateEstimateItemInput = z.infer<typeof createEstimateItemSchema>;
 export type UpdateEstimateItemInput = z.infer<typeof updateEstimateItemSchema>;
 export type CreateEstimateMaterialInput = z.infer<typeof createEstimateMaterialSchema>;
 export type UpdateEstimateMaterialInput = z.infer<typeof updateEstimateMaterialSchema>;
+export type ReassignMaterialsInput = z.infer<typeof reassignMaterialsSchema>;
 export type EstimateMaterialStatus = z.infer<typeof estimateMaterialStatusSchema>;
 export type SetEstimateContractorInput = z.infer<typeof setEstimateContractorSchema>;
+export type BulkDeleteEstimateItemsInput = z.infer<typeof bulkDeleteEstimateItemsSchema>;
 export type Estimate = z.infer<typeof estimateSchema>;
