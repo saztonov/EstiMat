@@ -11,6 +11,7 @@ import {
   DeleteOutlined,
 } from '@ant-design/icons';
 import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
+import { WorkTreeSelect } from '../components/WorkTreeSelect';
 import type { CostTypeGroup } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
@@ -221,13 +222,20 @@ export function SmetaPanel({
     setCollapsedTypes(new Set(groups.map(typeKey)));
   };
 
-  // Плоский список работ сметы — для выбора цели при переносе материала.
+  // Список работ сметы — для выбора цели при переносе материала (дерево Категория → Вид работ → Работа).
   const allWorks = useMemo(
     () =>
       groups.flatMap((g) =>
         g.works
           .filter((w) => w.id)
-          .map((w) => ({ id: w.id, label: w.description, costTypeName: g.costTypeName })),
+          .map((w) => ({
+            id: w.id,
+            label: w.description,
+            costTypeId: g.costTypeId,
+            costTypeName: g.costTypeName,
+            costCategoryId: g.costCategoryId,
+            costCategoryName: g.costCategoryName,
+          })),
       ),
     [groups],
   );
@@ -316,20 +324,7 @@ export function SmetaPanel({
                   trigger="click"
                   title="Перенести материалы к работе"
                   content={
-                    <Select
-                      showSearch
-                      size="small"
-                      autoFocus
-                      style={{ width: 320 }}
-                      placeholder="Выберите работу"
-                      optionFilterProp="label"
-                      disabled={reassigning}
-                      options={allWorks.map((w) => ({
-                        value: w.id,
-                        label: w.costTypeName ? `${w.costTypeName}: ${w.label}` : w.label,
-                      }))}
-                      onSelect={(val: string) => handleBulkReassign(val)}
-                    />
+                    <WorkTreeSelect works={allWorks} disabled={reassigning} onPick={handleBulkReassign} />
                   }
                 >
                   <Button

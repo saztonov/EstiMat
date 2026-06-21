@@ -27,6 +27,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { UnitSelect } from '../../../components/UnitSelect';
+import { WorkTreeSelect, type WorkOption } from './WorkTreeSelect';
 import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/estimateSelectionStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
@@ -119,7 +120,7 @@ function MaterialsSubTable({
   onDelete: (materialId: string) => void;
   onConfirm: (materialId: string) => void;
   onReassign?: (materialId: string, itemId: string) => void;
-  works?: { id: string; label: string; costTypeName: string | null }[];
+  works?: WorkOption[];
   selectionMode?: boolean;
   selectedIds?: Set<string>;
   onToggleMaterial?: (id: string, selected: boolean) => void;
@@ -229,21 +230,7 @@ function MaterialsSubTable({
         trigger="click"
         title="Перенести материал к работе"
         content={
-          <Select
-            showSearch
-            size="small"
-            autoFocus
-            style={{ width: 300 }}
-            placeholder="Выберите работу"
-            optionFilterProp="label"
-            options={works
-              .filter((w) => w.id !== work.id)
-              .map((w) => ({
-                value: w.id,
-                label: w.costTypeName ? `${w.costTypeName}: ${w.label}` : w.label,
-              }))}
-            onSelect={(val: string) => onReassign!(r.id, val)}
-          />
+          <WorkTreeSelect works={works} excludeId={work.id} onPick={(id) => onReassign!(r.id, id)} />
         }
       >
         <Button type="text" size="small" title="Перенести к другой работе" icon={<SwapOutlined />} disabled={!!editing} />
@@ -400,7 +387,7 @@ interface Props {
   onConfirmMaterial?: (materialId: string) => void;
   onReassignMaterial?: (materialId: string, itemId: string) => void;
   /** Все работы сметы — для выбора цели при переносе материала. */
-  allWorks?: { id: string; label: string; costTypeName: string | null }[];
+  allWorks?: WorkOption[];
   /** Режим выбора (перенос/удаление): показывает чекбоксы у материалов. */
   selectionMode?: boolean;
   selectedIds?: Set<string>;

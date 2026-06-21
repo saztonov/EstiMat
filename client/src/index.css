@@ -164,6 +164,12 @@ html, body, #root {
   font-size: 12px;
   color: #595959;
 }
+/* Выпадающее дерево выбора работы при переносе материалов:
+   длинные наименования переносятся на новую строку, а не обрезаются */
+.estimat-work-tree-popup .ant-select-tree-title { white-space: normal; }
+.estimat-work-tree-popup .ant-select-tree-node-content-wrapper { height: auto; }
+.estimat-work-tree-popup .ant-select-tree-treenode { align-items: flex-start; }
+
 /* Количество — компактный чип, как в макете */
 .estimat-qty-chip {
   display: inline-block;
