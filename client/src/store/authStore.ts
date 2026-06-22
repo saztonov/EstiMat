@@ -32,7 +32,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (email, password) => {
     set({ isLoading: true, error: null });
     try {
-      const data = await api.post<AuthResponse>('/auth/login', { email, password });
+      const data = await api.post<AuthResponse>('/auth/login', { email, password }, { skipAuthRefresh: true });
       set({
         user: data.user,
         isAuthenticated: true,
@@ -49,7 +49,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true, error: null });
     try {
       // Регистрация не авторизует: аккаунт создаётся неактивным и ждёт активации админом.
-      await api.post('/auth/register', { email, password, fullName, phone });
+      await api.post('/auth/register', { email, password, fullName, phone }, { skipAuthRefresh: true });
       set({ isLoading: false });
     } catch (err) {
       set({ isLoading: false, error: (err as Error).message });

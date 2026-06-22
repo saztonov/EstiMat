@@ -3,10 +3,30 @@
 // относительный путь через прокси Vite.
 const BASE_URL = `${import.meta.env.VITE_API_URL ?? ''}/api`;
 
+// Таймаут запроса по умолчанию. При латентной/нестабильной сети (например, доступ
+// через удалённый рабочий стол) без него fetch висит до браузерного лимита (~2 мин)
+// без какого-либо фидбэка — поэтому обрываем сами и показываем понятное сообщение.
+const DEFAULT_TIMEOUT_MS = 20_000;
+
 let refreshPromise: Promise<{ ok: boolean; expiresAt: number }> | null = null;
 
 interface FetchOptions {
   skipAuthRedirect?: boolean;
+  // Не выполнять авто-refresh/redirect при 401 (для эндпоинтов /auth/login,
+  // /auth/register): 401 там означает «неверные данные», а не истёкшую сессию,
+  // и должен дойти до вызывающего кода как обычная ошибка.
+  skipAuthRefresh?: boolean;
+  timeoutMs?: number;
+}
+
+// Ошибка API с HTTP-статусом и уже подготовленным понятным текстом для пользователя.
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
 }
 
 async function doRefresh(): Promise<{ ok: boolean; expiresAt: number }> {
@@ -53,13 +73,31 @@ export async function apiFetch<T = unknown>(
     headers['Content-Type'] ??= 'application/json';
   }
 
-  const res = await fetch(`${BASE_URL}${url}`, {
-    ...options,
-    credentials: 'include',
-    headers,
-  });
+  const controller = new AbortController();
+  const timeoutMs = fetchOpts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (res.status === 401 && !isRetry) {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${url}`, {
+      ...options,
+      credentials: 'include',
+      headers,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    // Обрыв по таймауту (мы сами вызвали abort) либо сетевая ошибка fetch.
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiError(0, 'Сервер не отвечает. Проверьте соединение и попробуйте ещё раз.');
+    }
+    throw new ApiError(0, 'Не удалось соединиться с сервером. Проверьте интернет-соединение.');
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  // 401 на /auth/login и /auth/register означает «неверные данные», а не истёкшую
+  // сессию: авто-refresh бессмыслен, а redirect перезагружает страницу и стирает форму.
+  if (res.status === 401 && !isRetry && !fetchOpts?.skipAuthRefresh) {
     const result = await refreshAccessToken();
     if (result.ok) {
       return apiFetch(url, options, fetchOpts, true);
@@ -67,12 +105,20 @@ export async function apiFetch<T = unknown>(
     if (!fetchOpts?.skipAuthRedirect) {
       redirectToLogin();
     }
-    throw new Error('Unauthorized');
+    throw new ApiError(401, 'Сессия истекла. Войдите снова.');
   }
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: 'Ошибка сервера' }));
-    throw new Error(error.error || `HTTP ${res.status}`);
+    const body = await res.json().catch(() => null);
+    const serverError = body?.error as string | undefined;
+    if (res.status === 429) {
+      throw new ApiError(429, 'Слишком много попыток входа. Подождите минуту и попробуйте снова.');
+    }
+    if (res.status >= 500) {
+      throw new ApiError(res.status, 'Ошибка сервера. Попробуйте позже.');
+    }
+    // Прочие 4xx: серверный текст уже на русском и осмысленный.
+    throw new ApiError(res.status, serverError || `HTTP ${res.status}`);
   }
 
   return res.json();
