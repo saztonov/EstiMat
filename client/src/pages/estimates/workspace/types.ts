@@ -53,3 +53,17 @@ export interface MaterialGroupRef {
   parent_id: string | null;
   code: string | null;
 }
+
+// Дерево справочника материалов: Категория → Вид работ → Материалы (по material_groups.parent_id).
+export interface MaterialGroupNode {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  code: string | null;
+  children: MaterialGroupNode[];
+  materials: MaterialRef[];
+}
+export interface MaterialsTree {
+  roots: MaterialGroupNode[];
+  ungrouped: MaterialRef[];
+}

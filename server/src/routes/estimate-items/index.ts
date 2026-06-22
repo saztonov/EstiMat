@@ -4,6 +4,7 @@ import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { recordAudit, recordAuditBatch, type AuditInput } from '../../lib/audit.js';
 import { makeEstimateEvent } from '../../lib/realtime/bus.js';
+import { mirrorMaterialsToCatalog } from '../../lib/catalog.js';
 import {
   createEstimateMaterialSchema,
   updateEstimateMaterialSchema,
@@ -117,6 +118,10 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         const { rows } = await client.query(`UPDATE estimate_materials SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, values);
         const estimateId = rows[0].estimate_id as string;
         const projectId = await loadProjectId(client, estimateId);
+        // Согласование материала (клик по тегу / подтверждение «предложения») — зеркалируем в legacy-справочник.
+        if ((body.status === 'confirmed' || body.needsReview === false) && rows[0].material_id === null) {
+          await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
+        }
         const isConfirm = fields.length === 1 && fields[0] === 'needs_review';
         const auditId = await recordAudit(client, {
           estimateId, projectId, entityType: 'estimate_material', entityId: rows[0].id,

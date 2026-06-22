@@ -39,6 +39,37 @@ export default async function materialRoutes(fastify: FastifyInstance) {
 
   // === Materials ===
 
+  // GET /api/materials/tree — дерево групп (по parent_id) с материалами на листьях:
+  // Категория → Вид работ → Материалы (зеркало справочника работ). Материалы без группы — отдельно.
+  fastify.get('/tree', async () => {
+    interface GroupRow { id: string; name: string; parent_id: string | null; code: string | null }
+    interface MatRow { id: string; name: string; group_id: string | null; unit: string; unit_price: string }
+    interface GroupNode extends GroupRow { children: GroupNode[]; materials: MatRow[] }
+
+    const { rows: groups } = await fastify.pool.query(
+      'SELECT id, name, parent_id, code FROM material_groups ORDER BY name',
+    );
+    const { rows: materials } = await fastify.pool.query(
+      'SELECT id, name, group_id, unit, unit_price FROM material_catalog WHERE is_active ORDER BY name',
+    );
+
+    const byId = new Map<string, GroupNode>();
+    for (const g of groups as GroupRow[]) byId.set(g.id, { ...g, children: [], materials: [] });
+    const ungrouped: MatRow[] = [];
+    for (const m of materials as MatRow[]) {
+      const node = m.group_id ? byId.get(m.group_id) : undefined;
+      if (node) node.materials.push(m);
+      else ungrouped.push(m);
+    }
+    const roots: GroupNode[] = [];
+    for (const node of byId.values()) {
+      const parent = node.parent_id ? byId.get(node.parent_id) : undefined;
+      if (parent) parent.children.push(node);
+      else roots.push(node);
+    }
+    return { data: { roots, ungrouped } };
+  });
+
   // GET /api/materials
   fastify.get('/', async (request) => {
     const { groupId } = request.query as { groupId?: string };

@@ -166,6 +166,11 @@ html, body, #root {
   font-size: 12px;
   color: #595959;
 }
+/* Ячейка названия с review-тегами: имя слева (переносится), теги прижаты к правому краю */
+.estimat-review-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.estimat-review-name { flex: 1; min-width: 0; }
+.estimat-review-tags { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
+.estimat-review-tags .ant-tag { margin-inline-end: 0; }
 /* Выпадающее дерево выбора работы при переносе материалов:
    длинные наименования переносятся на новую строку, а не обрезаются */
 .estimat-work-tree-popup .ant-select-tree-title { white-space: normal; }

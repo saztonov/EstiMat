@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Empty, Popconfirm, Popover, Select, Space, Switch, Tooltip } from 'antd';
+import { App, Button, Empty, Popover, Select, Space, Switch, Tooltip } from 'antd';
 import {
   PlusOutlined,
   TableOutlined,
@@ -13,6 +13,7 @@ import {
 } from '@ant-design/icons';
 import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import { WorkTreeSelect } from '../components/WorkTreeSelect';
+import { ReviewUnconfirmedModal } from '../components/ReviewUnconfirmedModal';
 import type { CostTypeGroup } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
@@ -42,7 +43,7 @@ interface Props {
   onDeleteMaterial: (materialId: string) => void;
   onConfirmMaterial: (materialId: string) => void;
   onConfirmWork: (workId: string) => void;
-  onConfirmAll: () => Promise<void>;
+  onBulkConfirm: (workIds: string[], materialIds: string[]) => Promise<void>;
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
@@ -83,7 +84,7 @@ export function SmetaPanel({
   onDeleteMaterial,
   onConfirmMaterial,
   onConfirmWork,
-  onConfirmAll,
+  onBulkConfirm,
   onReassignMaterial,
   onReassignMaterials,
   onBulkDelete,
@@ -103,7 +104,10 @@ export function SmetaPanel({
   const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set()); // выбранные работы (только delete)
   const [reassigning, setReassigning] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [confirmingAll, setConfirmingAll] = useState(false);
+  // Модалка ревью несогласованных позиций (согласовать/удалить выделенное).
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewConfirming, setReviewConfirming] = useState(false);
+  const [reviewDeleting, setReviewDeleting] = useState(false);
 
   // Массовое удаление разрешено сервером только admin/engineer — кнопку остальным не показываем.
   const role = useAuthStore((s) => s.user?.role);
@@ -248,27 +252,44 @@ export function SmetaPanel({
     [groups],
   );
 
-  // Число несогласованных позиций (работы + материалы с needs_review) — для кнопки «Согласовать всё».
-  const unreconciledCount = useMemo(() => {
+  // Число строк-листьев в модалке ревью: несогласованная работа = 1 (её материалы уйдут каскадом),
+  // иначе считаем несогласованные материалы под согласованной работой.
+  const rejectableCount = useMemo(() => {
     let n = 0;
     for (const g of groups)
       for (const w of g.works) {
         if (w.needs_review) n++;
-        for (const m of w.materials) if (m.needs_review) n++;
+        else for (const m of w.materials) if (m.needs_review) n++;
       }
     return n;
   }, [groups]);
 
-  // Массовое согласование всех ИИ-позиций сметы (снятие «не согласовано»).
-  const handleConfirmAll = async () => {
-    if (confirmingAll) return;
-    setConfirmingAll(true);
+  // Согласовать выделенное в модалке ревью. Выделение/закрытие — после успеха.
+  const handleReviewConfirm = async (workIds: string[], materialIds: string[]) => {
+    if (reviewConfirming || reviewDeleting) return;
+    setReviewConfirming(true);
     try {
-      await onConfirmAll();
+      await onBulkConfirm(workIds, materialIds);
+      setReviewOpen(false);
     } catch {
       /* ошибку покажет мутация */
     } finally {
-      setConfirmingAll(false);
+      setReviewConfirming(false);
+    }
+  };
+
+  // Удалить выделенное в модалке ревью.
+  const handleReviewDelete = async (workIds: string[], materialIds: string[]) => {
+    if (reviewConfirming || reviewDeleting) return;
+    setReviewDeleting(true);
+    try {
+      await onBulkDelete(workIds, materialIds);
+      message.success(`Удалено позиций: ${workIds.length + materialIds.length}`);
+      setReviewOpen(false);
+    } catch {
+      /* ошибку покажет мутация */
+    } finally {
+      setReviewDeleting(false);
     }
   };
 
@@ -425,24 +446,18 @@ export function SmetaPanel({
             )}
             {editable && mode === 'none' && (
               <>
-                {unreconciledCount > 0 && (
-                  <Popconfirm
-                    title="Согласовать все позиции?"
-                    description={`Снять «не согласовано» с ${unreconciledCount} поз. (работы и материалы).`}
-                    okText="Согласовать"
-                    cancelText="Отмена"
-                    onConfirm={handleConfirmAll}
-                  >
+                {canBulkDelete && rejectableCount > 0 && (
+                  <Tooltip title="Согласовать или удалить несогласованные позиции">
                     <Button
                       type="primary"
                       size="small"
                       icon={<CheckCircleOutlined />}
-                      loading={confirmingAll}
                       style={{ marginRight: 4 }}
+                      onClick={() => setReviewOpen(true)}
                     >
-                      Согласовать всё ({unreconciledCount})
+                      Несогласованные ({rejectableCount})
                     </Button>
-                  </Popconfirm>
+                  </Tooltip>
                 )}
                 <Tooltip title="Массовый перенос материалов: выбрать чекбоксами и перенести к работе">
                   <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setMode('reassign')} />
@@ -586,6 +601,16 @@ export function SmetaPanel({
           )}
         </Empty>
       )}
+
+      <ReviewUnconfirmedModal
+        open={reviewOpen}
+        groups={groups}
+        confirming={reviewConfirming}
+        deleting={reviewDeleting}
+        onCancel={() => setReviewOpen(false)}
+        onConfirm={handleReviewConfirm}
+        onDelete={handleReviewDelete}
+      />
     </PanelShell>
   );
 }

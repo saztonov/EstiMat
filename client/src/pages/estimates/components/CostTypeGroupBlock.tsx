@@ -265,22 +265,24 @@ function MaterialsSubTable({
         // клик по «не согласовано» снимает needs_review (оба тега исчезают).
         if (r.status === 'suggested' || r.needs_review) {
           return (
-            <Space size={6}>
-              <span>{v}</span>
-              {r.status === 'suggested' && <Tag color="orange" style={{ marginInlineEnd: 0 }}>предложение</Tag>}
-              {r.source === 'ai' && r.needs_review && <Tag color="blue" style={{ marginInlineEnd: 0 }}>ИИ</Tag>}
-              {r.needs_review && (
-                editable ? (
-                  <Tooltip title="Согласовать — снять «не согласовано»">
-                    <Tag color="orange" style={{ marginInlineEnd: 0, cursor: 'pointer' }} onClick={() => onConfirm(r.id)}>
-                      не согласовано
-                    </Tag>
-                  </Tooltip>
-                ) : (
-                  <Tag color="orange" style={{ marginInlineEnd: 0 }}>не согласовано</Tag>
-                )
-              )}
-            </Space>
+            <div className="estimat-review-cell">
+              <span className="estimat-review-name">{v}</span>
+              <span className="estimat-review-tags">
+                {r.status === 'suggested' && <Tag color="orange">предложение</Tag>}
+                {r.source === 'ai' && r.needs_review && <Tag color="blue">ИИ</Tag>}
+                {r.needs_review && (
+                  editable ? (
+                    <Tooltip title="Согласовать — снять «не согласовано»">
+                      <Tag color="orange" style={{ cursor: 'pointer' }} onClick={() => onConfirm(r.id)}>
+                        не согласовано
+                      </Tag>
+                    </Tooltip>
+                  ) : (
+                    <Tag color="orange">не согласовано</Tag>
+                  )
+                )}
+              </span>
+            </div>
           );
         }
         return v;
@@ -652,19 +654,21 @@ export function CostTypeGroupBlock({
         // Клик по «не согласовано» снимает needs_review (оба тега исчезают).
         if (r.needs_review) {
           return (
-            <Space size={6}>
-              <span>{v}</span>
-              {r.source === 'ai' && <Tag color="blue" style={{ marginInlineEnd: 0 }}>ИИ</Tag>}
-              {editable ? (
-                <Tooltip title="Согласовать — снять «не согласовано»">
-                  <Tag color="orange" style={{ marginInlineEnd: 0, cursor: 'pointer' }} onClick={() => onConfirmWork(r.id)}>
-                    не согласовано
-                  </Tag>
-                </Tooltip>
-              ) : (
-                <Tag color="orange" style={{ marginInlineEnd: 0 }}>не согласовано</Tag>
-              )}
-            </Space>
+            <div className="estimat-review-cell">
+              <span className="estimat-review-name">{v}</span>
+              <span className="estimat-review-tags">
+                {r.source === 'ai' && <Tag color="blue">ИИ</Tag>}
+                {editable ? (
+                  <Tooltip title="Согласовать — снять «не согласовано»">
+                    <Tag color="orange" style={{ cursor: 'pointer' }} onClick={() => onConfirmWork(r.id)}>
+                      не согласовано
+                    </Tag>
+                  </Tooltip>
+                ) : (
+                  <Tag color="orange">не согласовано</Tag>
+                )}
+              </span>
+            </div>
           );
         }
         return v;

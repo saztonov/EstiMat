@@ -79,6 +79,13 @@ export const bulkDeleteEstimateItemsSchema = z
     message: 'Не выбрано ни одной позиции',
   });
 
+// Выборочное согласование работ и материалов сметы (снятие needs_review) — та же форма, что и удаление.
+export const bulkConfirmEstimateItemsSchema = z
+  .object({ workIds: bulkDeleteIds, materialIds: bulkDeleteIds })
+  .refine((d) => d.workIds.length + d.materialIds.length > 0, {
+    message: 'Не выбрано ни одной позиции',
+  });
+
 // === Подрядчик на вид затрат (estimate + cost_type) ===
 export const setEstimateContractorSchema = z.object({
   costTypeId: z.string().uuid(),
@@ -108,4 +115,5 @@ export type ReassignMaterialsInput = z.infer<typeof reassignMaterialsSchema>;
 export type EstimateMaterialStatus = z.infer<typeof estimateMaterialStatusSchema>;
 export type SetEstimateContractorInput = z.infer<typeof setEstimateContractorSchema>;
 export type BulkDeleteEstimateItemsInput = z.infer<typeof bulkDeleteEstimateItemsSchema>;
+export type BulkConfirmEstimateItemsInput = z.infer<typeof bulkConfirmEstimateItemsSchema>;
 export type Estimate = z.infer<typeof estimateSchema>;

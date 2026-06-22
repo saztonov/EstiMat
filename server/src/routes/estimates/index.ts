@@ -6,6 +6,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { recordAudit, recordAuditBatch, type AuditInput } from '../../lib/audit.js';
 import { makeEstimateEvent } from '../../lib/realtime/bus.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
+import { mirrorMaterialsToCatalog } from '../../lib/catalog.js';
 import {
   createEstimateSchema,
   updateEstimateSchema,
@@ -13,6 +14,7 @@ import {
   updateEstimateItemSchema,
   setEstimateContractorSchema,
   bulkDeleteEstimateItemsSchema,
+  bulkConfirmEstimateItemsSchema,
   type EstimateChangeReason,
 } from '@estimat/shared';
 
@@ -517,6 +519,68 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       client.release();
     }
   });
+
+  // POST /api/estimates/:id/bulk-confirm — выборочное согласование работ и материалов (снять needs_review).
+  // Материалы согласуются каскадом для выбранных работ + явно выбранные; согласованные материалы
+  // зеркалируются в legacy-справочник material_catalog (структура Категория → Вид работ).
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/bulk-confirm',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const estimateId = z.string().uuid().safeParse(request.params.id);
+      if (!estimateId.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
+      const { workIds, materialIds } = bulkConfirmEstimateItemsSchema.parse(request.body);
+      const eid = estimateId.data;
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const works = await client.query(
+          `UPDATE estimate_items SET needs_review = false, updated_by = $3
+            WHERE estimate_id = $1 AND id = ANY($2::uuid[]) AND needs_review = true
+            RETURNING id`,
+          [eid, workIds, request.currentUser.id],
+        );
+        const materials = await client.query(
+          `UPDATE estimate_materials SET needs_review = false, status = 'confirmed', updated_by = $4
+            WHERE estimate_id = $1 AND needs_review = true
+              AND (item_id = ANY($2::uuid[]) OR id = ANY($3::uuid[]))
+            RETURNING id`,
+          [eid, workIds, materialIds, request.currentUser.id],
+        );
+
+        // Пополнение legacy-справочника материалов согласованными позициями.
+        await mirrorMaterialsToCatalog(
+          client,
+          materials.rows.map((r) => r.id as string),
+          request.currentUser.id,
+        );
+
+        const projectId = await loadProjectId(client, eid);
+        const audits: AuditInput[] = [
+          ...works.rows.map((r) => ({
+            estimateId: eid, projectId, entityType: 'estimate_item', entityId: r.id as string,
+            action: 'confirm', userId: request.currentUser.id,
+            changes: { changedFields: ['needs_review'], after: { needs_review: false } },
+          })),
+          ...materials.rows.map((r) => ({
+            estimateId: eid, projectId, entityType: 'estimate_material', entityId: r.id as string,
+            action: 'confirm', userId: request.currentUser.id,
+            changes: { changedFields: ['needs_review'], after: { needs_review: false } },
+          })),
+        ];
+        await recordAuditBatch(client, audits);
+        await client.query('COMMIT');
+        if (audits.length) await emit('confirmed_all', eid, projectId, request.currentUser.id);
+        return reply.send({ works: works.rowCount ?? 0, materials: materials.rowCount ?? 0 });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
 
   // DELETE /api/estimates/items/:id — удалить работу (материалы каскадом; snapshot обоих в журнал)
   fastify.delete<{ Params: { id: string } }>('/items/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
