@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Key } from 'react';
-import { Modal, Tree, Button } from 'antd';
+import { Modal, Tree, Button, Checkbox } from 'antd';
 import type { DataNode } from 'antd/es/tree';
 import type { CostTypeGroup } from './types';
 
@@ -107,6 +107,8 @@ export function ReviewUnconfirmedModal({ open, groups, confirming, deleting, onC
   const { workIds, materialIds } = useMemo(() => splitChecked(checkedKeys), [checkedKeys]);
   const selectedCount = workIds.length + materialIds.length;
   const busy = confirming || deleting;
+  const allChecked = leafKeys.length > 0 && selectedCount === leafKeys.length;
+  const someChecked = selectedCount > 0 && selectedCount < leafKeys.length;
 
   return (
     <Modal
@@ -134,16 +136,27 @@ export function ReviewUnconfirmedModal({ open, groups, confirming, deleting, onC
       {nodes.length === 0 ? (
         <div style={{ padding: 16, color: '#8c8c8c' }}>Нет несогласованных позиций.</div>
       ) : (
-        <Tree
-          checkable
-          blockNode
-          selectable={false}
-          defaultExpandAll
-          treeData={nodes}
-          checkedKeys={checkedKeys}
-          onCheck={(checked) => setCheckedKeys(Array.isArray(checked) ? checked : checked.checked)}
-          height={420}
-        />
+        <>
+          <Checkbox
+            checked={allChecked}
+            indeterminate={someChecked}
+            disabled={busy}
+            onChange={(e) => setCheckedKeys(e.target.checked ? leafKeys : [])}
+            style={{ marginBottom: 8 }}
+          >
+            Выбрать все
+          </Checkbox>
+          <Tree
+            checkable
+            blockNode
+            selectable={false}
+            defaultExpandAll
+            treeData={nodes}
+            checkedKeys={checkedKeys}
+            onCheck={(checked) => setCheckedKeys(Array.isArray(checked) ? checked : checked.checked)}
+            height={420}
+          />
+        </>
       )}
     </Modal>
   );
