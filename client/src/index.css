@@ -77,13 +77,15 @@ html, body, #root {
   overflow-y: auto !important;
 }
 
-/* Дерево справочников в workspace ввода сметы */
+/* Дерево справочников в workspace ввода сметы.
+   Длинные названия переносятся по строкам, узел растёт в высоту (не обрезается). */
 .estimat-ref-tree .ant-tree-node-content-wrapper {
   width: 100%;
-  overflow: hidden;
+  height: auto;
 }
 .estimat-ref-tree .ant-tree-treenode {
   width: 100%;
+  align-items: flex-start;
 }
 .estimat-tree-add {
   opacity: 0.35;

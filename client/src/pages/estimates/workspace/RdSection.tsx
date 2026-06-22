@@ -60,7 +60,7 @@ export function RdSection({ collapsed, onToggle }: Props) {
           title="Открыть документ"
         >
           <FileTextOutlined style={{ color: '#1677ff', flexShrink: 0 }} />
-          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
             {node.title as string}
           </span>
         </div>

@@ -118,7 +118,7 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
         onDoubleClick={() => addToWork(node.material)}
         title="Двойной клик — добавить к выделенной работе"
       >
-        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
           {node.title as string}
         </span>
         <Tooltip title="Добавить к выделенной работе">

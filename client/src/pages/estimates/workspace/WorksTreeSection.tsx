@@ -99,7 +99,7 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
           onDoubleClick={() => handleAdd(p)}
           title="Двойной клик — добавить в смету"
         >
-          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
             {p.name} · {p.unit}
           </span>
           <span style={{ color: '#8c8c8c', fontSize: 12, whiteSpace: 'nowrap' }}>
