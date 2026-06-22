@@ -157,7 +157,7 @@ export function EstimateWorkspace(props: Props) {
         onClose={() => setHistoryOpen(false)}
       />
 
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: 12, background: '#f5f5f5' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: '12px 8px', background: '#f5f5f5' }}>
         <Splitter
           style={{ flex: 1, height: '100%' }}
           onResize={(sizes) => setColSizes(panels.map((p) => p.id), sizes)}

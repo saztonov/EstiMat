@@ -166,18 +166,20 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
           <div style={sessionBar}>
             <Select
               size="small"
-              style={{ flex: 1 }}
+              className="estimat-chat-select"
+              popupClassName="estimat-chat-select-popup"
+              style={{ flex: 1, minWidth: 0 }}
               placeholder="Новый чат"
               value={sessionId ?? undefined}
               onChange={(v) => { setNewChat(false); setActiveSession(estimateId, v); }}
               options={sessions.map((s) => ({ value: s.id, label: s.title ?? 'Без названия' }))}
             />
             <Tooltip title="Новый чат">
-              <Button size="small" icon={<PlusOutlined />} onClick={() => { setNewChat(true); setActiveSession(estimateId, null); }} />
+              <Button size="small" style={{ flexShrink: 0 }} icon={<PlusOutlined />} onClick={() => { setNewChat(true); setActiveSession(estimateId, null); }} />
             </Tooltip>
             {sessionId && (
               <Popconfirm title="Удалить чат?" onConfirm={() => deleteMut.mutate(sessionId)} okText="Удалить" cancelText="Отмена">
-                <Button size="small" danger icon={<DeleteOutlined />} />
+                <Button size="small" danger style={{ flexShrink: 0 }} icon={<DeleteOutlined />} />
               </Popconfirm>
             )}
           </div>
@@ -233,9 +235,9 @@ const header: React.CSSProperties = {
 const sessionBar: React.CSSProperties = {
   flexShrink: 0,
   display: 'flex',
-  alignItems: 'center',
+  alignItems: 'flex-start',
   gap: 6,
-  padding: '8px 10px',
+  padding: '8px 8px',
   borderBottom: '1px solid #f5f5f5',
 };
 

@@ -23,9 +23,10 @@ export function AppLayout() {
   const { user, logout } = useAuthStore();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('estimat:sidebar-collapsed') === '1';
+      // По умолчанию меню свёрнуто в гамбургер; разворачивается только при явном выборе ('0').
+      return localStorage.getItem('estimat:sidebar-collapsed') !== '0';
     } catch {
-      return false;
+      return true;
     }
   });
 
@@ -51,6 +52,9 @@ export function AppLayout() {
   const onMenuClick: MenuProps['onClick'] = ({ key }) => {
     navigate(key);
   };
+
+  // Рабочее пространство сметы (/estimates/:id) — узкие горизонтальные поля; список /estimates не затрагивается.
+  const isEstimateWorkspace = /^\/estimates\/.+/.test(location.pathname);
 
   const userMenuItems: MenuProps['items'] = [
     {
@@ -131,7 +135,7 @@ export function AppLayout() {
         </div>
       </Sider>
       <Layout>
-        <Content style={{ margin: 24, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <Content style={{ margin: isEstimateWorkspace ? '24px 8px' : 24, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <Outlet />
         </Content>
       </Layout>
