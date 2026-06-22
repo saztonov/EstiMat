@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useNavigate } from 'react-router';
 import { Button, Space, Tooltip, Typography } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -8,6 +9,7 @@ import {
   RobotOutlined,
   AppstoreOutlined,
   HistoryOutlined,
+  ContainerOutlined,
 } from '@ant-design/icons';
 import type { EstimateDetail } from '../components/types';
 import { formatMoney } from '../components/types';
@@ -62,6 +64,7 @@ export function WorkspaceToolbar({
   onHistory,
 }: Props) {
   const { visibility, toggleArea } = useWorkspaceLayoutStore();
+  const navigate = useNavigate();
   const title = estimate.work_type || 'Смета';
 
   return (
@@ -79,6 +82,11 @@ export function WorkspaceToolbar({
       <Button icon={<ArrowLeftOutlined />} onClick={onBack}>
         К объекту
       </Button>
+      <Tooltip title="Свод материалов сметы">
+        <Button icon={<ContainerOutlined />} onClick={() => navigate(`/estimates/${estimate.id}/materials`)}>
+          Материалы
+        </Button>
+      </Tooltip>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
         <Typography.Text strong style={{ fontSize: 15, whiteSpace: 'nowrap' }}>
