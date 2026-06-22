@@ -14,7 +14,6 @@ import {
   searchSimilarMaterials,
   normalizeCostTypeIdToScope,
 } from './search.js';
-import { getTypicalMaterials } from './typical.js';
 import { getEstimateContext, listCostCategories, previewSection } from './context.js';
 import { estimateQuantity } from './calc.js';
 import { assertEstimateAccess, ChatAccessError } from './access.js';
@@ -69,22 +68,6 @@ export const TOOL_DEFS: ToolDef[] = [
           limit: { type: 'number' },
         },
         required: ['query'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_typical_materials_for_work',
-      description: 'Типовые материалы расценки (по source и catalogId работы из результатов поиска).',
-      parameters: {
-        type: 'object',
-        properties: {
-          source: { type: 'string', enum: ['v2', 'legacy'] },
-          catalogId: { type: 'string' },
-        },
-        required: ['source', 'catalogId'],
         additionalProperties: false,
       },
     },
@@ -171,10 +154,6 @@ const searchMaterialsArgs = z.object({
   query: z.string().min(1),
   limit: z.number().int().min(1).max(20).optional(),
 });
-const typicalArgs = z.object({
-  source: z.enum(['v2', 'legacy']),
-  catalogId: z.string().uuid(),
-});
 const similarArgs = z.object({
   query: z.string().min(1),
   scope: z.enum(['other_projects', 'this_project', 'all']).optional(),
@@ -235,7 +214,7 @@ export async function executeTool(ctx: AgentContext, name: string, rawArgs: unkn
         const items = await searchCatalogWorks(ctx, { query: a.query, costTypeId: norm.costTypeId, limit: a.limit });
         const result = items.map((c) => ({
           source: c.source, catalogId: c.catalogId, name: c.name, unit: c.unit, price: c.price,
-          costTypeName: c.costTypeName, duplicate: c.duplicateOfItemId != null, typicalMaterials: c.typicalMaterialsCount,
+          costTypeName: c.costTypeName, duplicate: c.duplicateOfItemId != null,
         }));
         const label = norm.ignored
           ? `Поиск работ: «${a.query}» — ${items.length} (costTypeId вне выбранной области — игнорирован)`
@@ -259,16 +238,6 @@ export async function executeTool(ctx: AgentContext, name: string, rawArgs: unkn
           result,
           step: step('search_materials', `Поиск материалов: «${a.query}» — ${items.length}`, { query: a.query, resultCount: items.length }),
           cards: items.length ? [{ type: 'material_candidates', title: a.query, items }] : [],
-        };
-      }
-      case 'get_typical_materials_for_work': {
-        const a = typicalArgs.parse(rawArgs);
-        const list = await getTypicalMaterials(ctx.db, a.source, a.catalogId);
-        return {
-          ok: true,
-          result: list.map((m) => ({ name: m.name, unit: m.unit, qtyRatio: m.qtyRatio, price: m.price })),
-          step: step('typical_materials', `Типовые материалы — ${list.length}`, { resultCount: list.length }),
-          cards: [],
         };
       }
       case 'search_similar_works': {

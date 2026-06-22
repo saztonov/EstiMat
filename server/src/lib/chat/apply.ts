@@ -3,9 +3,11 @@
  * транзакции. КЛИЕНТУ НЕ ДОВЕРЯЕМ: имя/единицу/цену/cost_type берём из БД по
  * (source, catalogId); клиент передал лишь ссылки, количество и флаги.
  *
- * Все позиции добавляются как source='ai', needs_review=true (на подтверждение),
- * с трассировкой ai_job_id (аудит) и ai_chat_id (сессия). Дубли без override
- * пропускаются. Действие логируется в ai_jobs (source_kind='catalog_query').
+ * Позицию из чата выбирает и добавляет сам пользователь, поэтому она считается
+ * согласованной: source='manual', needs_review=false (материалы status='confirmed')
+ * — без бейджей «ИИ»/«не согласовано». Связь с ИИ-чатом сохраняем для аудита через
+ * ai_job_id (задание) и ai_chat_id (сессия). Дубли без override пропускаются.
+ * Действие логируется в ai_jobs (source_kind='catalog_query').
  */
 import type { ApplyItem } from '@estimat/shared';
 import { findWorkDuplicate, findMaterialDuplicate } from './duplicates.js';
@@ -124,7 +126,7 @@ async function insertMaterialRow(
     `INSERT INTO estimate_materials
        (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status,
         source, ai_job_id, ai_chat_id, needs_review, source_snippet, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'suggested', 'ai', $9, $10, true, $11, $12, $12)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', 'manual', $9, $10, false, $11, $12, $12)
      RETURNING id`,
     [itemId, ctx.estimateId, m.materialId, m.name, m.quantity, m.unit, m.price, m.sort, aiJobId, ctx.chatId, ctx.prompt, ctx.userId],
   );
@@ -188,7 +190,7 @@ export async function applySelected(
         `INSERT INTO estimate_items
            (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
             source, ai_job_id, ai_chat_id, needs_review, source_snippet, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ai', $9, $10, true, $11, $12, $12)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'manual', $9, $10, false, $11, $12, $12)
          RETURNING id`,
         [ctx.estimateId, canon.costTypeId, canon.applyRateId, canon.name, item.quantity, canon.unit, canon.price, sort, aiJobId, ctx.chatId, ctx.prompt, ctx.userId],
       );
@@ -274,8 +276,8 @@ export async function applySelected(
 
 /**
  * Копирование раздела (вида затрат) из доступной сметы-источника в текущую.
- * Работы и их материалы → source='ai', needs_review=true. Доступ к источнику
- * проверяется роутом до вызова.
+ * Работы и их материалы → source='manual', needs_review=false (пользователь
+ * добавляет осознанно). Доступ к источнику проверяется роутом до вызова.
  */
 export async function applySection(
   db: Queryable,
@@ -318,7 +320,7 @@ export async function applySection(
       `INSERT INTO estimate_items
          (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
           source, ai_job_id, ai_chat_id, needs_review, source_snippet, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ai', $9, $10, true, $11, $12, $12)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'manual', $9, $10, false, $11, $12, $12)
        RETURNING id`,
       [ctx.estimateId, costTypeId, w.rate_id ?? null, w.description, num(w.quantity), w.unit, num(w.unit_price), sort++, aiJobId, ctx.chatId, ctx.prompt, ctx.userId],
     );

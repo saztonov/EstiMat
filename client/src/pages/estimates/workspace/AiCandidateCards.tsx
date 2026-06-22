@@ -88,7 +88,6 @@ function WorkCandidatesCard({
 }) {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [qty, setQty] = useState<Record<string, number>>({});
-  const [typical, setTypical] = useState(true);
 
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
@@ -100,7 +99,7 @@ function WorkCandidatesCard({
         source: c.source,
         catalogId: c.catalogId,
         quantity: qty[c.catalogId] ?? 1,
-        addTypicalMaterials: typical,
+        addTypicalMaterials: false,
       }));
     if (out.length) onApply(out);
   };
@@ -121,7 +120,6 @@ function WorkCandidatesCard({
             <div style={{ fontSize: 12.5 }}>
               {c.name}{' '}
               {c.duplicateOfItemId && <Tag color="gold" style={{ marginInlineStart: 4 }}>уже в смете</Tag>}
-              {c.typicalMaterialsCount > 0 && <Tag color="blue">мат. {c.typicalMaterialsCount}</Tag>}
             </div>
             <div style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)' }}>
               {[c.categoryName, c.costTypeName].filter(Boolean).join(' › ') || '—'} · {fmt(c.price)} ₽/{c.unit ?? '—'}
@@ -132,9 +130,6 @@ function WorkCandidatesCard({
         </div>
       ))}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-        <Checkbox checked={typical} onChange={(e) => setTypical(e.target.checked)} style={{ fontSize: 12 }}>
-          типовые материалы
-        </Checkbox>
         <span style={{ flex: 1 }} />
         <Button size="small" type="primary" icon={<PlusOutlined />} loading={applying} disabled={sel.size === 0} onClick={apply}>
           Добавить выбранные ({sel.size})
