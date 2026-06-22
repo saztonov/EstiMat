@@ -20,6 +20,7 @@ import {
 import { useAiChatStore } from '../../../store/aiChatStore';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkScopeStore } from '../../../store/workScopeStore';
+import { usePersistedTab } from '../../../hooks/usePersistedTab';
 
 type AiMode = 'chat' | 'extract';
 
@@ -33,7 +34,10 @@ interface Props {
 export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props) {
   const { message } = App.useApp();
   const qc = useQueryClient();
-  const [aiMode, setAiMode] = useState<AiMode>('extract');
+  // Активная вкладка ИИ-панели переживает ремоунт (Splitter пересоздаёт панель при скрытии
+  // справочников/сворачивании) — usePersistedTab читает значение из localStorage при маунте.
+  const [aiModeRaw, setAiMode] = usePersistedTab('estimat:ai-tab', 'extract');
+  const aiMode = aiModeRaw as AiMode;
   const [input, setInput] = useState('');
   const [newChat, setNewChat] = useState(false);
 

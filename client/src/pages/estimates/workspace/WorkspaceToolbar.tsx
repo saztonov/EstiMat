@@ -12,6 +12,7 @@ import {
 import type { EstimateDetail } from '../components/types';
 import { formatMoney } from '../components/types';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
+import { AiProcessingIndicator } from './AiProcessingIndicator';
 
 interface Props {
   estimate: EstimateDetail;
@@ -96,6 +97,8 @@ export function WorkspaceToolbar({
       </Typography.Text>
 
       <span style={{ flex: 1 }} />
+
+      <AiProcessingIndicator estimateId={estimate.id} />
 
       <Button type="dashed" icon={<PlusOutlined />} onClick={onAddCostType}>
         Вид работ

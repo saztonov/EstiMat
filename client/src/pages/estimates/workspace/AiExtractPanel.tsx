@@ -5,9 +5,11 @@ import { FileTextOutlined, InboxOutlined, ReloadOutlined, StopOutlined } from '@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { RdTreeResponse, AiJobSourceKind } from '@estimat/shared';
 import { api } from '../../../services/api';
-import { createAiJob, getAiJob, getRdMarkdown, cancelAiJob } from '../../../services/aiExtract';
+import { createAiJob, getRdMarkdown, cancelAiJob } from '../../../services/aiExtract';
 import { mapRdTreeToNodes, filterRdNodes, type RdDataNode } from './rdTreeMappers';
 import { useWorkScopeStore } from '../../../store/workScopeStore';
+import { useAiExtractStore, useExtractUi } from '../../../store/aiExtractStore';
+import { useAiExtractJob } from '../../../hooks/useAiExtractJob';
 import { WorkScopeSelect } from './WorkScopeSelect';
 
 interface Props {
@@ -38,14 +40,16 @@ const ACTIVE = (s?: string) => s === 'pending' || s === 'running';
 
 // Панель ИИ-извлечения работ/материалов из РД. Документ загружается/выбирается,
 // задание создаётся и обрабатывается автоматически; результат добавляется в смету.
+// Состояние (jobId, режим, подписи) хранится в aiExtractStore по estimateId — иначе при
+// перестройке Splitter (скрытие справочников/сворачивание) панель ремоунтится и статус терялся бы.
 export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<Mode>('rd_document');
+  const ui = useExtractUi(estimateId);
+  const patch = useAiExtractStore((s) => s.patch);
+  const mode = ui.extractMode;
+  const selectedDoc = ui.selectedDoc;
   const [search, setSearch] = useState('');
-  const [selectedDoc, setSelectedDoc] = useState<{ nodeId: string; name: string } | null>(null);
-  const [uploaded, setUploaded] = useState<{ name: string; content: string } | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
   // Дедуп авто-запуска (тот же источник не создаёт второе задание) + последний источник для «Запустить заново».
@@ -66,23 +70,17 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
   const nodes = useMemo(() => mapRdTreeToNodes(rdData?.data ?? []), [rdData]);
   const { nodes: treeData, expandedKeys } = useMemo(() => filterRdNodes(nodes, search), [nodes, search]);
 
-  // Поллинг статуса задания, пока не достигнут финал.
-  const { data: jobData } = useQuery({
-    queryKey: ['ai-job', jobId],
-    queryFn: () => getAiJob(jobId as string),
-    enabled: !!jobId,
-    refetchInterval: (q) => {
-      const s = q.state.data?.data.status;
-      return s === 'applied' || s === 'failed' || s === 'cancelled' ? false : 2000;
-    },
-  });
-  const job = jobData?.data;
+  // Статус задания (jobId хранится в сторе → поллинг переживает ремоунт панели).
+  const { job } = useAiExtractJob(estimateId);
 
-  // Когда задание применено — обновляем смету (через стабильный колбэк, учитывающий маршрут загрузки).
-  const applied = job?.status === 'applied';
+  // Когда задание применено — обновляем смету один раз. Гард по jobId: при ремоунте/повторном
+  // открытии сметы уже-applied задание не должно снова инвалидировать кэши.
   useEffect(() => {
-    if (applied) onEstimateChanged();
-  }, [applied, onEstimateChanged]);
+    if (job?.status === 'applied' && ui.jobId && ui.appliedNotifiedJobId !== ui.jobId) {
+      patch(estimateId, { appliedNotifiedJobId: ui.jobId });
+      onEstimateChanged();
+    }
+  }, [job?.status, ui.jobId, ui.appliedNotifiedJobId, estimateId, patch, onEstimateChanged]);
 
   // Создать задание (авто-запуск при появлении markdown). force — игнорировать дедуп («Запустить заново»).
   const startJob = useCallback(
@@ -101,7 +99,7 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
           markdown: src.markdown,
           sectionScope,
         });
-        setJobId(res.data.id);
+        patch(estimateId, { jobId: res.data.id, appliedNotifiedJobId: null });
       } catch (e) {
         submittedKey.current = '';
         message.error(e instanceof Error ? e.message : 'Не удалось создать задание');
@@ -109,11 +107,11 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
         setCreating(false);
       }
     },
-    [estimateId, categoryIds, costTypeIds, message],
+    [estimateId, categoryIds, costTypeIds, message, patch],
   );
 
   async function selectDoc(nodeId: string, name: string) {
-    setSelectedDoc({ nodeId, name });
+    patch(estimateId, { selectedDoc: { nodeId, name } });
     try {
       const md = await getRdMarkdown(nodeId);
       void startJob({ sourceKind: 'rd_document', sourceRef: nodeId, markdown: md.content });
@@ -123,6 +121,7 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
   }
 
   async function handleCancel() {
+    const jobId = ui.jobId;
     if (!jobId) return;
     try {
       await cancelAiJob(jobId);
@@ -154,7 +153,7 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
       <Segmented<Mode>
         block
         value={mode}
-        onChange={(v) => setMode(v)}
+        onChange={(v) => patch(estimateId, { extractMode: v })}
         options={[
           { label: 'РД-документ', value: 'rd_document', icon: <FileTextOutlined /> },
           { label: 'Загрузить .md', value: 'upload_md', icon: <InboxOutlined /> },
@@ -202,7 +201,8 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
             const reader = new FileReader();
             reader.onload = () => {
               const content = String(reader.result ?? '');
-              setUploaded({ name: file.name, content });
+              // Markdown в стор/localStorage не пишем (большой) — он нужен лишь здесь, для startJob.
+              patch(estimateId, { uploadedName: file.name });
               void startJob({ sourceKind: 'upload_md', sourceRef: file.name, markdown: content });
             };
             reader.readAsText(file as unknown as Blob);
@@ -211,7 +211,7 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
         >
           <p className="ant-upload-drag-icon"><InboxOutlined /></p>
           <p className="ant-upload-text">Перетащите .md-файл рабочей документации</p>
-          {uploaded && <Typography.Text type="success">Загружен: {uploaded.name}</Typography.Text>}
+          {ui.uploadedName && <Typography.Text type="success">Загружен: {ui.uploadedName}</Typography.Text>}
         </Upload.Dragger>
       )}
 
