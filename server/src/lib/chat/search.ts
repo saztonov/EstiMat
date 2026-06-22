@@ -12,7 +12,7 @@ import type {
   CatalogSourceKind,
 } from '@estimat/shared';
 import { trigramSimilarity, normLoose } from '../extract/normalize.js';
-import type { SectionScope } from '../extract/types.js';
+import type { CatalogSourceMode, SectionScope } from '../extract/types.js';
 import { simExpr } from './sql.js';
 import { findWorkDuplicate, findMaterialDuplicate } from './duplicates.js';
 import { getTypicalMaterials } from './typical.js';
@@ -20,6 +20,12 @@ import type { AgentContext, Queryable } from './types.js';
 
 const SIM_THRESHOLD = 0.15;
 const PREFILTER_LIMIT = 300;
+
+/**
+ * Чат, как и РД-извлечение, зафиксирован на legacy-справочнике.
+ * Настройка `ai_catalog_source` на чат НЕ влияет (она compat-only, без UI).
+ */
+export const CHAT_CATALOG_MODE: CatalogSourceMode = 'legacy';
 
 // ============================================================
 // Область подбора (sectionScope) — фильтр по разделам/видам затрат

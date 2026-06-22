@@ -9,12 +9,12 @@ import {
 } from '@estimat/shared';
 import type { ChatMessage, ChatSession, ChatStep, ChatCard } from '@estimat/shared';
 import { config } from '../../config.js';
-import type { CatalogSourceMode, SectionScope } from '../../lib/extract/types.js';
+import type { SectionScope } from '../../lib/extract/types.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import { runAgentTurn } from '../../lib/chat/agent.js';
 import { CHAT_SCOPE_NOTE } from '../../lib/chat/prompt.js';
 import { applySelected, applySection, type ApplyContext } from '../../lib/chat/apply.js';
-import { hasPgTrgm, searchCatalogWorks, isScopeActive } from '../../lib/chat/search.js';
+import { hasPgTrgm, searchCatalogWorks, isScopeActive, CHAT_CATALOG_MODE } from '../../lib/chat/search.js';
 import type { AgentContext, ChatUser } from '../../lib/chat/types.js';
 import { randomUUID } from 'node:crypto';
 import { makeEstimateEvent } from '../../lib/realtime/bus.js';
@@ -38,11 +38,6 @@ async function resolveChatModel(fastify: FastifyInstance): Promise<string> {
   const rd = byKey.get('ai_model_default');
   if (typeof rd === 'string' && rd.trim()) return rd.trim();
   return config.ai.model;
-}
-
-async function resolveCatalogMode(fastify: FastifyInstance): Promise<CatalogSourceMode> {
-  const r = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_catalog_source'`);
-  return (r.rows[0]?.value as CatalogSourceMode) ?? 'v2_first';
 }
 
 function mapSession(r: any): ChatSession {
@@ -92,8 +87,8 @@ async function runChatTurn(
   const controller = new AbortController();
   runningChats.set(assistantId, controller);
   try {
-    const [mode, hasTrgm, hist] = await Promise.all([
-      resolveCatalogMode(fastify),
+    const mode = CHAT_CATALOG_MODE;
+    const [hasTrgm, hist] = await Promise.all([
       hasPgTrgm(fastify.pool),
       fastify.pool.query(
         `SELECT role, content FROM ai_chat_messages
@@ -266,14 +261,13 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
       if (!config.ai.enabled) {
         // Деградация без ключа: детерминированный поиск-карточки, без диалога.
         const hasTrgm = await hasPgTrgm(fastify.pool);
-        const mode = await resolveCatalogMode(fastify);
         const ctx: AgentContext = {
           db: fastify.pool, estimateId: chat.estimateId, projectId: chat.projectId,
-          chatId: chat.id, user: chatUser(request.currentUser), catalogMode: mode,
+          chatId: chat.id, user: chatUser(request.currentUser), catalogMode: CHAT_CATALOG_MODE,
           sectionScope: body.sectionScope, hasTrgm,
         };
         const items = await searchCatalogWorks(ctx, { query: body.content, limit: 8 });
-        const cards: ChatCard[] = items.length ? [{ type: 'work_candidates', items }] : [];
+        const cards: ChatCard[] = items.length ? [{ type: 'work_candidates', title: body.content, items }] : [];
         const content =
           'ИИ-диалог недоступен (не настроен ключ OpenRouter). ' +
           (items.length ? 'Вот что нашлось в справочнике по вашему запросу:' : 'Ничего подходящего в справочнике не нашлось.');

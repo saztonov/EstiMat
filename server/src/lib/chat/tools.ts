@@ -244,7 +244,7 @@ export async function executeTool(ctx: AgentContext, name: string, rawArgs: unkn
           ok: true,
           result,
           step: step('search_works', label, { query: a.query, resultCount: items.length }),
-          cards: items.length ? [{ type: 'work_candidates', items }] : [],
+          cards: items.length ? [{ type: 'work_candidates', title: a.query, items }] : [],
         };
       }
       case 'search_catalog_materials': {
@@ -258,7 +258,7 @@ export async function executeTool(ctx: AgentContext, name: string, rawArgs: unkn
           ok: true,
           result,
           step: step('search_materials', `Поиск материалов: «${a.query}» — ${items.length}`, { query: a.query, resultCount: items.length }),
-          cards: items.length ? [{ type: 'material_candidates', items }] : [],
+          cards: items.length ? [{ type: 'material_candidates', title: a.query, items }] : [],
         };
       }
       case 'get_typical_materials_for_work': {

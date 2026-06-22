@@ -22,7 +22,7 @@ export interface AgentContext {
   projectId: string;
   chatId: string;
   user: ChatUser;
-  /** Источник справочника (настройка ai_catalog_source). */
+  /** Источник справочника. Для чата зафиксирован на legacy (см. CHAT_CATALOG_MODE); настройка ai_catalog_source на чат не влияет. */
   catalogMode: CatalogSourceMode;
   /**
    * Область подбора (разделы/виды), выбранная сметчиком в чате. Сужает поиск по

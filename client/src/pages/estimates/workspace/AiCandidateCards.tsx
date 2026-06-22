@@ -32,9 +32,9 @@ const rowBox: React.CSSProperties = {
 export function AiCandidateCards({ card, applying, onApplyItems, onApplySection }: Props) {
   switch (card.type) {
     case 'work_candidates':
-      return <WorkCandidatesCard items={card.items} applying={applying} onApply={onApplyItems} />;
+      return <WorkCandidatesCard items={card.items} title={card.title ?? null} applying={applying} onApply={onApplyItems} />;
     case 'material_candidates':
-      return <MaterialCandidatesCard items={card.items} targetItemId={card.targetItemId ?? null} applying={applying} onApply={onApplyItems} />;
+      return <MaterialCandidatesCard items={card.items} title={card.title ?? null} targetItemId={card.targetItemId ?? null} applying={applying} onApply={onApplyItems} />;
     case 'similar_works':
       return <SimilarWorksCard items={card.items} applying={applying} onApply={onApplyItems} />;
     case 'similar_materials':
@@ -77,10 +77,12 @@ export function AiCandidateCards({ card, applying, onApplyItems, onApplySection 
 // ---- Работы из справочника ----
 function WorkCandidatesCard({
   items,
+  title,
   applying,
   onApply,
 }: {
   items: WorkCandidate[];
+  title: string | null;
   applying: boolean;
   onApply: (items: ApplyItem[]) => void;
 }) {
@@ -105,7 +107,13 @@ function WorkCandidatesCard({
 
   return (
     <div style={cardBox}>
-      <Typography.Text strong style={{ fontSize: 12.5 }}>Работы из справочника</Typography.Text>
+      <Typography.Text
+        strong
+        style={{ fontSize: 12.5, display: 'block' }}
+        ellipsis={title ? { tooltip: `Работы из справочника: «${title}»` } : false}
+      >
+        Работы из справочника{title ? `: «${title}»` : ''}
+      </Typography.Text>
       {items.map((c) => (
         <div key={c.catalogId} style={rowBox}>
           <Checkbox checked={sel.has(c.catalogId)} onChange={() => toggle(c.catalogId)} />
@@ -116,7 +124,7 @@ function WorkCandidatesCard({
               {c.typicalMaterialsCount > 0 && <Tag color="blue">мат. {c.typicalMaterialsCount}</Tag>}
             </div>
             <div style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)' }}>
-              {c.costTypeName ?? '—'} · {fmt(c.price)} ₽/{c.unit ?? '—'}
+              {[c.categoryName, c.costTypeName].filter(Boolean).join(' › ') || '—'} · {fmt(c.price)} ₽/{c.unit ?? '—'}
             </div>
           </div>
           <InputNumber size="small" min={0.0001} value={qty[c.catalogId] ?? 1} style={{ width: 78 }}
@@ -139,11 +147,13 @@ function WorkCandidatesCard({
 // ---- Материалы из справочника (к выбранной в смете работе) ----
 function MaterialCandidatesCard({
   items,
+  title,
   targetItemId,
   applying,
   onApply,
 }: {
   items: MaterialCandidate[];
+  title: string | null;
   targetItemId: string | null;
   applying: boolean;
   onApply: (items: ApplyItem[]) => void;
@@ -164,7 +174,13 @@ function MaterialCandidatesCard({
 
   return (
     <div style={cardBox}>
-      <Typography.Text strong style={{ fontSize: 12.5 }}>Материалы из справочника</Typography.Text>
+      <Typography.Text
+        strong
+        style={{ fontSize: 12.5, display: 'block' }}
+        ellipsis={title ? { tooltip: `Материалы из справочника: «${title}»` } : false}
+      >
+        Материалы из справочника{title ? `: «${title}»` : ''}
+      </Typography.Text>
       {items.map((c) => (
         <div key={c.catalogId} style={rowBox}>
           <Checkbox checked={sel.has(c.catalogId)} onChange={() => toggle(c.catalogId)} />

@@ -8,7 +8,7 @@
  */
 import { estimateQuantity } from './calc.js';
 import { TOOL_DEFS } from './tools.js';
-import { costTypePredicate, isScopeActive, normalizeCostTypeIdToScope } from './search.js';
+import { costTypePredicate, isScopeActive, normalizeCostTypeIdToScope, CHAT_CATALOG_MODE } from './search.js';
 
 let failed = 0;
 function check(name: string, cond: boolean): void {
@@ -35,6 +35,9 @@ check('имена инструментов уникальны', new Set(names).s
 check('у каждого инструмента есть parameters.object', TOOL_DEFS.every((t) => (t.function.parameters as any)?.type === 'object'));
 check('есть поиск работ и материалов', names.includes('search_catalog_works') && names.includes('search_catalog_materials'));
 check('есть поиск похожих в чужих сметах', names.includes('search_similar_works') && names.includes('search_similar_materials'));
+
+console.log('Источник справочника чата:');
+check('чат зафиксирован на legacy', CHAT_CATALOG_MODE === 'legacy');
 
 console.log('sectionScope — costTypePredicate:');
 check('без области → null', costTypePredicate(undefined, 'c.ct', 5) === null);

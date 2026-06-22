@@ -5,7 +5,11 @@ import { aiCatalogSourceSchema, type AiCatalogSource } from './ai.js';
 export interface AppSettings {
   /** Показывать ли блок «Рабочая документация» в справочниках сметы */
   rdSectionEnabled: boolean;
-  /** Источник справочника для ИИ-сопоставления извлечённых позиций */
+  /**
+   * Источник справочника для ИИ. COMPAT-ONLY: значение сохраняется в БД, но на ИИ
+   * больше не влияет — и чат, и РД-извлечение зафиксированы на legacy
+   * (см. CHAT_CATALOG_MODE на сервере). Пользовательского управления нет.
+   */
   aiCatalogSource: AiCatalogSource;
   /** Список доступных LLM-моделей (id OpenRouter, напр. 'anthropic/claude-opus-4-8') */
   aiModels: string[];

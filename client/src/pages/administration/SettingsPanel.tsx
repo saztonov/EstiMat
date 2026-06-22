@@ -75,25 +75,6 @@ export function SettingsPanel() {
         в рабочем пространстве сметы у всех пользователей.
       </Typography.Paragraph>
 
-      <Typography.Title level={5}>ИИ-извлечение из РД</Typography.Title>
-      <Typography.Paragraph style={{ marginBottom: 8 }}>Источник справочника для сопоставления</Typography.Paragraph>
-      <Radio.Group
-        disabled={updateMutation.isPending}
-        value={settings?.aiCatalogSource ?? 'v2_first'}
-        onChange={(e) => updateMutation.mutate({ aiCatalogSource: e.target.value })}
-        optionType="button"
-        buttonStyle="solid"
-        options={[
-          { label: 'Сначала из ВОР, затем старый', value: 'v2_first' },
-          { label: 'Только старый', value: 'legacy' },
-          { label: 'Оба', value: 'both' },
-        ]}
-      />
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginTop: 4 }}>
-        Какой справочник использует ИИ-агент при сопоставлении извлечённых из РД работ и материалов.
-        Цена подставляется из выбранного справочника, если она там есть.
-      </Typography.Paragraph>
-
       <Typography.Title level={5}>Модели ИИ</Typography.Title>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 8 }}>
         Список доступных моделей (id OpenRouter). Ниже отдельно выбираются модель для
