@@ -3,8 +3,8 @@
  * (в т.ч. чужих смет), поэтому доступ формализован отдельным слоем, а не «всем
  * авторизованным».
  *
- * Правило: admin — все объекты; иначе объект организации пользователя ИЛИ объект,
- * в котором пользователь состоит (project_members).
+ * Правило: admin и engineer — все объекты; иначе объект организации пользователя
+ * ИЛИ объект, в котором пользователь состоит (project_members).
  */
 import type { Queryable, ChatUser } from './types.js';
 
@@ -20,6 +20,11 @@ export class ChatAccessError extends Error {
 
 export function isAdmin(user: ChatUser): boolean {
   return user.role === 'admin';
+}
+
+/** Полный доступ ко всем сметам/чатам: админ и инженер-сметчик. */
+export function hasFullEstimateAccess(user: ChatUser): boolean {
+  return user.role === 'admin' || user.role === 'engineer';
 }
 
 /** Проверить доступ к смете и вернуть её projectId. Бросает ChatAccessError. */
@@ -38,7 +43,7 @@ export async function assertEstimateAccess(
   if (rows.length === 0) throw new ChatAccessError('Смета не найдена', 404);
 
   const { project_id: projectId, org_id: orgId } = rows[0];
-  if (isAdmin(user)) return { projectId };
+  if (hasFullEstimateAccess(user)) return { projectId };
 
   if (user.orgId && orgId === user.orgId) return { projectId };
 
@@ -60,7 +65,7 @@ export function accessibleProjectsClause(
   user: ChatUser,
   startIdx: number,
 ): { clause: string; values: unknown[] } {
-  if (isAdmin(user)) return { clause: 'TRUE', values: [] };
+  if (hasFullEstimateAccess(user)) return { clause: 'TRUE', values: [] };
   // $startIdx — orgId, $startIdx+1 — userId
   return {
     clause: `(p.org_id = $${startIdx} OR p.id IN (

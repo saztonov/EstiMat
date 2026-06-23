@@ -17,6 +17,7 @@ import { simExpr } from './sql.js';
 import { findWorkDuplicate, findMaterialDuplicate } from './duplicates.js';
 import { getTypicalMaterials } from './typical.js';
 import type { AgentContext, Queryable } from './types.js';
+import { hasFullEstimateAccess } from './access.js';
 
 const SIM_THRESHOLD = 0.15;
 const PREFILTER_LIMIT = 300;
@@ -392,11 +393,11 @@ export async function searchSimilarWorks(
 ): Promise<SimilarWork[]> {
   const scope = opts.scope ?? 'other_projects';
   const limit = Math.min(Math.max(opts.limit ?? 8, 0), 20);
-  const isAdmin = ctx.user.role === 'admin';
+  const fullAccess = hasFullEstimateAccess(ctx.user);
 
-  // Параметры: $1 query, $2 projectId, [orgId,userId если не admin], threshold/prefilter, limit
-  const accessParams: unknown[] = isAdmin ? [] : [ctx.user.orgId, ctx.user.id];
-  const accessClause = isAdmin
+  // Параметры: $1 query, $2 projectId, [orgId,userId если нет полного доступа], threshold/prefilter, limit
+  const accessParams: unknown[] = fullAccess ? [] : [ctx.user.orgId, ctx.user.id];
+  const accessClause = fullAccess
     ? 'TRUE'
     : `(p.org_id = $3 OR p.id IN (SELECT project_id FROM project_members WHERE user_id = $4))`;
   const sc = scopeClause(scope, '$2');
@@ -459,9 +460,9 @@ export async function searchSimilarMaterials(
 ): Promise<SimilarMaterial[]> {
   const scope = opts.scope ?? 'other_projects';
   const limit = Math.min(Math.max(opts.limit ?? 8, 0), 20);
-  const isAdmin = ctx.user.role === 'admin';
-  const accessParams: unknown[] = isAdmin ? [] : [ctx.user.orgId, ctx.user.id];
-  const accessClause = isAdmin
+  const fullAccess = hasFullEstimateAccess(ctx.user);
+  const accessParams: unknown[] = fullAccess ? [] : [ctx.user.orgId, ctx.user.id];
+  const accessClause = fullAccess
     ? 'TRUE'
     : `(p.org_id = $3 OR p.id IN (SELECT project_id FROM project_members WHERE user_id = $4))`;
   const sc = scopeClause(scope, '$2');
