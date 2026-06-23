@@ -61,6 +61,8 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
     : stored && sessions.some((s) => s.id === stored)
       ? stored
       : (sessions[0]?.id ?? null);
+  // Полное название активного чата — для всплывающей подсказки над селектором (в нём текст обрезается до 2 строк).
+  const activeChatTitle = sessions.find((s) => s.id === sessionId)?.title ?? undefined;
 
   const messagesQuery = useQuery({
     queryKey: ['ai-chat-messages', sessionId],
@@ -174,16 +176,18 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
       ) : (
         <>
           <div style={sessionBar}>
-            <Select
-              size="small"
-              className="estimat-chat-select"
-              popupClassName="estimat-chat-select-popup"
-              style={{ flex: 1, minWidth: 0 }}
-              placeholder="Новый чат"
-              value={sessionId ?? undefined}
-              onChange={(v) => { setNewChat(false); setActiveSession(estimateId, v); }}
-              options={sessions.map((s) => ({ value: s.id, label: s.title ?? 'Без названия' }))}
-            />
+            <Tooltip title={activeChatTitle}>
+              <Select
+                size="small"
+                className="estimat-chat-select"
+                popupClassName="estimat-chat-select-popup"
+                style={{ flex: 1, minWidth: 0 }}
+                placeholder="Новый чат"
+                value={sessionId ?? undefined}
+                onChange={(v) => { setNewChat(false); setActiveSession(estimateId, v); }}
+                options={sessions.map((s) => ({ value: s.id, label: s.title ?? 'Без названия' }))}
+              />
+            </Tooltip>
             <Tooltip title="Новый чат">
               <Button size="small" style={{ flexShrink: 0 }} icon={<PlusOutlined />} onClick={() => { setNewChat(true); setActiveSession(estimateId, null); }} />
             </Tooltip>
