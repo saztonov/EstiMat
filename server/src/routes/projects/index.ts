@@ -4,7 +4,22 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { createProjectSchema, updateProjectSchema } from '@estimat/shared';
+import {
+  createProjectSchema,
+  updateProjectSchema,
+  createZoneSchema,
+  updateZoneSchema,
+  setProjectRoomTypesSchema,
+} from '@estimat/shared';
+
+interface ZoneRow {
+  id: string;
+  parent_id: string | null;
+  [key: string]: unknown;
+}
+interface ZoneNode extends ZoneRow {
+  children: ZoneNode[];
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UPLOADS_ROOT = join(__dirname, '..', '..', '..', 'uploads');
@@ -66,13 +81,17 @@ async function buildEstimateDetail(fastify: FastifyInstance, estimateId: string)
 
   const items = await fastify.pool.query(
     `SELECT ei.*, r.name AS rate_name, r.code AS rate_code,
-            ct.name AS cost_type_name, cc.name AS cost_category_name
+            ct.name AS cost_type_name, cc.name AS cost_category_name,
+            z.name AS zone_name, z.kind AS zone_kind, rt.name AS room_type_name
        FROM estimate_items ei
        LEFT JOIN rates r            ON ei.rate_id = r.id
        LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
        LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
+       LEFT JOIN project_zones z    ON ei.zone_id = z.id
+       LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
       WHERE ei.estimate_id = $1
-      ORDER BY cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
+      ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
+               cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
     [estimateId],
   );
 
@@ -170,13 +189,19 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                     r.name  AS rate_name,
                     r.code  AS rate_code,
                     ct.name AS cost_type_name,
-                    cc.name AS cost_category_name
+                    cc.name AS cost_category_name,
+                    z.name  AS zone_name,
+                    z.kind  AS zone_kind,
+                    rt.name AS room_type_name
                FROM estimate_items ei
                LEFT JOIN rates r            ON ei.rate_id = r.id
                LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
                LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
+               LEFT JOIN project_zones z    ON ei.zone_id = z.id
+               LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
                WHERE ei.estimate_id = ANY($1)
-               ORDER BY cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
+               ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
+                        cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
             [estimateIds],
           )
         ).rows
@@ -376,4 +401,150 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     );
     return reply.status(201).send({ data: rows[0] });
   });
+
+  // ============================================================
+  // Локации объекта: зоны (география) + активные типы помещений
+  // ============================================================
+
+  // GET /api/projects/:id/zones — дерево зон объекта (корпус/парковка/стилобат/секция)
+  fastify.get<{ Params: { id: string } }>('/:id/zones', async (request) => {
+    const { rows } = await fastify.pool.query<ZoneRow>(
+      'SELECT * FROM project_zones WHERE project_id = $1 ORDER BY sort_order, name',
+      [request.params.id],
+    );
+    // Построение дерева из parent_id в памяти (паттерн materials.get('/tree')).
+    const byId = new Map<string, ZoneNode>();
+    for (const z of rows) byId.set(z.id, { ...z, children: [] });
+    const roots: ZoneNode[] = [];
+    for (const node of byId.values()) {
+      const parent = node.parent_id ? byId.get(node.parent_id) : undefined;
+      if (parent) parent.children.push(node);
+      else roots.push(node);
+    }
+    return { data: { roots } };
+  });
+
+  // POST /api/projects/:id/zones
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/zones',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const body = createZoneSchema.parse(request.body);
+      const { rows } = await fastify.pool.query(
+        `INSERT INTO project_zones
+           (project_id, parent_id, name, kind, code, floor_min, floor_max, sort_order, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING *`,
+        [
+          request.params.id,
+          body.parentId ?? null,
+          body.name,
+          body.kind,
+          body.code ?? null,
+          body.floorMin ?? null,
+          body.floorMax ?? null,
+          body.sortOrder ?? 0,
+          request.currentUser.id,
+        ],
+      );
+      return reply.status(201).send({ data: rows[0] });
+    },
+  );
+
+  // PUT /api/projects/:id/zones/:zoneId
+  fastify.put<{ Params: { id: string; zoneId: string } }>(
+    '/:id/zones/:zoneId',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const body = updateZoneSchema.parse(request.body);
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      let i = 1;
+
+      if (body.parentId !== undefined) { sets.push(`parent_id = $${i++}`); values.push(body.parentId); }
+      if (body.name !== undefined) { sets.push(`name = $${i++}`); values.push(body.name); }
+      if (body.kind !== undefined) { sets.push(`kind = $${i++}`); values.push(body.kind); }
+      if (body.code !== undefined) { sets.push(`code = $${i++}`); values.push(body.code); }
+      if (body.floorMin !== undefined) { sets.push(`floor_min = $${i++}`); values.push(body.floorMin); }
+      if (body.floorMax !== undefined) { sets.push(`floor_max = $${i++}`); values.push(body.floorMax); }
+      if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
+
+      if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
+      sets.push(`updated_by = $${i++}`); values.push(request.currentUser.id);
+
+      values.push(request.params.zoneId);
+      values.push(request.params.id);
+      const { rows } = await fastify.pool.query(
+        `UPDATE project_zones SET ${sets.join(', ')} WHERE id = $${i++} AND project_id = $${i} RETURNING *`,
+        values,
+      );
+      if (rows.length === 0) return reply.status(404).send({ error: 'Зона не найдена' });
+      return { data: rows[0] };
+    },
+  );
+
+  // DELETE /api/projects/:id/zones/:zoneId — FK SET NULL обнулит zone_id у строк сметы
+  fastify.delete<{ Params: { id: string; zoneId: string } }>(
+    '/:id/zones/:zoneId',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const { rowCount } = await fastify.pool.query(
+        'DELETE FROM project_zones WHERE id = $1 AND project_id = $2',
+        [request.params.zoneId, request.params.id],
+      );
+      if (rowCount === 0) return reply.status(404).send({ error: 'Зона не найдена' });
+      return { success: true };
+    },
+  );
+
+  // GET /api/projects/:id/room-types — активные типы помещений объекта
+  // (фолбэк на все is_active, если junction для объекта пуст).
+  fastify.get<{ Params: { id: string } }>('/:id/room-types', async (request) => {
+    const { rows } = await fastify.pool.query(
+      `SELECT rt.*
+         FROM project_room_types prt
+         JOIN room_types rt ON rt.id = prt.room_type_id
+        WHERE prt.project_id = $1
+        ORDER BY prt.sort_order, rt.sort_order, rt.name`,
+      [request.params.id],
+    );
+    if (rows.length > 0) return { data: rows };
+    const fallback = await fastify.pool.query(
+      'SELECT * FROM room_types WHERE is_active = true ORDER BY sort_order, name',
+    );
+    return { data: fallback.rows };
+  });
+
+  // PUT /api/projects/:id/room-types — заменить набор активных типов (REPLACE)
+  fastify.put<{ Params: { id: string } }>(
+    '/:id/room-types',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const body = setProjectRoomTypesSchema.parse(request.body);
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM project_room_types WHERE project_id = $1', [request.params.id]);
+        for (let idx = 0; idx < body.roomTypeIds.length; idx++) {
+          await client.query(
+            `INSERT INTO project_room_types (project_id, room_type_id, sort_order)
+             VALUES ($1, $2, $3) ON CONFLICT (project_id, room_type_id) DO NOTHING`,
+            [request.params.id, body.roomTypeIds[idx], idx],
+          );
+        }
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+      const { rows } = await fastify.pool.query(
+        `SELECT rt.* FROM project_room_types prt
+           JOIN room_types rt ON rt.id = prt.room_type_id
+          WHERE prt.project_id = $1 ORDER BY prt.sort_order, rt.sort_order, rt.name`,
+        [request.params.id],
+      );
+      return reply.send({ data: rows });
+    },
+  );
 }

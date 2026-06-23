@@ -4,6 +4,8 @@ import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-quer
 import { api } from '../../services/api';
 import { invalidateEstimateQueries } from '../../lib/estimateQueries';
 import { useEstimateRealtime } from '../../hooks/useEstimateRealtime';
+import { useLocationContextStore, EMPTY_ADD_CONTEXT } from '../../store/locationContextStore';
+import type { ReplicateTargets } from './components/ReplicateWorksModal';
 import type { SaveWorkPayload, SaveMaterialPayload } from './components/CostTypeGroupBlock';
 import { AddCostTypeModal, type CostTypeFormPayload } from './components/AddCostTypeModal';
 import { EditEstimateModal, type EditEstimatePayload } from './components/EditEstimateModal';
@@ -59,12 +61,32 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
+  // Текущий контекст добавления локации (читается на момент мутации, не из замыкания рендера).
+  const currentAddLocation = () => {
+    const ctx = useLocationContextStore.getState().byEstimate[estimateId] ?? EMPTY_ADD_CONTEXT;
+    return { zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo, roomTypeId: ctx.roomTypeId };
+  };
+
   const createWorkMutation = useMutation({
     mutationFn: ({ costTypeId, payload }: { costTypeId: string | null; payload: SaveWorkPayload }) =>
-      api.post(`/estimates/${estimateId}/items`, { ...payload, costTypeId }),
+      api.post(`/estimates/${estimateId}/items`, { ...currentAddLocation(), ...payload, costTypeId }),
     onSuccess: () => {
       invalidate();
       message.success('Работа добавлена');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  // Тиражирование набора работ на целевые локации (корпуса × типы помещений, диапазон этажей).
+  const replicateWorksMutation = useMutation({
+    mutationFn: ({ sourceWorkIds, targets }: { sourceWorkIds: string[]; targets: ReplicateTargets }) =>
+      api.post<{ created: { works: number; materials: number }; skipped: number; copyBatchId: string }>(
+        `/estimates/${estimateId}/replicate-items`,
+        { sourceItemIds: sourceWorkIds, ...targets },
+      ),
+    onSuccess: (res) => {
+      invalidate();
+      message.success(`Создано строк: ${res.created.works}${res.skipped ? ` (пропущено дублей: ${res.skipped})` : ''}`);
     },
     onError: (e: Error) => message.error(e.message),
   });
@@ -298,6 +320,8 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
           reassignMaterialsBulkMutation.mutateAsync({ materialIds, itemId }).then(() => undefined)}
         onBulkDelete={(workIds, materialIds) =>
           bulkDeleteMutation.mutateAsync({ workIds, materialIds })}
+        onReplicate={(sourceWorkIds, targets) =>
+          replicateWorksMutation.mutateAsync({ sourceWorkIds, targets }).then(() => undefined)}
         onSetContractor={(costTypeId, contractorId) =>
           setContractorMutation.mutate({ costTypeId, contractorId })
         }

@@ -18,6 +18,7 @@ export const estimateChangeReasonSchema = z.enum([
   'contractor_cleared',
   'ai_applied',
   'estimate_updated',
+  'items_replicated',
 ]);
 export type EstimateChangeReason = z.infer<typeof estimateChangeReasonSchema>;
 

@@ -32,6 +32,8 @@ import { WorkTreeSelect, type WorkOption } from './WorkTreeSelect';
 import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/estimateSelectionStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
+import { LocationCell } from './LocationCell';
+import type { ZoneNode, RoomType } from './location';
 import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
 import { formatMoney } from './types';
 
@@ -65,6 +67,11 @@ export interface SaveWorkPayload {
   unit: string;
   quantity: number;
   unitPrice: number;
+  // Локация (опционально): задаётся контекстом добавления или поповером строки.
+  zoneId?: string | null;
+  floorFrom?: number | null;
+  floorTo?: number | null;
+  roomTypeId?: string | null;
 }
 
 export interface SaveMaterialPayload {
@@ -424,6 +431,10 @@ interface Props {
   onToggleCollapsed?: () => void;
   /** Показывать ли категорию в заголовке блока (false — когда категория уже в заголовке секции). */
   showCategoryInTitle?: boolean;
+  /** Показывать колонку «Локация» (в группировке «по виду работ»). */
+  showLocationColumn?: boolean;
+  zones?: ZoneNode[];
+  roomTypes?: RoomType[];
 }
 
 const noopAsync = async () => {};
@@ -457,6 +468,9 @@ export function CostTypeGroupBlock({
   collapsed: controlledCollapsed,
   onToggleCollapsed,
   showCategoryInTitle = true,
+  showLocationColumn = false,
+  zones = [],
+  roomTypes = [],
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -692,6 +706,36 @@ export function CostTypeGroupBlock({
     { title: 'Сумма', dataIndex: 'total', width: 105, align: 'right', render: (v: string, r) =>
         isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
     },
+    ...(showLocationColumn
+      ? [{
+          title: 'Локация', width: 158,
+          render: (_: unknown, r: EstimateItem) => {
+            if (r.id === DRAFT_ID) return null; // у черновика локация подставится из контекста добавления
+            return (
+              <LocationCell
+                work={r}
+                editable={editable && !deleteMode && !editing}
+                zones={zones}
+                roomTypes={roomTypes}
+                onChange={(loc) =>
+                  onUpdateWork(r.id, {
+                    costTypeId: r.cost_type_id,
+                    rateId: r.rate_id,
+                    description: r.description,
+                    unit: r.unit,
+                    quantity: Number(r.quantity),
+                    unitPrice: Number(r.unit_price),
+                    zoneId: loc.zoneId,
+                    floorFrom: loc.floorFrom,
+                    floorTo: loc.floorTo,
+                    roomTypeId: loc.roomTypeId,
+                  })
+                }
+              />
+            );
+          },
+        }]
+      : []),
     ...(editable && !deleteMode
       ? [{
           title: '', width: 64,

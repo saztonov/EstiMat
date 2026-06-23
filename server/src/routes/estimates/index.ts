@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
@@ -15,6 +16,7 @@ import {
   setEstimateContractorSchema,
   bulkDeleteEstimateItemsSchema,
   bulkConfirmEstimateItemsSchema,
+  replicateItemsSchema,
   type EstimateChangeReason,
 } from '@estimat/shared';
 
@@ -81,16 +83,22 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
               r.code  AS rate_code,
               ct.name AS cost_type_name,
               cc.name AS cost_category_name,
+              z.name  AS zone_name,
+              z.kind  AS zone_kind,
+              rt.name AS room_type_name,
               uc.full_name AS created_by_name,
               uu.full_name AS updated_by_name
        FROM estimate_items ei
        LEFT JOIN rates r            ON ei.rate_id = r.id
        LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
        LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
+       LEFT JOIN project_zones z    ON ei.zone_id = z.id
+       LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
        LEFT JOIN users uc           ON ei.created_by = uc.id
        LEFT JOIN users uu           ON ei.updated_by = uu.id
        WHERE ei.estimate_id = $1
-       ORDER BY cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
+       ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
+                cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
       [request.params.id],
     );
 
@@ -350,8 +358,9 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         await client.query('BEGIN');
         const { rows } = await client.query(
           `INSERT INTO estimate_items
-             (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order, created_by, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING *`,
+             (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
+              zone_id, floor_from, floor_to, room_type_id, created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13) RETURNING *`,
           [
             request.params.id,
             body.costTypeId ?? null,
@@ -361,6 +370,10 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
             body.unit,
             body.unitPrice,
             body.sortOrder,
+            body.zoneId ?? null,
+            body.floorFrom ?? null,
+            body.floorTo ?? null,
+            body.roomTypeId ?? null,
             request.currentUser.id,
           ],
         );
@@ -435,6 +448,11 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     if (body.unit !== undefined) { sets.push(`unit = $${i++}`); values.push(body.unit); fields.push('unit'); }
     if (body.unitPrice !== undefined) { sets.push(`unit_price = $${i++}`); values.push(body.unitPrice); fields.push('unit_price'); }
     if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); fields.push('sort_order'); }
+    // Локация строки (география + диапазон этажей + тип помещения).
+    if (body.zoneId !== undefined) { sets.push(`zone_id = $${i++}`); values.push(body.zoneId); fields.push('zone_id'); }
+    if (body.floorFrom !== undefined) { sets.push(`floor_from = $${i++}`); values.push(body.floorFrom); fields.push('floor_from'); }
+    if (body.floorTo !== undefined) { sets.push(`floor_to = $${i++}`); values.push(body.floorTo); fields.push('floor_to'); }
+    if (body.roomTypeId !== undefined) { sets.push(`room_type_id = $${i++}`); values.push(body.roomTypeId); fields.push('room_type_id'); }
     // Снятие «не согласовано» (согласование ИИ-позиции) — отдельным флагом needsReview.
     if (body.needsReview !== undefined) { sets.push(`needs_review = $${i++}`); values.push(body.needsReview); fields.push('needs_review'); }
 
@@ -676,6 +694,197 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         await client.query('COMMIT');
         await emit('bulk_deleted', eid, projectId, request.currentUser.id);
         return { success: true, deletedWorks, deletedMaterials };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // POST /api/estimates/:id/replicate-items — тиражирование набора работ на целевые локации.
+  // Целевые контуры = декартово произведение zoneIds × roomTypeIds (пустая ось = значение
+  // источника), диапазон этажей — override из body либо из источника. Каждый (источник × контур)
+  // создаёт отдельную строку-копию (с материалами). Дубли по локации отсекаются (skipExisting).
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/replicate-items',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const estimateId = z.string().uuid().safeParse(request.params.id);
+      if (!estimateId.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
+      const body = replicateItemsSchema.parse(request.body);
+      const eid = estimateId.data;
+
+      const zoneTargets: (string | undefined)[] = body.zoneIds.length ? body.zoneIds : [undefined];
+      const roomTargets: (string | undefined)[] = body.roomTypeIds.length ? body.roomTypeIds : [undefined];
+      const hasFloorOverride = body.floorFrom !== undefined || body.floorTo !== undefined;
+
+      // Guard: ограничение на общий объём операции.
+      if (body.sourceItemIds.length * zoneTargets.length * roomTargets.length > 5000) {
+        return reply.status(400).send({ error: 'Слишком большой объём тиражирования (макс. 5000 строк)' });
+      }
+
+      const copyBatchId = randomUUID();
+      const dupKey = (r: {
+        cost_type_id: unknown; rate_id: unknown; description: unknown;
+        zone_id: unknown; floor_from: unknown; floor_to: unknown; room_type_id: unknown;
+      }) =>
+        [r.cost_type_id, r.rate_id ?? r.description, r.zone_id, r.floor_from, r.floor_to, r.room_type_id].join('|');
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const { rows: sources } = await client.query(
+          'SELECT * FROM estimate_items WHERE id = ANY($1::uuid[]) AND estimate_id = $2',
+          [body.sourceItemIds, eid],
+        );
+        if (sources.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({ error: 'Исходные строки не найдены' });
+        }
+
+        // Существующие ключи сметы — для skipExisting (включая уже созданные в этом батче).
+        const existing = new Set<string>();
+        if (body.skipExisting) {
+          const { rows: all } = await client.query(
+            'SELECT cost_type_id, rate_id, description, zone_id, floor_from, floor_to, room_type_id FROM estimate_items WHERE estimate_id = $1',
+            [eid],
+          );
+          for (const r of all) existing.add(dupKey(r));
+        }
+
+        const projectId = await loadProjectId(client, eid);
+        const audits: AuditInput[] = [];
+        let createdWorks = 0;
+        let createdMaterials = 0;
+        let skipped = 0;
+
+        for (const src of sources) {
+          for (const zone of zoneTargets) {
+            for (const room of roomTargets) {
+              const targetZone = zone === undefined ? src.zone_id : zone;
+              const targetRoom = room === undefined ? src.room_type_id : room;
+              const targetFloorFrom = hasFloorOverride ? (body.floorFrom ?? null) : src.floor_from;
+              const targetFloorTo = hasFloorOverride ? (body.floorTo ?? null) : src.floor_to;
+
+              const key = dupKey({
+                cost_type_id: src.cost_type_id,
+                rate_id: src.rate_id,
+                description: src.description,
+                zone_id: targetZone,
+                floor_from: targetFloorFrom,
+                floor_to: targetFloorTo,
+                room_type_id: targetRoom,
+              });
+              if (body.skipExisting && existing.has(key)) {
+                skipped++;
+                continue;
+              }
+              existing.add(key);
+
+              const { rows: ins } = await client.query(
+                `INSERT INTO estimate_items
+                   (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
+                    zone_id, floor_from, floor_to, room_type_id, source, needs_review,
+                    copy_batch_id, copy_source_item_id, created_by, updated_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'manual', false, $13, $14, $15, $15)
+                 RETURNING *`,
+                [
+                  eid, src.cost_type_id, src.rate_id, src.description, src.quantity, src.unit,
+                  src.unit_price, src.sort_order, targetZone, targetFloorFrom, targetFloorTo, targetRoom,
+                  copyBatchId, src.id, request.currentUser.id,
+                ],
+              );
+              const copy = ins[0];
+              createdWorks++;
+              audits.push({
+                estimateId: eid, projectId, entityType: 'estimate_item', entityId: copy.id,
+                action: 'create', userId: request.currentUser.id,
+                changes: { after: copy, copySourceItemId: src.id, copyBatchId },
+                correlationId: copyBatchId,
+              });
+
+              if (body.includeMaterials) {
+                const { rows: mats } = await client.query(
+                  `INSERT INTO estimate_materials
+                     (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status, created_by, updated_by)
+                   SELECT $1, $2, m.material_id, m.description, m.quantity, m.unit, m.unit_price, m.sort_order, m.status, $3, $3
+                   FROM estimate_materials m WHERE m.item_id = $4
+                   RETURNING *`,
+                  [copy.id, eid, request.currentUser.id, src.id],
+                );
+                createdMaterials += mats.length;
+                for (const m of mats) {
+                  audits.push({
+                    estimateId: eid, projectId, entityType: 'estimate_material', entityId: m.id as string,
+                    action: 'create', userId: request.currentUser.id,
+                    changes: { after: m, copyBatchId }, correlationId: copyBatchId,
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Сводная запись о батче тиражирования.
+        audits.push({
+          estimateId: eid, projectId, entityType: 'estimate', entityId: eid,
+          action: 'create', userId: request.currentUser.id,
+          changes: { copyBatchId, createdWorks, createdMaterials, skipped, sourceCount: sources.length },
+          correlationId: copyBatchId,
+        });
+        await recordAuditBatch(client, audits);
+        await client.query('COMMIT');
+        await emit('items_replicated', eid, projectId, request.currentUser.id, { correlationId: copyBatchId });
+        return reply.send({
+          created: { works: createdWorks, materials: createdMaterials },
+          skipped,
+          copyBatchId,
+        });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // DELETE /api/estimates/:id/copy-batch/:batchId — откат батча тиражирования
+  // (удаляет ровно созданные строки; материалы каскадом).
+  fastify.delete<{ Params: { id: string; batchId: string } }>(
+    '/:id/copy-batch/:batchId',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: works } = await client.query(
+          'SELECT * FROM estimate_items WHERE estimate_id = $1 AND copy_batch_id = $2',
+          [request.params.id, request.params.batchId],
+        );
+        if (works.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({ error: 'Батч тиражирования не найден' });
+        }
+        const ids = works.map((w) => w.id as string);
+        await client.query('DELETE FROM estimate_items WHERE id = ANY($1::uuid[])', [ids]);
+        const projectId = works[0].project_id ?? (await loadProjectId(client, request.params.id));
+        await recordAuditBatch(
+          client,
+          works.map((w) => ({
+            estimateId: request.params.id, projectId, entityType: 'estimate_item', entityId: w.id as string,
+            action: 'delete', userId: request.currentUser.id,
+            changes: { before: w, reason: 'replicate_undo' }, correlationId: request.params.batchId,
+          })),
+        );
+        await client.query('COMMIT');
+        await emit('bulk_deleted', request.params.id, projectId, request.currentUser.id, {
+          correlationId: request.params.batchId,
+        });
+        return { success: true, deletedWorks: works.length };
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;

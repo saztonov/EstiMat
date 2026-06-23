@@ -189,10 +189,13 @@ export async function applySelected(
       const { rows } = await db.query(
         `INSERT INTO estimate_items
            (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
+            zone_id, floor_from, floor_to, room_type_id,
             source, ai_job_id, ai_chat_id, needs_review, source_snippet, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'manual', $9, $10, false, $11, $12, $12)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'manual', $13, $14, false, $15, $16, $16)
          RETURNING id`,
-        [ctx.estimateId, canon.costTypeId, canon.applyRateId, canon.name, item.quantity, canon.unit, canon.price, sort, aiJobId, ctx.chatId, ctx.prompt, ctx.userId],
+        [ctx.estimateId, canon.costTypeId, canon.applyRateId, canon.name, item.quantity, canon.unit, canon.price, sort,
+         item.zoneId ?? null, item.floorFrom ?? null, item.floorTo ?? null, item.roomTypeId ?? null,
+         aiJobId, ctx.chatId, ctx.prompt, ctx.userId],
       );
       const itemId: string = rows[0].id;
       works++;

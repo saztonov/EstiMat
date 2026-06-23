@@ -3,6 +3,7 @@ export * from './organization.js';
 export * from './project.js';
 export * from './material.js';
 export * from './unit.js';
+export * from './location.js';
 export * from './estimate.js';
 export * from './rate.js';
 export * from './rd.js';

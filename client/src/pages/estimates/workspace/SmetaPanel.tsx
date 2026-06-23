@@ -10,14 +10,21 @@ import {
   SwapOutlined,
   DeleteOutlined,
   CheckCircleOutlined,
+  CopyOutlined,
 } from '@ant-design/icons';
 import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import { WorkTreeSelect } from '../components/WorkTreeSelect';
 import { ReviewUnconfirmedModal } from '../components/ReviewUnconfirmedModal';
-import type { CostTypeGroup } from '../components/types';
+import { ReplicateWorksModal, type ReplicateTargets } from '../components/ReplicateWorksModal';
+import { LocationContextBar } from './LocationContextBar';
+import { LocationSections } from './LocationSections';
+import { buildLocationGroups } from '../components/buildLocationGroups';
+import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
+import { useLocationContextStore } from '../../../store/locationContextStore';
+import { useProjectZones, useProjectRoomTypes } from '../../../hooks/useProjectLocations';
 import { useAuthStore } from '../../../store/authStore';
 import { PanelShell } from './PanelShell';
 
@@ -34,6 +41,8 @@ interface Props {
   groupCount: number;
   editable: boolean;
   orgs?: Organization[];
+  estimateId: string;
+  projectId: string;
   onAddCostType: () => void;
   onCreateWork: (costTypeId: string | null, payload: SaveWorkPayload) => Promise<void>;
   onUpdateWork: (workId: string, payload: SaveWorkPayload) => Promise<void>;
@@ -47,12 +56,13 @@ interface Props {
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
+  onReplicate: (sourceWorkIds: string[], targets: ReplicateTargets) => Promise<void>;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;
 }
 
-// Режим выбора в шапке: перенос материалов или массовое удаление позиций.
-type SelectionMode = 'none' | 'reassign' | 'delete';
+// Режим выбора в шапке: перенос материалов, массовое удаление или тиражирование набора.
+type SelectionMode = 'none' | 'reassign' | 'delete' | 'replicate';
 
 const NO_CATEGORY = '__none__';
 
@@ -75,6 +85,8 @@ export function SmetaPanel({
   groupCount,
   editable,
   orgs,
+  estimateId,
+  projectId,
   onAddCostType,
   onCreateWork,
   onUpdateWork,
@@ -88,6 +100,7 @@ export function SmetaPanel({
   onReassignMaterial,
   onReassignMaterials,
   onBulkDelete,
+  onReplicate,
   onSetContractor,
   onClearContractor,
 }: Props) {
@@ -97,13 +110,25 @@ export function SmetaPanel({
   const [onlyUnreconciled, setOnlyUnreconciled] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
-  // Единый режим выбора с чекбоксами: перенос материалов ('reassign') или удаление ('delete').
+  const [collapsedZones, setCollapsedZones] = useState<Set<string>>(new Set());
+  // Единый режим выбора с чекбоксами: перенос ('reassign'), удаление ('delete') или тиражирование ('replicate').
   const [mode, setMode] = useState<SelectionMode>('none');
-  const selectionMode = mode !== 'none'; // чекбоксы материалов видны в обоих режимах
+  const selectionMode = mode !== 'none'; // чекбоксы материалов видны в reassign/delete
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // выбранные материалы (общий набор)
-  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set()); // выбранные работы (только delete)
+  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set()); // выбранные работы (delete/replicate)
   const [reassigning, setReassigning] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [replicateOpen, setReplicateOpen] = useState(false);
+  const [replicating, setReplicating] = useState(false);
+
+  // Локация: фильтр-срезы, группировка, справочники зон/типов для размножения.
+  const filterZoneIds = useLocationContextStore((s) => s.filterZoneIds);
+  const filterRoomTypeIds = useLocationContextStore((s) => s.filterRoomTypeIds);
+  const filterFloorFrom = useLocationContextStore((s) => s.filterFloorFrom);
+  const filterFloorTo = useLocationContextStore((s) => s.filterFloorTo);
+  const groupBy = useLocationContextStore((s) => s.groupBy);
+  const { data: zonesData } = useProjectZones(projectId);
+  const { data: roomTypesData } = useProjectRoomTypes(projectId);
   // Модалка ревью несогласованных позиций (согласовать/удалить выделенное).
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewConfirming, setReviewConfirming] = useState(false);
@@ -177,18 +202,53 @@ export function SmetaPanel({
       .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
   }, [groups, categoryFilter]);
 
+  const locationActive =
+    filterZoneIds.length > 0 ||
+    filterRoomTypeIds.length > 0 ||
+    filterFloorFrom != null ||
+    filterFloorTo != null;
+
+  // Проходит ли работа фильтр локации (срезы по зоне/типу/диапазону этажей).
+  const matchesLocation = (w: EstimateItem): boolean => {
+    if (filterZoneIds.length && !(w.zone_id && filterZoneIds.includes(w.zone_id))) return false;
+    if (filterRoomTypeIds.length && !(w.room_type_id && filterRoomTypeIds.includes(w.room_type_id))) return false;
+    if (filterFloorFrom != null || filterFloorTo != null) {
+      const wFrom = w.floor_from ?? null;
+      const wTo = w.floor_to ?? null;
+      if (wFrom == null && wTo == null) return false; // нет этажей — не проходит этажный срез
+      const lo = filterFloorFrom ?? -Infinity;
+      const hi = filterFloorTo ?? Infinity;
+      const wLo = wFrom ?? (wTo as number);
+      const wHi = wTo ?? (wFrom as number);
+      if (wHi < lo || wLo > hi) return false; // нет пересечения диапазонов
+    }
+    return true;
+  };
+
   const visibleGroups = useMemo(() => {
     const byFilter = groups.filter(
       (g) =>
         (!categoryFilter || g.costCategoryId === categoryFilter) &&
         (!typeFilter || g.costTypeId === typeFilter),
     );
-    if (!onlyUnreconciled) return byFilter;
-    // Оставляем только несогласованные работы (с категориями и видами работ).
+    if (!onlyUnreconciled && !locationActive) return byFilter;
+    // Фильтр на уровне работ: несогласованные и/или срез по локации.
     return byFilter
-      .map((g) => ({ ...g, works: g.works.filter(hasUnreconciled) }))
+      .map((g) => ({
+        ...g,
+        works: g.works.filter(
+          (w) => (!onlyUnreconciled || hasUnreconciled(w)) && (!locationActive || matchesLocation(w)),
+        ),
+      }))
       .filter((g) => g.works.length > 0);
-  }, [groups, categoryFilter, typeFilter, onlyUnreconciled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterRoomTypeIds, filterFloorFrom, filterFloorTo]);
+
+  // Секции группировки по локации (Зона → Тип помещения → Вид работ).
+  const locationSections = useMemo(
+    () => (groupBy === 'location' ? buildLocationGroups(visibleGroups) : []),
+    [groupBy, visibleGroups],
+  );
 
   // Группировка видимых видов работ по категориям (порядок — как пришли,
   // groups уже отсортированы по категории→виду).
@@ -211,6 +271,14 @@ export function SmetaPanel({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+
+  const toggleZone = (key: string) =>
+    setCollapsedZones((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
 
@@ -331,7 +399,31 @@ export function SmetaPanel({
   useEffect(() => {
     setSelectedIds(new Set());
     setSelectedWorkIds(new Set());
-  }, [categoryFilter, typeFilter, onlyUnreconciled]);
+  }, [categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterRoomTypeIds, filterFloorFrom, filterFloorTo]);
+
+  // Выбранные работы-шаблоны для тиражирования (по id из всех групп).
+  const selectedSourceWorks = useMemo(() => {
+    if (selectedWorkIds.size === 0) return [];
+    const out: EstimateItem[] = [];
+    for (const g of groups) for (const w of g.works) if (selectedWorkIds.has(w.id)) out.push(w);
+    return out;
+  }, [groups, selectedWorkIds]);
+
+  // Тиражирование выбранного набора на целевые локации. Сброс — только после успеха.
+  const handleReplicate = async (targets: ReplicateTargets) => {
+    if (selectedWorkIds.size === 0 || replicating) return;
+    setReplicating(true);
+    try {
+      await onReplicate([...selectedWorkIds], targets);
+      setReplicateOpen(false);
+      setSelectedWorkIds(new Set());
+      setMode('none');
+    } catch {
+      /* ошибку покажет мутация; выделение сохраняется */
+    } finally {
+      setReplicating(false);
+    }
+  };
 
   // Навигация к работе из ИИ-чата: раскрыть категорию/вид, снять фильтры, выделить и прокрутить.
   useEffect(() => {
@@ -383,9 +475,14 @@ export function SmetaPanel({
     selectionMode,
     selectedIds,
     onToggleMaterial: toggleMaterial,
-    deleteMode: mode === 'delete',
+    // Чекбоксы работ активны в delete и replicate (выбор шаблона для тиражирования).
+    deleteMode: mode === 'delete' || mode === 'replicate',
     selectedWorkIds,
     onToggleWork: toggleWork,
+    // Колонку локации показываем только в группировке «по виду работ» (иначе локация — в заголовке секции).
+    showLocationColumn: groupBy === 'cost_type',
+    zones: zonesData?.data.roots ?? [],
+    roomTypes: roomTypesData?.data ?? [],
   };
 
   return (
@@ -444,6 +541,21 @@ export function SmetaPanel({
                 </Button>
               </Space>
             )}
+            {editable && mode === 'replicate' && (
+              <Space size={6} style={{ marginRight: 4 }}>
+                <span style={{ fontSize: 12.5, color: '#595959' }}>Шаблон: {selectedWorkIds.size}</span>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  disabled={selectedWorkIds.size === 0}
+                  onClick={() => setReplicateOpen(true)}
+                >
+                  Повторить набор
+                </Button>
+                <Button size="small" onClick={cancelSelection}>Отмена</Button>
+              </Space>
+            )}
             {editable && mode === 'none' && (
               <>
                 {canBulkDelete && rejectableCount > 0 && (
@@ -462,6 +574,13 @@ export function SmetaPanel({
                 <Tooltip title="Массовый перенос материалов: выбрать чекбоксами и перенести к работе">
                   <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setMode('reassign')} />
                 </Tooltip>
+                {canBulkDelete && (
+                  <Tooltip title="Повторить набор работ на другие корпуса/этажи/типы помещений">
+                    <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => setMode('replicate')}>
+                      Повторить набор
+                    </Button>
+                  </Tooltip>
+                )}
                 {canBulkDelete && (
                   <Tooltip title="Массовое удаление работ и материалов: выбрать чекбоксами и подтвердить">
                     <Button
@@ -489,6 +608,7 @@ export function SmetaPanel({
     >
       {groups.length > 0 ? (
         <>
+          {editable && <LocationContextBar projectId={projectId} estimateId={estimateId} />}
           <Space style={{ marginBottom: 12 }} wrap>
             <Select
               allowClear
@@ -521,7 +641,23 @@ export function SmetaPanel({
             </Tooltip>
           </Space>
 
-          {sections.length === 0 ? (
+          {groupBy === 'location' ? (
+            <LocationSections
+              sections={locationSections}
+              collapsed={collapsedZones}
+              onToggle={toggleZone}
+              renderGroup={(group, i, key) => (
+                <CostTypeGroupBlock
+                  key={key}
+                  group={group}
+                  index={i}
+                  collapsed={collapsedTypes.has(typeKey(group))}
+                  onToggleCollapsed={() => toggleType(group.costTypeId)}
+                  {...blockProps}
+                />
+              )}
+            />
+          ) : sections.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Ничего не найдено по отбору" style={{ padding: '24px 0' }} />
           ) : (
             sections.map((sec) => {
@@ -610,6 +746,16 @@ export function SmetaPanel({
         onCancel={() => setReviewOpen(false)}
         onConfirm={handleReviewConfirm}
         onDelete={handleReviewDelete}
+      />
+
+      <ReplicateWorksModal
+        open={replicateOpen}
+        sourceWorks={selectedSourceWorks}
+        zones={zonesData?.data.roots ?? []}
+        roomTypes={roomTypesData?.data ?? []}
+        loading={replicating}
+        onCancel={() => setReplicateOpen(false)}
+        onConfirm={handleReplicate}
       />
     </PanelShell>
   );

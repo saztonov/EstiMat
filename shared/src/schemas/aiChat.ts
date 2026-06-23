@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { sectionScopeSchema } from './ai.js';
+import { locationContextSchema } from './location.js';
 
 // ============================================================
 // ИИ-ассистент сметчика в режиме «Чат».
@@ -195,6 +196,8 @@ export const applyItemSchema = z.discriminatedUnion('kind', [
     catalogId: z.string().uuid(),
     quantity: z.number().positive(),
     addTypicalMaterials: z.boolean().default(false),
+    // Контекст локации из UI (опционально): куда добавить работу. Материал наследует от targetItemId.
+    ...locationContextSchema.shape,
   }),
   z.object({
     kind: z.literal('material'),

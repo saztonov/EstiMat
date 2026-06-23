@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { Button, Space, Tooltip, Typography } from 'antd';
+import { Button, Drawer, Space, Tooltip, Typography } from 'antd';
 import {
   ArrowLeftOutlined,
   PlusOutlined,
@@ -10,11 +10,13 @@ import {
   AppstoreOutlined,
   HistoryOutlined,
   ContainerOutlined,
+  EnvironmentOutlined,
 } from '@ant-design/icons';
 import type { EstimateDetail } from '../components/types';
 import { formatMoney } from '../components/types';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { AiProcessingIndicator } from './AiProcessingIndicator';
+import { ProjectZonesPanel } from '../../projects/ProjectZonesPanel';
 
 interface Props {
   estimate: EstimateDetail;
@@ -65,6 +67,7 @@ export function WorkspaceToolbar({
 }: Props) {
   const { visibility, toggleArea } = useWorkspaceLayoutStore();
   const navigate = useNavigate();
+  const [zonesOpen, setZonesOpen] = useState(false);
   const title = estimate.work_type || 'Смета';
 
   return (
@@ -85,6 +88,11 @@ export function WorkspaceToolbar({
       <Tooltip title="Свод материалов сметы">
         <Button icon={<ContainerOutlined />} onClick={() => navigate(`/estimates/${estimate.id}/materials`)}>
           Материалы
+        </Button>
+      </Tooltip>
+      <Tooltip title="Настройка локаций объекта (корпуса, этажность, типы помещений)">
+        <Button icon={<EnvironmentOutlined />} onClick={() => setZonesOpen(true)}>
+          Локации
         </Button>
       </Tooltip>
 
@@ -133,6 +141,17 @@ export function WorkspaceToolbar({
           onClick={() => toggleArea('refs')}
         />
       </Space>
+
+      <Drawer
+        title="Локации объекта"
+        placement="right"
+        width={640}
+        open={zonesOpen}
+        onClose={() => setZonesOpen(false)}
+        destroyOnClose
+      >
+        <ProjectZonesPanel projectId={estimate.project_id} />
+      </Drawer>
     </div>
   );
 }

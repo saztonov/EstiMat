@@ -42,6 +42,17 @@ export interface EstimateItem {
   source?: 'manual' | 'ai' | 'catalog';
   needs_review?: boolean;
   confidence?: string | number | null;
+  // Локализация: география (зона + диапазон этажей) + тип помещения (денормализованные имена).
+  zone_id?: string | null;
+  zone_name?: string | null;
+  zone_kind?: string | null;
+  floor_from?: number | null;
+  floor_to?: number | null;
+  room_type_id?: string | null;
+  room_type_name?: string | null;
+  // Трассировка тиражирования.
+  copy_batch_id?: string | null;
+  copy_source_item_id?: string | null;
 }
 
 /** Есть ли в работе несогласованные позиции (сама работа или её материалы). */

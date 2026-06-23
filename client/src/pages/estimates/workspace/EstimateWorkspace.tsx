@@ -8,6 +8,7 @@ import { AiChatPanel } from './AiChatPanel';
 import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import { useWorkspaceLayoutStore, type PanelId } from '../../../store/workspaceLayoutStore';
 import type { SaveWorkPayload, SaveMaterialPayload } from '../components/CostTypeGroupBlock';
+import type { ReplicateTargets } from '../components/ReplicateWorksModal';
 import type { CostTypeGroup, EstimateDetail } from '../components/types';
 import type { RateLeafPayload } from './types';
 
@@ -40,6 +41,7 @@ interface Props {
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
+  onReplicate: (sourceWorkIds: string[], targets: ReplicateTargets) => Promise<void>;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;
   onAddRate: (payload: RateLeafPayload) => void;
@@ -102,6 +104,8 @@ export function EstimateWorkspace(props: Props) {
           groupCount={groupCount}
           editable
           orgs={orgs}
+          estimateId={estimate.id}
+          projectId={estimate.project_id}
           onAddCostType={props.onAddCostType}
           onCreateWork={props.onCreateWork}
           onUpdateWork={props.onUpdateWork}
@@ -115,6 +119,7 @@ export function EstimateWorkspace(props: Props) {
           onReassignMaterial={props.onReassignMaterial}
           onReassignMaterials={props.onReassignMaterials}
           onBulkDelete={props.onBulkDelete}
+          onReplicate={props.onReplicate}
           onSetContractor={props.onSetContractor}
           onClearContractor={props.onClearContractor}
         />

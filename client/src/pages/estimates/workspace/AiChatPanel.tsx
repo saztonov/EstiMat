@@ -20,6 +20,7 @@ import {
 import { useAiChatStore } from '../../../store/aiChatStore';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkScopeStore } from '../../../store/workScopeStore';
+import { useLocationContextStore, EMPTY_ADD_CONTEXT } from '../../../store/locationContextStore';
 import { usePersistedTab } from '../../../hooks/usePersistedTab';
 
 type AiMode = 'chat' | 'extract';
@@ -96,7 +97,16 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
   });
 
   const applyMut = useMutation({
-    mutationFn: (items: ApplyItem[]) => applySelectedApi({ chatId: sessionId as string, items, override: false }),
+    mutationFn: (items: ApplyItem[]) => {
+      // Домешиваем текущий контекст добавления локации к работам (материалы наследуют от targetItemId).
+      const ctx = useLocationContextStore.getState().byEstimate[estimateId] ?? EMPTY_ADD_CONTEXT;
+      const withLoc = items.map((it) =>
+        it.kind === 'work'
+          ? { ...it, zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo, roomTypeId: ctx.roomTypeId }
+          : it,
+      );
+      return applySelectedApi({ chatId: sessionId as string, items: withLoc, override: false });
+    },
     onSuccess: (res) => {
       const { works, materials } = res.data.added;
       message.success(`Добавлено: работ ${works}, материалов ${materials}`);

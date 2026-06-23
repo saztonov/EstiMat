@@ -5,6 +5,7 @@ import { OrganizationsPanel } from './OrganizationsPanel';
 import { MaterialsPanel } from './MaterialsPanel';
 import { RatesPanel } from './RatesPanel';
 import { UnitsPanel } from './UnitsPanel';
+import { RoomTypesPanel } from './RoomTypesPanel';
 import { CatalogComparePanel } from './CatalogComparePanel';
 
 const tabs = [
@@ -13,6 +14,7 @@ const tabs = [
   { key: 'materials', label: 'Материалы', children: <MaterialsPanel /> },
   { key: 'rates', label: 'Расценки', children: <RatesPanel /> },
   { key: 'units', label: 'Единицы измерения', children: <UnitsPanel /> },
+  { key: 'room-types', label: 'Типы помещений', children: <RoomTypesPanel /> },
   { key: 'catalog-compare', label: 'Сравнение справочников', children: <CatalogComparePanel /> },
 ];
 

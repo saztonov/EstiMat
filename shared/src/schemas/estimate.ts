@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { locationContextSchema } from './location.js';
 
 export const createEstimateSchema = z.object({
   projectId: z.string().uuid(),
@@ -34,7 +35,7 @@ export const createEstimateItemSchema = z.object({
   unit: z.string().min(1, 'Единица измерения обязательна'),
   unitPrice: z.number().min(0, 'Цена не может быть отрицательной'),
   sortOrder: z.number().int().default(0),
-}).merge(sourceTraceSchema);
+}).merge(sourceTraceSchema).merge(locationContextSchema);
 
 export const updateEstimateItemSchema = createEstimateItemSchema.partial();
 
