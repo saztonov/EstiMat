@@ -1,34 +1,25 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router';
-import { Layout, Menu, Button, Typography, Dropdown } from 'antd';
+import { Layout, Menu, Button, Typography, Dropdown, Drawer } from 'antd';
 import {
   FileTextOutlined,
   AppstoreOutlined,
   SettingOutlined,
   UserOutlined,
   LogoutOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
+  MenuOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../store/authStore';
 import type { MenuProps } from 'antd';
-import { useMemo } from 'react';
 
-const { Sider, Content } = Layout;
+const { Content } = Layout;
 const { Text } = Typography;
 
 export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try {
-      // По умолчанию меню свёрнуто в гамбургер; разворачивается только при явном выборе ('0').
-      return localStorage.getItem('estimat:sidebar-collapsed') !== '0';
-    } catch {
-      return true;
-    }
-  });
+  const [open, setOpen] = useState(false);
 
   const menuItems = useMemo(() => {
     const items = [
@@ -51,6 +42,7 @@ export function AppLayout() {
 
   const onMenuClick: MenuProps['onClick'] = ({ key }) => {
     navigate(key);
+    setOpen(false);
   };
 
   // Рабочее пространство сметы (/estimates/:id) — узкие горизонтальные поля; список /estimates не затрагивается.
@@ -70,75 +62,65 @@ export function AppLayout() {
 
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
-      <Sider
+      {/* Плавающая кнопка-гамбургер; при открытом Drawer её перекрывает маска (zIndex Drawer ~1000). */}
+      <Button
+        type="text"
+        icon={<MenuOutlined style={{ fontSize: 18 }} />}
+        onClick={() => setOpen(true)}
+        aria-label="Открыть меню"
+        aria-expanded={open}
+        style={{ position: 'fixed', top: 8, left: 8, zIndex: 900 }}
+      />
+
+      <Drawer
+        placement="left"
+        open={open}
+        onClose={() => setOpen(false)}
         width={240}
-        collapsedWidth={64}
-        theme="dark"
-        collapsed={collapsed}
-        style={{ display: 'flex', flexDirection: 'column' }}
+        title={
+          <Link to="/" onClick={() => setOpen(false)} style={{ fontSize: 20, fontWeight: 'bold' }}>
+            EstiMat
+          </Link>
+        }
+        styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <div style={{ padding: collapsed ? '16px 0' : '16px 24px', textAlign: 'center' }}>
-            <Link to="/" style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>
-              {collapsed ? 'E' : 'EstiMat'}
-            </Link>
-          </div>
-          <Menu
-            theme="dark"
-            mode="inline"
-            selectedKeys={selectedKeys}
-            items={menuItems}
-            onClick={onMenuClick}
-            style={{ flex: 1, borderRight: 0 }}
-          />
-          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', padding: collapsed ? '8px 0' : '8px 16px' }}>
-            <Dropdown menu={{ items: userMenuItems }} placement="topRight" trigger={['click']}>
-              <Button
-                type="text"
-                icon={<UserOutlined />}
-                style={{
-                  color: 'rgba(255,255,255,0.85)',
-                  width: '100%',
-                  textAlign: 'left',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: collapsed ? 'center' : 'flex-start',
-                  gap: 8,
-                }}
-              >
-                {!collapsed && <Text style={{ color: 'rgba(255,255,255,0.85)' }} ellipsis>{user?.fullName || user?.email}</Text>}
-              </Button>
-            </Dropdown>
-          </div>
-          <Button
-            type="text"
-            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            onClick={() => {
-              setCollapsed((prev) => {
-                const next = !prev;
-                try {
-                  localStorage.setItem('estimat:sidebar-collapsed', next ? '1' : '0');
-                } catch {
-                  /* localStorage недоступен — игнорируем */
-                }
-                return next;
-              });
-            }}
-            style={{
-              color: 'rgba(255,255,255,0.65)',
-              width: '100%',
-              borderRadius: 0,
-              borderTop: '1px solid rgba(255,255,255,0.1)',
-              height: 48,
-            }}
-          />
+        <Menu
+          mode="inline"
+          selectedKeys={selectedKeys}
+          items={menuItems}
+          onClick={onMenuClick}
+          style={{ flex: 1, borderRight: 0 }}
+        />
+        <div style={{ borderTop: '1px solid rgba(0,0,0,0.06)', padding: '8px 16px' }}>
+          <Dropdown menu={{ items: userMenuItems }} placement="topLeft" trigger={['click']}>
+            <Button
+              type="text"
+              icon={<UserOutlined />}
+              style={{
+                width: '100%',
+                textAlign: 'left',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-start',
+                gap: 8,
+              }}
+            >
+              <Text ellipsis>{user?.fullName || user?.email}</Text>
+            </Button>
+          </Dropdown>
         </div>
-      </Sider>
-      <Layout>
-        <Content style={{ margin: isEstimateWorkspace ? '24px 8px' : 24, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <Outlet />
-        </Content>
-      </Layout>
+      </Drawer>
+
+      <Content
+        style={{
+          margin: isEstimateWorkspace ? '48px 8px 24px' : '48px 24px 24px',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <Outlet />
+      </Content>
     </Layout>
   );
 }
