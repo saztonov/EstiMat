@@ -166,10 +166,6 @@ html, body, #root {
   font-size: 12px;
   color: #595959;
 }
-/* Светло-салатовый заголовок таблиц только на странице «Подрядчики» */
-.contractors-smeta .estimat-compact .ant-table-thead .ant-table-cell {
-  background: #eaf7d9 !important;
-}
 /* Ячейка названия с review-тегами: имя слева (переносится), теги прижаты к правому краю */
 .estimat-review-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .estimat-review-name { flex: 1; min-width: 0; }
