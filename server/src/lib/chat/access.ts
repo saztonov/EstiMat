@@ -3,8 +3,8 @@
  * (в т.ч. чужих смет), поэтому доступ формализован отдельным слоем, а не «всем
  * авторизованным».
  *
- * Правило: admin и engineer — все объекты; иначе объект организации пользователя
- * ИЛИ объект, в котором пользователь состоит (project_members).
+ * Правило: admin и engineer — все объекты; иначе объект, в котором пользователь
+ * состоит (project_members).
  */
 import type { Queryable, ChatUser } from './types.js';
 
@@ -34,18 +34,13 @@ export async function assertEstimateAccess(
   user: ChatUser,
 ): Promise<{ projectId: string }> {
   const { rows } = await db.query(
-    `SELECT e.project_id, p.org_id
-     FROM estimates e
-     JOIN projects p ON p.id = e.project_id
-     WHERE e.id = $1`,
+    `SELECT project_id FROM estimates WHERE id = $1`,
     [estimateId],
   );
   if (rows.length === 0) throw new ChatAccessError('Смета не найдена', 404);
 
-  const { project_id: projectId, org_id: orgId } = rows[0];
+  const { project_id: projectId } = rows[0];
   if (hasFullEstimateAccess(user)) return { projectId };
-
-  if (user.orgId && orgId === user.orgId) return { projectId };
 
   const member = await db.query(
     `SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2 LIMIT 1`,
@@ -66,11 +61,9 @@ export function accessibleProjectsClause(
   startIdx: number,
 ): { clause: string; values: unknown[] } {
   if (hasFullEstimateAccess(user)) return { clause: 'TRUE', values: [] };
-  // $startIdx — orgId, $startIdx+1 — userId
+  // $startIdx — userId
   return {
-    clause: `(p.org_id = $${startIdx} OR p.id IN (
-      SELECT project_id FROM project_members WHERE user_id = $${startIdx + 1}
-    ))`,
-    values: [user.orgId, user.id],
+    clause: `p.id IN (SELECT project_id FROM project_members WHERE user_id = $${startIdx})`,
+    values: [user.id],
   };
 }

@@ -321,13 +321,12 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   fastify.post('/', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
     const body = createProjectSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
-      `INSERT INTO projects (code, name, full_name, org_id, address, status, start_date, end_date, image_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      `INSERT INTO projects (code, name, full_name, address, status, start_date, end_date, image_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [
         body.code,
         body.name,
         body.fullName || null,
-        body.orgId,
         body.address || null,
         body.status,
         body.startDate || null,
@@ -348,7 +347,6 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     if (body.code !== undefined) { sets.push(`code = $${i++}`); values.push(body.code); }
     if (body.name !== undefined) { sets.push(`name = $${i++}`); values.push(body.name); }
     if (body.fullName !== undefined) { sets.push(`full_name = $${i++}`); values.push(body.fullName); }
-    if (body.orgId !== undefined) { sets.push(`org_id = $${i++}`); values.push(body.orgId); }
     if (body.address !== undefined) { sets.push(`address = $${i++}`); values.push(body.address); }
     if (body.status !== undefined) { sets.push(`status = $${i++}`); values.push(body.status); }
     if (body.startDate !== undefined) { sets.push(`start_date = $${i++}`); values.push(body.startDate); }

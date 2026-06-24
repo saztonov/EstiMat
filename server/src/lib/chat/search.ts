@@ -395,11 +395,11 @@ export async function searchSimilarWorks(
   const limit = Math.min(Math.max(opts.limit ?? 8, 0), 20);
   const fullAccess = hasFullEstimateAccess(ctx.user);
 
-  // Параметры: $1 query, $2 projectId, [orgId,userId если нет полного доступа], threshold/prefilter, limit
-  const accessParams: unknown[] = fullAccess ? [] : [ctx.user.orgId, ctx.user.id];
+  // Параметры: $1 query, $2 projectId, [userId если нет полного доступа], threshold/prefilter, limit
+  const accessParams: unknown[] = fullAccess ? [] : [ctx.user.id];
   const accessClause = fullAccess
     ? 'TRUE'
-    : `(p.org_id = $3 OR p.id IN (SELECT project_id FROM project_members WHERE user_id = $4))`;
+    : `p.id IN (SELECT project_id FROM project_members WHERE user_id = $3)`;
   const sc = scopeClause(scope, '$2');
 
   if (ctx.hasTrgm) {
@@ -461,10 +461,10 @@ export async function searchSimilarMaterials(
   const scope = opts.scope ?? 'other_projects';
   const limit = Math.min(Math.max(opts.limit ?? 8, 0), 20);
   const fullAccess = hasFullEstimateAccess(ctx.user);
-  const accessParams: unknown[] = fullAccess ? [] : [ctx.user.orgId, ctx.user.id];
+  const accessParams: unknown[] = fullAccess ? [] : [ctx.user.id];
   const accessClause = fullAccess
     ? 'TRUE'
-    : `(p.org_id = $3 OR p.id IN (SELECT project_id FROM project_members WHERE user_id = $4))`;
+    : `p.id IN (SELECT project_id FROM project_members WHERE user_id = $3)`;
   const sc = scopeClause(scope, '$2');
 
   if (ctx.hasTrgm) {

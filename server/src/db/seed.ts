@@ -57,10 +57,9 @@ async function seed() {
 
     // Project
     const projResult = await client.query(
-      `INSERT INTO projects (code, name, full_name, org_id, status)
-       VALUES ('СОБ62', 'ЖК Солнечный', 'Жилой комплекс Солнечный, корпус 2', $1, 'active')
+      `INSERT INTO projects (code, name, full_name, status)
+       VALUES ('СОБ62', 'ЖК Солнечный', 'Жилой комплекс Солнечный, корпус 2', 'active')
        RETURNING id`,
-      [orgId],
     );
     const projectId = projResult.rows[0].id;
 

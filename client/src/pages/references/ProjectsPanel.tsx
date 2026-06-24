@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Table, Button, Modal, Form, Input, Select, Tag, Space, Upload, App } from 'antd';
+import { Table, Button, Modal, Form, Input, Tag, Space, Upload, App } from 'antd';
 import { PlusOutlined, EditOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile, UploadProps } from 'antd/es/upload/interface';
@@ -20,7 +20,6 @@ type ProjectRow = Record<string, unknown> & {
   code: string;
   name: string;
   full_name: string | null;
-  org_id: string;
   address: string | null;
   image_url: string | null;
   image_src?: string | null;
@@ -108,11 +107,6 @@ function ProjectFormModal({ mode, onClose, onSuccess }: ProjectFormModalProps) {
   const { message } = App.useApp();
   const isEdit = mode.type === 'edit';
 
-  const { data: orgs } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => api.get<{ data: Record<string, unknown>[] }>('/organizations'),
-  });
-
   const [fileList, setFileList] = useState<UploadFile[]>(() =>
     isEdit && mode.project.image_url
       ? [{ uid: '-1', name: 'photo', status: 'done', url: mode.project.image_src ?? mode.project.image_url ?? undefined }]
@@ -126,7 +120,6 @@ function ProjectFormModal({ mode, onClose, onSuccess }: ProjectFormModalProps) {
         code: mode.project.code,
         name: mode.project.name,
         fullName: mode.project.full_name,
-        orgId: mode.project.org_id,
         address: mode.project.address,
         imageUrl: mode.project.image_url,
       });
@@ -201,12 +194,6 @@ function ProjectFormModal({ mode, onClose, onSuccess }: ProjectFormModalProps) {
         </Form.Item>
         <Form.Item name="fullName" label="Полное название">
           <Input />
-        </Form.Item>
-        <Form.Item name="orgId" label="Организация" rules={[{ required: true }]}>
-          <Select
-            placeholder="Выберите организацию"
-            options={orgs?.data.map((o) => ({ value: o.id as string, label: o.name as string }))}
-          />
         </Form.Item>
         <Form.Item name="address" label="Адрес">
           <Input />
