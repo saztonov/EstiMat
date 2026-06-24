@@ -673,6 +673,23 @@ export function CostTypeGroupBlock({
     { title: '№', width: 36, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
     {
       title: 'Наименование работы', dataIndex: 'description',
+      // Клик по названию работы разворачивает/сворачивает её материалы — как кнопка «+».
+      // onCell применяется и в editable, и в read-only режиме (у подрядчиков onRow не задан).
+      onCell: (r) => ({
+        onClick: (e) => {
+          if (r.id === DRAFT_ID || isRowInEdit(r)) return;
+          // не реагируем на клики по интерактиву внутри ячейки (теги «ИИ»/«не согласовано»,
+          // поле автодополнения в режиме редактирования)
+          if ((e.target as HTMLElement).closest('button, input, a, .ant-select, .ant-tag')) return;
+          // гасим всплытие, чтобы НЕ сработал row-onClick (selectWork): клик по названию —
+          // только сворачивание/разворачивание, без выделения работы
+          e.stopPropagation();
+          setExpandedKeys((keys) =>
+            keys.includes(r.id) ? keys.filter((k) => k !== r.id) : [...keys, r.id],
+          );
+        },
+        style: r.id === DRAFT_ID ? undefined : { cursor: 'pointer' },
+      }),
       render: (v: string, r) => {
         if (isRowInEdit(r) && editing) {
           return (
@@ -919,7 +936,6 @@ export function CostTypeGroupBlock({
                     )
                       return;
                     selectWork(r.id, r.description, ctx);
-                    setExpandedKeys((keys) => (keys.includes(r.id) ? keys : [...keys, r.id]));
                   },
                   // Двойной клик по строке — режим редактирования работы
                   onDoubleClick: (e) => {
