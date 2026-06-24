@@ -18,6 +18,7 @@
 - **Без FSD** — простая страничная структура (pages/components/hooks/store)
 - **ИИ-часть отложена** — сметы и ВОР набираются вручную
 - **Drizzle в database-first режиме** — SQL-миграции вручную → drizzle-kit pull → автогенерация схемы
+- **Миграции совместимы с `deploy-estimat --migrate`** — каждый файл накатывается одним батчем (`node dist/db/migrate.js` → `client.query(sql)` по всему файлу): только чистый SQL без psql-метакоманд (`\d`, `\copy`, `\g`); идемпотентно (`IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, `DO $$ … pg_trigger`); сквозная нумерация `NNNN_name.sql` без коллизий номера (порядок применения — по алфавиту имени, трекинг в `schema_migrations`). `deploy-estimat --migrate` сам делает полный деплой (build + up API/SPA) и накат миграций — отдельный `deploy-estimat` не нужен
 
 ## Архитектура
 - Клиент-серверная: Fastify REST API + React SPA
