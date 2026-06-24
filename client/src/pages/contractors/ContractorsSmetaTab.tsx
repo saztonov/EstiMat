@@ -19,7 +19,6 @@ import {
   DownOutlined,
   UpOutlined,
   UserOutlined,
-  PlusOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { Organization } from '@estimat/shared';
@@ -279,7 +278,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
       0,
     );
 
-  // Ячейка «Исполнитель»: чипы подрядчиков + статус остатка + инлайн-назначение.
+  // Ячейка «Исполнитель»: чипы подрядчиков + статус остатка. Клик по всему блоку — назначение.
   const renderExecutor = (it: EstimateItem) => {
     const chips = (it.item_contractors ?? []).map((c) => (
       <Tag
@@ -288,6 +287,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
         closable={canAssign}
         onClose={(e) => {
           e.preventDefault();
+          e.stopPropagation(); // снятие подрядчика «крестиком» не должно открывать поповер
           clearMutation.mutate({ itemIds: [it.id], contractorId: c.contractor_id });
         }}
       >
@@ -305,23 +305,26 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
       );
     else status = <Tag color="green">распределено</Tag>;
 
-    return (
+    const content = (
       <Space size={4} wrap>
         {chips}
         {status}
-        {canAssign && (
-          <AssignPopover
-            contractorOptions={contractorOptions}
-            allowQty
-            onAssign={(input) => doAssign(input, [it.id])}
-            trigger={
-              <Tooltip title="Назначить исполнителя">
-                <Button type="text" size="small" icon={<PlusOutlined />} />
-              </Tooltip>
-            }
-          />
-        )}
       </Space>
+    );
+
+    if (!canAssign) return content;
+
+    return (
+      <AssignPopover
+        contractorOptions={contractorOptions}
+        allowQty
+        onAssign={(input) => doAssign(input, [it.id])}
+        trigger={
+          <div style={{ cursor: 'pointer' }} title="Назначить исполнителя">
+            {content}
+          </div>
+        }
+      />
     );
   };
 

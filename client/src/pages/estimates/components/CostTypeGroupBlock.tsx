@@ -658,6 +658,9 @@ export function CostTypeGroupBlock({
 
   const columns: ColumnsType<EstimateItem> = [
     ...leadingColumns,
+    // Когда есть лидирующие колонки (напр. «Исполнитель» в разделе «Подрядчики»),
+    // ставим колонку раскрытия материалов после них — иначе AntD рисует её самой левой.
+    ...(leadingColumns.length ? [Table.EXPAND_COLUMN] : []),
     { title: '№', width: 36, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
     {
       title: 'Наименование работы', dataIndex: 'description',
