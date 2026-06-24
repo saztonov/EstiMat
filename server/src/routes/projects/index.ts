@@ -25,6 +25,17 @@ interface ZoneNode extends ZoneRow {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UPLOADS_ROOT = join(__dirname, '..', '..', '..', 'uploads');
 
+// Content-Type обложки выводим из расширения ключа по белому списку растровых картинок,
+// а НЕ из сохранённого в S3 значения (оно задаётся клиентским mimetype при загрузке).
+// Иначе объект с типом text/html или image/svg+xml, отданный с нашего origin, дал бы
+// stored XSS. Загрузка и так принимает только эти типы — список держим согласованным.
+const COVER_MIME: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
 // Легаси-обложки хранились на локальном диске под /uploads/projects/<имя>.
 // Новые — ключи объектов S3 (без префикса /uploads/).
 function isLegacyLocalImage(value: string): boolean {
@@ -156,18 +167,32 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   // прямого сетевого пути клиент → S3. Ключ объекта (projects/<uuid>.<ext>) — в wildcard.
   fastify.get<{ Params: { '*': string } }>(
     '/cover/*',
-    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    {
+      preHandler: [requireRole('admin', 'engineer', 'manager')],
+      // Обложка встраивается в SPA с другого origin (домен API ≠ домен SPA), поэтому
+      // дефолтный helmet CORP=same-origin её режет (ERR_BLOCKED_BY_RESPONSE.NotSameOrigin).
+      // Для картинки разрешаем кросс-доменное встраивание (прочитать содержимое cross-origin
+      // всё равно нельзя — это просто изображение). Переопределение точечное, на этот роут.
+      helmet: { crossOriginResourcePolicy: { policy: 'cross-origin' } },
+    },
     async (request, reply) => {
       const key = request.params['*'];
       // Только обложки проектов; защита от обхода путей и легаси-локальных файлов.
       if (!key.startsWith('projects/') || key.includes('..')) {
         return reply.status(400).send({ error: 'Некорректный ключ объекта' });
       }
+      // Тип — из расширения по белому списку, не из сохранённого в S3 (анти-XSS).
+      const ext = key.slice(key.lastIndexOf('.') + 1).toLowerCase();
+      const contentType = COVER_MIME[ext];
+      if (!contentType) return reply.status(400).send({ error: 'Неподдерживаемый тип обложки' });
       if (!fastify.storage) return reply.status(404).send({ error: 'Хранилище не настроено' });
       try {
         const obj = await fastify.storage.getObject(key);
-        if (obj.contentType) reply.type(obj.contentType);
+        reply.type(contentType);
         if (obj.contentLength != null) reply.header('Content-Length', obj.contentLength);
+        // Анти-XSS: тип не угадывать по содержимому, как документ не исполнять, отдавать inline.
+        reply.header('X-Content-Type-Options', 'nosniff');
+        reply.header('Content-Disposition', 'inline; filename="cover"');
         // Ключ контент-адресный (UUID) — содержимое неизменно, кэшируем «навсегда».
         reply.header('Cache-Control', 'private, max-age=31536000, immutable');
         return reply.send(obj.body);
