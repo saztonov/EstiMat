@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Table, Tag, Space, Empty, Tooltip } from 'antd';
+import { useMemo, useState } from 'react';
+import { Table, Tag, Space, Empty, Tooltip, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { buildMaterialGroups, type AggregatedMaterial } from '../estimates/materials/aggregateMaterials';
 import { formatMoney, type EstimateItem } from '../estimates/components/types';
@@ -31,10 +31,29 @@ function scaleForContractor(items: EstimateItem[]): EstimateItem[] {
 }
 
 export function ContractorsMaterialsTab({ items, viewerIsContractor }: Props) {
+  const [filterContractorIds, setFilterContractorIds] = useState<string[]>([]);
+
+  // Опции фильтра — только подрядчики, реально назначенные на работы в этой смете
+  // (источник — item_contractors, как на вкладке «Смета»).
+  const assignedContractorOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const it of items)
+      for (const c of it.item_contractors ?? [])
+        if (!map.has(c.contractor_id)) map.set(c.contractor_id, c.contractor_name ?? '—');
+    return [...map]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+  }, [items]);
+
   const groups = useMemo(() => {
-    const src = viewerIsContractor ? scaleForContractor(items) : items;
+    let src = items;
+    if (filterContractorIds.length)
+      src = src.filter((it) =>
+        (it.item_contractors ?? []).some((c) => filterContractorIds.includes(c.contractor_id)),
+      );
+    if (viewerIsContractor) src = scaleForContractor(src);
     return buildMaterialGroups(src, []);
-  }, [items, viewerIsContractor]);
+  }, [items, viewerIsContractor, filterContractorIds]);
 
   const columns: ColumnsType<AggregatedMaterial> = [
     {
@@ -76,32 +95,50 @@ export function ContractorsMaterialsTab({ items, viewerIsContractor }: Props) {
     },
   ];
 
-  if (groups.length === 0) {
-    return <Empty description="Материалов нет" />;
-  }
-
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-      <Space direction="vertical" style={{ width: '100%' }} size="middle">
-      {groups.map((g) => (
-        <div key={g.costTypeId ?? '__none__'}>
-          <Space style={{ marginBottom: 8 }}>
-            <strong>
-              {g.costCategoryName ? `${g.costCategoryName} · ` : ''}
-              {g.costTypeName ?? 'Без вида работ'}
-            </strong>
-            <span style={{ color: '#1677ff' }}>{formatMoney(g.total)}</span>
-          </Space>
-          <Table<AggregatedMaterial>
-            rowKey="key"
-            size="small"
-            pagination={false}
-            dataSource={g.materials}
-            columns={columns}
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      {!viewerIsContractor && (
+        <div style={{ flexShrink: 0, marginBottom: 12 }}>
+          <Select
+            mode="multiple"
+            allowClear
+            showSearch
+            placeholder="Фильтр по подрядчикам"
+            style={{ width: 280 }}
+            value={filterContractorIds}
+            onChange={setFilterContractorIds}
+            options={assignedContractorOptions}
+            optionFilterProp="label"
+            maxTagCount={1}
           />
         </div>
-      ))}
-      </Space>
+      )}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        {groups.length === 0 ? (
+          <Empty description="Материалов нет" />
+        ) : (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          {groups.map((g) => (
+            <div key={g.costTypeId ?? '__none__'}>
+              <Space style={{ marginBottom: 8 }}>
+                <strong>
+                  {g.costCategoryName ? `${g.costCategoryName} · ` : ''}
+                  {g.costTypeName ?? 'Без вида работ'}
+                </strong>
+                <span style={{ color: '#1677ff' }}>{formatMoney(g.total)}</span>
+              </Space>
+              <Table<AggregatedMaterial>
+                rowKey="key"
+                size="small"
+                pagination={false}
+                dataSource={g.materials}
+                columns={columns}
+              />
+            </div>
+          ))}
+          </Space>
+        )}
+      </div>
     </div>
   );
 }
