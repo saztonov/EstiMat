@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { App, Button, Popconfirm, Segmented, Select, Tooltip } from 'antd';
-import { RobotOutlined, DoubleRightOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { App, Button, Dropdown, Popconfirm, Segmented, Tooltip } from 'antd';
+import { RobotOutlined, DoubleRightOutlined, DownOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApplyItem } from '@estimat/shared';
 import { AiMessageList } from './AiMessageList';
@@ -176,18 +176,22 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
       ) : (
         <>
           <div style={sessionBar}>
-            <Tooltip title={activeChatTitle}>
-              <Select
-                size="small"
-                className="estimat-chat-select"
-                popupClassName="estimat-chat-select-popup"
-                style={{ flex: 1, minWidth: 0 }}
-                placeholder="Новый чат"
-                value={sessionId ?? undefined}
-                onChange={(v) => { setNewChat(false); setActiveSession(estimateId, v); }}
-                options={sessions.map((s) => ({ value: s.id, label: s.title ?? 'Без названия' }))}
-              />
-            </Tooltip>
+            <Dropdown
+              trigger={['click']}
+              overlayClassName="estimat-chat-menu"
+              menu={{
+                items: sessions.length
+                  ? sessions.map((s) => ({ key: s.id, label: s.title ?? 'Без названия' }))
+                  : [{ key: '__none', label: 'Чатов пока нет', disabled: true }],
+                selectedKeys: sessionId ? [sessionId] : [],
+                onClick: ({ key }) => { setNewChat(false); setActiveSession(estimateId, key); },
+              }}
+            >
+              <button type="button" title={activeChatTitle} style={chatTriggerBox}>
+                <span style={chatTriggerText}>{activeChatTitle ?? 'Новый чат'}</span>
+                <DownOutlined style={{ fontSize: 11, color: 'rgba(0,0,0,0.35)', flexShrink: 0, marginTop: 2 }} />
+              </button>
+            </Dropdown>
             <Tooltip title="Новый чат">
               <Button size="small" style={{ flexShrink: 0 }} icon={<PlusOutlined />} onClick={() => { setNewChat(true); setActiveSession(estimateId, null); }} />
             </Tooltip>
@@ -253,6 +257,37 @@ const sessionBar: React.CSSProperties = {
   gap: 6,
   padding: '8px 8px',
   borderBottom: '1px solid #f5f5f5',
+};
+
+// Триггер выбора чата вместо нативного Select: своё название с переносом в 2 строки.
+const chatTriggerBox: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 4,
+  background: '#fff',
+  border: '1px solid #d9d9d9',
+  borderRadius: 6,
+  padding: '2px 8px',
+  cursor: 'pointer',
+  textAlign: 'left',
+  fontSize: 12,
+  lineHeight: 1.3,
+  color: 'rgba(0,0,0,0.88)',
+  fontFamily: 'inherit',
+};
+
+const chatTriggerText: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: '-webkit-box',
+  WebkitBoxOrient: 'vertical',
+  WebkitLineClamp: 2,
+  overflow: 'hidden',
+  overflowWrap: 'anywhere',
+  maxHeight: '2.6em', // страховка: 2 строки даже если line-clamp недоступен
+  paddingBlock: 2,
 };
 
 const scopeBar: React.CSSProperties = {
