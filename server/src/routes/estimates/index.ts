@@ -43,7 +43,8 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   }
 
   // GET /api/estimates?projectId=
-  fastify.get('/', async (request) => {
+  // Закрыто для contractor: подрядчик получает свои строки только через /api/contractors/*.
+  fastify.get('/', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request) => {
     const { projectId } = request.query as { projectId?: string };
     let query = `SELECT e.*,
                         p.code AS project_code,
@@ -63,7 +64,11 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   });
 
   // GET /api/estimates/:id — работы (с измерениями + автором), материалы (вложенно), подрядчики
-  fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
+  // Закрыто для contractor: отдаёт ВСЕ строки сметы; подрядчик использует /api/contractors/my-items.
+  fastify.get<{ Params: { id: string } }>(
+    '/:id',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
     const { rows } = await fastify.pool.query(
       `SELECT e.*,
               p.code AS project_code,
@@ -129,10 +134,33 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       [request.params.id],
     );
 
-    const itemsWithMaterials = items.rows.map((it) => ({
-      ...it,
-      materials: materials.rows.filter((m) => m.item_id === it.id),
-    }));
+    // Построчные назначения подрядчиков (раздел «Подрядчики»): подрядчики строки,
+    // распределённый объём, остаток без подрядчика и признак over-assigned.
+    const itemContractors = await fastify.pool.query(
+      `SELECT eic.item_id, eic.contractor_id, eic.assigned_qty, eic.assigned_percent,
+              COALESCE(eic.assigned_qty, ei.quantity * eic.assigned_percent / 100.0, ei.quantity) AS effective_qty,
+              o.name AS contractor_name
+         FROM estimate_item_contractors eic
+         JOIN estimate_items ei      ON ei.id = eic.item_id
+         LEFT JOIN organizations o   ON o.id = eic.contractor_id
+        WHERE eic.estimate_id = $1
+        ORDER BY eic.assigned_at`,
+      [request.params.id],
+    );
+
+    const itemsWithMaterials = items.rows.map((it) => {
+      const its = itemContractors.rows.filter((c) => c.item_id === it.id);
+      const assignedTotal = its.reduce((s, c) => s + Number(c.effective_qty), 0);
+      const qty = Number(it.quantity);
+      return {
+        ...it,
+        materials: materials.rows.filter((m) => m.item_id === it.id),
+        item_contractors: its,
+        assigned_total: assignedTotal,
+        remaining_qty: Math.max(qty - assignedTotal, 0),
+        over_assigned: assignedTotal > qty + 1e-6,
+      };
+    });
 
     return {
       data: {

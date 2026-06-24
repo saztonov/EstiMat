@@ -93,6 +93,60 @@ export const setEstimateContractorSchema = z.object({
   contractorId: z.string().uuid(),
 });
 
+// === Назначение подрядчика на строки сметы (раздел «Подрядчики») ===
+// Список строк дедуплицируется; пустой и >1000 id отклоняются.
+const assignItemIds = z
+  .array(z.string().uuid())
+  .min(1, 'Не выбрано ни одной строки')
+  .max(1000, 'Слишком много строк за одно назначение')
+  .transform((ids) => [...new Set(ids)]);
+
+// Режимы назначения (взаимоисключающие). Массовый абсолютный qty не допускается —
+// строки бывают в разных единицах/объёмах, поэтому qty задаётся только пер-строка массивом пар.
+export const assignItemContractorsSchema = z.discriminatedUnion('mode', [
+  // один процент на выбранные строки
+  z.object({
+    mode: z.literal('percent'),
+    contractorId: z.string().uuid(),
+    itemIds: assignItemIds,
+    percent: z.number().positive('Процент должен быть > 0').max(100, 'Процент не больше 100'),
+  }),
+  // «весь остаток» по каждой выбранной строке
+  z.object({
+    mode: z.literal('remainder'),
+    contractorId: z.string().uuid(),
+    itemIds: assignItemIds,
+  }),
+  // абсолютные объёмы — только пер-строка массивом пар
+  z.object({
+    mode: z.literal('qty'),
+    contractorId: z.string().uuid(),
+    assignments: z
+      .array(
+        z.object({
+          itemId: z.string().uuid(),
+          assignedQty: z.number().positive('Объём должен быть > 0'),
+        }),
+      )
+      .min(1, 'Не выбрано ни одной строки')
+      .max(1000, 'Слишком много строк за одно назначение'),
+  }),
+  // на вид работ целиком — все ТЕКУЩИЕ строки cost_type сметы (новые не наследуют)
+  z.object({
+    mode: z.literal('cost_type'),
+    contractorId: z.string().uuid(),
+    estimateId: z.string().uuid(),
+    costTypeId: z.string().uuid(),
+    percent: z.number().positive().max(100).nullable().optional(),
+  }),
+]);
+
+// Снять подрядчика со строк: contractorId не задан → снять всех подрядчиков с этих строк.
+export const clearItemContractorsSchema = z.object({
+  itemIds: assignItemIds,
+  contractorId: z.string().uuid().nullable().optional(),
+});
+
 export const estimateSchema = z.object({
   id: z.string().uuid(),
   projectId: z.string().uuid(),
@@ -115,6 +169,8 @@ export type UpdateEstimateMaterialInput = z.infer<typeof updateEstimateMaterialS
 export type ReassignMaterialsInput = z.infer<typeof reassignMaterialsSchema>;
 export type EstimateMaterialStatus = z.infer<typeof estimateMaterialStatusSchema>;
 export type SetEstimateContractorInput = z.infer<typeof setEstimateContractorSchema>;
+export type AssignItemContractorsInput = z.infer<typeof assignItemContractorsSchema>;
+export type ClearItemContractorsInput = z.infer<typeof clearItemContractorsSchema>;
 export type BulkDeleteEstimateItemsInput = z.infer<typeof bulkDeleteEstimateItemsSchema>;
 export type BulkConfirmEstimateItemsInput = z.infer<typeof bulkConfirmEstimateItemsSchema>;
 export type Estimate = z.infer<typeof estimateSchema>;

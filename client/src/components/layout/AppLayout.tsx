@@ -8,6 +8,8 @@ import {
   UserOutlined,
   LogoutOutlined,
   MenuOutlined,
+  TeamOutlined,
+  CheckSquareOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../store/authStore';
 import type { MenuProps } from 'antd';
@@ -22,9 +24,18 @@ export function AppLayout() {
   const [open, setOpen] = useState(false);
 
   const menuItems = useMemo(() => {
+    // Подрядчик видит только свои разделы; остальные роли — полное меню.
+    if (user?.role === 'contractor') {
+      return [
+        { key: '/contractors', icon: <TeamOutlined />, label: 'Подрядчики' },
+        { key: '/execution', icon: <CheckSquareOutlined />, label: 'Выполнение' },
+      ];
+    }
     const items = [
       { key: '/estimates', icon: <FileTextOutlined />, label: 'Сметы' },
       { key: '/references', icon: <AppstoreOutlined />, label: 'Справочники' },
+      { key: '/contractors', icon: <TeamOutlined />, label: 'Подрядчики' },
+      { key: '/execution', icon: <CheckSquareOutlined />, label: 'Выполнение' },
     ];
     if (user?.role === 'admin') {
       items.push({ key: '/administration', icon: <SettingOutlined />, label: 'Администрирование' });
@@ -36,6 +47,8 @@ export function AppLayout() {
     const path = location.pathname;
     if (path.startsWith('/references')) return ['/references'];
     if (path.startsWith('/administration')) return ['/administration'];
+    if (path.startsWith('/contractors')) return ['/contractors'];
+    if (path.startsWith('/execution')) return ['/execution'];
     if (path.startsWith('/estimates') || path.startsWith('/projects')) return ['/estimates'];
     return [path];
   }, [location.pathname]);

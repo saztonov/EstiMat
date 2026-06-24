@@ -53,6 +53,26 @@ export interface EstimateItem {
   // Трассировка тиражирования.
   copy_batch_id?: string | null;
   copy_source_item_id?: string | null;
+  // Назначения подрядчиков на строку + распределение объёма (раздел «Подрядчики», вид инженера).
+  item_contractors?: ItemContractor[];
+  assigned_total?: number;
+  remaining_qty?: number;
+  over_assigned?: boolean;
+  // Вид подрядчика (его строки из /contractors/my-items): объём, назначенный его организации.
+  my_effective_qty?: string | number | null;
+  my_assigned_qty?: string | null;
+  my_assigned_percent?: string | null;
+}
+
+// Назначение подрядчика (организации) на строку сметы с распределённым объёмом.
+export interface ItemContractor {
+  item_id?: string;
+  contractor_id: string;
+  contractor_name: string | null;
+  assigned_qty: string | null;
+  assigned_percent: string | null;
+  /** Эффективный объём подрядчика по строке (qty, доля или весь объём) — посчитан сервером. */
+  effective_qty: string | number;
 }
 
 /** Есть ли в работе несогласованные позиции (сама работа или её материалы). */

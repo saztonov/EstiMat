@@ -27,6 +27,15 @@ export function hasFullEstimateAccess(user: ChatUser): boolean {
   return user.role === 'admin' || user.role === 'engineer';
 }
 
+/**
+ * Подрядчик: видит только строки сметы, назначенные его организации
+ * (estimate_item_contractors.contractor_id = user.orgId). Инженеры подрядчика
+ * заводятся именно с ролью contractor (роль engineer даёт полный доступ — только нашим).
+ */
+export function isContractor(user: ChatUser): boolean {
+  return user.role === 'contractor';
+}
+
 /** Проверить доступ к смете и вернуть её projectId. Бросает ChatAccessError. */
 export async function assertEstimateAccess(
   db: Queryable,

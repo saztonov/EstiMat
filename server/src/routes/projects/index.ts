@@ -131,7 +131,8 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
 
   // GET /api/projects
-  fastify.get('/', async () => {
+  // Объекты/сметы закрыты для contractor — он работает только в разделе «Подрядчики».
+  fastify.get('/', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async () => {
     const { rows } = await fastify.pool.query(
       'SELECT * FROM projects ORDER BY code',
     );
@@ -139,7 +140,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   });
 
   // GET /api/projects/with-stats — для галереи объектов на странице «Сметы»
-  fastify.get('/with-stats', async () => {
+  fastify.get('/with-stats', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async () => {
     const { rows } = await fastify.pool.query(
       `SELECT p.*,
               COALESCE(COUNT(e.id), 0)::int AS estimates_count,
@@ -153,17 +154,24 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   });
 
   // GET /api/projects/:id
-  fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
-    const { rows } = await fastify.pool.query(
-      'SELECT * FROM projects WHERE id = $1',
-      [request.params.id],
-    );
-    if (rows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
-    return { data: await withImageSrc(fastify, rows[0]) };
-  });
+  fastify.get<{ Params: { id: string } }>(
+    '/:id',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const { rows } = await fastify.pool.query(
+        'SELECT * FROM projects WHERE id = $1',
+        [request.params.id],
+      );
+      if (rows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
+      return { data: await withImageSrc(fastify, rows[0]) };
+    },
+  );
 
   // GET /api/projects/:id/summary — сводная смета по объекту
-  fastify.get<{ Params: { id: string } }>('/:id/summary', async (request, reply) => {
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/summary',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
     const { rows: projectRows } = await fastify.pool.query(
       'SELECT * FROM projects WHERE id = $1',
       [request.params.id],

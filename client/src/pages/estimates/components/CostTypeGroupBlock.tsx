@@ -822,8 +822,9 @@ export function CostTypeGroupBlock({
             allowClear
             showSearch
             optionFilterProp="label"
-            placeholder="Подрядчик"
-            style={{ minWidth: 200 }}
+            placeholder="Подрядчик по виду работ (общий)"
+            title="Общий подрядчик на весь вид работ. Построчное распределение — в разделе «Подрядчики»."
+            style={{ minWidth: 240 }}
             value={group.contractor?.contractor_id}
             options={contractorOptions}
             onChange={(val) => {
