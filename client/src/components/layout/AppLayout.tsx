@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import type { ReactNode } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router';
 import { Layout, Menu, Button, Typography, Dropdown, Drawer } from 'antd';
 import {
@@ -24,21 +25,33 @@ export function AppLayout() {
   const [open, setOpen] = useState(false);
 
   const menuItems = useMemo(() => {
+    // Пункты — настоящие ссылки (<a href>): средний/Ctrl-клик открывает раздел
+    // в новой вкладке штатным поведением браузера. key = путь маршрута.
+    const navItem = (key: string, icon: ReactNode, label: string) => ({
+      key,
+      label: (
+        <Link to={key} className="estimat-nav-link">
+          {icon}
+          <span>{label}</span>
+        </Link>
+      ),
+    });
+
     // Подрядчик видит только свои разделы; остальные роли — полное меню.
     if (user?.role === 'contractor') {
       return [
-        { key: '/contractors', icon: <TeamOutlined />, label: 'Подрядчики' },
-        { key: '/execution', icon: <CheckSquareOutlined />, label: 'Выполнение' },
+        navItem('/contractors', <TeamOutlined />, 'Подрядчики'),
+        navItem('/execution', <CheckSquareOutlined />, 'Выполнение'),
       ];
     }
     const items = [
-      { key: '/estimates', icon: <FileTextOutlined />, label: 'Сметы' },
-      { key: '/contractors', icon: <TeamOutlined />, label: 'Подрядчики' },
-      { key: '/execution', icon: <CheckSquareOutlined />, label: 'Выполнение' },
-      { key: '/references', icon: <AppstoreOutlined />, label: 'Справочники' },
+      navItem('/estimates', <FileTextOutlined />, 'Сметы'),
+      navItem('/contractors', <TeamOutlined />, 'Подрядчики'),
+      navItem('/execution', <CheckSquareOutlined />, 'Выполнение'),
+      navItem('/references', <AppstoreOutlined />, 'Справочники'),
     ];
     if (user?.role === 'admin') {
-      items.push({ key: '/administration', icon: <SettingOutlined />, label: 'Администрирование' });
+      items.push(navItem('/administration', <SettingOutlined />, 'Администрирование'));
     }
     return items;
   }, [user?.role]);
@@ -53,10 +66,9 @@ export function AppLayout() {
     return [path];
   }, [location.pathname]);
 
-  const onMenuClick: MenuProps['onClick'] = ({ key }) => {
-    navigate(key);
-    setOpen(false);
-  };
+  // Навигацию выполняет <Link> в пункте; обработчик лишь закрывает Drawer
+  // (на средний клик событие click не возникает — Drawer останется открытым).
+  const onMenuClick: MenuProps['onClick'] = () => setOpen(false);
 
   // Рабочее пространство сметы (/estimates/:id) — узкие горизонтальные поля; список /estimates не затрагивается.
   const isEstimateWorkspace = /^\/estimates\/.+/.test(location.pathname);
@@ -99,6 +111,7 @@ export function AppLayout() {
       >
         <Menu
           mode="inline"
+          className="estimat-nav-menu"
           selectedKeys={selectedKeys}
           items={menuItems}
           onClick={onMenuClick}
