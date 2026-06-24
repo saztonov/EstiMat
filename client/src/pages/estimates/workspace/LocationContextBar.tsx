@@ -1,6 +1,6 @@
 import { Segmented, Space, Typography, Button, Tooltip } from 'antd';
 import { CloseCircleOutlined, EnvironmentOutlined } from '@ant-design/icons';
-import { useProjectZones, useProjectRoomTypes } from '../../../hooks/useProjectLocations';
+import { useProjectZones } from '../../../hooks/useProjectLocations';
 import { useLocationContextStore, useAddContext } from '../../../store/locationContextStore';
 import { LocationPicker } from '../components/LocationPicker';
 import { LocationFilterPopover } from './LocationFilterPopover';
@@ -14,9 +14,7 @@ interface Props {
 // Бар над таблицей сметы: активный контекст добавления локации + переключатель группировки + фильтр.
 export function LocationContextBar({ projectId, estimateId }: Props) {
   const { data: zonesData } = useProjectZones(projectId);
-  const { data: roomTypesData } = useProjectRoomTypes(projectId);
   const zones = zonesData?.data.roots ?? [];
-  const roomTypes = roomTypesData?.data ?? [];
 
   const add = useAddContext(estimateId);
   const setAddContext = useLocationContextStore((s) => s.setAddContext);
@@ -25,14 +23,12 @@ export function LocationContextBar({ projectId, estimateId }: Props) {
   const setGroupBy = useLocationContextStore((s) => s.setGroupBy);
 
   const zone = findZone(zones, add.zoneId);
-  const roomTypeName = roomTypes.find((rt) => rt.id === add.roomTypeId)?.name;
   const label = formatLocationLabel({
     zone_name: zone?.name,
     floor_from: add.floorFrom,
     floor_to: add.floorTo,
-    room_type_name: roomTypeName,
   });
-  const hasContext = !!(add.zoneId || add.roomTypeId || add.floorFrom != null || add.floorTo != null);
+  const hasContext = !!(add.zoneId || add.floorFrom != null || add.floorTo != null);
 
   return (
     <div
@@ -57,7 +53,6 @@ export function LocationContextBar({ projectId, estimateId }: Props) {
         size="small"
         compact
         zones={zones}
-        roomTypes={roomTypes}
         value={add}
         onChange={(v) => setAddContext(estimateId, v)}
       />
@@ -92,7 +87,7 @@ export function LocationContextBar({ projectId, estimateId }: Props) {
           { label: 'По локации', value: 'location' },
         ]}
       />
-      <LocationFilterPopover zones={zones} roomTypes={roomTypes} />
+      <LocationFilterPopover zones={zones} />
     </div>
   );
 }

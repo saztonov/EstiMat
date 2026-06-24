@@ -3,25 +3,23 @@ import { Tag, Popover, Button, Space } from 'antd';
 import { EnvironmentOutlined } from '@ant-design/icons';
 import type { LocationAddContext } from '../../../store/locationContextStore';
 import { LocationPicker } from './LocationPicker';
-import { type ZoneNode, type RoomType, formatLocationLabel, hasLocation } from './location';
+import { type ZoneNode, formatLocationLabel, hasLocation } from './location';
 import type { EstimateItem } from './types';
 
 interface Props {
   work: EstimateItem;
   editable: boolean;
   zones: ZoneNode[];
-  roomTypes: RoomType[];
   onChange: (loc: LocationAddContext) => void;
 }
 
-// Ячейка локации работы: тег с подписью + поповер редактирования (география + тип помещения).
-export function LocationCell({ work, editable, zones, roomTypes, onChange }: Props) {
+// Ячейка локации работы: тег с подписью + поповер редактирования (география: зона + этажи).
+export function LocationCell({ work, editable, zones, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<LocationAddContext>({
     zoneId: work.zone_id ?? null,
     floorFrom: work.floor_from ?? null,
     floorTo: work.floor_to ?? null,
-    roomTypeId: work.room_type_id ?? null,
   });
 
   const label = formatLocationLabel(work);
@@ -43,7 +41,6 @@ export function LocationCell({ work, editable, zones, roomTypes, onChange }: Pro
         zoneId: work.zone_id ?? null,
         floorFrom: work.floor_from ?? null,
         floorTo: work.floor_to ?? null,
-        roomTypeId: work.room_type_id ?? null,
       });
     }
     setOpen(v);
@@ -60,7 +57,7 @@ export function LocationCell({ work, editable, zones, roomTypes, onChange }: Pro
       title="Локация работы"
       content={
         <Space direction="vertical" style={{ width: 360 }}>
-          <LocationPicker size="small" zones={zones} roomTypes={roomTypes} value={draft} onChange={setDraft} />
+          <LocationPicker size="small" zones={zones} value={draft} onChange={setDraft} />
           <Space>
             <Button size="small" type="primary" onClick={apply}>Применить</Button>
             <Button size="small" onClick={() => setOpen(false)}>Отмена</Button>

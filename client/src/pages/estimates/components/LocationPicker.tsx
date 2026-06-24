@@ -1,9 +1,8 @@
 import { useMemo } from 'react';
-import { TreeSelect, Select, InputNumber, Button, Space, Tooltip } from 'antd';
+import { TreeSelect, InputNumber, Button, Space, Tooltip } from 'antd';
 import type { LocationAddContext } from '../../../store/locationContextStore';
 import {
   type ZoneNode,
-  type RoomType,
   ZONE_KIND_LABEL,
   findZone,
 } from './location';
@@ -24,7 +23,6 @@ function zonesToTreeData(nodes: ZoneNode[]): TreeData[] {
 
 interface Props {
   zones: ZoneNode[];
-  roomTypes: RoomType[];
   value: LocationAddContext;
   onChange: (v: LocationAddContext) => void;
   size?: 'small' | 'middle' | 'large';
@@ -32,8 +30,8 @@ interface Props {
   compact?: boolean;
 }
 
-// Выбор локации строки: зона (дерево) + диапазон этажей + тип помещения.
-export function LocationPicker({ zones, roomTypes, value, onChange, size = 'middle', compact }: Props) {
+// Выбор локации строки: зона (дерево) + диапазон этажей. Типы помещений временно скрыты.
+export function LocationPicker({ zones, value, onChange, size = 'middle', compact }: Props) {
   const treeData = useMemo(() => zonesToTreeData(zones), [zones]);
   const zone = useMemo(() => findZone(zones, value.zoneId), [zones, value.zoneId]);
   const hasFloors = !!zone && zone.floor_min != null && zone.floor_max != null;
@@ -97,17 +95,6 @@ export function LocationPicker({ zones, roomTypes, value, onChange, size = 'midd
           </Tooltip>
         )}
       </Space.Compact>
-      <Select
-        size={size}
-        allowClear
-        showSearch
-        optionFilterProp="label"
-        placeholder="Тип помещения"
-        style={{ minWidth: 160 }}
-        value={value.roomTypeId ?? undefined}
-        onChange={(v) => onChange({ ...value, roomTypeId: (v as string) ?? null })}
-        options={roomTypes.map((rt) => ({ value: rt.id, label: rt.name }))}
-      />
     </Space>
   );
 }

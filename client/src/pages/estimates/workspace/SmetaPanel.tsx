@@ -24,7 +24,7 @@ import { formatMoney, hasUnreconciled } from '../components/types';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { useLocationContextStore } from '../../../store/locationContextStore';
-import { useProjectZones, useProjectRoomTypes } from '../../../hooks/useProjectLocations';
+import { useProjectZones } from '../../../hooks/useProjectLocations';
 import { useAuthStore } from '../../../store/authStore';
 import { PanelShell } from './PanelShell';
 
@@ -121,14 +121,12 @@ export function SmetaPanel({
   const [replicateOpen, setReplicateOpen] = useState(false);
   const [replicating, setReplicating] = useState(false);
 
-  // Локация: фильтр-срезы, группировка, справочники зон/типов для размножения.
+  // Локация: фильтр-срезы, группировка, справочник зон для размножения.
   const filterZoneIds = useLocationContextStore((s) => s.filterZoneIds);
-  const filterRoomTypeIds = useLocationContextStore((s) => s.filterRoomTypeIds);
   const filterFloorFrom = useLocationContextStore((s) => s.filterFloorFrom);
   const filterFloorTo = useLocationContextStore((s) => s.filterFloorTo);
   const groupBy = useLocationContextStore((s) => s.groupBy);
   const { data: zonesData } = useProjectZones(projectId);
-  const { data: roomTypesData } = useProjectRoomTypes(projectId);
   // Модалка ревью несогласованных позиций (согласовать/удалить выделенное).
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewConfirming, setReviewConfirming] = useState(false);
@@ -204,14 +202,12 @@ export function SmetaPanel({
 
   const locationActive =
     filterZoneIds.length > 0 ||
-    filterRoomTypeIds.length > 0 ||
     filterFloorFrom != null ||
     filterFloorTo != null;
 
-  // Проходит ли работа фильтр локации (срезы по зоне/типу/диапазону этажей).
+  // Проходит ли работа фильтр локации (срезы по зоне/диапазону этажей).
   const matchesLocation = (w: EstimateItem): boolean => {
     if (filterZoneIds.length && !(w.zone_id && filterZoneIds.includes(w.zone_id))) return false;
-    if (filterRoomTypeIds.length && !(w.room_type_id && filterRoomTypeIds.includes(w.room_type_id))) return false;
     if (filterFloorFrom != null || filterFloorTo != null) {
       const wFrom = w.floor_from ?? null;
       const wTo = w.floor_to ?? null;
@@ -242,9 +238,9 @@ export function SmetaPanel({
       }))
       .filter((g) => g.works.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterRoomTypeIds, filterFloorFrom, filterFloorTo]);
+  }, [groups, categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorFrom, filterFloorTo]);
 
-  // Секции группировки по локации (Зона → Тип помещения → Вид работ).
+  // Секции группировки по локации (Зона → Вид работ).
   const locationSections = useMemo(
     () => (groupBy === 'location' ? buildLocationGroups(visibleGroups) : []),
     [groupBy, visibleGroups],
@@ -399,7 +395,7 @@ export function SmetaPanel({
   useEffect(() => {
     setSelectedIds(new Set());
     setSelectedWorkIds(new Set());
-  }, [categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterRoomTypeIds, filterFloorFrom, filterFloorTo]);
+  }, [categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorFrom, filterFloorTo]);
 
   // Выбранные работы-шаблоны для тиражирования (по id из всех групп).
   const selectedSourceWorks = useMemo(() => {
@@ -482,7 +478,6 @@ export function SmetaPanel({
     // Колонку локации показываем только в группировке «по виду работ» (иначе локация — в заголовке секции).
     showLocationColumn: groupBy === 'cost_type',
     zones: zonesData?.data.roots ?? [],
-    roomTypes: roomTypesData?.data ?? [],
   };
 
   return (
@@ -752,7 +747,6 @@ export function SmetaPanel({
         open={replicateOpen}
         sourceWorks={selectedSourceWorks}
         zones={zonesData?.data.roots ?? []}
-        roomTypes={roomTypesData?.data ?? []}
         loading={replicating}
         onCancel={() => setReplicateOpen(false)}
         onConfirm={handleReplicate}

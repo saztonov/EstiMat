@@ -117,6 +117,8 @@ export function formatFloorRange(from: number | null | undefined, to: number | n
 }
 
 // Компактная подпись локации строки из денормализованных полей выдачи.
+// Типы помещений временно скрыты во всём локационном UX — room_type_name не выводим
+// (поле в сигнатуре оставлено опциональным, чтобы не ломать вызовы).
 export function formatLocationLabel(item: {
   zone_name?: string | null;
   floor_from?: number | null;
@@ -127,18 +129,17 @@ export function formatLocationLabel(item: {
   if (item.zone_name) parts.push(item.zone_name);
   const fr = formatFloorRange(item.floor_from, item.floor_to);
   if (fr) parts.push(fr);
-  if (item.room_type_name) parts.push(item.room_type_name);
   return parts.join(' · ');
 }
 
-// Есть ли у строки хоть одна координата локации.
+// Есть ли у строки хоть одна координата локации (тип помещения временно не учитываем).
 export function hasLocation(item: {
   zone_id?: string | null;
   floor_from?: number | null;
   floor_to?: number | null;
   room_type_id?: string | null;
 }): boolean {
-  return !!(item.zone_id || item.room_type_id || item.floor_from != null || item.floor_to != null);
+  return !!(item.zone_id || item.floor_from != null || item.floor_to != null);
 }
 
 // Плоский список всех зон дерева (для поиска/выбора).

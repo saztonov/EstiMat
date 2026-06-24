@@ -181,7 +181,7 @@ export function EstimatesPage() {
         footer={null}
         width="90%"
         style={{ top: 24 }}
-        styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflow: 'auto' } }}
+        styles={{ body: { height: 'calc(100vh - 180px)', overflow: 'hidden' } }}
       >
         {builderProjectId && (
           <LocationBuilder projectId={builderProjectId} onDirtyChange={setBuilderDirty} />

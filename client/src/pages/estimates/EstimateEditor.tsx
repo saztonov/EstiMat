@@ -64,7 +64,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   // Текущий контекст добавления локации (читается на момент мутации, не из замыкания рендера).
   const currentAddLocation = () => {
     const ctx = useLocationContextStore.getState().byEstimate[estimateId] ?? EMPTY_ADD_CONTEXT;
-    return { zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo, roomTypeId: ctx.roomTypeId };
+    return { zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo };
   };
 
   const createWorkMutation = useMutation({

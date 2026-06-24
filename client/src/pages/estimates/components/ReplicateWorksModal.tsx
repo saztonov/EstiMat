@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Modal, Select, InputNumber, Switch, Radio, Space, Typography, Alert, Divider } from 'antd';
-import { type ZoneNode, type RoomType, flattenZones, ZONE_KIND_LABEL } from './location';
+import { type ZoneNode, flattenZones, ZONE_KIND_LABEL } from './location';
 import type { EstimateItem } from './types';
 
 // Целевые параметры тиражирования (тело replicate-items, без sourceItemIds).
@@ -17,16 +17,15 @@ interface Props {
   open: boolean;
   sourceWorks: EstimateItem[];
   zones: ZoneNode[];
-  roomTypes: RoomType[];
   loading?: boolean;
   onCancel: () => void;
   onConfirm: (targets: ReplicateTargets) => void;
 }
 
-// Модалка «Повторить набор»: размножение выбранных работ на целевые корпуса/типы.
-export function ReplicateWorksModal({ open, sourceWorks, zones, roomTypes, loading, onCancel, onConfirm }: Props) {
+// Модалка «Повторить набор»: размножение выбранных работ на целевые корпуса/зоны.
+// Типы помещений временно скрыты (roomTypeIds всегда пуст).
+export function ReplicateWorksModal({ open, sourceWorks, zones, loading, onCancel, onConfirm }: Props) {
   const [zoneIds, setZoneIds] = useState<string[]>([]);
-  const [roomTypeIds, setRoomTypeIds] = useState<string[]>([]);
   const [floorMode, setFloorMode] = useState<'source' | 'override'>('source');
   const [floorFrom, setFloorFrom] = useState<number | null>(null);
   const [floorTo, setFloorTo] = useState<number | null>(null);
@@ -41,14 +40,13 @@ export function ReplicateWorksModal({ open, sourceWorks, zones, roomTypes, loadi
     [zones],
   );
 
-  // Грубое превью: контуры = max(1,корпуса) × max(1,типы); строк = работы × контуры (без вычета дублей).
-  const contours = Math.max(1, zoneIds.length) * Math.max(1, roomTypeIds.length);
+  // Грубое превью: контуры = max(1,корпуса); строк = работы × контуры (без вычета дублей).
+  const contours = Math.max(1, zoneIds.length);
   const estimatedRows = sourceWorks.length * contours;
-  const noTarget = zoneIds.length === 0 && roomTypeIds.length === 0 && floorMode === 'source';
+  const noTarget = zoneIds.length === 0 && floorMode === 'source';
 
   const reset = () => {
     setZoneIds([]);
-    setRoomTypeIds([]);
     setFloorMode('source');
     setFloorFrom(null);
     setFloorTo(null);
@@ -59,7 +57,7 @@ export function ReplicateWorksModal({ open, sourceWorks, zones, roomTypes, loadi
   const handleConfirm = () => {
     onConfirm({
       zoneIds,
-      roomTypeIds,
+      roomTypeIds: [],
       floorFrom: floorMode === 'override' ? floorFrom : undefined,
       floorTo: floorMode === 'override' ? floorTo : undefined,
       includeMaterials,
@@ -79,8 +77,8 @@ export function ReplicateWorksModal({ open, sourceWorks, zones, roomTypes, loadi
       width={560}
     >
       <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-        Выбрано работ: <b>{sourceWorks.length}</b>. Будут созданы копии на каждый целевой контур
-        (корпус × тип помещения). Диапазон этажей переносится из источника или задаётся вручную.
+        Выбрано работ: <b>{sourceWorks.length}</b>. Будут созданы копии на каждый целевой корпус/зону.
+        Диапазон этажей переносится из источника или задаётся вручную.
       </Typography.Paragraph>
 
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -95,20 +93,6 @@ export function ReplicateWorksModal({ open, sourceWorks, zones, roomTypes, loadi
             onChange={setZoneIds}
             optionFilterProp="label"
             options={zoneOptions}
-          />
-        </div>
-
-        <div>
-          <Typography.Text strong>Целевые типы помещений</Typography.Text>
-          <Select
-            mode="multiple"
-            allowClear
-            style={{ width: '100%', marginTop: 4 }}
-            placeholder="Как у источника (если не выбрано)"
-            value={roomTypeIds}
-            onChange={setRoomTypeIds}
-            optionFilterProp="label"
-            options={roomTypes.map((rt) => ({ value: rt.id, label: rt.name }))}
           />
         </div>
 
@@ -141,7 +125,7 @@ export function ReplicateWorksModal({ open, sourceWorks, zones, roomTypes, loadi
 
         <Divider style={{ margin: '4px 0' }} />
         {noTarget ? (
-          <Alert type="warning" showIcon message="Выберите хотя бы одну целевую зону, тип помещения или задайте этажи." />
+          <Alert type="warning" showIcon message="Выберите хотя бы одну целевую зону или задайте этажи." />
         ) : (
           <Alert
             type="info"

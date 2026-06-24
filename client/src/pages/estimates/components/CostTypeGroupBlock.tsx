@@ -33,7 +33,7 @@ import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/esti
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
 import { LocationCell } from './LocationCell';
-import type { ZoneNode, RoomType } from './location';
+import type { ZoneNode } from './location';
 import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
 import { formatMoney } from './types';
 
@@ -434,7 +434,6 @@ interface Props {
   /** Показывать колонку «Локация» (в группировке «по виду работ»). */
   showLocationColumn?: boolean;
   zones?: ZoneNode[];
-  roomTypes?: RoomType[];
 }
 
 const noopAsync = async () => {};
@@ -470,7 +469,6 @@ export function CostTypeGroupBlock({
   showCategoryInTitle = true,
   showLocationColumn = false,
   zones = [],
-  roomTypes = [],
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -716,7 +714,6 @@ export function CostTypeGroupBlock({
                 work={r}
                 editable={editable && !deleteMode && !editing}
                 zones={zones}
-                roomTypes={roomTypes}
                 onChange={(loc) =>
                   onUpdateWork(r.id, {
                     costTypeId: r.cost_type_id,
@@ -728,7 +725,6 @@ export function CostTypeGroupBlock({
                     zoneId: loc.zoneId,
                     floorFrom: loc.floorFrom,
                     floorTo: loc.floorTo,
-                    roomTypeId: loc.roomTypeId,
                   })
                 }
               />

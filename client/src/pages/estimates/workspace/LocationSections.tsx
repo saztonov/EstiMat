@@ -29,7 +29,7 @@ export function LocationSections({ sections, collapsed, onToggle, renderGroup }:
     <>
       {sections.map((zsec) => {
         const zoneCollapsed = collapsed.has(zsec.zoneKey);
-        const zoneSum = zsec.rooms.reduce((a, r) => a + roomTotal(r.groups), 0);
+        const zoneSum = roomTotal(zsec.groups);
         return (
           <div key={zsec.zoneKey} style={{ marginBottom: 10 }}>
             <div
@@ -58,30 +58,9 @@ export function LocationSections({ sections, collapsed, onToggle, renderGroup }:
 
             {!zoneCollapsed && (
               <div style={{ paddingLeft: 8 }}>
-                {zsec.rooms.map((room) => (
-                  <div key={room.roomKey} style={{ marginBottom: 8 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '2px 8px',
-                        marginBottom: 4,
-                        color: '#595959',
-                        fontSize: 12.5,
-                        fontWeight: 600,
-                        borderLeft: '3px solid #91caff',
-                      }}
-                    >
-                      {room.roomName}
-                      <span style={{ flex: 1 }} />
-                      <span style={{ color: '#8c8c8c', fontWeight: 500 }}>{formatMoney(roomTotal(room.groups))}</span>
-                    </div>
-                    {room.groups.map((group, i) =>
-                      renderGroup(group, i, `${zsec.zoneKey}:${room.roomKey}:${group.costTypeId ?? 'none'}`),
-                    )}
-                  </div>
-                ))}
+                {zsec.groups.map((group, i) =>
+                  renderGroup(group, i, `${zsec.zoneKey}:${group.costTypeId ?? 'none'}`),
+                )}
               </div>
             )}
           </div>

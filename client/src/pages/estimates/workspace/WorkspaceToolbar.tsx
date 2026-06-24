@@ -165,7 +165,7 @@ export function WorkspaceToolbar({
         footer={null}
         width="90%"
         style={{ top: 24 }}
-        styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflow: 'auto' } }}
+        styles={{ body: { height: 'calc(100vh - 180px)', overflow: 'hidden' } }}
       >
         {zonesOpen && (
           <LocationBuilder projectId={estimate.project_id} onDirtyChange={setZonesDirty} />

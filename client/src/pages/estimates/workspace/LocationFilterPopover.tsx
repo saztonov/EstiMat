@@ -1,17 +1,15 @@
 import { Badge, Button, Popover, Select, InputNumber, Space, Typography, Divider } from 'antd';
 import { FilterOutlined } from '@ant-design/icons';
 import { useLocationContextStore } from '../../../store/locationContextStore';
-import { type ZoneNode, type RoomType, flattenZones, ZONE_KIND_LABEL } from '../components/location';
+import { type ZoneNode, flattenZones, ZONE_KIND_LABEL } from '../components/location';
 
 interface Props {
   zones: ZoneNode[];
-  roomTypes: RoomType[];
 }
 
-// Расширенный множественный фильтр локаций (срезы: «все ЛК по корпусам 2,3»).
-export function LocationFilterPopover({ zones, roomTypes }: Props) {
+// Расширенный множественный фильтр локаций (срезы: «все корпуса 2,3 по этажам»).
+export function LocationFilterPopover({ zones }: Props) {
   const filterZoneIds = useLocationContextStore((s) => s.filterZoneIds);
-  const filterRoomTypeIds = useLocationContextStore((s) => s.filterRoomTypeIds);
   const filterFloorFrom = useLocationContextStore((s) => s.filterFloorFrom);
   const filterFloorTo = useLocationContextStore((s) => s.filterFloorTo);
   const setFilter = useLocationContextStore((s) => s.setFilter);
@@ -23,7 +21,7 @@ export function LocationFilterPopover({ zones, roomTypes }: Props) {
   }));
 
   const activeCount =
-    filterZoneIds.length + filterRoomTypeIds.length + (filterFloorFrom != null || filterFloorTo != null ? 1 : 0);
+    filterZoneIds.length + (filterFloorFrom != null || filterFloorTo != null ? 1 : 0);
 
   const content = (
     <Space direction="vertical" size="middle" style={{ width: 320 }}>
@@ -38,19 +36,6 @@ export function LocationFilterPopover({ zones, roomTypes }: Props) {
           onChange={(v) => setFilter({ filterZoneIds: v })}
           optionFilterProp="label"
           options={zoneOptions}
-        />
-      </div>
-      <div>
-        <Typography.Text type="secondary">Типы помещений</Typography.Text>
-        <Select
-          mode="multiple"
-          allowClear
-          style={{ width: '100%', marginTop: 4 }}
-          placeholder="Все"
-          value={filterRoomTypeIds}
-          onChange={(v) => setFilter({ filterRoomTypeIds: v })}
-          optionFilterProp="label"
-          options={roomTypes.map((rt) => ({ value: rt.id, label: rt.name }))}
         />
       </div>
       <div>

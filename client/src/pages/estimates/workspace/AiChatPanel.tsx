@@ -104,7 +104,7 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
       const ctx = useLocationContextStore.getState().byEstimate[estimateId] ?? EMPTY_ADD_CONTEXT;
       const withLoc = items.map((it) =>
         it.kind === 'work'
-          ? { ...it, zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo, roomTypeId: ctx.roomTypeId }
+          ? { ...it, zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo }
           : it,
       );
       return applySelectedApi({ chatId: sessionId as string, items: withLoc, override: false });

@@ -5,18 +5,17 @@ import { persist } from 'zustand/middleware';
 export type LocationGroupBy = 'cost_type' | 'location' | 'location_cost_type';
 
 // Контекст добавления — одна точная локация, куда падают новые работы.
+// Тип помещения временно скрыт во всём локационном UX (roomTypeId не задаётся).
 export interface LocationAddContext {
   zoneId: string | null;
   floorFrom: number | null;
   floorTo: number | null;
-  roomTypeId: string | null;
 }
 
 export const EMPTY_ADD_CONTEXT: LocationAddContext = {
   zoneId: null,
   floorFrom: null,
   floorTo: null,
-  roomTypeId: null,
 };
 
 interface LocationContextState {
@@ -27,11 +26,10 @@ interface LocationContextState {
 
   // ФИЛЬТР отображения (транзиент, НЕ персистится): срезы по локации.
   filterZoneIds: string[];
-  filterRoomTypeIds: string[];
   filterFloorFrom: number | null;
   filterFloorTo: number | null;
   setFilter: (f: Partial<Pick<LocationContextState,
-    'filterZoneIds' | 'filterRoomTypeIds' | 'filterFloorFrom' | 'filterFloorTo'>>) => void;
+    'filterZoneIds' | 'filterFloorFrom' | 'filterFloorTo'>>) => void;
   clearFilter: () => void;
 
   // Ось группировки (транзиент).
@@ -49,12 +47,11 @@ export const useLocationContextStore = create<LocationContextState>()(
         set((s) => ({ byEstimate: { ...s.byEstimate, [estimateId]: EMPTY_ADD_CONTEXT } })),
 
       filterZoneIds: [],
-      filterRoomTypeIds: [],
       filterFloorFrom: null,
       filterFloorTo: null,
       setFilter: (f) => set((s) => ({ ...s, ...f })),
       clearFilter: () =>
-        set({ filterZoneIds: [], filterRoomTypeIds: [], filterFloorFrom: null, filterFloorTo: null }),
+        set({ filterZoneIds: [], filterFloorFrom: null, filterFloorTo: null }),
 
       groupBy: 'cost_type',
       setGroupBy: (groupBy) => set({ groupBy }),
