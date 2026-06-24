@@ -4,6 +4,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
+import { withImageSrc, isLegacyLocalImage } from '../../lib/projectImage.js';
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -36,12 +37,6 @@ const COVER_MIME: Record<string, string> = {
   webp: 'image/webp',
 };
 
-// Легаси-обложки хранились на локальном диске под /uploads/projects/<имя>.
-// Новые — ключи объектов S3 (без префикса /uploads/).
-function isLegacyLocalImage(value: string): boolean {
-  return value.startsWith('/uploads/');
-}
-
 // Удаление прежней обложки при замене: локальный файл — unlink, объект S3 —
 // deleteObject (идемпотентно, §15).
 async function removeUpload(fastify: FastifyInstance, value: string | null | undefined) {
@@ -58,22 +53,6 @@ async function removeUpload(fastify: FastifyInstance, value: string | null | und
     return;
   }
   if (fastify.storage) await fastify.storage.deleteObject(value);
-}
-
-// Обложка проекта (§15): image_url в БД — ключ объекта S3 (или легаси-локальный путь).
-// Для показа добавляем image_src — ссылку на наш прокси GET /api/projects/cover/<key>,
-// не меняя сам image_url (round-trip формы сохраняет ключ). Прокси нужен, чтобы браузер
-// не ходил в Cloud.ru напрямую: прямой путь до стороннего хоста S3 в части клиентских
-// сетей не проходит (обрыв передачи файла), хотя VPS до S3 достучивается без проблем.
-function withImageSrc<T extends { image_url?: string | null }>(
-  fastify: FastifyInstance,
-  row: T,
-): T & { image_src: string | null } {
-  const img = row.image_url ?? null;
-  if (img && fastify.storage && !isLegacyLocalImage(img)) {
-    return { ...row, image_src: `/api/projects/cover/${img}` };
-  }
-  return { ...row, image_src: img };
 }
 
 // Полная детализация сметы (как в GET /estimates/:id): работы с измерениями,
@@ -168,7 +147,9 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { '*': string } }>(
     '/cover/*',
     {
-      preHandler: [requireRole('admin', 'engineer', 'manager')],
+      // contractor тоже видит обложки своих объектов в разделе «Подрядчики».
+      // Ключ — UUID, в списке подрядчик видит только свои объекты — риск перебора минимален.
+      preHandler: [requireRole('admin', 'engineer', 'manager', 'contractor')],
       // Обложка встраивается в SPA с другого origin (домен API ≠ домен SPA), поэтому
       // дефолтный helmet CORP=same-origin её режет (ERR_BLOCKED_BY_RESPONSE.NotSameOrigin).
       // Для картинки разрешаем кросс-доменное встраивание (прочитать содержимое cross-origin

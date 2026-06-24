@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { recordAudit, recordAuditBatch } from '../../lib/audit.js';
+import { withImageSrc } from '../../lib/projectImage.js';
 import { makeEstimateEvent } from '../../lib/realtime/bus.js';
 import { assertEstimateAccess, ChatAccessError, isContractor } from '../../lib/chat/access.js';
 import {
@@ -52,6 +53,7 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
       const { rows } = await fastify.pool.query(
         `SELECT e.id AS estimate_id, e.project_id, e.work_type,
                 p.code AS project_code, p.name AS project_name,
+                p.address, p.image_url,
                 cc.name AS cost_category_name,
                 COUNT(DISTINCT ei.id)::int AS items_total,
                 COALESCE(SUM(${EFFECTIVE} * ei.unit_price), 0)::numeric AS my_amount
@@ -61,37 +63,41 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
            JOIN projects p        ON p.id = e.project_id
            LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
           WHERE eic.contractor_id = $1
-          GROUP BY e.id, p.code, p.name, cc.name
+          GROUP BY e.id, p.id, cc.name
           ORDER BY p.code`,
         [user.orgId],
       );
-      return { data: rows };
+      return { data: rows.map((r) => withImageSrc(fastify, r)) };
     }
 
-    // Инженер/админ: все сметы со счётчиками назначено/без подрядчика/нераспределённый объём.
+    // Инженер/админ/менеджер: все объекты (карточка = объект, у объекта одна смета).
+    // Корень — projects, смета через LEFT JOIN: объекты без заведённой сметы тоже
+    // попадают в галерею (estimate_id = NULL, счётчики 0). Счётчики назначено/без
+    // подрядчика/нераспределённый объём — по строкам сметы объекта.
     const { rows } = await fastify.pool.query(
       `SELECT e.id AS estimate_id, e.project_id, e.work_type, e.total_amount,
               p.code AS project_code, p.name AS project_name,
+              p.address, p.image_url,
               cc.name AS cost_category_name,
               COUNT(ei.id)::int AS items_total,
               COUNT(ei.id) FILTER (WHERE asg.cnt > 0)::int AS items_assigned,
               COUNT(ei.id) FILTER (WHERE COALESCE(asg.cnt, 0) = 0)::int AS items_unassigned,
               COALESCE(SUM(GREATEST(ei.quantity - COALESCE(asg.effective, 0), 0) * ei.unit_price), 0)::numeric
                 AS unassigned_amount
-         FROM estimates e
-         JOIN projects p ON e.project_id = p.id
+         FROM projects p
+         LEFT JOIN estimates e        ON e.project_id = p.id
          LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
-         LEFT JOIN estimate_items ei ON ei.estimate_id = e.id
+         LEFT JOIN estimate_items ei  ON ei.estimate_id = e.id
          LEFT JOIN LATERAL (
            SELECT COUNT(*) AS cnt,
                   SUM(COALESCE(eic.assigned_qty, ei.quantity * eic.assigned_percent / 100.0, ei.quantity)) AS effective
              FROM estimate_item_contractors eic
             WHERE eic.item_id = ei.id
          ) asg ON true
-        GROUP BY e.id, p.code, p.name, cc.name
-        ORDER BY p.code, e.created_at DESC`,
+        GROUP BY p.id, e.id, cc.name
+        ORDER BY p.code`,
     );
-    return { data: rows };
+    return { data: rows.map((r) => withImageSrc(fastify, r)) };
   });
 
   // ============================================================

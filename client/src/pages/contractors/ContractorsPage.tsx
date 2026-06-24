@@ -2,19 +2,24 @@ import { useNavigate, useParams } from 'react-router';
 import { Card, Row, Col, Tag, Empty, Spin, Space, Button, Tabs } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../../services/api';
+import { api, assetUrl } from '../../services/api';
+import { placeholderCover } from '../../components/shared/placeholderCover';
 import { useAuthStore } from '../../store/authStore';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { formatMoney, type EstimateDetail, type EstimateItem } from '../estimates/components/types';
 import { ContractorsSmetaTab } from './ContractorsSmetaTab';
 import { ContractorsMaterialsTab } from './ContractorsMaterialsTab';
 
-// Строка списка объектов/смет раздела (поля зависят от роли — см. /api/contractors/estimates).
+// Строка списка объектов раздела (поля зависят от роли — см. /api/contractors/estimates).
+// Карточка = объект; у объекта одна смета (estimate_id = null, если смета не заведена).
 interface ContractorEstimateRow {
-  estimate_id: string;
+  estimate_id: string | null;
   project_id: string;
   project_code: string;
   project_name: string;
+  address: string | null;
+  image_url: string | null;
+  image_src: string | null;
   work_type: string | null;
   cost_category_name: string | null;
   items_total: number;
@@ -36,18 +41,30 @@ function ObjectList() {
 
   if (isLoading) return <Spin size="large" />;
   const rows = data?.data ?? [];
-  if (rows.length === 0) return <Empty description="Смет нет" />;
+  if (rows.length === 0) return <Empty description="Объектов нет" />;
 
   return (
     <Row gutter={[16, 16]}>
-      {rows.map((r) => (
-        <Col key={r.estimate_id} xs={24} sm={12} lg={8} xl={6}>
-          <Card hoverable onClick={() => navigate(`/contractors/${r.estimate_id}`)} styles={{ body: { padding: 16 } }}>
+      {rows.map((r) => {
+        const clickable = r.estimate_id != null;
+        const src = assetUrl(r.image_src ?? r.image_url);
+        return (
+        <Col key={r.project_id} xs={24} sm={12} lg={8} xl={6}>
+          <Card
+            hoverable={clickable}
+            cover={
+              src
+                ? <img alt={r.project_name} src={src} style={{ height: 140, objectFit: 'cover' }} />
+                : placeholderCover(r.project_code)
+            }
+            onClick={clickable ? () => navigate(`/contractors/${r.estimate_id}`) : undefined}
+            styles={{ body: { padding: 16 } }}
+          >
             <div style={{ marginBottom: 6 }}>
               <strong>{r.project_code} · {r.project_name}</strong>
             </div>
             <div style={{ color: '#8c8c8c', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
-              {r.cost_category_name || r.work_type || '—'}
+              {r.address || '—'}
             </div>
             {r.items_unassigned != null ? (
               <Space direction="vertical" size={4} style={{ width: '100%' }}>
@@ -68,7 +85,8 @@ function ObjectList() {
             )}
           </Card>
         </Col>
-      ))}
+        );
+      })}
     </Row>
   );
 }

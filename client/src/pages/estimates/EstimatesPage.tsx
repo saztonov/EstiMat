@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Card, Row, Col, Input, Select, Tag, Empty, Spin, Space, Button, Modal, App } from 'antd';
-import { SearchOutlined, FileTextOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Input, Select, Empty, Spin, Space, Button, Modal, App } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api, assetUrl } from '../../services/api';
-import { PROJECT_STATUS_LABELS } from '@estimat/shared';
 import { BuildingsIcon } from '../../components/shared/BuildingsIcon';
+import { placeholderCover } from '../../components/shared/placeholderCover';
 import { LocationBuilder } from '../projects/LocationBuilder';
 
 interface ProjectWithStats {
@@ -21,34 +21,8 @@ interface ProjectWithStats {
   estimates_total: string;
 }
 
-const statusColors: Record<string, string> = {
-  planning: 'default',
-  active: 'blue',
-  completed: 'green',
-  archived: 'orange',
-};
-
 const formatMoney = (v: string | number) =>
   `${Number(v ?? 0).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ₽`;
-
-const placeholderCover = (code: string) => {
-  const hue = (code.charCodeAt(0) * 37) % 360;
-  return (
-    <div
-      style={{
-        height: 140,
-        background: `linear-gradient(135deg, hsl(${hue},60%,55%), hsl(${(hue + 40) % 360},60%,45%))`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: 'rgba(255,255,255,0.85)',
-        fontSize: 40,
-      }}
-    >
-      <FileTextOutlined />
-    </div>
-  );
-};
 
 export function EstimatesPage() {
   const navigate = useNavigate();
@@ -146,11 +120,8 @@ export function EstimatesPage() {
                 onClick={() => navigate(`/projects/${p.id}`)}
                 styles={{ body: { padding: 16 } }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div style={{ marginBottom: 6 }}>
                   <strong>{p.code} · {p.name}</strong>
-                  <Tag color={statusColors[p.status]} style={{ marginInlineEnd: 0 }}>
-                    {PROJECT_STATUS_LABELS[p.status as keyof typeof PROJECT_STATUS_LABELS]}
-                  </Tag>
                 </div>
                 <div style={{ color: '#8c8c8c', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
                   {p.address || '—'}
