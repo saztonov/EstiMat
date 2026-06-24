@@ -656,6 +656,15 @@ export function CostTypeGroupBlock({
     await doSave({ ...payload, description: resolution.description, rateId: resolution.rateId }, editing.workId);
   }
 
+  // Суммарная ширина лидирующих колонок (напр. «Исполнитель» в разделе «Подрядчики»).
+  const leadingWidth = leadingColumns.reduce(
+    (s, c) => s + (typeof c.width === 'number' ? c.width : 0),
+    0,
+  );
+  // Когда есть лидирующие колонки, раскрытые материалы выравниваем под колонку «Наименование
+  // работы»: ширина лидирующих колонок + колонка раскрытия (56) + «№» (36). На «Смете» — 0.
+  const materialsIndent = leadingWidth ? leadingWidth + 56 + 36 : 0;
+
   const columns: ColumnsType<EstimateItem> = [
     ...leadingColumns,
     // Когда есть лидирующие колонки (напр. «Исполнитель» в разделе «Подрядчики»),
@@ -951,22 +960,24 @@ export function CostTypeGroupBlock({
               );
             },
             expandedRowRender: (r) => (
-              <MaterialsSubTable
-                work={r}
-                editable={editable}
-                showPrices={showPrices}
-                onCreate={onCreateMaterial}
-                onUpdate={onUpdateMaterial}
-                onDelete={onDeleteMaterial}
-                onConfirm={onConfirmMaterial}
-                onReassign={onReassignMaterial}
-                works={allWorks}
-                selectionMode={selectionMode}
-                selectedIds={selectedIds}
-                onToggleMaterial={onToggleMaterial}
-                deleteMode={deleteMode}
-                workSelected={!!selectedWorkIds?.has(r.id)}
-              />
+              <div style={{ marginLeft: materialsIndent }}>
+                <MaterialsSubTable
+                  work={r}
+                  editable={editable}
+                  showPrices={showPrices}
+                  onCreate={onCreateMaterial}
+                  onUpdate={onUpdateMaterial}
+                  onDelete={onDeleteMaterial}
+                  onConfirm={onConfirmMaterial}
+                  onReassign={onReassignMaterial}
+                  works={allWorks}
+                  selectionMode={selectionMode}
+                  selectedIds={selectedIds}
+                  onToggleMaterial={onToggleMaterial}
+                  deleteMode={deleteMode}
+                  workSelected={!!selectedWorkIds?.has(r.id)}
+                />
+              </div>
             ),
           }}
         />

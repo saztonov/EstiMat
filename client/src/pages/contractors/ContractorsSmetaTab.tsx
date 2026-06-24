@@ -381,7 +381,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
 
   // ── Вид инженера/админа: как страница «Смета» + столбец «Исполнитель» слева ──
   return (
-    <>
+    <div className="contractors-smeta">
       <Space style={{ marginBottom: 12 }} wrap>
         <Checkbox checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)}>
           Только с нераспределённым объёмом
@@ -473,6 +473,6 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
           </div>
         );
       })}
-    </>
+    </div>
   );
 }
