@@ -39,7 +39,28 @@ export function ProjectsPanel() {
   });
 
   const columns: ColumnsType<ProjectRow> = [
-    { title: 'Код', dataIndex: 'code', width: 100 },
+    {
+      title: 'Код',
+      dataIndex: 'code',
+      width: 130,
+      render: (code: string, record) => {
+        const src = record.image_src ?? record.image_url;
+        return (
+          <Space size={8}>
+            {src ? (
+              <img
+                src={src as string}
+                alt=""
+                style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 4, display: 'block' }}
+              />
+            ) : (
+              <span style={{ width: 28, height: 28, display: 'inline-block', flexShrink: 0 }} />
+            )}
+            <span>{code}</span>
+          </Space>
+        );
+      },
+    },
     { title: 'Название', dataIndex: 'name' },
     {
       title: 'Статус',
