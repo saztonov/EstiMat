@@ -19,6 +19,7 @@ import { ReplicateWorksModal, type ReplicateTargets } from '../components/Replic
 import { LocationContextBar } from './LocationContextBar';
 import { LocationSections } from './LocationSections';
 import { buildLocationGroups } from '../components/buildLocationGroups';
+import { flattenZones } from '../components/location';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
@@ -205,18 +206,30 @@ export function SmetaPanel({
     filterFloorFrom != null ||
     filterFloorTo != null;
 
-  // Проходит ли работа фильтр локации (срезы по зоне/диапазону этажей).
+  // Проходит ли работа фильтр локации (срезы по зоне/набору этажей). Мультизона:
+  // достаточно совпадения хотя бы одной зоны и пересечения хотя бы одного этажа.
   const matchesLocation = (w: EstimateItem): boolean => {
-    if (filterZoneIds.length && !(w.zone_id && filterZoneIds.includes(w.zone_id))) return false;
+    const locs = w.locations ?? [];
+    const zoneIds = locs.length
+      ? locs.map((l) => l.zoneId).filter((z): z is string => !!z)
+      : w.zone_id ? [w.zone_id] : [];
+    if (filterZoneIds.length && !zoneIds.some((z) => filterZoneIds.includes(z))) return false;
     if (filterFloorFrom != null || filterFloorTo != null) {
-      const wFrom = w.floor_from ?? null;
-      const wTo = w.floor_to ?? null;
-      if (wFrom == null && wTo == null) return false; // нет этажей — не проходит этажный срез
+      let floors: number[];
+      if (locs.length) {
+        floors = locs.flatMap((l) => l.floors ?? []);
+      } else {
+        floors = [];
+        const f = w.floor_from ?? null;
+        const t = w.floor_to ?? null;
+        if (f != null && t != null) { for (let x = f; x <= t; x++) floors.push(x); }
+        else if (f != null) floors.push(f);
+        else if (t != null) floors.push(t);
+      }
+      if (floors.length === 0) return false; // нет этажей — не проходит этажный срез
       const lo = filterFloorFrom ?? -Infinity;
       const hi = filterFloorTo ?? Infinity;
-      const wLo = wFrom ?? (wTo as number);
-      const wHi = wTo ?? (wFrom as number);
-      if (wHi < lo || wLo > hi) return false; // нет пересечения диапазонов
+      if (!floors.some((x) => x >= lo && x <= hi)) return false; // нет пересечения
     }
     return true;
   };
@@ -240,10 +253,17 @@ export function SmetaPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorFrom, filterFloorTo]);
 
+  // Имя зоны по id (для подписей секций мультизонной группировки).
+  const zoneNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const z of flattenZones(zonesData?.data.roots ?? [])) m.set(z.id, z.name);
+    return m;
+  }, [zonesData]);
+
   // Секции группировки по локации (Зона → Вид работ).
   const locationSections = useMemo(
-    () => (groupBy === 'location' ? buildLocationGroups(visibleGroups) : []),
-    [groupBy, visibleGroups],
+    () => (groupBy === 'location' ? buildLocationGroups(visibleGroups, zoneNameById) : []),
+    [groupBy, visibleGroups, zoneNameById],
   );
 
   // Группировка видимых видов работ по категориям (порядок — как пришли,

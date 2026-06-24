@@ -18,7 +18,45 @@ import {
   bulkConfirmEstimateItemsSchema,
   replicateItemsSchema,
   type EstimateChangeReason,
+  type LocationEntry,
 } from '@estimat/shared';
+
+// ---------- Мультилокация: производное «первичное» зеркало legacy-колонок ----------
+
+// Развернуть диапазон floor_from..floor_to в точный набор этажей (для зеркала ↔ jsonb).
+function expandFloors(from: number | null, to: number | null): number[] {
+  if (from == null && to == null) return [];
+  if (from != null && to != null) {
+    const lo = Math.min(from, to);
+    const hi = Math.max(from, to);
+    const out: number[] = [];
+    for (let f = lo; f <= hi; f++) out.push(f);
+    return out;
+  }
+  return [(from ?? to) as number];
+}
+
+// Собрать массив локаций из легаси-полей (старый клиент без locations, тиражирование).
+function legacyToLocations(
+  zoneId: string | null,
+  floorFrom: number | null,
+  floorTo: number | null,
+): LocationEntry[] {
+  if (zoneId == null && floorFrom == null && floorTo == null) return [];
+  return [{ zoneId, floors: expandFloors(floorFrom, floorTo) }];
+}
+
+// Производное «первичное» зеркало (первая зона; min/max объединённого набора этажей).
+function deriveLegacyLocation(locations: LocationEntry[]): {
+  zoneId: string | null;
+  floorFrom: number | null;
+  floorTo: number | null;
+} {
+  const zoneId = locations.find((l) => l.zoneId != null)?.zoneId ?? null;
+  const floors = locations.flatMap((l) => l.floors ?? []);
+  if (floors.length === 0) return { zoneId, floorFrom: null, floorTo: null };
+  return { zoneId, floorFrom: Math.min(...floors), floorTo: Math.max(...floors) };
+}
 
 export default async function estimateRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -381,14 +419,17 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     { preHandler: [requireRole('admin', 'engineer')] },
     async (request, reply) => {
       const body = createEstimateItemSchema.parse(request.body);
+      // Источник истины — locations; если не передан (старый клиент) — собираем из legacy-полей.
+      const locations = body.locations ?? legacyToLocations(body.zoneId ?? null, body.floorFrom ?? null, body.floorTo ?? null);
+      const primary = deriveLegacyLocation(locations);
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
         const { rows } = await client.query(
           `INSERT INTO estimate_items
              (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
-              zone_id, floor_from, floor_to, room_type_id, created_by, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13) RETURNING *`,
+              zone_id, floor_from, floor_to, room_type_id, locations, created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $14) RETURNING *`,
           [
             request.params.id,
             body.costTypeId ?? null,
@@ -398,10 +439,11 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
             body.unit,
             body.unitPrice,
             body.sortOrder,
-            body.zoneId ?? null,
-            body.floorFrom ?? null,
-            body.floorTo ?? null,
+            primary.zoneId,
+            primary.floorFrom,
+            primary.floorTo,
             body.roomTypeId ?? null,
+            JSON.stringify(locations),
             request.currentUser.id,
           ],
         );
@@ -476,10 +518,19 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     if (body.unit !== undefined) { sets.push(`unit = $${i++}`); values.push(body.unit); fields.push('unit'); }
     if (body.unitPrice !== undefined) { sets.push(`unit_price = $${i++}`); values.push(body.unitPrice); fields.push('unit_price'); }
     if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); fields.push('sort_order'); }
-    // Локация строки (география + диапазон этажей + тип помещения).
-    if (body.zoneId !== undefined) { sets.push(`zone_id = $${i++}`); values.push(body.zoneId); fields.push('zone_id'); }
-    if (body.floorFrom !== undefined) { sets.push(`floor_from = $${i++}`); values.push(body.floorFrom); fields.push('floor_from'); }
-    if (body.floorTo !== undefined) { sets.push(`floor_to = $${i++}`); values.push(body.floorTo); fields.push('floor_to'); }
+    // Локация строки. locations — источник истины (мультизона); из него выводим зеркало.
+    if (body.locations !== undefined) {
+      const primary = deriveLegacyLocation(body.locations);
+      sets.push(`locations = $${i++}::jsonb`); values.push(JSON.stringify(body.locations)); fields.push('locations');
+      sets.push(`zone_id = $${i++}`); values.push(primary.zoneId); fields.push('zone_id');
+      sets.push(`floor_from = $${i++}`); values.push(primary.floorFrom); fields.push('floor_from');
+      sets.push(`floor_to = $${i++}`); values.push(primary.floorTo); fields.push('floor_to');
+    } else {
+      // Обратная совместимость: точечная правка legacy-полей без locations (новый клиент шлёт locations).
+      if (body.zoneId !== undefined) { sets.push(`zone_id = $${i++}`); values.push(body.zoneId); fields.push('zone_id'); }
+      if (body.floorFrom !== undefined) { sets.push(`floor_from = $${i++}`); values.push(body.floorFrom); fields.push('floor_from'); }
+      if (body.floorTo !== undefined) { sets.push(`floor_to = $${i++}`); values.push(body.floorTo); fields.push('floor_to'); }
+    }
     if (body.roomTypeId !== undefined) { sets.push(`room_type_id = $${i++}`); values.push(body.roomTypeId); fields.push('room_type_id'); }
     // Снятие «не согласовано» (согласование ИИ-позиции) — отдельным флагом needsReview.
     if (body.needsReview !== undefined) { sets.push(`needs_review = $${i++}`); values.push(body.needsReview); fields.push('needs_review'); }
@@ -815,13 +866,14 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
               const { rows: ins } = await client.query(
                 `INSERT INTO estimate_items
                    (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
-                    zone_id, floor_from, floor_to, room_type_id, source, needs_review,
+                    zone_id, floor_from, floor_to, room_type_id, locations, source, needs_review,
                     copy_batch_id, copy_source_item_id, created_by, updated_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'manual', false, $13, $14, $15, $15)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, 'manual', false, $14, $15, $16, $16)
                  RETURNING *`,
                 [
                   eid, src.cost_type_id, src.rate_id, src.description, src.quantity, src.unit,
                   src.unit_price, src.sort_order, targetZone, targetFloorFrom, targetFloorTo, targetRoom,
+                  JSON.stringify(legacyToLocations(targetZone, targetFloorFrom, targetFloorTo)),
                   copyBatchId, src.id, request.currentUser.id,
                 ],
               );

@@ -138,12 +138,15 @@ export function formatLocationLabel(item: {
 }
 
 // Есть ли у строки хоть одна координата локации (тип помещения временно не учитываем).
+// Источник истины — locations; legacy-поля как фолбэк.
 export function hasLocation(item: {
+  locations?: LocationEntry[] | null;
   zone_id?: string | null;
   floor_from?: number | null;
   floor_to?: number | null;
   room_type_id?: string | null;
 }): boolean {
+  if (item.locations && item.locations.length > 0) return true;
   return !!(item.zone_id || item.floor_from != null || item.floor_to != null);
 }
 
@@ -171,4 +174,88 @@ export function zoneFloors(zone: ZoneNode | undefined): number[] {
   const out: number[] = [];
   for (let f = zone.floor_min; f <= zone.floor_max; f++) out.push(f);
   return out;
+}
+
+// ---------- Мультилокация строки: зоны + точный набор этажей ----------
+
+// Элемент локации работы: одна зона + точный набор этажей (floors: [] = «весь корпус»).
+export interface LocationEntry {
+  zoneId: string | null;
+  floors: number[];
+}
+
+// Разобрать строку этажей в точный набор. Списки через запятую, диапазоны через тире,
+// поддержка минусов: «1-4, 6» → [1,2,3,4,6]; «-1-8» → [-1,1,…,8]; «-3--1» → [-3,-2,-1].
+// Этаж 0 внутри диапазона пропускаем (в зданиях его нет). Нераспознанные токены игнорируются.
+export function parseFloors(input: string): number[] {
+  const set = new Set<number>();
+  for (const raw of input.split(',')) {
+    const token = raw.trim();
+    if (!token) continue;
+    const range = token.match(/^(-?\d+)\s*-\s*(-?\d+)$/);
+    if (range) {
+      let a = parseInt(range[1]!, 10);
+      let b = parseInt(range[2]!, 10);
+      if (a > b) [a, b] = [b, a];
+      for (let f = a; f <= b; f++) {
+        if (f !== 0) set.add(f); // нет этажа 0
+      }
+      continue;
+    }
+    if (/^-?\d+$/.test(token)) set.add(parseInt(token, 10));
+  }
+  return [...set].sort((x, y) => x - y);
+}
+
+// Полностью ли строку этажей можно разобрать. Пусто = валидно (= все этажи).
+export function isValidFloorsInput(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed) return true;
+  return trimmed.split(',').every((raw) => {
+    const t = raw.trim();
+    if (!t) return false;
+    return /^-?\d+$/.test(t) || /^-?\d+\s*-\s*-?\d+$/.test(t);
+  });
+}
+
+// Свернуть набор этажей в каноничную строку: «-1-4, 6» (подряд идущие → диапазон).
+// Смежность учитывает пропуск нуля: после −1 идёт 1.
+export function formatFloors(floors: number[]): string {
+  const uniq = [...new Set(floors)].sort((a, b) => a - b);
+  if (uniq.length === 0) return '';
+  const parts: string[] = [];
+  const flush = (a: number, b: number) => parts.push(a === b ? `${a}` : `${a}-${b}`);
+  let start = uniq[0]!;
+  let prev = uniq[0]!;
+  for (let k = 1; k < uniq.length; k++) {
+    const cur = uniq[k]!;
+    const expected = prev === -1 ? 1 : prev + 1;
+    if (cur === expected) { prev = cur; continue; }
+    flush(start, prev);
+    start = cur;
+    prev = cur;
+  }
+  flush(start, prev);
+  return parts.join(', ');
+}
+
+// Подпись мультилокации строки: «Корпус 1, Корпус 2 · эт. -1-4, 6». Имена зон — из дерева.
+export function formatLocationsLabel(
+  locations: LocationEntry[] | null | undefined,
+  roots: ZoneNode[],
+): string {
+  if (!locations || locations.length === 0) return '';
+  const zoneNames = [
+    ...new Set(
+      locations
+        .map((l) => (l.zoneId ? findZone(roots, l.zoneId)?.name ?? null : null))
+        .filter((n): n is string => !!n),
+    ),
+  ];
+  const floors = locations.flatMap((l) => l.floors ?? []);
+  const parts: string[] = [];
+  if (zoneNames.length) parts.push(zoneNames.join(', '));
+  const fr = formatFloors(floors);
+  if (fr) parts.push(`эт. ${fr}`);
+  return parts.join(' · ');
 }

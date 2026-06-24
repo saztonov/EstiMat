@@ -8,10 +8,20 @@ import { z } from 'zod';
 // Все координаты опциональны: пусто = «Весь объект / не указано».
 // ============================================================
 
+// Элемент мультилокации: одна зона + точный набор этажей (floors: [] = «весь корпус»).
+// Один и тот же набор этажей применяется ко всем выбранным зонам (по одному элементу на зону).
+export const locationEntrySchema = z.object({
+  zoneId: z.string().uuid().nullable(),
+  floors: z.array(z.number().int()).max(500).default([]),
+});
+
 // Контекст локации строки (мержится в create/update item; активный контекст панели).
 // Чистый ZodObject (без .refine) — чтобы переживал .merge()/.partial() в estimate.ts.
 // Инвариант floorFrom <= floorTo гарантируется CHECK-constraint в БД (chk_estimate_items_floor_range).
+// locations — источник истины (мультизона); zoneId/floorFrom/floorTo — производное «первичное»
+// зеркало, которое выводит сервер (нужно тиражированию/сортировке/JOIN за zone_name).
 export const locationContextSchema = z.object({
+  locations: z.array(locationEntrySchema).max(100).optional(),
   zoneId: z.string().uuid().nullable().optional(),
   floorFrom: z.number().int().nullable().optional(),
   floorTo: z.number().int().nullable().optional(),
@@ -148,6 +158,7 @@ export const replicateItemsSchema = z
 // ---------- Типы ----------
 
 export type LocationContext = z.infer<typeof locationContextSchema>;
+export type LocationEntry = z.infer<typeof locationEntrySchema>;
 export type ZoneKind = z.infer<typeof zoneKindSchema>;
 export type CreateZoneInput = z.infer<typeof createZoneSchema>;
 export type UpdateZoneInput = z.infer<typeof updateZoneSchema>;

@@ -1,7 +1,8 @@
 import type { CostTypeGroup, EstimateContractor, EstimateItem } from './types';
-import { formatFloorRange } from './location';
+import { formatFloors } from './location';
 
 // Группировка сметы по локации: Зона → Вид работ (CostTypeGroup).
+// Мультизона: работа с несколькими зонами попадает в секцию каждой своей зоны.
 // Типы помещений временно скрыты — промежуточного уровня «тип помещения» нет.
 // Переиспользует CostTypeGroupBlock на нижнем уровне (вид работ).
 export interface LocationSection {
@@ -13,59 +14,81 @@ export interface LocationSection {
 const NONE = '__none__';
 const GROUP_NONE = '__none__';
 
-// Подпись зоны с диапазоном этажей по строкам (если в зоне один диапазон — покажем его).
-function zoneLabel(works: EstimateItem[]): string {
-  const name = works[0]?.zone_name;
-  if (!name) return 'Без локации';
-  const ranges = new Set(works.map((w) => formatFloorRange(w.floor_from, w.floor_to)).filter(Boolean));
-  if (ranges.size === 1) {
-    const r = [...ranges][0];
-    return r ? `${name} · ${r}` : name;
+// Ключи зон работы (несколько при мультилокации). Фолбэк на legacy zone_id.
+function zoneKeysOf(w: EstimateItem): string[] {
+  const locs = w.locations ?? [];
+  if (locs.length) {
+    const keys = [...new Set(locs.map((l) => l.zoneId ?? NONE))];
+    return keys.length ? keys : [NONE];
   }
-  return name;
+  return [w.zone_id ?? NONE];
 }
 
-export function buildLocationGroups(groups: CostTypeGroup[]): LocationSection[] {
+// Набор этажей работы в конкретной зоне (для подписи секции). Фолбэк на legacy диапазон.
+function floorsForZone(w: EstimateItem, zoneKey: string): number[] {
+  const locs = w.locations ?? [];
+  if (locs.length) {
+    return locs.filter((l) => (l.zoneId ?? NONE) === zoneKey).flatMap((l) => l.floors ?? []);
+  }
+  const out: number[] = [];
+  const f = w.floor_from ?? null;
+  const t = w.floor_to ?? null;
+  if (f != null && t != null) { for (let x = f; x <= t; x++) out.push(x); }
+  else if (f != null) out.push(f);
+  else if (t != null) out.push(t);
+  return out;
+}
+
+export function buildLocationGroups(
+  groups: CostTypeGroup[],
+  zoneNameById: Map<string, string>,
+): LocationSection[] {
   // Подрядчик по виду затрат — чтобы перенести в виртуальные группы локации.
   const contractorByType = new Map<string, EstimateContractor | null>();
   for (const g of groups) if (g.costTypeId) contractorByType.set(g.costTypeId, g.contractor);
 
   // zoneKey → costTypeKey → CostTypeGroup
   const zoneMap = new Map<string, Map<string, CostTypeGroup>>();
-  const zoneNames = new Map<string, EstimateItem[]>();
+  // zoneKey → набор канонических подписей этажей по работам (для подписи секции).
+  const zoneFloorLabels = new Map<string, Set<string>>();
 
   for (const g of groups) {
     for (const w of g.works) {
-      const zoneKey = w.zone_id ?? NONE;
-      const ctKey = g.costTypeId ?? GROUP_NONE;
+      for (const zoneKey of zoneKeysOf(w)) {
+        const ctKey = g.costTypeId ?? GROUP_NONE;
 
-      if (!zoneNames.has(zoneKey)) zoneNames.set(zoneKey, []);
-      zoneNames.get(zoneKey)!.push(w);
+        const fr = formatFloors(floorsForZone(w, zoneKey));
+        if (!zoneFloorLabels.has(zoneKey)) zoneFloorLabels.set(zoneKey, new Set());
+        if (fr) zoneFloorLabels.get(zoneKey)!.add(fr);
 
-      let cts = zoneMap.get(zoneKey);
-      if (!cts) { cts = new Map(); zoneMap.set(zoneKey, cts); }
-      let ctg = cts.get(ctKey);
-      if (!ctg) {
-        ctg = {
-          costTypeId: g.costTypeId,
-          costTypeName: g.costTypeName,
-          costCategoryId: g.costCategoryId,
-          costCategoryName: g.costCategoryName,
-          works: [],
-          contractor: g.costTypeId ? contractorByType.get(g.costTypeId) ?? null : null,
-        };
-        cts.set(ctKey, ctg);
+        let cts = zoneMap.get(zoneKey);
+        if (!cts) { cts = new Map(); zoneMap.set(zoneKey, cts); }
+        let ctg = cts.get(ctKey);
+        if (!ctg) {
+          ctg = {
+            costTypeId: g.costTypeId,
+            costTypeName: g.costTypeName,
+            costCategoryId: g.costCategoryId,
+            costCategoryName: g.costCategoryName,
+            works: [],
+            contractor: g.costTypeId ? contractorByType.get(g.costTypeId) ?? null : null,
+          };
+          cts.set(ctKey, ctg);
+        }
+        ctg.works.push(w);
       }
-      ctg.works.push(w);
     }
   }
 
   const sections: LocationSection[] = [];
   for (const [zoneKey, cts] of zoneMap) {
-    const zoneWorks = zoneNames.get(zoneKey) ?? [];
     const groupsArr = [...cts.values()].sort((a, b) =>
       (a.costTypeName ?? '').localeCompare(b.costTypeName ?? '', 'ru'));
-    sections.push({ zoneKey, zoneName: zoneLabel(zoneWorks), groups: groupsArr });
+    const name = zoneKey === NONE ? 'Без локации' : zoneNameById.get(zoneKey) ?? 'Зона';
+    // Если во всей зоне один и тот же набор этажей — покажем его в подписи.
+    const labels = zoneFloorLabels.get(zoneKey);
+    const zoneName = labels && labels.size === 1 ? `${name} · эт. ${[...labels][0]}` : name;
+    sections.push({ zoneKey, zoneName, groups: groupsArr });
   }
 
   sections.sort((a, b) => {

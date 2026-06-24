@@ -1,4 +1,4 @@
-import { useEffect, useState, type Key } from 'react';
+import { useEffect, useState, type Key, type ReactNode } from 'react';
 import {
   Table,
   Button,
@@ -33,7 +33,7 @@ import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/esti
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
 import { LocationCell } from './LocationCell';
-import type { ZoneNode } from './location';
+import type { ZoneNode, LocationEntry } from './location';
 import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
 import { formatMoney } from './types';
 
@@ -68,6 +68,8 @@ export interface SaveWorkPayload {
   quantity: number;
   unitPrice: number;
   // Локация (опционально): задаётся контекстом добавления или поповером строки.
+  // locations — мультизона из поповера; zoneId/floorFrom/floorTo — legacy-контекст добавления.
+  locations?: LocationEntry[];
   zoneId?: string | null;
   floorFrom?: number | null;
   floorTo?: number | null;
@@ -109,6 +111,7 @@ interface MaterialEdit {
 function MaterialsSubTable({
   work,
   editable,
+  showPrices = true,
   onCreate,
   onUpdate,
   onDelete,
@@ -123,6 +126,8 @@ function MaterialsSubTable({
 }: {
   work: EstimateItem;
   editable: boolean;
+  /** Показывать колонки «Цена»/«Сумма» (false — скрываем деньги, напр. для подрядчика). */
+  showPrices?: boolean;
   onCreate: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
   onUpdate: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDelete: (materialId: string) => void;
@@ -305,14 +310,18 @@ function MaterialsSubTable({
           <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
         ) : <span className="estimat-qty-chip">{Number(v).toLocaleString('ru-RU')}</span>,
     },
-    { title: 'Цена', dataIndex: 'unit_price', width: 90, align: 'right', render: (v: string, r) =>
-        isRowInEdit(r) && editing ? (
-          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
-        ) : formatMoney(v),
-    },
-    { title: 'Сумма', dataIndex: 'total', width: 100, align: 'right', render: (v: string, r) =>
-        isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
-    },
+    ...(showPrices
+      ? [
+          { title: 'Цена', dataIndex: 'unit_price', width: 90, align: 'right' as const, render: (v: string, r: EstimateMaterial) =>
+              isRowInEdit(r) && editing ? (
+                <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
+              ) : formatMoney(v),
+          },
+          { title: 'Сумма', dataIndex: 'total', width: 100, align: 'right' as const, render: (v: string, r: EstimateMaterial) =>
+              isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
+          },
+        ]
+      : []),
     ...(editable && !deleteMode
       ? [{
           title: '', width: 64,
@@ -434,6 +443,12 @@ interface Props {
   /** Показывать колонку «Локация» (в группировке «по виду работ»). */
   showLocationColumn?: boolean;
   zones?: ZoneNode[];
+  /** Дополнительные колонки слева (перед «№»). Напр. «Исполнитель» в разделе «Подрядчики». */
+  leadingColumns?: ColumnsType<EstimateItem>;
+  /** Показывать колонки «Цена»/«Сумма» и сумму группы (false — скрываем деньги). */
+  showPrices?: boolean;
+  /** Дополнительный контент в шапке блока вида работ (напр. «Назначить на весь вид»). */
+  headerExtra?: ReactNode;
 }
 
 const noopAsync = async () => {};
@@ -469,6 +484,9 @@ export function CostTypeGroupBlock({
   showCategoryInTitle = true,
   showLocationColumn = false,
   zones = [],
+  leadingColumns = [],
+  showPrices = true,
+  headerExtra,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -639,6 +657,7 @@ export function CostTypeGroupBlock({
   }
 
   const columns: ColumnsType<EstimateItem> = [
+    ...leadingColumns,
     { title: '№', width: 36, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
     {
       title: 'Наименование работы', dataIndex: 'description',
@@ -696,14 +715,18 @@ export function CostTypeGroupBlock({
           <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
         ) : <span className="estimat-qty-chip">{Number(v).toLocaleString('ru-RU')}</span>,
     },
-    { title: 'Цена', dataIndex: 'unit_price', width: 95, align: 'right', render: (v: string, r) =>
-        isRowInEdit(r) && editing ? (
-          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
-        ) : formatMoney(v),
-    },
-    { title: 'Сумма', dataIndex: 'total', width: 105, align: 'right', render: (v: string, r) =>
-        isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
-    },
+    ...(showPrices
+      ? [
+          { title: 'Цена', dataIndex: 'unit_price', width: 95, align: 'right' as const, render: (v: string, r: EstimateItem) =>
+              isRowInEdit(r) && editing ? (
+                <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
+              ) : formatMoney(v),
+          },
+          { title: 'Сумма', dataIndex: 'total', width: 105, align: 'right' as const, render: (v: string, r: EstimateItem) =>
+              isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
+          },
+        ]
+      : []),
     ...(showLocationColumn
       ? [{
           title: 'Локация', width: 158,
@@ -714,7 +737,7 @@ export function CostTypeGroupBlock({
                 work={r}
                 editable={editable && !deleteMode && !editing}
                 zones={zones}
-                onChange={(loc) =>
+                onChange={({ locations }) =>
                   onUpdateWork(r.id, {
                     costTypeId: r.cost_type_id,
                     rateId: r.rate_id,
@@ -722,9 +745,7 @@ export function CostTypeGroupBlock({
                     unit: r.unit,
                     quantity: Number(r.quantity),
                     unitPrice: Number(r.unit_price),
-                    zoneId: loc.zoneId,
-                    floorFrom: loc.floorFrom,
-                    floorTo: loc.floorTo,
+                    locations,
                   })
                 }
               />
@@ -835,8 +856,9 @@ export function CostTypeGroupBlock({
           )
         )}
 
+        {headerExtra}
         <span style={{ flex: 1 }} />
-        <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>
+        {showPrices && <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>}
         {editable && !deleteMode && (
           <Button type="primary" size="small" icon={<PlusOutlined />} disabled={!!editing} onClick={() => setEditing({ workId: null, rateId: null, description: '', unit: '', quantity: 1, unitPrice: 0, originalDescription: '', originalRateId: null })}>
             Работа
@@ -909,6 +931,7 @@ export function CostTypeGroupBlock({
               <MaterialsSubTable
                 work={r}
                 editable={editable}
+                showPrices={showPrices}
                 onCreate={onCreateMaterial}
                 onUpdate={onUpdateMaterial}
                 onDelete={onDeleteMaterial}

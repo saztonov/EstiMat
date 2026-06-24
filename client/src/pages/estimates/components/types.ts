@@ -1,3 +1,5 @@
+import type { LocationEntry } from './location';
+
 export interface EstimateMaterial {
   id: string;
   item_id: string;
@@ -42,7 +44,9 @@ export interface EstimateItem {
   source?: 'manual' | 'ai' | 'catalog';
   needs_review?: boolean;
   confidence?: string | number | null;
-  // Локализация: география (зона + диапазон этажей) + тип помещения (денормализованные имена).
+  // Мультилокация (источник истины): зоны + точный набор этажей.
+  locations?: LocationEntry[] | null;
+  // Легаси «первичное» зеркало (зона + диапазон этажей) + тип помещения (денормализованные имена).
   zone_id?: string | null;
   zone_name?: string | null;
   zone_kind?: string | null;
