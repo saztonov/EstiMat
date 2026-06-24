@@ -33,9 +33,9 @@ export function AppLayout() {
     }
     const items = [
       { key: '/estimates', icon: <FileTextOutlined />, label: 'Сметы' },
-      { key: '/references', icon: <AppstoreOutlined />, label: 'Справочники' },
       { key: '/contractors', icon: <TeamOutlined />, label: 'Подрядчики' },
       { key: '/execution', icon: <CheckSquareOutlined />, label: 'Выполнение' },
+      { key: '/references', icon: <AppstoreOutlined />, label: 'Справочники' },
     ];
     if (user?.role === 'admin') {
       items.push({ key: '/administration', icon: <SettingOutlined />, label: 'Администрирование' });
