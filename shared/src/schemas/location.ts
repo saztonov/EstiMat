@@ -39,6 +39,7 @@ export const createZoneSchema = z
     floorMin: z.number().int().nullable().optional(),
     floorMax: z.number().int().nullable().optional(),
     sortOrder: z.number().int().default(0),
+    spansZoneIds: z.array(z.string().uuid()).max(100).default([]),
   })
   .refine(
     (d) => d.floorMin == null || d.floorMax == null || d.floorMin <= d.floorMax,
@@ -54,6 +55,7 @@ export const updateZoneSchema = z
     floorMin: z.number().int().nullable().optional(),
     floorMax: z.number().int().nullable().optional(),
     sortOrder: z.number().int().optional(),
+    spansZoneIds: z.array(z.string().uuid()).max(100).optional(),
   })
   .refine(
     (d) => d.floorMin == null || d.floorMax == null || d.floorMin <= d.floorMax,
@@ -75,6 +77,7 @@ export const bulkZoneSchema = z
     floorMin: z.number().int().nullable().optional(),
     floorMax: z.number().int().nullable().optional(),
     sortOrder: z.number().int().default(0),
+    spansZoneIds: z.array(z.string().uuid()).max(100).default([]),
   })
   .refine(
     (d) => d.floorMin == null || d.floorMax == null || d.floorMin <= d.floorMax,

@@ -22,6 +22,7 @@ export interface ZoneNode {
   floor_min: number | null;
   floor_max: number | null;
   sort_order: number;
+  spans_zone_ids: string[];
   children: ZoneNode[];
 }
 
@@ -86,13 +87,13 @@ export interface BaseLayerPreset {
   defaultFloorMax: number | null;
 }
 
-// Палитра «Добавить» в порядке снизу вверх (как в разрезе).
+// Палитра «Добавить». Все повторяемы: корпусов, паркингов, стилобатов и техэтажей может быть несколько.
 export const BASE_LAYER_PRESETS: BaseLayerPreset[] = [
-  { kind: 'parking',   label: 'Паркинг',  repeatable: false, defaultName: 'Паркинг',  defaultFloorMin: -1, defaultFloorMax: -1 },
-  { kind: 'techfloor', label: 'Техэтаж',  repeatable: false, defaultName: 'Техэтаж',  defaultFloorMin: null, defaultFloorMax: null },
-  { kind: 'stylobate', label: 'Стилобат', repeatable: false, defaultName: 'Стилобат', defaultFloorMin: 1, defaultFloorMax: 1 },
-  { kind: 'building',  label: 'Корпус',   repeatable: true,  defaultName: 'Корпус',   defaultFloorMin: 1, defaultFloorMax: 1 },
-  { kind: 'roof',      label: 'Кровля',   repeatable: true,  defaultName: 'Кровля',   defaultFloorMin: null, defaultFloorMax: null },
+  { kind: 'building',  label: 'Корпус',   repeatable: true, defaultName: 'Корпус',   defaultFloorMin: 1, defaultFloorMax: 1 },
+  { kind: 'parking',   label: 'Паркинг',  repeatable: true, defaultName: 'Паркинг',  defaultFloorMin: -1, defaultFloorMax: -1 },
+  { kind: 'stylobate', label: 'Стилобат', repeatable: true, defaultName: 'Стилобат', defaultFloorMin: 1, defaultFloorMax: 1 },
+  { kind: 'techfloor', label: 'Техэтаж',  repeatable: true, defaultName: 'Техэтаж',  defaultFloorMin: 1, defaultFloorMax: 1 },
+  { kind: 'roof',      label: 'Кровля',   repeatable: true, defaultName: 'Кровля',   defaultFloorMin: null, defaultFloorMax: null },
 ];
 
 // «Количество этажей» ↔ диапазон. Паркинг считает подземные (отрицательные), остальные — надземные с 1.

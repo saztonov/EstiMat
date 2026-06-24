@@ -474,27 +474,35 @@ export default async function projectRoutes(fastify: FastifyInstance) {
           );
         }
 
-        for (const z of zones) {
+        // Родители (parent_id = null) — раньше детей, чтобы FK на parent_id не падал в одной транзакции.
+        const ordered = [...zones].sort((a, b) => (a.parentId ? 1 : 0) - (b.parentId ? 1 : 0));
+        for (const z of ordered) {
           if (z.id) {
+            // upsert по id (клиент генерирует uuid для новых — ссылки parent_id/spans стабильны).
+            // ON CONFLICT ... WHERE project_id совпадает: чужой объект (тот же id) не перезаписать.
             await client.query(
-              `UPDATE project_zones
-                  SET parent_id = $1, name = $2, kind = $3, code = $4,
-                      floor_min = $5, floor_max = $6, sort_order = $7, updated_by = $8
-                WHERE id = $9 AND project_id = $10`,
+              `INSERT INTO project_zones
+                 (id, project_id, parent_id, name, kind, code, floor_min, floor_max, sort_order, spans_zone_ids, created_by, updated_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid[], $11, $11)
+               ON CONFLICT (id) DO UPDATE SET
+                 parent_id = EXCLUDED.parent_id, name = EXCLUDED.name, kind = EXCLUDED.kind,
+                 code = EXCLUDED.code, floor_min = EXCLUDED.floor_min, floor_max = EXCLUDED.floor_max,
+                 sort_order = EXCLUDED.sort_order, spans_zone_ids = EXCLUDED.spans_zone_ids,
+                 updated_by = EXCLUDED.updated_by
+               WHERE project_zones.project_id = EXCLUDED.project_id`,
               [
-                z.parentId ?? null, z.name, z.kind, z.code ?? null,
-                z.floorMin ?? null, z.floorMax ?? null, z.sortOrder ?? 0,
-                userId, z.id, projectId,
+                z.id, projectId, z.parentId ?? null, z.name, z.kind, z.code ?? null,
+                z.floorMin ?? null, z.floorMax ?? null, z.sortOrder ?? 0, z.spansZoneIds ?? [], userId,
               ],
             );
           } else {
             await client.query(
               `INSERT INTO project_zones
-                 (project_id, parent_id, name, kind, code, floor_min, floor_max, sort_order, created_by, updated_by)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+                 (project_id, parent_id, name, kind, code, floor_min, floor_max, sort_order, spans_zone_ids, created_by, updated_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid[], $10, $10)`,
               [
                 projectId, z.parentId ?? null, z.name, z.kind, z.code ?? null,
-                z.floorMin ?? null, z.floorMax ?? null, z.sortOrder ?? 0, userId,
+                z.floorMin ?? null, z.floorMax ?? null, z.sortOrder ?? 0, z.spansZoneIds ?? [], userId,
               ],
             );
           }
