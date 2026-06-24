@@ -157,6 +157,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
+  const [filterContractorIds, setFilterContractorIds] = useState<string[]>([]);
 
   // Инженеру/админу видны цены (как на странице «Смета»).
   const showPrices = canAssign;
@@ -175,10 +176,28 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
     [orgsData],
   );
 
-  const visibleItems = useMemo(
-    () => (onlyUnassigned ? items.filter((it) => num(it.remaining_qty ?? it.quantity) > 1e-6) : items),
-    [items, onlyUnassigned],
-  );
+  // Опции фильтра — только подрядчики, реально назначенные на работы в этой смете
+  // (источник — item_contractors, а не справочник организаций).
+  const assignedContractorOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const it of items)
+      for (const c of it.item_contractors ?? [])
+        if (!map.has(c.contractor_id)) map.set(c.contractor_id, c.contractor_name ?? '—');
+    return [...map]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+  }, [items]);
+
+  const visibleItems = useMemo(() => {
+    let res = onlyUnassigned
+      ? items.filter((it) => num(it.remaining_qty ?? it.quantity) > 1e-6)
+      : items;
+    if (filterContractorIds.length)
+      res = res.filter((it) =>
+        (it.item_contractors ?? []).some((c) => filterContractorIds.includes(c.contractor_id)),
+      );
+    return res;
+  }, [items, onlyUnassigned, filterContractorIds]);
   const groups = useMemo(() => buildCostTypeGroups(visibleItems, []), [visibleItems]);
 
   // Секции категорий (категория → виды работ), как на странице «Смета».
@@ -364,6 +383,17 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
         <Checkbox checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)}>
           Только с нераспределённым объёмом
         </Checkbox>
+        <Select
+          mode="multiple"
+          allowClear
+          placeholder="Фильтр по подрядчикам"
+          style={{ minWidth: 260 }}
+          value={filterContractorIds}
+          onChange={setFilterContractorIds}
+          options={assignedContractorOptions}
+          optionFilterProp="label"
+          maxTagCount="responsive"
+        />
         <Tooltip title="Развернуть всё">
           <Button type="text" size="small" icon={<DownOutlined />} onClick={expandAll} />
         </Tooltip>
