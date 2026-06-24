@@ -85,7 +85,7 @@ export function LocationCell({ work, editable, zones, onChange }: Props) {
       placement="bottomLeft"
       title="Локация работы"
       content={
-        <Space direction="vertical" style={{ width: 360 }}>
+        <Space direction="vertical" style={{ width: 400 }}>
           <MultiLocationPicker size="small" zones={zones} value={draft} onChange={setDraft} />
           <Space>
             <Button size="small" type="primary" disabled={!isValidFloorsInput(draft.floorsText)} onClick={apply}>
