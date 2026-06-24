@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Card, Row, Col, Input, Select, Tag, Empty, Spin, Space } from 'antd';
+import { Card, Row, Col, Input, Select, Tag, Empty, Spin, Space, Button, Modal, App } from 'antd';
 import { SearchOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { PROJECT_STATUS_LABELS } from '@estimat/shared';
+import { BuildingsIcon } from '../../components/shared/BuildingsIcon';
+import { LocationBuilder } from '../projects/LocationBuilder';
 
 interface ProjectWithStats {
   id: string;
@@ -50,8 +52,26 @@ const placeholderCover = (code: string) => {
 
 export function EstimatesPage() {
   const navigate = useNavigate();
+  const { modal } = App.useApp();
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<'code' | 'name' | 'total' | 'count'>('code');
+  const [sort, setSort] = useState<'code' | 'name' | 'total'>('code');
+  const [builderProjectId, setBuilderProjectId] = useState<string | null>(null);
+  const [builderDirty, setBuilderDirty] = useState(false);
+
+  const openBuilder = (id: string) => { setBuilderDirty(false); setBuilderProjectId(id); };
+  const closeBuilder = () => {
+    if (builderDirty) {
+      modal.confirm({
+        title: 'Закрыть без сохранения?',
+        content: 'Есть несохранённые изменения местоположения.',
+        okText: 'Закрыть',
+        cancelText: 'Остаться',
+        onOk: () => { setBuilderDirty(false); setBuilderProjectId(null); },
+      });
+    } else {
+      setBuilderProjectId(null);
+    }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['projects-with-stats'],
@@ -75,13 +95,13 @@ export function EstimatesPage() {
       switch (sort) {
         case 'name': return a.name.localeCompare(b.name);
         case 'total': return Number(b.estimates_total) - Number(a.estimates_total);
-        case 'count': return b.estimates_count - a.estimates_count;
         default: return a.code.localeCompare(b.code);
       }
     });
   }, [data, search, sort]);
 
   return (
+    <>
     <Card
       title="Строительные объекты"
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
@@ -104,7 +124,6 @@ export function EstimatesPage() {
             { value: 'code', label: 'Сортировка: по коду' },
             { value: 'name', label: 'Сортировка: по названию' },
             { value: 'total', label: 'Сортировка: по сумме' },
-            { value: 'count', label: 'Сортировка: по числу смет' },
           ]}
         />
       </Space>
@@ -136,10 +155,16 @@ export function EstimatesPage() {
                 <div style={{ color: '#8c8c8c', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
                   {p.address || '—'}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <span style={{ color: '#8c8c8c' }}>
-                    <FileTextOutlined /> {p.estimates_count} смет
-                  </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<BuildingsIcon />}
+                    style={{ paddingInline: 4, color: '#595959' }}
+                    onClick={(e) => { e.stopPropagation(); openBuilder(p.id); }}
+                  >
+                    Местоположение
+                  </Button>
                   <strong style={{ color: '#1677ff' }}>{formatMoney(p.estimates_total)}</strong>
                 </div>
               </Card>
@@ -148,5 +173,20 @@ export function EstimatesPage() {
         </Row>
       )}
     </Card>
+
+      <Modal
+        title="Местоположение"
+        open={!!builderProjectId}
+        onCancel={closeBuilder}
+        footer={null}
+        width="90%"
+        style={{ top: 24 }}
+        styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflow: 'auto' } }}
+      >
+        {builderProjectId && (
+          <LocationBuilder projectId={builderProjectId} onDirtyChange={setBuilderDirty} />
+        )}
+      </Modal>
+    </>
   );
 }

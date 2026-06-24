@@ -27,6 +27,7 @@ export const zoneKindSchema = z.enum([
   'section',
   'roof',
   'other',
+  'techfloor',
 ]);
 
 export const createZoneSchema = z
@@ -58,6 +59,32 @@ export const updateZoneSchema = z
     (d) => d.floorMin == null || d.floorMax == null || d.floorMin <= d.floorMax,
     { message: 'floorMin не может быть больше floorMax', path: ['floorMax'] },
   );
+
+// ---------- Пакетное сохранение конструктора локаций ----------
+// Конструктор шлёт весь набор зон одним запросом: элемент с id → UPDATE, без id → INSERT.
+// Удаление — только явным deletedIds (не «отсутствие в zones»), чтобы не снести зоны,
+// созданные параллельно другим пользователем после открытия модалки.
+
+export const bulkZoneSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    parentId: z.string().uuid().nullable().optional(),
+    name: z.string().min(1, 'Название обязательно'),
+    kind: zoneKindSchema.default('building'),
+    code: z.string().nullable().optional(),
+    floorMin: z.number().int().nullable().optional(),
+    floorMax: z.number().int().nullable().optional(),
+    sortOrder: z.number().int().default(0),
+  })
+  .refine(
+    (d) => d.floorMin == null || d.floorMax == null || d.floorMin <= d.floorMax,
+    { message: 'floorMin не может быть больше floorMax', path: ['floorMax'] },
+  );
+
+export const bulkZonesSchema = z.object({
+  zones: z.array(bulkZoneSchema).max(200),
+  deletedIds: z.array(z.string().uuid()).max(200).default([]),
+});
 
 // ---------- Типы помещений ----------
 
@@ -120,6 +147,8 @@ export type LocationContext = z.infer<typeof locationContextSchema>;
 export type ZoneKind = z.infer<typeof zoneKindSchema>;
 export type CreateZoneInput = z.infer<typeof createZoneSchema>;
 export type UpdateZoneInput = z.infer<typeof updateZoneSchema>;
+export type BulkZoneInput = z.infer<typeof bulkZoneSchema>;
+export type BulkZonesInput = z.infer<typeof bulkZonesSchema>;
 export type CreateRoomTypeInput = z.infer<typeof createRoomTypeSchema>;
 export type UpdateRoomTypeInput = z.infer<typeof updateRoomTypeSchema>;
 export type SetProjectRoomTypesInput = z.infer<typeof setProjectRoomTypesSchema>;

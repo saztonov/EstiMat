@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { Button, Drawer, Space, Tooltip, Typography } from 'antd';
+import { Button, Modal, Space, Tooltip, Typography, App } from 'antd';
 import {
   ArrowLeftOutlined,
   PlusOutlined,
@@ -10,13 +10,13 @@ import {
   AppstoreOutlined,
   HistoryOutlined,
   ContainerOutlined,
-  EnvironmentOutlined,
 } from '@ant-design/icons';
 import type { EstimateDetail } from '../components/types';
 import { formatMoney } from '../components/types';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { AiProcessingIndicator } from './AiProcessingIndicator';
-import { ProjectZonesPanel } from '../../projects/ProjectZonesPanel';
+import { LocationBuilder } from '../../projects/LocationBuilder';
+import { BuildingsIcon } from '../../../components/shared/BuildingsIcon';
 
 interface Props {
   estimate: EstimateDetail;
@@ -66,9 +66,25 @@ export function WorkspaceToolbar({
   onHistory,
 }: Props) {
   const { visibility, toggleArea } = useWorkspaceLayoutStore();
+  const { modal } = App.useApp();
   const navigate = useNavigate();
   const [zonesOpen, setZonesOpen] = useState(false);
+  const [zonesDirty, setZonesDirty] = useState(false);
   const title = estimate.work_type || 'Смета';
+
+  const closeZones = () => {
+    if (zonesDirty) {
+      modal.confirm({
+        title: 'Закрыть без сохранения?',
+        content: 'Есть несохранённые изменения местоположения.',
+        okText: 'Закрыть',
+        cancelText: 'Остаться',
+        onOk: () => { setZonesDirty(false); setZonesOpen(false); },
+      });
+    } else {
+      setZonesOpen(false);
+    }
+  };
 
   return (
     <div
@@ -90,9 +106,9 @@ export function WorkspaceToolbar({
           Материалы
         </Button>
       </Tooltip>
-      <Tooltip title="Настройка локаций объекта (корпуса, этажность, типы помещений)">
-        <Button icon={<EnvironmentOutlined />} onClick={() => setZonesOpen(true)}>
-          Локации
+      <Tooltip title="Местоположение: корпуса, этажность, типы помещений">
+        <Button icon={<BuildingsIcon />} onClick={() => { setZonesDirty(false); setZonesOpen(true); }}>
+          Местоположение
         </Button>
       </Tooltip>
 
@@ -142,16 +158,19 @@ export function WorkspaceToolbar({
         />
       </Space>
 
-      <Drawer
-        title="Локации объекта"
-        placement="right"
-        width={640}
+      <Modal
+        title="Местоположение"
         open={zonesOpen}
-        onClose={() => setZonesOpen(false)}
-        destroyOnClose
+        onCancel={closeZones}
+        footer={null}
+        width="90%"
+        style={{ top: 24 }}
+        styles={{ body: { maxHeight: 'calc(100vh - 180px)', overflow: 'auto' } }}
       >
-        <ProjectZonesPanel projectId={estimate.project_id} />
-      </Drawer>
+        {zonesOpen && (
+          <LocationBuilder projectId={estimate.project_id} onDirtyChange={setZonesDirty} />
+        )}
+      </Modal>
     </div>
   );
 }

@@ -1,6 +1,16 @@
 // Типы и утилиты локализации для клиента (зоны объекта + типы помещений).
+import type { ComponentType } from 'react';
+import {
+  BankOutlined,
+  CarOutlined,
+  BuildOutlined,
+  ApartmentOutlined,
+  ToolOutlined,
+  BorderTopOutlined,
+  EnvironmentOutlined,
+} from '@ant-design/icons';
 
-export type ZoneKind = 'building' | 'parking' | 'stylobate' | 'section' | 'roof' | 'other';
+export type ZoneKind = 'building' | 'parking' | 'stylobate' | 'section' | 'roof' | 'other' | 'techfloor';
 
 export interface ZoneNode {
   id: string;
@@ -25,12 +35,77 @@ export interface RoomType {
 
 export const ZONE_KIND_LABEL: Record<ZoneKind, string> = {
   building: 'Корпус',
-  parking: 'Парковка',
+  parking: 'Паркинг',
   stylobate: 'Стилобат',
   section: 'Секция',
   roof: 'Кровля',
   other: 'Прочее',
+  techfloor: 'Техэтаж',
 };
+
+// Иконка и акцентный цвет яруса — единый источник для разреза-конструктора и тегов локации в смете.
+export const ZONE_KIND_ICON: Record<ZoneKind, ComponentType> = {
+  building: BankOutlined,
+  parking: CarOutlined,
+  stylobate: BuildOutlined,
+  section: ApartmentOutlined,
+  roof: BorderTopOutlined,
+  other: EnvironmentOutlined,
+  techfloor: ToolOutlined,
+};
+
+export const ZONE_KIND_COLOR: Record<ZoneKind, string> = {
+  building: '#1677ff',
+  parking: '#722ed1',
+  stylobate: '#fa8c16',
+  section: '#4096ff',
+  roof: '#595959',
+  other: '#8c8c8c',
+  techfloor: '#13a8a8',
+};
+
+// ---------- Конструктор локаций: базовые слои, маппинг этажей, порядок ----------
+
+// Базовый вес sort_order слоя (снизу вверх). Повторяемые (корпус/кровля) сдвигаются по индексу.
+export const LAYER_BASE_ORDER: Record<ZoneKind, number> = {
+  parking: 10,
+  techfloor: 20,
+  stylobate: 30,
+  building: 40,
+  section: 40,
+  roof: 900,
+  other: 950,
+};
+
+export interface BaseLayerPreset {
+  kind: ZoneKind;
+  label: string;            // подпись кнопки в палитре
+  repeatable: boolean;      // корпус/кровля — можно несколько; остальные — единичные
+  defaultName: string;
+  defaultFloorMin: number | null;
+  defaultFloorMax: number | null;
+}
+
+// Палитра «Добавить» в порядке снизу вверх (как в разрезе).
+export const BASE_LAYER_PRESETS: BaseLayerPreset[] = [
+  { kind: 'parking',   label: 'Паркинг',  repeatable: false, defaultName: 'Паркинг',  defaultFloorMin: -1, defaultFloorMax: -1 },
+  { kind: 'techfloor', label: 'Техэтаж',  repeatable: false, defaultName: 'Техэтаж',  defaultFloorMin: null, defaultFloorMax: null },
+  { kind: 'stylobate', label: 'Стилобат', repeatable: false, defaultName: 'Стилобат', defaultFloorMin: 1, defaultFloorMax: 1 },
+  { kind: 'building',  label: 'Корпус',   repeatable: true,  defaultName: 'Корпус',   defaultFloorMin: 1, defaultFloorMax: 1 },
+  { kind: 'roof',      label: 'Кровля',   repeatable: true,  defaultName: 'Кровля',   defaultFloorMin: null, defaultFloorMax: null },
+];
+
+// «Количество этажей» ↔ диапазон. Паркинг считает подземные (отрицательные), остальные — надземные с 1.
+export function floorCountToRange(kind: ZoneKind, count: number): { floorMin: number; floorMax: number } {
+  const n = Math.max(1, Math.round(count));
+  if (kind === 'parking') return { floorMin: -n, floorMax: -1 };
+  return { floorMin: 1, floorMax: n };
+}
+
+export function rangeToFloorCount(floorMin: number | null, floorMax: number | null): number {
+  if (floorMin == null || floorMax == null) return 0;
+  return floorMax - floorMin + 1;
+}
 
 // «эт. 5–40» | «эт. 5» | '' (диапазон этажей).
 export function formatFloorRange(from: number | null | undefined, to: number | null | undefined): string {

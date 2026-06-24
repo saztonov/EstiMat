@@ -9,6 +9,7 @@ import {
   updateProjectSchema,
   createZoneSchema,
   updateZoneSchema,
+  bulkZonesSchema,
   setProjectRoomTypesSchema,
 } from '@estimat/shared';
 
@@ -447,6 +448,80 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         ],
       );
       return reply.status(201).send({ data: rows[0] });
+    },
+  );
+
+  // PUT /api/projects/:id/zones/bulk — пакетное сохранение конструктора локаций.
+  // Регистрируется ДО параметризованного '/:id/zones/:zoneId' (явный приоритет статического сегмента).
+  // upsert переданных зон + удаление только перечисленных deletedIds; зоны вне обоих списков не трогаем.
+  fastify.put<{ Params: { id: string } }>(
+    '/:id/zones/bulk',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const { zones, deletedIds } = bulkZonesSchema.parse(request.body);
+      const projectId = request.params.id;
+      const userId = request.currentUser.id;
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        if (deletedIds.length > 0) {
+          // WHERE по project_id гарантирует, что чужой объект не затронуть.
+          await client.query(
+            'DELETE FROM project_zones WHERE project_id = $1 AND id = ANY($2::uuid[])',
+            [projectId, deletedIds],
+          );
+        }
+
+        for (const z of zones) {
+          if (z.id) {
+            await client.query(
+              `UPDATE project_zones
+                  SET parent_id = $1, name = $2, kind = $3, code = $4,
+                      floor_min = $5, floor_max = $6, sort_order = $7, updated_by = $8
+                WHERE id = $9 AND project_id = $10`,
+              [
+                z.parentId ?? null, z.name, z.kind, z.code ?? null,
+                z.floorMin ?? null, z.floorMax ?? null, z.sortOrder ?? 0,
+                userId, z.id, projectId,
+              ],
+            );
+          } else {
+            await client.query(
+              `INSERT INTO project_zones
+                 (project_id, parent_id, name, kind, code, floor_min, floor_max, sort_order, created_by, updated_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+              [
+                projectId, z.parentId ?? null, z.name, z.kind, z.code ?? null,
+                z.floorMin ?? null, z.floorMax ?? null, z.sortOrder ?? 0, userId,
+              ],
+            );
+          }
+        }
+
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+
+      // Этажность зон могла измениться — строки сметы могут оказаться вне диапазона.
+      const { rows } = await fastify.pool.query<ZoneRow>(
+        'SELECT * FROM project_zones WHERE project_id = $1 ORDER BY sort_order, name',
+        [projectId],
+      );
+      const byId = new Map<string, ZoneNode>();
+      for (const z of rows) byId.set(z.id, { ...z, children: [] });
+      const roots: ZoneNode[] = [];
+      for (const node of byId.values()) {
+        const parent = node.parent_id ? byId.get(node.parent_id) : undefined;
+        if (parent) parent.children.push(node);
+        else roots.push(node);
+      }
+      return reply.send({ data: { roots } });
     },
   );
 
