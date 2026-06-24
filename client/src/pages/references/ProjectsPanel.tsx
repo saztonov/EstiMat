@@ -5,7 +5,7 @@ import { PlusOutlined, EditOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile, UploadProps } from 'antd/es/upload/interface';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../services/api';
+import { api, assetUrl } from '../../services/api';
 import { PROJECT_STATUS_LABELS } from '@estimat/shared';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
@@ -45,12 +45,12 @@ export function ProjectsPanel() {
       dataIndex: 'code',
       width: 130,
       render: (code: string, record) => {
-        const src = record.image_src ?? record.image_url;
+        const src = assetUrl((record.image_src ?? record.image_url) as string | null);
         return (
           <Space size={8}>
             {src ? (
               <img
-                src={src as string}
+                src={src}
                 alt=""
                 style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 4, display: 'block' }}
               />
@@ -132,7 +132,7 @@ function ProjectFormModal({ mode, onClose, onSuccess }: ProjectFormModalProps) {
 
   const [fileList, setFileList] = useState<UploadFile[]>(() =>
     isEdit && mode.project.image_url
-      ? [{ uid: '-1', name: 'photo', status: 'done', url: mode.project.image_src ?? mode.project.image_url ?? undefined }]
+      ? [{ uid: '-1', name: 'photo', status: 'done', url: assetUrl(mode.project.image_src ?? mode.project.image_url) }]
       : [],
   );
   const [uploading, setUploading] = useState(false);
@@ -171,7 +171,7 @@ function ProjectFormModal({ mode, onClose, onSuccess }: ProjectFormModalProps) {
     try {
       const fd = new FormData();
       fd.append('file', file as File);
-      // В форму (→ БД) кладём ключ объекта; res.url — presigned URL для превью.
+      // В форму (→ БД) кладём ключ объекта; res.url — прокси-URL API для превью.
       const res = await api.upload<{ key: string; url: string }>('/uploads/image', fd);
       form.setFieldValue('imageUrl', res.key);
       onUpSuccess?.(res);
@@ -186,7 +186,7 @@ function ProjectFormModal({ mode, onClose, onSuccess }: ProjectFormModalProps) {
   const handleChange: UploadProps['onChange'] = ({ fileList: fl }) => {
     const next = fl.slice(-1).map((f) => {
       if (f.response && typeof (f.response as { url?: string }).url === 'string') {
-        return { ...f, url: (f.response as { url: string }).url };
+        return { ...f, url: assetUrl((f.response as { url: string }).url) };
       }
       return f;
     });

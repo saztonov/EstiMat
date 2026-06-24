@@ -50,19 +50,17 @@ async function removeUpload(fastify: FastifyInstance, value: string | null | und
 }
 
 // Обложка проекта (§15): image_url в БД — ключ объекта S3 (или легаси-локальный путь).
-// Для показа добавляем image_src с presigned GET-URL, не меняя сам image_url —
-// чтобы round-trip формы редактирования сохранял ключ, а не протухший URL.
-async function withImageSrc<T extends { image_url?: string | null }>(
+// Для показа добавляем image_src — ссылку на наш прокси GET /api/projects/cover/<key>,
+// не меняя сам image_url (round-trip формы сохраняет ключ). Прокси нужен, чтобы браузер
+// не ходил в Cloud.ru напрямую: прямой путь до стороннего хоста S3 в части клиентских
+// сетей не проходит (обрыв передачи файла), хотя VPS до S3 достучивается без проблем.
+function withImageSrc<T extends { image_url?: string | null }>(
   fastify: FastifyInstance,
   row: T,
-): Promise<T & { image_src: string | null }> {
+): T & { image_src: string | null } {
   const img = row.image_url ?? null;
   if (img && fastify.storage && !isLegacyLocalImage(img)) {
-    try {
-      return { ...row, image_src: await fastify.storage.presignGet(img) };
-    } catch {
-      return { ...row, image_src: null };
-    }
+    return { ...row, image_src: `/api/projects/cover/${img}` };
   }
   return { ...row, image_src: img };
 }
@@ -136,7 +134,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     const { rows } = await fastify.pool.query(
       'SELECT * FROM projects ORDER BY code',
     );
-    return { data: await Promise.all(rows.map((r) => withImageSrc(fastify, r))) };
+    return { data: rows.map((r) => withImageSrc(fastify, r)) };
   });
 
   // GET /api/projects/with-stats — для галереи объектов на странице «Сметы»
@@ -150,8 +148,38 @@ export default async function projectRoutes(fastify: FastifyInstance) {
          GROUP BY p.id
          ORDER BY p.code`,
     );
-    return { data: await Promise.all(rows.map((r) => withImageSrc(fastify, r))) };
+    return { data: rows.map((r) => withImageSrc(fastify, r)) };
   });
+
+  // GET /api/projects/cover/* — прокси чтения обложки из S3. Браузер берёт обложку
+  // с нашего домена (а сервер сам тянет объект из Cloud.ru), чтобы не зависеть от
+  // прямого сетевого пути клиент → S3. Ключ объекта (projects/<uuid>.<ext>) — в wildcard.
+  fastify.get<{ Params: { '*': string } }>(
+    '/cover/*',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const key = request.params['*'];
+      // Только обложки проектов; защита от обхода путей и легаси-локальных файлов.
+      if (!key.startsWith('projects/') || key.includes('..')) {
+        return reply.status(400).send({ error: 'Некорректный ключ объекта' });
+      }
+      if (!fastify.storage) return reply.status(404).send({ error: 'Хранилище не настроено' });
+      try {
+        const obj = await fastify.storage.getObject(key);
+        if (obj.contentType) reply.type(obj.contentType);
+        if (obj.contentLength != null) reply.header('Content-Length', obj.contentLength);
+        // Ключ контент-адресный (UUID) — содержимое неизменно, кэшируем «навсегда».
+        reply.header('Cache-Control', 'private, max-age=31536000, immutable');
+        return reply.send(obj.body);
+      } catch (err) {
+        const name = (err as { name?: string }).name;
+        if (name === 'NoSuchKey' || name === 'NotFound') {
+          return reply.status(404).send({ error: 'Обложка не найдена' });
+        }
+        throw err;
+      }
+    },
+  );
 
   // GET /api/projects/:id
   fastify.get<{ Params: { id: string } }>(
@@ -163,7 +191,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         [request.params.id],
       );
       if (rows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
-      return { data: await withImageSrc(fastify, rows[0]) };
+      return { data: withImageSrc(fastify, rows[0]) };
     },
   );
 
@@ -262,7 +290,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
     return {
       data: {
-        project: await withImageSrc(fastify, projectRows[0]),
+        project: withImageSrc(fastify, projectRows[0]),
         estimates: estimatesWithItems,
         grandTotal,
       },
@@ -383,7 +411,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
       await removeUpload(fastify, previousImageUrl);
     }
 
-    return { data: await withImageSrc(fastify, rows[0]) };
+    return { data: withImageSrc(fastify, rows[0]) };
   });
 
   // GET /api/projects/:id/members

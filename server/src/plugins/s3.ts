@@ -7,6 +7,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { LRUCache } from 'lru-cache';
+import type { Readable } from 'stream';
 import { config } from '../config.js';
 
 // Хранилище файлов в S3-совместимом объектном хранилище (Cloud.ru) — корп. стандарт §15.
@@ -21,6 +22,8 @@ export interface Storage {
   putObject(key: string, body: Buffer, contentType: string): Promise<void>;
   deleteObject(key: string): Promise<void>;
   presignGet(key: string, ttlSec?: number): Promise<string>;
+  // Чтение объекта стримом — для отдачи через API-прокси (браузер не ходит в S3 напрямую).
+  getObject(key: string): Promise<{ body: Readable; contentType?: string; contentLength?: number }>;
 }
 
 function buildStorage(): Storage {
@@ -61,6 +64,15 @@ function buildStorage(): Storage {
       );
       urlCache.set(key, url);
       return url;
+    },
+
+    async getObject(key) {
+      const res = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      return {
+        body: res.Body as Readable,
+        contentType: res.ContentType,
+        contentLength: res.ContentLength,
+      };
     },
   };
 }

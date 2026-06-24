@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { Card, Row, Col, Input, Select, Tag, Empty, Spin, Space, Button, Modal, App } from 'antd';
 import { SearchOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../../services/api';
+import { api, assetUrl } from '../../services/api';
 import { PROJECT_STATUS_LABELS } from '@estimat/shared';
 import { BuildingsIcon } from '../../components/shared/BuildingsIcon';
 import { LocationBuilder } from '../projects/LocationBuilder';
@@ -140,7 +140,7 @@ export function EstimatesPage() {
                 hoverable
                 cover={
                   p.image_src ?? p.image_url
-                    ? <img alt={p.name} src={(p.image_src ?? p.image_url) as string} style={{ height: 140, objectFit: 'cover' }} />
+                    ? <img alt={p.name} src={assetUrl(p.image_src ?? p.image_url)} style={{ height: 140, objectFit: 'cover' }} />
                     : placeholderCover(p.code)
                 }
                 onClick={() => navigate(`/projects/${p.id}`)}

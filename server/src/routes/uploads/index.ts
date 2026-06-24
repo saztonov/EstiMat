@@ -39,13 +39,13 @@ export default async function uploadsRoutes(fastify: FastifyInstance) {
         return reply.status(400).send({ error: 'Файл больше 10 МБ' });
       }
 
-      // S3-хранилище (§15): ключ генерирует бэкенд, в БД пишется ключ объекта,
-      // на показ возвращаем presigned GET-URL.
+      // S3-хранилище (§15): ключ генерирует бэкенд, в БД пишется ключ объекта.
+      // url для превью — ссылка на прокси API (как и постоянная обложка), а не
+      // presigned-URL, чтобы превью сразу после загрузки не шло в Cloud.ru напрямую.
       if (fastify.storage) {
         const key = `projects/${randomUUID()}.${ext}`;
         await fastify.storage.putObject(key, buffer, file.mimetype);
-        const url = await fastify.storage.presignGet(key);
-        return reply.status(201).send({ key, url });
+        return reply.status(201).send({ key, url: `/api/projects/cover/${key}` });
       }
 
       // Фолбэк для локальной разработки без S3 — запись на диск.
