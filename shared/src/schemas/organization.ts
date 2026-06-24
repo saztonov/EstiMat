@@ -9,6 +9,8 @@ export const createOrganizationSchema = z.object({
   type: z.enum(ORG_TYPES),
   contacts: z.record(z.string()).nullish(),
   address: z.string().nullish(),
+  // Альтернативные наименования (напр. на латинице) — массив строк, хранится в jsonb.
+  alternative_names: z.array(z.string()).nullish(),
 });
 
 export const updateOrganizationSchema = createOrganizationSchema.partial();
@@ -20,6 +22,7 @@ export const organizationSchema = z.object({
   type: z.enum(ORG_TYPES),
   contacts: z.record(z.string()).nullable(),
   address: z.string().nullable(),
+  alternative_names: z.array(z.string()).default([]),
   isActive: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),

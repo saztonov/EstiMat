@@ -59,6 +59,7 @@ export function OrganizationsPanel() {
       inn: record.inn,
       type: record.type,
       address: record.address,
+      alternative_names: (record.alternative_names as string[]) ?? [],
     });
     setModalOpen(true);
   }
@@ -126,6 +127,9 @@ export function OrganizationsPanel() {
           </Form.Item>
           <Form.Item name="address" label="Адрес">
             <Input />
+          </Form.Item>
+          <Form.Item name="alternative_names" label="Альтернативные наименования">
+            <Select mode="tags" tokenSeparators={[',']} open={false} placeholder="Введите и нажмите Enter" />
           </Form.Item>
         </Form>
       </Modal>

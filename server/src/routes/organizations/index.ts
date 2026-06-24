@@ -29,9 +29,9 @@ export default async function organizationRoutes(fastify: FastifyInstance) {
   fastify.post('/', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
     const body = createOrganizationSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
-      `INSERT INTO organizations (name, inn, type, contacts, address)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [body.name, body.inn || null, body.type, JSON.stringify(body.contacts || {}), body.address || null],
+      `INSERT INTO organizations (name, inn, type, contacts, address, alternative_names)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [body.name, body.inn || null, body.type, JSON.stringify(body.contacts || {}), body.address || null, JSON.stringify(body.alternative_names || [])],
     );
     return reply.status(201).send({ data: rows[0] });
   });
@@ -48,6 +48,7 @@ export default async function organizationRoutes(fastify: FastifyInstance) {
     if (body.type !== undefined) { sets.push(`type = $${i++}`); values.push(body.type); }
     if (body.contacts !== undefined) { sets.push(`contacts = $${i++}`); values.push(JSON.stringify(body.contacts)); }
     if (body.address !== undefined) { sets.push(`address = $${i++}`); values.push(body.address); }
+    if (body.alternative_names !== undefined) { sets.push(`alternative_names = $${i++}`); values.push(JSON.stringify(body.alternative_names)); }
 
     if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
 
