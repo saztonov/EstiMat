@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Button, Input, InputNumber, Select, Popconfirm, Space, Tag, Typography, Divider,
-  Alert, Spin, Empty, Tooltip, App,
+  Button, Input, InputNumber, Select, Popconfirm, Space, Tag, Typography,
+  Alert, Spin, Empty, App, Modal,
 } from 'antd';
 import {
   PlusOutlined, DeleteOutlined, CopyOutlined, ArrowLeftOutlined, ArrowRightOutlined,
@@ -13,7 +13,7 @@ import { useProjectZones } from '../../hooks/useProjectLocations';
 import {
   type ZoneNode, type ZoneKind, type BaseLayerPreset,
   ZONE_KIND_LABEL, ZONE_KIND_ICON, ZONE_KIND_COLOR, LAYER_BASE_ORDER, BASE_LAYER_PRESETS,
-  flattenZones, formatFloorRange, floorCountToRange, rangeToFloorCount,
+  flattenZones, formatFloorRange,
 } from '../estimates/components/location';
 
 interface Props {
@@ -21,7 +21,6 @@ interface Props {
   onDirtyChange?: (dirty: boolean) => void;
 }
 
-// Черновая зона. id есть всегда (для новых — uuid) — ссылки parentId/spansZoneIds стабильны (сервер upsert по id).
 interface DraftZone {
   id: string;
   parentId: string | null;
@@ -44,14 +43,17 @@ function zoneToDraft(z: ZoneNode): DraftZone {
 
 const buildingCount = (b: DraftZone) => (b.floorMax ?? 1) - (b.floorMin ?? 1) + 1;
 
-// --- геометрия разреза ---
+// --- геометрия разреза (линейная шкала этажей) ---
 const COLW = 104;
 const GAP = 22;
-const TOWER_BAND_H = 150;
-const TOWER_MIN = 48;
-const LANE_H = 20;
-const LANE_GAP = 3;
-const ROOF_LANE_H = 12;
+const AXIS_W = 32;
+const FLOOR_PX_MIN = 9;
+const FLOOR_PX_MAX = 26;
+const PLOT_MAX_H = 520;
+const LABELS_H = 18;
+const STREET_H = 16;
+// слот этажа без «дыры нуля»: 1→0, 2→1, -1→-1, -2→-2
+const slot = (f: number) => (f > 0 ? f - 1 : f);
 
 function KindIcon({ kind }: { kind: ZoneKind }) {
   const Ico = ZONE_KIND_ICON[kind];
@@ -68,6 +70,7 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
 
   const [draft, setDraft] = useState<DraftZone[]>([]);
   const [dirty, setDirty] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const dirtyRef = useRef(false);
   const deletedIdsRef = useRef<string[]>([]);
   const serverIdsRef = useRef<Set<string>>(new Set());
@@ -82,7 +85,12 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
     const flat = flattenZones(zonesData?.data.roots ?? []);
     serverIdsRef.current = new Set(flat.map((z) => z.id));
     deletedIdsRef.current = [];
-    setDraft(flat.map(zoneToDraft));
+    const d = flat.map(zoneToDraft);
+    // «Улица» есть всегда (на случай, если сервер не сидировал).
+    if (!d.some((z) => z.kind === 'street')) {
+      d.unshift({ id: makeId(), parentId: null, kind: 'street', name: 'Улица', code: null, floorMin: null, floorMax: null, spansZoneIds: [] });
+    }
+    setDraft(d);
   }, [zonesData]);
 
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
@@ -108,34 +116,40 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
   };
 
   const removeZone = (z: DraftZone) => {
+    if (z.kind === 'street') return; // Улица неудаляемая
     setDraft((prev) => {
       const toRemove = new Set<string>([z.id]);
       prev.forEach((c) => { if (c.parentId === z.id) toRemove.add(c.id); });
       toRemove.forEach(pushDeleted);
       return prev.filter((x) => !toRemove.has(x.id));
     });
+    setEditingId(null);
     markDirty();
   };
 
-  const addLayer = (preset: BaseLayerPreset) => {
+  const addAndEdit = (preset: BaseLayerPreset) => {
     const sameKind = draft.filter((d) => d.kind === preset.kind && d.parentId == null).length;
+    const id = makeId();
     setDraft((prev) => [...prev, {
-      id: makeId(), parentId: null, kind: preset.kind,
+      id, parentId: null, kind: preset.kind,
       name: `${preset.defaultName}${sameKind > 0 ? ` ${sameKind + 1}` : ''}`,
       code: null, floorMin: preset.defaultFloorMin, floorMax: preset.defaultFloorMax, spansZoneIds: [],
     }]);
     markDirty();
+    setEditingId(id);
   };
 
   const duplicate = (z: DraftZone) => {
+    const id = makeId();
     setDraft((prev) => {
       const i = prev.findIndex((x) => x.id === z.id);
-      const copy: DraftZone = { ...z, id: makeId(), name: `${z.name} (копия)`, spansZoneIds: [...z.spansZoneIds] };
+      const copy: DraftZone = { ...z, id, parentId: null, name: `${z.name} (копия)`, spansZoneIds: [...z.spansZoneIds] };
       const arr = [...prev];
       arr.splice(i + 1, 0, copy);
       return arr;
     });
     markDirty();
+    setEditingId(id);
   };
 
   const moveBuilding = (z: DraftZone, dir: 1 | -1) => {
@@ -181,16 +195,6 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
     markDirty();
   };
 
-  const quickTemplate = () => {
-    const bId = makeId();
-    setDraft([
-      { id: bId, parentId: null, kind: 'building', name: 'Корпус 1', code: null, floorMin: 1, floorMax: 10, spansZoneIds: [] },
-      { id: makeId(), parentId: null, kind: 'parking', name: 'Паркинг', code: null, floorMin: -2, floorMax: -1, spansZoneIds: [bId] },
-      { id: makeId(), parentId: null, kind: 'stylobate', name: 'Стилобат', code: null, floorMin: 1, floorMax: 2, spansZoneIds: [bId] },
-    ]);
-    markDirty();
-  };
-
   const onSaveZones = () => {
     if (draft.some((d) => !d.name.trim())) { message.error('У каждой локации должно быть название'); return; }
     const bad = draft.find((d) => d.floorMin != null && d.floorMax != null && d.floorMin > d.floorMax);
@@ -201,8 +205,6 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
     const zones = draft.map((d) => {
       let sortOrder: number;
       if (d.kind === 'building' && d.parentId == null) sortOrder = LAYER_BASE_ORDER.building + blds.indexOf(d) * 10;
-      else if (d.kind === 'roof') sortOrder = LAYER_BASE_ORDER.roof;
-      else if (d.kind === 'section' || d.kind === 'other') sortOrder = LAYER_BASE_ORDER[d.kind];
       else sortOrder = LAYER_BASE_ORDER[d.kind] ?? 0;
       return {
         id: d.id, parentId: d.parentId, name: d.name.trim(), kind: d.kind, code: d.code || null,
@@ -215,13 +217,10 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
 
   // ---------- группировка ----------
   const buildings = draft.filter((d) => d.kind === 'building' && d.parentId == null);
-  const stylobates = draft.filter((d) => d.kind === 'stylobate' && d.parentId == null);
-  const parkings = draft.filter((d) => d.kind === 'parking');
-  const techfloors = draft.filter((d) => d.kind === 'techfloor');
-  const roofs = draft.filter((d) => d.kind === 'roof');
+  const podiums = draft.filter((d) => d.kind === 'parking' || d.kind === 'stylobate' || d.kind === 'techfloor');
+  const street = draft.find((d) => d.kind === 'street');
   const others = draft.filter((d) => d.kind === 'section' || d.kind === 'other');
-  const posTech = techfloors.filter((z) => (z.floorMin ?? 1) >= 0);
-  const negTech = techfloors.filter((z) => (z.floorMin ?? 1) < 0);
+  // legacy roof — скрыт полностью, но остаётся в draft/payload без изменений.
 
   const colIndex = new Map<string, number>();
   buildings.forEach((b, i) => colIndex.set(b.id, i));
@@ -235,18 +234,21 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
     );
   }
 
-  // ---------- геометрия разреза ----------
+  // ---------- шкала ----------
+  const floored = draft.filter((z) => z.floorMin != null && z.floorMax != null);
+  const top = floored.length ? Math.max(...floored.map((z) => z.floorMax as number)) : 1;
+  const bottom = floored.length ? Math.min(...floored.map((z) => z.floorMin as number)) : 1;
+  const slotsCount = Math.max(1, slot(top) - slot(bottom) + 1);
+  const floorPx = Math.min(FLOOR_PX_MAX, Math.max(FLOOR_PX_MIN, PLOT_MAX_H / slotsCount));
+  const plotH = slotsCount * floorPx;
+  const rowTopY = (f: number) => (slot(top) - slot(f)) * floorPx;
+  const blockTop = (z: DraftZone) => rowTopY(z.floorMax as number);
+  const blockH = (z: DraftZone) => (slot(z.floorMax as number) - slot(z.floorMin as number) + 1) * floorPx;
+  const groundY = (slot(top) + 1) * floorPx; // низ этажа 1
   const n = buildings.length;
   const plotW = n ? n * (COLW + GAP) - GAP : 280;
   const colX = (i: number) => i * (COLW + GAP);
-  const maxTop = Math.max(1, ...buildings.map((b) => b.floorMax ?? 1));
-  const towerH = (b: DraftZone) => {
-    const top = Math.max(1, b.floorMax ?? 1);
-    const t = Math.sqrt(top / maxTop);
-    return Math.round(TOWER_MIN + (TOWER_BAND_H - TOWER_MIN) * t);
-  };
 
-  // сегменты колонок охвата (несвязный → несколько); пустой охват = все колонки
   const zoneSegments = (z: DraftZone): { x: number; w: number }[] => {
     if (!n) return [{ x: 0, w: plotW }];
     let idxs: number[];
@@ -264,209 +266,206 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
     return segs;
   };
 
-  // вертикальная раскладка дорожек
-  let yc = 0;
-  const roofY = roofs.map((z, i) => ({ z, y: yc + i * (ROOF_LANE_H + LANE_GAP) }));
-  yc += roofs.length ? roofs.length * (ROOF_LANE_H + LANE_GAP) + 2 : 0;
-  const towerTop = yc; yc += TOWER_BAND_H; const towerBottom = yc;
-  const posTechY = posTech.map((z, i) => ({ z, y: yc + i * (LANE_H + LANE_GAP) }));
-  yc += posTech.length * (LANE_H + LANE_GAP);
-  const stylY = stylobates.map((z, i) => ({ z, y: yc + i * (LANE_H + LANE_GAP) }));
-  yc += stylobates.length * (LANE_H + LANE_GAP);
-  yc += 2; const groundY = yc; yc += 4;
-  const parkY = parkings.map((z, i) => ({ z, y: yc + i * (LANE_H + LANE_GAP) }));
-  yc += parkings.length * (LANE_H + LANE_GAP);
-  const negTechY = negTech.map((z, i) => ({ z, y: yc + i * (LANE_H + LANE_GAP) }));
-  yc += negTech.length * (LANE_H + LANE_GAP);
-  const labelsY = yc; yc += 18;
-  const totalH = yc;
-
-  const lane = (z: DraftZone, y: number, h: number) =>
-    zoneSegments(z).map((seg, si) => {
-      const c = ZONE_KIND_COLOR[z.kind];
-      return (
-        <div key={`${z.id}-${si}`} title={`${ZONE_KIND_LABEL[z.kind]} · ${z.name} · ${formatFloorRange(z.floorMin, z.floorMax)}`}
-          style={{ position: 'absolute', left: seg.x, top: y, width: seg.w, height: h, background: c + '2e', border: `1px solid ${c}`, borderRadius: 4, display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px', overflow: 'hidden', boxSizing: 'border-box' }}>
-          {h >= LANE_H && <span style={{ color: c, display: 'inline-flex', fontSize: 12 }}><KindIcon kind={z.kind} /></span>}
-          <span style={{ fontSize: 10.5, color: '#555', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {z.name}{h >= LANE_H && formatFloorRange(z.floorMin, z.floorMax) ? ` · ${formatFloorRange(z.floorMin, z.floorMax)}` : ''}
-          </span>
-        </div>
-      );
-    });
+  // метки оси этажей
+  const floorsList: number[] = [];
+  for (let f = top; f >= bottom; f--) if (f !== 0) floorsList.push(f);
+  const labelStep = floorPx >= 18 ? 1 : floorPx >= 12 ? 5 : 10;
+  const showLabel = (f: number) => f === 1 || f === -1 || f === top || f === bottom || f % labelStep === 0;
 
   const sliceView = (
-    <div style={{ flexShrink: 0, borderBottom: '1px solid #f0f0f0', paddingBottom: 8 }}>
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>Разрез (слева направо — корпуса)</Typography.Text>
-      <div style={{ marginTop: 6, overflowX: 'auto', overflowY: 'hidden' }}>
-        {draft.length === 0 ? (
-          <div style={{ color: '#bfbfbf', fontSize: 12, padding: '28px 0', textAlign: 'center' }}>Пустая площадка — добавьте корпус</div>
-        ) : (
-          <div style={{ position: 'relative', width: plotW + 4, height: totalH }}>
-            {/* кровли */}
-            {roofY.map(({ z, y }) => lane(z, y, ROOF_LANE_H))}
-            {/* корпуса (башни) */}
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
+      {draft.length === 0 ? (
+        <div style={{ color: '#bfbfbf', fontSize: 12, padding: '28px 0', textAlign: 'center' }}>Пустая площадка — добавьте корпус</div>
+      ) : (
+        <div style={{ position: 'relative', width: AXIS_W + plotW + 4, height: plotH + LABELS_H }}>
+          {/* ось этажей */}
+          {floorsList.filter(showLabel).map((f) => (
+            <div key={`ax-${f}`} style={{ position: 'absolute', left: 0, top: rowTopY(f), width: AXIS_W - 4, height: floorPx, fontSize: 9, color: '#bfbfbf', textAlign: 'right', lineHeight: `${Math.max(floorPx, 10)}px`, overflow: 'hidden' }}>{f}</div>
+          ))}
+
+          {/* зоны (плоскость со смещением на ось) */}
+          <div style={{ position: 'absolute', left: AXIS_W, top: 0, width: plotW, height: plotH }}>
+            {/* Улица — полоса на уровне земли на всю ширину */}
+            {street && (
+              <div
+                title="Улица"
+                onClick={() => setEditingId(street.id)}
+                style={{ position: 'absolute', left: 0, top: Math.max(0, groundY - STREET_H), width: plotW, height: STREET_H, background: ZONE_KIND_COLOR.street + '26', border: `1px solid ${ZONE_KIND_COLOR.street}`, borderRadius: 3, display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px', cursor: 'pointer', boxSizing: 'border-box' }}
+              >
+                <span style={{ color: ZONE_KIND_COLOR.street, display: 'inline-flex', fontSize: 11 }}><KindIcon kind="street" /></span>
+                <span style={{ fontSize: 10.5, color: '#3f6600' }}>{street.name}</span>
+              </div>
+            )}
+
+            {/* башни корпусов */}
             {buildings.map((b, i) => {
-              const h = towerH(b);
-              const top = towerBottom - h;
-              const styl = draft.find((d) => d.kind === 'stylobate' && d.parentId === b.id);
-              const s = styl ? (styl.floorMax ?? 0) : 0;
-              const baseFrac = b.floorMax ? Math.min(1, s / b.floorMax) : 0;
-              const baseH = Math.round(h * baseFrac);
               const cB = ZONE_KIND_COLOR.building;
-              const cS = ZONE_KIND_COLOR.stylobate;
               return (
                 <div key={b.id} title={`${b.name} · ${formatFloorRange(b.floorMin, b.floorMax)}`}
-                  style={{ position: 'absolute', left: colX(i), top, width: COLW, height: h, background: cB + '22', border: `1px solid ${cB}`, borderRadius: 4, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                  onClick={() => setEditingId(b.id)}
+                  style={{ position: 'absolute', left: colX(i), top: blockTop(b), width: COLW, height: Math.max(20, blockH(b)), background: cB + '1f', border: `1px solid ${cB}`, borderRadius: 4, boxSizing: 'border-box', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                   <span style={{ color: cB, display: 'inline-flex', fontSize: 14 }}><KindIcon kind="building" /></span>
                   <span style={{ fontSize: 11, fontWeight: 600, color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: COLW - 8 }}>{b.name}</span>
                   <span style={{ fontSize: 10, color: '#8c8c8c' }}>{buildingCount(b)} эт.</span>
-                  {baseH > 0 && (
-                    <div title={`Стилобат · эт. 1–${s}`} style={{ position: 'absolute', left: 0, bottom: 0, width: '100%', height: baseH, background: cS + '40', borderTop: `1px solid ${cS}`, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <span style={{ fontSize: 9, color: '#8a5a12', whiteSpace: 'nowrap' }}>стилобат {s} эт.</span>
-                    </div>
-                  )}
                 </div>
               );
             })}
-            {/* надземные техэтажи и стилобаты-подиумы */}
-            {posTechY.map(({ z, y }) => lane(z, y, LANE_H))}
-            {stylY.map(({ z, y }) => lane(z, y, LANE_H))}
+
+            {/* подиумы: паркинг / стилобат / техэтаж — на своих этажах в колонках охвата */}
+            {podiums.map((z) => zoneSegments(z).map((seg, si) => {
+              const c = ZONE_KIND_COLOR[z.kind];
+              const h = Math.max(12, blockH(z));
+              return (
+                <div key={`${z.id}-${si}`} title={`${ZONE_KIND_LABEL[z.kind]} · ${z.name} · ${formatFloorRange(z.floorMin, z.floorMax)}`}
+                  onClick={() => setEditingId(z.parentId && z.kind === 'stylobate' ? z.parentId : z.id)}
+                  style={{ position: 'absolute', left: seg.x, top: blockTop(z), width: seg.w, height: h, background: c + '33', border: `1px solid ${c}`, borderRadius: 3, display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px', overflow: 'hidden', cursor: 'pointer', boxSizing: 'border-box', zIndex: 2 }}>
+                  {h >= 16 && <span style={{ color: c, display: 'inline-flex', fontSize: 11 }}><KindIcon kind={z.kind} /></span>}
+                  <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{z.name} · {formatFloorRange(z.floorMin, z.floorMax)}</span>
+                </div>
+              );
+            }))}
+
             {/* линия земли */}
-            <div style={{ position: 'absolute', left: 0, top: groundY, width: plotW, borderTop: '2px solid #8c8c8c' }} />
-            <span style={{ position: 'absolute', left: 0, top: groundY - 12, fontSize: 9, color: '#bfbfbf' }}>0 — земля</span>
-            {/* подземное */}
-            {parkY.map(({ z, y }) => lane(z, y, LANE_H))}
-            {negTechY.map(({ z, y }) => lane(z, y, LANE_H))}
+            <div style={{ position: 'absolute', left: 0, top: groundY, width: plotW, borderTop: '2px solid #8c8c8c', zIndex: 3 }} />
+
             {/* подписи колонок */}
             {buildings.map((b, i) => (
-              <div key={`lbl-${b.id}`} style={{ position: 'absolute', left: colX(i), top: labelsY, width: COLW, fontSize: 10, color: '#8c8c8c', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</div>
+              <div key={`lbl-${b.id}`} style={{ position: 'absolute', left: colX(i), top: plotH + 2, width: COLW, fontSize: 10, color: '#8c8c8c', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</div>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // ---------- модалка редактирования объекта ----------
+  const editing = draft.find((z) => z.id === editingId) || null;
+  const editModal = editing && (
+    <Modal
+      open
+      title={`${ZONE_KIND_LABEL[editing.kind]}${editing.kind === 'building' ? '' : ''}`}
+      onCancel={() => setEditingId(null)}
+      footer={[
+        editing.kind !== 'street' && canEdit && (
+          <Button key="dup" icon={<CopyOutlined />} onClick={() => duplicate(editing)} style={{ float: 'left' }}>Дублировать</Button>
+        ),
+        editing.kind !== 'street' && canEdit && (
+          <Popconfirm key="del" title="Удалить локацию?" description="Строки сметы этой локации станут «без локации»." onConfirm={() => removeZone(editing)}>
+            <Button danger icon={<DeleteOutlined />} style={{ float: 'left', marginLeft: 8 }}>Удалить</Button>
+          </Popconfirm>
+        ),
+        <Button key="ok" type="primary" onClick={() => setEditingId(null)}>Готово</Button>,
+      ]}
+      width={460}
+    >
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>Название</Typography.Text>
+          <Input value={editing.name} disabled={!canEdit} onChange={(e) => patch(editing.id, { name: e.target.value })} />
+        </div>
+
+        {editing.kind === 'building' && (() => {
+          const styl = draft.find((d) => d.kind === 'stylobate' && d.parentId === editing.id);
+          const stylH = styl ? (styl.floorMax ?? 0) : 0;
+          return (
+            <>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>Код</Typography.Text>
+                <Input value={editing.code ?? ''} disabled={!canEdit} onChange={(e) => patch(editing.id, { code: e.target.value })} />
+              </div>
+              <Space size="large" wrap>
+                <div>
+                  <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>Надземных этажей</Typography.Text>
+                  <InputNumber controls={false} min={1} max={200} disabled={!canEdit} style={{ width: 120 }} value={buildingCount(editing)} onChange={(v) => applyBuilding(editing.id, { count: (v as number) ?? 1 })} />
+                </div>
+                <div>
+                  <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>Стилобат в составе, эт. (0 — нет)</Typography.Text>
+                  <InputNumber controls={false} min={0} max={20} disabled={!canEdit} style={{ width: 120 }} value={stylH} onChange={(v) => applyBuilding(editing.id, { stylobate: (v as number) ?? 0 })} />
+                </div>
+              </Space>
+              <Typography.Text style={{ fontSize: 12, color: '#8c8c8c' }}>
+                Итог: {formatFloorRange(editing.floorMin, editing.floorMax)}{stylH > 0 ? ` · стилобат эт. 1–${stylH}` : ''}
+              </Typography.Text>
+              {canEdit && (
+                <div>
+                  <Typography.Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>Порядок в ряду:</Typography.Text>
+                  <Button size="small" icon={<ArrowLeftOutlined />} onClick={() => moveBuilding(editing, -1)} />
+                  <Button size="small" icon={<ArrowRightOutlined />} onClick={() => moveBuilding(editing, 1)} style={{ marginLeft: 4 }} />
+                </div>
+              )}
+            </>
+          );
+        })()}
+
+        {(editing.kind === 'parking' || editing.kind === 'stylobate' || editing.kind === 'techfloor') && (
+          <>
+            <Space size="large">
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>Этаж от{editing.kind === 'parking' ? ' (−)' : ''}</Typography.Text>
+                <InputNumber controls={false} disabled={!canEdit} style={{ width: 110 }} value={editing.floorMin ?? undefined} onChange={(v) => patch(editing.id, { floorMin: (v as number) ?? null })} />
+              </div>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>Этаж до</Typography.Text>
+                <InputNumber controls={false} disabled={!canEdit} style={{ width: 110 }} value={editing.floorMax ?? undefined} onChange={(v) => patch(editing.id, { floorMax: (v as number) ?? null })} />
+              </div>
+            </Space>
+            <div>
+              <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                {editing.kind === 'parking' ? 'Под какими корпусами' : editing.kind === 'stylobate' ? 'Между/под какими корпусами' : 'У каких корпусов'} (пусто = все)
+              </Typography.Text>
+              <Select mode="multiple" allowClear disabled={!canEdit} style={{ width: '100%' }} placeholder="Все корпуса"
+                value={editing.spansZoneIds.filter((id) => colIndex.has(id))}
+                onChange={(v) => patch(editing.id, { spansZoneIds: v })} options={buildingOptions} maxTagCount="responsive" />
+            </div>
+          </>
         )}
-      </div>
-    </div>
+
+        {editing.kind === 'street' && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Наружная локация (благоустройство, сети). Есть всегда, без этажей. Удалить нельзя.
+          </Typography.Text>
+        )}
+      </Space>
+    </Modal>
   );
-
-  // ---------- редактор ----------
-  const spansSelect = (z: DraftZone, placeholder: string) => (
-    <Select mode="multiple" allowClear size="small" disabled={!canEdit}
-      style={{ minWidth: 170, maxWidth: 260 }} placeholder={placeholder}
-      value={z.spansZoneIds.filter((id) => colIndex.has(id))}
-      onChange={(v) => patch(z.id, { spansZoneIds: v })}
-      options={buildingOptions} maxTagCount="responsive" />
-  );
-
-  const delBtn = (z: DraftZone) => canEdit && (
-    <Popconfirm title="Удалить локацию?" description="Строки сметы этой локации станут «без локации»." onConfirm={() => removeZone(z)}>
-      <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-    </Popconfirm>
-  );
-
-  const rowWrap = (z: DraftZone, children: React.ReactNode) => (
-    <div key={z.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', border: '1px solid #f0f0f0', borderRadius: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-      <span style={{ color: ZONE_KIND_COLOR[z.kind], display: 'inline-flex', fontSize: 16 }}><KindIcon kind={z.kind} /></span>
-      <Input size="small" style={{ width: 150 }} value={z.name} disabled={!canEdit} placeholder="Название" onChange={(e) => patch(z.id, { name: e.target.value })} />
-      {children}
-    </div>
-  );
-
-  const buildingRow = (z: DraftZone) => {
-    const styl = draft.find((d) => d.kind === 'stylobate' && d.parentId === z.id);
-    const stylH = styl ? (styl.floorMax ?? 0) : 0;
-    return rowWrap(z, (
-      <>
-        <Input size="small" style={{ width: 76 }} value={z.code ?? ''} disabled={!canEdit} placeholder="Код" onChange={(e) => patch(z.id, { code: e.target.value })} />
-        <Tooltip title="Надземных этажей (над стилобатом)">
-          <InputNumber size="small" style={{ width: 76 }} min={1} max={200} disabled={!canEdit} addonAfter="эт." value={buildingCount(z)} onChange={(v) => applyBuilding(z.id, { count: (v as number) ?? 1 })} />
-        </Tooltip>
-        <Tooltip title="Стилобат в составе корпуса (сквозная нумерация): 0 — нет">
-          <InputNumber size="small" style={{ width: 92 }} min={0} max={20} disabled={!canEdit} addonBefore="стил." value={stylH} onChange={(v) => applyBuilding(z.id, { stylobate: (v as number) ?? 0 })} />
-        </Tooltip>
-        <span style={{ fontSize: 12, color: '#8c8c8c' }}>{formatFloorRange(z.floorMin, z.floorMax)}</span>
-        <span style={{ flex: 1 }} />
-        {canEdit && <>
-          <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={() => moveBuilding(z, -1)} />
-          <Button type="text" size="small" icon={<ArrowRightOutlined />} onClick={() => moveBuilding(z, 1)} />
-          <Tooltip title="Дублировать корпус"><Button type="text" size="small" icon={<CopyOutlined />} onClick={() => duplicate(z)} /></Tooltip>
-        </>}
-        {delBtn(z)}
-      </>
-    ));
-  };
-
-  const floorCountRow = (z: DraftZone, label: string, spansPlaceholder: string) =>
-    rowWrap(z, (
-      <>
-        <InputNumber size="small" style={{ width: 76 }} min={1} max={200} disabled={!canEdit} addonAfter={label}
-          value={rangeToFloorCount(z.floorMin, z.floorMax) || 1}
-          onChange={(v) => { const r = floorCountToRange(z.kind, (v as number) ?? 1); patch(z.id, { floorMin: r.floorMin, floorMax: r.floorMax }); }} />
-        <span style={{ fontSize: 12, color: '#8c8c8c' }}>{formatFloorRange(z.floorMin, z.floorMax)}</span>
-        {spansSelect(z, spansPlaceholder)}
-        <span style={{ flex: 1 }} />
-        {delBtn(z)}
-      </>
-    ));
-
-  const techRow = (z: DraftZone) =>
-    rowWrap(z, (
-      <>
-        <Tooltip title="Этаж от (отрицательный — подземный)">
-          <InputNumber size="small" style={{ width: 76 }} disabled={!canEdit} placeholder="эт. от" value={z.floorMin ?? undefined} onChange={(v) => patch(z.id, { floorMin: (v as number) ?? null })} />
-        </Tooltip>
-        <Tooltip title="Этаж до">
-          <InputNumber size="small" style={{ width: 76 }} disabled={!canEdit} placeholder="эт. до" value={z.floorMax ?? undefined} onChange={(v) => patch(z.id, { floorMax: (v as number) ?? null })} />
-        </Tooltip>
-        {spansSelect(z, 'у каких корпусов')}
-        <span style={{ flex: 1 }} />
-        {delBtn(z)}
-      </>
-    ));
-
-  const roofRow = (z: DraftZone) =>
-    rowWrap(z, (<>{spansSelect(z, 'над какими корпусами')}<span style={{ flex: 1 }} />{delBtn(z)}</>));
-
-  const otherRow = (z: DraftZone) =>
-    rowWrap(z, (<><Tag>{ZONE_KIND_LABEL[z.kind]}</Tag><span style={{ fontSize: 12, color: '#8c8c8c' }}>{formatFloorRange(z.floorMin, z.floorMax) || '—'}</span><span style={{ flex: 1 }} />{delBtn(z)}</>));
-
-  const sectionTitle = (t: string) => <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', margin: '8px 0 4px' }}>{t}</Typography.Text>;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      {sliceView}
-
       {canEdit && (
-        <Space wrap style={{ flexShrink: 0, padding: '10px 0 8px' }}>
+        <Space wrap style={{ flexShrink: 0, paddingBottom: 8 }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>Добавить:</Typography.Text>
           {BASE_LAYER_PRESETS.map((p) => (
-            <Button key={p.kind} size="small" icon={<PlusOutlined />} onClick={() => addLayer(p)}>{p.label}</Button>
+            <Button key={p.kind} size="small" icon={<PlusOutlined />} onClick={() => addAndEdit(p)}>{p.label}</Button>
           ))}
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>Клик по объекту — настройка</Typography.Text>
         </Space>
       )}
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-        {draft.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Локации ещё не заданы">
-            {canEdit && <Button type="primary" onClick={quickTemplate}>Быстрый шаблон: корпус + паркинг + стилобат</Button>}
-          </Empty>
-        ) : (
-          <>
-            {buildings.length > 0 && <>{sectionTitle('Корпуса')}{buildings.map(buildingRow)}</>}
-            {stylobates.length > 0 && <>{sectionTitle('Стилобаты (между корпусами)')}{stylobates.map((z) => floorCountRow(z, 'эт.', 'между какими корпусами'))}</>}
-            {parkings.length > 0 && <>{sectionTitle('Паркинг')}{parkings.map((z) => floorCountRow(z, 'подз.', 'под какими корпусами'))}</>}
-            {techfloors.length > 0 && <>{sectionTitle('Техэтажи')}{techfloors.map(techRow)}</>}
-            {roofs.length > 0 && <>{sectionTitle('Кровли')}{roofs.map(roofRow)}</>}
-            {others.length > 0 && <><Divider style={{ margin: '12px 0 4px' }} orientation="left" plain><Typography.Text type="secondary" style={{ fontSize: 12 }}>Прочие локации</Typography.Text></Divider>{others.map(otherRow)}</>}
-          </>
-        )}
-      </div>
+      {draft.length === 0 && canEdit ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Локации ещё не заданы" style={{ flex: 1 }} />
+      ) : sliceView}
+
+      {others.length > 0 && (
+        <div style={{ flexShrink: 0, paddingTop: 8 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>Прочие локации:</Typography.Text>
+          <Space wrap size={4}>
+            {others.map((z) => (
+              <Tag key={z.id} style={{ cursor: 'pointer' }} onClick={() => setEditingId(z.id)}>
+                {z.name} {formatFloorRange(z.floorMin, z.floorMax)}
+              </Tag>
+            ))}
+          </Space>
+        </div>
+      )}
 
       {canEdit && (
-        <div style={{ flexShrink: 0, borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
+        <div style={{ flexShrink: 0, borderTop: '1px solid #f0f0f0', paddingTop: 10, marginTop: 8 }}>
           <Button type="primary" loading={saveZones.isPending} disabled={!dirty} onClick={onSaveZones}>Сохранить</Button>
           {isFetching && <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>обновление…</Typography.Text>}
         </div>
       )}
+
+      {editModal}
     </div>
   );
 }

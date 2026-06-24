@@ -8,9 +8,10 @@ import {
   ToolOutlined,
   BorderTopOutlined,
   EnvironmentOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 
-export type ZoneKind = 'building' | 'parking' | 'stylobate' | 'section' | 'roof' | 'other' | 'techfloor';
+export type ZoneKind = 'building' | 'parking' | 'stylobate' | 'section' | 'roof' | 'other' | 'techfloor' | 'street';
 
 export interface ZoneNode {
   id: string;
@@ -42,6 +43,7 @@ export const ZONE_KIND_LABEL: Record<ZoneKind, string> = {
   roof: 'Кровля',
   other: 'Прочее',
   techfloor: 'Техэтаж',
+  street: 'Улица',
 };
 
 // Иконка и акцентный цвет яруса — единый источник для разреза-конструктора и тегов локации в смете.
@@ -53,6 +55,7 @@ export const ZONE_KIND_ICON: Record<ZoneKind, ComponentType> = {
   roof: BorderTopOutlined,
   other: EnvironmentOutlined,
   techfloor: ToolOutlined,
+  street: GlobalOutlined,
 };
 
 export const ZONE_KIND_COLOR: Record<ZoneKind, string> = {
@@ -63,12 +66,14 @@ export const ZONE_KIND_COLOR: Record<ZoneKind, string> = {
   roof: '#595959',
   other: '#8c8c8c',
   techfloor: '#13a8a8',
+  street: '#52c41a',
 };
 
 // ---------- Конструктор локаций: базовые слои, маппинг этажей, порядок ----------
 
 // Базовый вес sort_order слоя (снизу вверх). Повторяемые (корпус/кровля) сдвигаются по индексу.
 export const LAYER_BASE_ORDER: Record<ZoneKind, number> = {
+  street: 5,
   parking: 10,
   techfloor: 20,
   stylobate: 30,
@@ -88,12 +93,12 @@ export interface BaseLayerPreset {
 }
 
 // Палитра «Добавить». Все повторяемы: корпусов, паркингов, стилобатов и техэтажей может быть несколько.
+// Кровля убрана (будет в типах помещений); «Улица» добавляется автоматически (не через палитру).
 export const BASE_LAYER_PRESETS: BaseLayerPreset[] = [
   { kind: 'building',  label: 'Корпус',   repeatable: true, defaultName: 'Корпус',   defaultFloorMin: 1, defaultFloorMax: 1 },
   { kind: 'parking',   label: 'Паркинг',  repeatable: true, defaultName: 'Паркинг',  defaultFloorMin: -1, defaultFloorMax: -1 },
-  { kind: 'stylobate', label: 'Стилобат', repeatable: true, defaultName: 'Стилобат', defaultFloorMin: 1, defaultFloorMax: 1 },
+  { kind: 'stylobate', label: 'Стилобат', repeatable: true, defaultName: 'Стилобат', defaultFloorMin: 1, defaultFloorMax: 2 },
   { kind: 'techfloor', label: 'Техэтаж',  repeatable: true, defaultName: 'Техэтаж',  defaultFloorMin: 1, defaultFloorMax: 1 },
-  { kind: 'roof',      label: 'Кровля',   repeatable: true, defaultName: 'Кровля',   defaultFloorMin: null, defaultFloorMax: null },
 ];
 
 // «Количество этажей» ↔ диапазон. Паркинг считает подземные (отрицательные), остальные — надземные с 1.

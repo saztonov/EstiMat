@@ -415,6 +415,13 @@ export default async function projectRoutes(fastify: FastifyInstance) {
 
   // GET /api/projects/:id/zones — дерево зон объекта (корпус/парковка/стилобат/секция)
   fastify.get<{ Params: { id: string } }>('/:id/zones', async (request) => {
+    // «Улица» есть всегда: lazy-seed, если её ещё нет у объекта (идемпотентно).
+    await fastify.pool.query(
+      `INSERT INTO project_zones (project_id, name, kind, sort_order)
+       SELECT $1, 'Улица', 'street', 5
+        WHERE NOT EXISTS (SELECT 1 FROM project_zones WHERE project_id = $1 AND kind = 'street')`,
+      [request.params.id],
+    );
     const { rows } = await fastify.pool.query<ZoneRow>(
       'SELECT * FROM project_zones WHERE project_id = $1 ORDER BY sort_order, name',
       [request.params.id],

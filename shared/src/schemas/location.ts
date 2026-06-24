@@ -28,6 +28,7 @@ export const zoneKindSchema = z.enum([
   'roof',
   'other',
   'techfloor',
+  'street',
 ]);
 
 export const createZoneSchema = z
