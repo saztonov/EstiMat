@@ -14,7 +14,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
               u.created_at, u.updated_at, o.name as org_name
        FROM users u
        LEFT JOIN organizations o ON u.org_id = o.id
-       ORDER BY u.full_name`,
+       ORDER BY u.created_at DESC`,
     );
     return { data: rows };
   });

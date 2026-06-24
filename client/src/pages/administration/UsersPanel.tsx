@@ -17,6 +17,7 @@ interface User {
   role: Role;
   phone: string | null;
   is_active: boolean;
+  created_at: string;
 }
 
 const roleColors: Record<string, string> = {
@@ -122,20 +123,22 @@ export function UsersPanel() {
   }
 
   const columns: ColumnsType<User> = [
-    { title: 'ФИО', dataIndex: 'full_name' },
-    { title: 'Email', dataIndex: 'email', width: 220 },
+    { title: 'ФИО', dataIndex: 'full_name', sorter: (a, b) => (a.full_name || '').localeCompare(b.full_name || '') },
+    { title: 'Email', dataIndex: 'email', width: 220, sorter: (a, b) => (a.email || '').localeCompare(b.email || '') },
     {
       title: 'Роль',
       dataIndex: 'role',
       width: 160,
+      sorter: (a, b) => ROLE_LABELS[a.role].localeCompare(ROLE_LABELS[b.role]),
       render: (role: Role) => <Tag color={roleColors[role]}>{ROLE_LABELS[role]}</Tag>,
     },
-    { title: 'Организация', dataIndex: 'org_name', width: 200 },
-    { title: 'Телефон', dataIndex: 'phone', width: 150 },
+    { title: 'Организация', dataIndex: 'org_name', width: 200, sorter: (a, b) => (a.org_name || '').localeCompare(b.org_name || '') },
+    { title: 'Телефон', dataIndex: 'phone', width: 150, sorter: (a, b) => (a.phone || '').localeCompare(b.phone || '') },
     {
       title: 'Активен',
       dataIndex: 'is_active',
       width: 100,
+      sorter: (a, b) => Number(a.is_active) - Number(b.is_active),
       render: (v: boolean, record: User) => (
         <Switch
           checked={v}
@@ -143,6 +146,14 @@ export function UsersPanel() {
           onChange={(checked) => toggleActiveMutation.mutate({ id: record.id, isActive: checked })}
         />
       ),
+    },
+    {
+      title: 'Дата регистрации',
+      dataIndex: 'created_at',
+      width: 170,
+      sorter: (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      defaultSortOrder: 'descend',
+      render: (v: string) => (v ? new Date(v).toLocaleString('ru-RU') : '—'),
     },
     {
       title: 'Действия',
