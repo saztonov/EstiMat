@@ -81,7 +81,8 @@ export function ContractorsMaterialsTab({ items, viewerIsContractor }: Props) {
   }
 
   return (
-    <Space direction="vertical" style={{ width: '100%' }} size="middle">
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+      <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {groups.map((g) => (
         <div key={g.costTypeId ?? '__none__'}>
           <Space style={{ marginBottom: 8 }}>
@@ -100,6 +101,7 @@ export function ContractorsMaterialsTab({ items, viewerIsContractor }: Props) {
           />
         </div>
       ))}
-    </Space>
+      </Space>
+    </div>
   );
 }

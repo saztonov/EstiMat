@@ -363,7 +363,8 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
       { title: 'Мой объём', key: 'my', width: 120, align: 'right', render: (_, it) => num(it.my_effective_qty) },
     ];
     return (
-      <Space direction="vertical" style={{ width: '100%' }} size="middle">
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
         {groups.map((g) => (
           <div key={g.costTypeId ?? '__none__'}>
             <Space style={{ marginBottom: 8 }}>
@@ -375,37 +376,42 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
             <Table<EstimateItem> rowKey="id" size="small" pagination={false} dataSource={g.works} columns={myColumns} />
           </div>
         ))}
-      </Space>
+        </Space>
+      </div>
     );
   }
 
   // ── Вид инженера/админа: как страница «Смета» + столбец «Исполнитель» слева ──
   return (
-    <div className="contractors-smeta">
-      <Space style={{ marginBottom: 12 }} wrap>
-        <Checkbox checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)}>
-          Только с нераспределённым объёмом
-        </Checkbox>
-        <Select
-          mode="multiple"
-          allowClear
-          placeholder="Фильтр по подрядчикам"
-          style={{ minWidth: 260 }}
-          value={filterContractorIds}
-          onChange={setFilterContractorIds}
-          options={assignedContractorOptions}
-          optionFilterProp="label"
-          maxTagCount="responsive"
-        />
-        <Tooltip title="Развернуть всё">
-          <Button type="text" size="small" icon={<DownOutlined />} onClick={expandAll} />
-        </Tooltip>
-        <Tooltip title="Свернуть всё">
-          <Button type="text" size="small" icon={<UpOutlined />} onClick={collapseAll} />
-        </Tooltip>
-      </Space>
+    <div className="contractors-smeta" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flexShrink: 0, marginBottom: 12 }}>
+        <Space wrap>
+          <Checkbox checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)}>
+            Только с нераспределённым объёмом
+          </Checkbox>
+          <Select
+            mode="multiple"
+            allowClear
+            showSearch
+            placeholder="Фильтр по подрядчикам"
+            style={{ width: 280 }}
+            value={filterContractorIds}
+            onChange={setFilterContractorIds}
+            options={assignedContractorOptions}
+            optionFilterProp="label"
+            maxTagCount={1}
+          />
+          <Tooltip title="Развернуть всё">
+            <Button type="text" size="small" icon={<DownOutlined />} onClick={expandAll} />
+          </Tooltip>
+          <Tooltip title="Свернуть всё">
+            <Button type="text" size="small" icon={<UpOutlined />} onClick={collapseAll} />
+          </Tooltip>
+        </Space>
+      </div>
 
-      {sections.map((sec) => {
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        {sections.map((sec) => {
         const collapsed = collapsedCats.has(sec.id);
         return (
           <div key={sec.id} style={{ marginBottom: 8 }}>
@@ -473,6 +479,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
