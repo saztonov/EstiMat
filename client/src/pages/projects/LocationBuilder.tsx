@@ -51,7 +51,6 @@ const FLOOR_PX_MIN = 9;
 const FLOOR_PX_MAX = 26;
 const PLOT_MAX_H = 520;
 const LABELS_H = 18;
-const STREET_H = 16;
 // слот этажа без «дыры нуля»: 1→0, 2→1, -1→-1, -2→-2
 const slot = (f: number) => (f > 0 ? f - 1 : f);
 
@@ -85,11 +84,22 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
     const flat = flattenZones(zonesData?.data.roots ?? []);
     serverIdsRef.current = new Set(flat.map((z) => z.id));
     deletedIdsRef.current = [];
-    const d = flat.map(zoneToDraft);
-    // «Улица» есть всегда (на случай, если сервер не сидировал).
-    if (!d.some((z) => z.kind === 'street')) {
-      d.unshift({ id: makeId(), parentId: null, kind: 'street', name: 'Улица', code: null, floorMin: null, floorMax: null, spansZoneIds: [] });
-    }
+    const d = flat
+      .map(zoneToDraft)
+      // «Улицу» в конструкторе не показываем — она остаётся на сервере и доступна в списке локаций сметы.
+      // (нет в draft → не попадёт ни в zones, ни в deletedIds payload → bulk её не трогает)
+      .filter((z) => z.kind !== 'street')
+      .map((z) => {
+        // legacy «стилобат в составе» (parent_id) → охват ровно этого корпуса
+        if (z.kind === 'stylobate' && z.parentId) {
+          return { ...z, spansZoneIds: z.spansZoneIds.length ? z.spansZoneIds : [z.parentId], parentId: null };
+        }
+        // корпус всегда нумеруется с 1-го этажа (убираем legacy-сдвиг сквозной нумерации)
+        if (z.kind === 'building' && z.parentId == null && z.floorMin != null && z.floorMax != null && z.floorMin > 1) {
+          return { ...z, floorMax: z.floorMax - z.floorMin + 1, floorMin: 1 };
+        }
+        return z;
+      });
     setDraft(d);
   }, [zonesData]);
 
@@ -167,29 +177,28 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
     markDirty();
   };
 
-  // Корпус: число надземных этажей + высота стилобата «в составе» (сквозная нумерация).
+  // «Стилобат корпуса» = стилобат-зона с охватом РОВНО этого корпуса (источник истины — spans, не parent_id).
+  const buildingStylobate = (zones: DraftZone[], buildingId: string) =>
+    zones.find((z) => z.kind === 'stylobate' && z.spansZoneIds.length === 1 && z.spansZoneIds[0] === buildingId);
+
+  // Корпус: число надземных этажей (всегда с 1-го) + высота персонального стилобата (цоколь, не сдвигает нумерацию).
   const applyBuilding = (buildingId: string, opts: { count?: number; stylobate?: number }) => {
     setDraft((prev) => {
       const b = prev.find((z) => z.id === buildingId);
       if (!b) return prev;
       let next = [...prev];
-      const child = next.find((z) => z.kind === 'stylobate' && z.parentId === buildingId);
-      let s = child ? (child.floorMax ?? 0) : 0;
       if (opts.stylobate !== undefined) {
         const sNew = Math.max(0, Math.round(opts.stylobate));
+        const child = buildingStylobate(next, buildingId);
         if (sNew > 0) {
-          s = sNew;
-          if (child) next = next.map((z) => (z.id === child.id ? { ...z, floorMin: 1, floorMax: sNew, spansZoneIds: [buildingId] } : z));
-          else next = [...next, { id: makeId(), parentId: buildingId, kind: 'stylobate', name: `Стилобат (${b.name})`, code: null, floorMin: 1, floorMax: sNew, spansZoneIds: [buildingId] }];
-        } else {
-          if (child) { pushDeleted(child.id); next = next.filter((z) => z.id !== child.id); }
-          s = 0;
-        }
+          if (child) next = next.map((z) => (z.id === child.id ? { ...z, floorMin: 1, floorMax: sNew } : z));
+          else next = [...next, { id: makeId(), parentId: null, kind: 'stylobate', name: `Стилобат (${b.name})`, code: null, floorMin: 1, floorMax: sNew, spansZoneIds: [buildingId] }];
+        } else if (child) { pushDeleted(child.id); next = next.filter((z) => z.id !== child.id); }
       }
-      const count = opts.count ?? buildingCount(b);
-      const newMin = s + 1;
-      const newMax = newMin + Math.max(1, count) - 1;
-      next = next.map((z) => (z.id === buildingId ? { ...z, floorMin: newMin, floorMax: newMax } : z));
+      if (opts.count !== undefined) {
+        const newMax = Math.max(1, Math.round(opts.count));
+        next = next.map((z) => (z.id === buildingId ? { ...z, floorMin: 1, floorMax: newMax } : z));
+      }
       return next;
     });
     markDirty();
@@ -218,7 +227,6 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
   // ---------- группировка ----------
   const buildings = draft.filter((d) => d.kind === 'building' && d.parentId == null);
   const podiums = draft.filter((d) => d.kind === 'parking' || d.kind === 'stylobate' || d.kind === 'techfloor');
-  const street = draft.find((d) => d.kind === 'street');
   const others = draft.filter((d) => d.kind === 'section' || d.kind === 'other');
   // legacy roof — скрыт полностью, но остаётся в draft/payload без изменений.
 
@@ -285,18 +293,6 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
 
           {/* зоны (плоскость со смещением на ось) */}
           <div style={{ position: 'absolute', left: AXIS_W, top: 0, width: plotW, height: plotH }}>
-            {/* Улица — полоса на уровне земли на всю ширину */}
-            {street && (
-              <div
-                title="Улица"
-                onClick={() => setEditingId(street.id)}
-                style={{ position: 'absolute', left: 0, top: Math.max(0, groundY - STREET_H), width: plotW, height: STREET_H, background: ZONE_KIND_COLOR.street + '26', border: `1px solid ${ZONE_KIND_COLOR.street}`, borderRadius: 3, display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px', cursor: 'pointer', boxSizing: 'border-box' }}
-              >
-                <span style={{ color: ZONE_KIND_COLOR.street, display: 'inline-flex', fontSize: 11 }}><KindIcon kind="street" /></span>
-                <span style={{ fontSize: 10.5, color: '#3f6600' }}>{street.name}</span>
-              </div>
-            )}
-
             {/* башни корпусов */}
             {buildings.map((b, i) => {
               const cB = ZONE_KIND_COLOR.building;
@@ -314,13 +310,15 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
             {/* подиумы: паркинг / стилобат / техэтаж — на своих этажах в колонках охвата */}
             {podiums.map((z) => zoneSegments(z).map((seg, si) => {
               const c = ZONE_KIND_COLOR[z.kind];
-              const h = Math.max(12, blockH(z));
+              const h = Math.max(18, blockH(z));
+              const range = formatFloorRange(z.floorMin, z.floorMax);
               return (
-                <div key={`${z.id}-${si}`} title={`${ZONE_KIND_LABEL[z.kind]} · ${z.name} · ${formatFloorRange(z.floorMin, z.floorMax)}`}
-                  onClick={() => setEditingId(z.parentId && z.kind === 'stylobate' ? z.parentId : z.id)}
+                <div key={`${z.id}-${si}`} title={`${ZONE_KIND_LABEL[z.kind]} · ${z.name} · ${range}`}
+                  onClick={() => setEditingId(z.id)}
                   style={{ position: 'absolute', left: seg.x, top: blockTop(z), width: seg.w, height: h, background: c + '33', border: `1px solid ${c}`, borderRadius: 3, display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px', overflow: 'hidden', cursor: 'pointer', boxSizing: 'border-box', zIndex: 2 }}>
-                  {h >= 16 && <span style={{ color: c, display: 'inline-flex', fontSize: 11 }}><KindIcon kind={z.kind} /></span>}
-                  <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{z.name} · {formatFloorRange(z.floorMin, z.floorMax)}</span>
+                  <span style={{ color: c, display: 'inline-flex', fontSize: 11, flexShrink: 0 }}><KindIcon kind={z.kind} /></span>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: '#333', whiteSpace: 'nowrap', flexShrink: 0 }}>{range}</span>
+                  <span style={{ fontSize: 10, color: '#777', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{z.name}</span>
                 </div>
               );
             }))}
@@ -365,7 +363,7 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
         </div>
 
         {editing.kind === 'building' && (() => {
-          const styl = draft.find((d) => d.kind === 'stylobate' && d.parentId === editing.id);
+          const styl = buildingStylobate(draft, editing.id);
           const stylH = styl ? (styl.floorMax ?? 0) : 0;
           return (
             <>

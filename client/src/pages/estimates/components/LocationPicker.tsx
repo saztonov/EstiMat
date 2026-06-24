@@ -16,7 +16,7 @@ interface TreeData {
 function zonesToTreeData(nodes: ZoneNode[]): TreeData[] {
   return nodes.map((z) => ({
     value: z.id,
-    title: z.kind === 'building' ? z.name : `${z.name} (${ZONE_KIND_LABEL[z.kind]})`,
+    title: z.kind === 'building' || z.kind === 'street' ? z.name : `${z.name} (${ZONE_KIND_LABEL[z.kind]})`,
     children: z.children?.length ? zonesToTreeData(z.children) : undefined,
   }));
 }
