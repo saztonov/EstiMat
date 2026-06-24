@@ -200,6 +200,21 @@ html, body, #root {
   text-align: center;
 }
 
+/* Число материалов работы — компактный счётчик рядом с иконкой раскрытия «+» */
+.estimat-mat-count {
+  display: inline-block;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: #e6f4ff;
+  color: #0958d9;
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  text-align: center;
+}
+
 /* Навигационное меню-гамбургер: пункты — настоящие ссылки (<a href>),
    средний/Ctrl-клик открывает раздел в новой вкладке. Ссылка растянута
    на всю строку пункта, чтобы клик по любой её части вёл навигацию. */

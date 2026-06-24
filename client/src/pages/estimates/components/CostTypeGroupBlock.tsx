@@ -927,6 +927,26 @@ export function CostTypeGroupBlock({
             expandedRowKeys: expandedKeys,
             onExpandedRowsChange: (keys) => setExpandedKeys(keys),
             rowExpandable: (r) => r.id !== DRAFT_ID,
+            columnWidth: 56,
+            // Кастомная иконка раскрытия: штатная кнопка «+/−» + число материалов работы,
+            // чтобы по свёрнутой строке было видно, есть ли материалы и сколько их.
+            expandIcon: ({ expanded, onExpand, record }) => {
+              if (record.id === DRAFT_ID) return <span style={{ display: 'inline-block', width: 17 }} />;
+              const count = record.materials?.length ?? 0;
+              return (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <button
+                    type="button"
+                    className={`ant-table-row-expand-icon ant-table-row-expand-icon-${expanded ? 'expanded' : 'collapsed'}`}
+                    aria-label={expanded ? 'Свернуть' : 'Развернуть'}
+                    onClick={(e) => onExpand(record, e)}
+                  />
+                  {count > 0 && (
+                    <span className="estimat-mat-count" title={`Материалов: ${count}`}>{count}</span>
+                  )}
+                </span>
+              );
+            },
             expandedRowRender: (r) => (
               <MaterialsSubTable
                 work={r}
