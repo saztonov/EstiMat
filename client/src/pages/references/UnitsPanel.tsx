@@ -3,6 +3,7 @@ import { Table, Button, Modal, Form, Input, InputNumber, Popconfirm, Space, App 
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
 export function UnitsPanel() {
   const [modalOpen, setModalOpen] = useState(false);
@@ -94,7 +95,7 @@ export function UnitsPanel() {
       <Space style={{ marginBottom: 16, flexShrink: 0 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Добавить</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={units?.data} loading={isLoading} scroll={{ y: 'flex' }} />
+      <Table rowKey="id" columns={columns} dataSource={units?.data} loading={isLoading} scroll={{ y: 'flex' }} pagination={DEFAULT_PAGINATION} />
 
       <Modal
         title={editingId ? 'Редактирование единицы' : 'Новая единица измерения'}

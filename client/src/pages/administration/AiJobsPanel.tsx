@@ -3,6 +3,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { StopOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listAllAiJobs, cancelAiJob, deleteAiJob, type AiJobAdminItem } from '../../services/aiExtract';
+import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
 const SOURCE_LABELS: Record<string, string> = {
   rd_document: 'РД-документ',
@@ -137,7 +138,7 @@ export function AiJobsPanel() {
         columns={columns}
         dataSource={data?.data}
         loading={isLoading}
-        pagination={{ pageSize: 20, hideOnSinglePage: true }}
+        pagination={DEFAULT_PAGINATION}
         scroll={{ y: 'flex' }}
       />
     </div>

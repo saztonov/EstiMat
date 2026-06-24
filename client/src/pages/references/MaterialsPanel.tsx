@@ -4,6 +4,7 @@ import { PlusOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { UnitSelect } from '../../components/UnitSelect';
+import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
 export function MaterialsPanel() {
   const [modalOpen, setModalOpen] = useState(false);
@@ -99,7 +100,7 @@ export function MaterialsPanel() {
       <Space style={{ marginBottom: 16, flexShrink: 0 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Добавить</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={materials?.data} loading={isLoading} scroll={{ y: 'flex' }} />
+      <Table rowKey="id" columns={columns} dataSource={materials?.data} loading={isLoading} scroll={{ y: 'flex' }} pagination={DEFAULT_PAGINATION} />
 
       <Modal
         title={editingId ? 'Редактирование материала' : 'Новый материал'}

@@ -4,6 +4,7 @@ import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
+import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
 // Глобальный справочник типов помещений (квартира, МОП, лестничная клетка и т.п.).
 export function RoomTypesPanel() {
@@ -106,7 +107,7 @@ export function RoomTypesPanel() {
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Добавить</Button>
         </Space>
       )}
-      <Table rowKey="id" columns={columns} dataSource={roomTypes?.data} loading={isLoading} scroll={{ y: 'flex' }} />
+      <Table rowKey="id" columns={columns} dataSource={roomTypes?.data} loading={isLoading} scroll={{ y: 'flex' }} pagination={DEFAULT_PAGINATION} />
 
       <Modal
         title={editingId ? 'Редактирование типа помещения' : 'Новый тип помещения'}

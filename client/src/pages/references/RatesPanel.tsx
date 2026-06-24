@@ -4,6 +4,7 @@ import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlin
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { UnitSelect } from '../../components/UnitSelect';
+import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile } from 'antd/es/upload';
 
@@ -240,7 +241,7 @@ export function RatesPanel() {
         dataSource={filteredRates}
         loading={isLoading}
         scroll={{ y: 'flex' }}
-        pagination={{ pageSize: 50, showSizeChanger: false }}
+        pagination={DEFAULT_PAGINATION}
       />
 
       <Modal

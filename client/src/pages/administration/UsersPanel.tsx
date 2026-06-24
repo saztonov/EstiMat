@@ -6,6 +6,7 @@ import { api } from '../../services/api';
 import { ROLES, ROLE_LABELS } from '@estimat/shared';
 import type { Role } from '@estimat/shared';
 import type { ColumnsType } from 'antd/es/table';
+import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
 interface User {
   id: string;
@@ -163,7 +164,7 @@ export function UsersPanel() {
       <Space style={{ marginBottom: 16, flexShrink: 0 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Добавить</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={usersData?.data} loading={isLoading} scroll={{ y: 'flex' }} />
+      <Table rowKey="id" columns={columns} dataSource={usersData?.data} loading={isLoading} scroll={{ y: 'flex' }} pagination={DEFAULT_PAGINATION} />
 
       {/* Create / Edit modal */}
       <Modal

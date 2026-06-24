@@ -27,6 +27,9 @@
 - client/ — Vite 8 + React 19 + Ant Design 6 + React Router 7
 - shared/ — Zod-схемы, типы, константы (переиспользуются в server и client)
 
+## UI
+- Пагинация таблиц-списков: по умолчанию **100** строк на страницу; в переключателе размера — **100 / 200 / 500**. Использовать общий конфиг `DEFAULT_PAGINATION` из `client/src/lib/tableConfig.ts` (вложенные/группированные таблицы со `pagination={false}` — исключение)
+
 ## Стек
 - Node.js 22 LTS + TypeScript 5.7
 - Backend: Fastify 5 + @fastify/jwt + @fastify/cookie + @fastify/helmet + @fastify/rate-limit

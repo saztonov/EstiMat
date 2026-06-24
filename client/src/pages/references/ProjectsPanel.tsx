@@ -7,6 +7,7 @@ import type { UploadFile, UploadProps } from 'antd/es/upload/interface';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { PROJECT_STATUS_LABELS } from '@estimat/shared';
+import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
 const statusColors: Record<string, string> = {
   planning: 'blue',
@@ -99,6 +100,7 @@ export function ProjectsPanel() {
         dataSource={data?.data}
         loading={isLoading}
         scroll={{ y: 'flex' }}
+        pagination={DEFAULT_PAGINATION}
         onRow={(record) => ({ onClick: () => navigate(`/projects/${record.id}`) })}
         style={{ cursor: 'pointer' }}
       />

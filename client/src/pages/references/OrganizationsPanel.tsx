@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, App } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { ORG_TYPE_LABELS, ORG_TYPES } from '@estimat/shared';
+import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
 export function OrganizationsPanel() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editRecord, setEditRecord] = useState<Record<string, unknown> | null>(null);
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState<string | undefined>();
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
   const { message } = App.useApp();
@@ -101,12 +104,40 @@ export function OrganizationsPanel() {
     },
   ];
 
+  // Клиентская фильтрация: поиск по названию и ИНН + отбор по типу.
+  const searchTrimmed = search.trim().toLowerCase();
+  const filtered = (data?.data ?? []).filter((org) => {
+    if (typeFilter && org.type !== typeFilter) return false;
+    if (searchTrimmed) {
+      const name = String(org.name ?? '').toLowerCase();
+      const inn = String(org.inn ?? '').toLowerCase();
+      if (!name.includes(searchTrimmed) && !inn.includes(searchTrimmed)) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="table-page-wrapper">
-      <Space style={{ marginBottom: 16, flexShrink: 0 }}>
+      <Space style={{ marginBottom: 16, flexShrink: 0 }} wrap>
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="Поиск по названию или ИНН"
+          style={{ width: 300 }}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <Select
+          allowClear
+          placeholder="Тип"
+          style={{ width: 200 }}
+          value={typeFilter}
+          onChange={setTypeFilter}
+          options={ORG_TYPES.map((t) => ({ value: t, label: ORG_TYPE_LABELS[t] }))}
+        />
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Создать</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={data?.data} loading={isLoading} scroll={{ y: 'flex' }} />
+      <Table rowKey="id" columns={columns} dataSource={filtered} loading={isLoading} scroll={{ y: 'flex' }} pagination={DEFAULT_PAGINATION} />
 
       <Modal
         title={editRecord ? 'Редактирование организации' : 'Новая организация'}
