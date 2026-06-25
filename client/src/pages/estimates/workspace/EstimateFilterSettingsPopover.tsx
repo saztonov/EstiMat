@@ -41,7 +41,6 @@ export function EstimateFilterSettingsPopover({
             <div style={{ marginTop: 4 }}>
               <LocationPicker
                 size="small"
-                compact
                 zones={zones}
                 value={add}
                 onChange={(v) => setAddContext(estimateId, v)}

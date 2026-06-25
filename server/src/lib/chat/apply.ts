@@ -14,6 +14,7 @@ import { findWorkDuplicate, findMaterialDuplicate } from './duplicates.js';
 import { getTypicalMaterials } from './typical.js';
 import type { Queryable } from './types.js';
 import { recordAuditBatch, type AuditInput } from '../audit.js';
+import { legacyToLocations, deriveLegacyLocation } from '../location.js';
 
 export interface ApplyContext {
   estimateId: string;
@@ -186,15 +187,18 @@ export async function applySelected(
         continue;
       }
       const sort = await nextWorkSort(db, ctx.estimateId, canon.costTypeId);
+      // Источник истины — locations (точный набор этажей с разрывами); legacy-поля как фолбэк.
+      const locations = item.locations ?? legacyToLocations(item.zoneId ?? null, item.floorFrom ?? null, item.floorTo ?? null);
+      const primary = deriveLegacyLocation(locations);
       const { rows } = await db.query(
         `INSERT INTO estimate_items
            (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
-            zone_id, floor_from, floor_to, room_type_id,
+            zone_id, floor_from, floor_to, room_type_id, locations,
             source, ai_job_id, ai_chat_id, needs_review, source_snippet, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'manual', $13, $14, false, $15, $16, $16)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, 'manual', $14, $15, false, $16, $17, $17)
          RETURNING id`,
         [ctx.estimateId, canon.costTypeId, canon.applyRateId, canon.name, item.quantity, canon.unit, canon.price, sort,
-         item.zoneId ?? null, item.floorFrom ?? null, item.floorTo ?? null, item.roomTypeId ?? null,
+         primary.zoneId, primary.floorFrom, primary.floorTo, item.roomTypeId ?? null, JSON.stringify(locations),
          aiJobId, ctx.chatId, ctx.prompt, ctx.userId],
       );
       const itemId: string = rows[0].id;

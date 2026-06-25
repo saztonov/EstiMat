@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
-import { TreeSelect, InputNumber, Button, Space, Tooltip } from 'antd';
+import { TreeSelect, Input, Flex, Typography } from 'antd';
 import type { LocationAddContext } from '../../../store/locationContextStore';
 import {
   type ZoneNode,
   ZONE_KIND_LABEL,
-  findZone,
+  isValidFloorsInput,
 } from './location';
 
 interface TreeData {
@@ -26,75 +26,41 @@ interface Props {
   value: LocationAddContext;
   onChange: (v: LocationAddContext) => void;
   size?: 'small' | 'middle' | 'large';
-  /** Компактный режим: контролы в один ряд без подписей. */
-  compact?: boolean;
 }
 
-// Выбор локации строки: зона (дерево) + диапазон этажей. Типы помещений временно скрыты.
-export function LocationPicker({ zones, value, onChange, size = 'middle', compact }: Props) {
+// Выбор локации добавления: зона (дерево) + единое поле этажей. Точный набор «-1-10, 12, 16-18»
+// (списки, диапазоны, минусы); пустое поле = весь корпус. Типы помещений временно скрыты.
+export function LocationPicker({ zones, value, onChange, size = 'middle' }: Props) {
   const treeData = useMemo(() => zonesToTreeData(zones), [zones]);
-  const zone = useMemo(() => findZone(zones, value.zoneId), [zones, value.zoneId]);
-  const hasFloors = !!zone && zone.floor_min != null && zone.floor_max != null;
-
-  const setZone = (zoneId: string | null) => {
-    const z = findZone(zones, zoneId);
-    // Сбросить этажи под диапазон новой зоны (или очистить, если зона без этажности).
-    const floorFrom = z && z.floor_min != null ? z.floor_min : null;
-    const floorTo = z && z.floor_max != null ? z.floor_max : null;
-    onChange({ ...value, zoneId, floorFrom, floorTo });
-  };
-
-  const clampFloor = (v: number | null): number | null => {
-    if (v == null || !zone || zone.floor_min == null || zone.floor_max == null) return v;
-    return Math.min(Math.max(v, zone.floor_min), zone.floor_max);
-  };
+  const floorsValid = isValidFloorsInput(value.floorsText);
 
   return (
-    <Space wrap={!compact} size={compact ? 4 : 8} style={{ width: '100%' }}>
+    <Flex vertical gap={6} style={{ width: '100%' }}>
       <TreeSelect
         size={size}
         allowClear
         showSearch
         treeDefaultExpandAll
         placeholder="Зона (корпус/парковка)"
-        style={{ minWidth: 180 }}
+        style={{ width: '100%' }}
         value={value.zoneId ?? undefined}
         treeData={treeData}
         treeNodeFilterProp="title"
-        onChange={(v) => setZone((v as string) ?? null)}
+        onChange={(v) => onChange({ ...value, zoneId: (v as string) ?? null })}
       />
-      <Space.Compact>
-        <InputNumber
-          size={size}
-          placeholder="этаж от"
-          style={{ width: 92 }}
-          disabled={!hasFloors}
-          min={zone?.floor_min ?? undefined}
-          max={zone?.floor_max ?? undefined}
-          value={value.floorFrom ?? undefined}
-          onChange={(v) => onChange({ ...value, floorFrom: clampFloor(v as number | null) })}
-        />
-        <InputNumber
-          size={size}
-          placeholder="до"
-          style={{ width: 80 }}
-          disabled={!hasFloors}
-          min={zone?.floor_min ?? undefined}
-          max={zone?.floor_max ?? undefined}
-          value={value.floorTo ?? undefined}
-          onChange={(v) => onChange({ ...value, floorTo: clampFloor(v as number | null) })}
-        />
-        {hasFloors && (
-          <Tooltip title="Весь корпус (все этажи)">
-            <Button
-              size={size}
-              onClick={() => onChange({ ...value, floorFrom: zone!.floor_min, floorTo: zone!.floor_max })}
-            >
-              всё
-            </Button>
-          </Tooltip>
-        )}
-      </Space.Compact>
-    </Space>
+      <Input
+        size={size}
+        style={{ width: '100%' }}
+        placeholder="Этажи: -1-10, 12, 16-18 (пусто = весь корпус)"
+        value={value.floorsText}
+        status={floorsValid ? undefined : 'error'}
+        onChange={(e) => onChange({ ...value, floorsText: e.target.value })}
+      />
+      {!floorsValid && (
+        <Typography.Text type="danger" style={{ fontSize: 12 }}>
+          Формат: числа и диапазоны через запятую, например «1-4, 6» или «-1-8».
+        </Typography.Text>
+      )}
+    </Flex>
   );
 }

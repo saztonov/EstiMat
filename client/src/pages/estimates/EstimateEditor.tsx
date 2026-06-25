@@ -5,6 +5,7 @@ import { api } from '../../services/api';
 import { invalidateEstimateQueries } from '../../lib/estimateQueries';
 import { useEstimateRealtime } from '../../hooks/useEstimateRealtime';
 import { getEffectiveAddContext } from '../../store/locationContextStore';
+import { parseFloors } from './components/location';
 import type { ReplicateTargets } from './components/ReplicateWorksModal';
 import type { SaveWorkPayload, SaveMaterialPayload } from './components/CostTypeGroupBlock';
 import { AddCostTypeModal, type CostTypeFormPayload } from './components/AddCostTypeModal';
@@ -63,9 +64,12 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
 
   // Текущий контекст добавления местоположения (с учётом флага «Добавлять в указанное
   // местоположение»; читается на момент мутации, не из замыкания рендера).
+  // Точный набор этажей с разрывами → источник истины locations: [{zoneId, floors}].
   const currentAddLocation = () => {
     const ctx = getEffectiveAddContext(estimateId);
-    return { zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo };
+    const floors = parseFloors(ctx.floorsText);
+    if (!ctx.zoneId && floors.length === 0) return {};
+    return { locations: [{ zoneId: ctx.zoneId, floors }] };
   };
 
   const createWorkMutation = useMutation({

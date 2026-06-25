@@ -21,6 +21,7 @@ import { useAiChatStore } from '../../../store/aiChatStore';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkScopeStore } from '../../../store/workScopeStore';
 import { getEffectiveAddContext } from '../../../store/locationContextStore';
+import { parseFloors } from '../components/location';
 import { usePersistedTab } from '../../../hooks/usePersistedTab';
 
 type AiMode = 'chat' | 'extract';
@@ -101,11 +102,12 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
   const applyMut = useMutation({
     mutationFn: (items: ApplyItem[]) => {
       // Домешиваем текущий контекст добавления местоположения к работам (материалы наследуют от targetItemId).
+      // Точный набор этажей с разрывами → locations: [{zoneId, floors}].
       const ctx = getEffectiveAddContext(estimateId);
+      const floors = parseFloors(ctx.floorsText);
+      const locations = ctx.zoneId || floors.length ? [{ zoneId: ctx.zoneId, floors }] : undefined;
       const withLoc = items.map((it) =>
-        it.kind === 'work'
-          ? { ...it, zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo }
-          : it,
+        it.kind === 'work' && locations ? { ...it, locations } : it,
       );
       return applySelectedApi({ chatId: sessionId as string, items: withLoc, override: false });
     },
