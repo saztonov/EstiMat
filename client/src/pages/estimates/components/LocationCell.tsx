@@ -83,7 +83,7 @@ export function LocationCell({ work, editable, zones, onChange }: Props) {
       onOpenChange={onOpenChange}
       trigger="click"
       placement="bottomLeft"
-      title="Локация работы"
+      title="Местоположение работы"
       content={
         <Space direction="vertical" style={{ width: 400 }}>
           <MultiLocationPicker size="small" zones={zones} value={draft} onChange={setDraft} />

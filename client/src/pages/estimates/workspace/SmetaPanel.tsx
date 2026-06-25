@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Empty, Popover, Select, Space, Switch, Tooltip } from 'antd';
+import { App, Button, Empty, Popover, Select, Space, Tooltip } from 'antd';
 import {
   PlusOutlined,
   TableOutlined,
@@ -16,10 +16,8 @@ import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } fr
 import { WorkTreeSelect } from '../components/WorkTreeSelect';
 import { ReviewUnconfirmedModal } from '../components/ReviewUnconfirmedModal';
 import { ReplicateWorksModal, type ReplicateTargets } from '../components/ReplicateWorksModal';
-import { LocationContextBar } from './LocationContextBar';
-import { LocationSections } from './LocationSections';
-import { buildLocationGroups } from '../components/buildLocationGroups';
-import { flattenZones } from '../components/location';
+import { LocationFilterPopover } from './LocationFilterPopover';
+import { EstimateFilterSettingsPopover } from './EstimateFilterSettingsPopover';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
@@ -113,7 +111,6 @@ export function SmetaPanel({
   const [onlyUnreconciled, setOnlyUnreconciled] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
-  const [collapsedZones, setCollapsedZones] = useState<Set<string>>(new Set());
   // Единый режим выбора с чекбоксами: перенос ('reassign'), удаление ('delete') или тиражирование ('replicate').
   const [mode, setMode] = useState<SelectionMode>('none');
   const selectionMode = mode !== 'none'; // чекбоксы материалов видны в reassign/delete
@@ -124,11 +121,10 @@ export function SmetaPanel({
   const [replicateOpen, setReplicateOpen] = useState(false);
   const [replicating, setReplicating] = useState(false);
 
-  // Локация: фильтр-срезы, группировка, справочник зон для размножения.
+  // Местоположение: фильтр-срезы + справочник зон для размножения.
   const filterZoneIds = useLocationContextStore((s) => s.filterZoneIds);
   const filterFloorFrom = useLocationContextStore((s) => s.filterFloorFrom);
   const filterFloorTo = useLocationContextStore((s) => s.filterFloorTo);
-  const groupBy = useLocationContextStore((s) => s.groupBy);
   const { data: zonesData } = useProjectZones(projectId);
   // Модалка ревью несогласованных позиций (согласовать/удалить выделенное).
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -255,19 +251,6 @@ export function SmetaPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorFrom, filterFloorTo]);
 
-  // Имя зоны по id (для подписей секций мультизонной группировки).
-  const zoneNameById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const z of flattenZones(zonesData?.data.roots ?? [])) m.set(z.id, z.name);
-    return m;
-  }, [zonesData]);
-
-  // Секции группировки по локации (Зона → Вид работ).
-  const locationSections = useMemo(
-    () => (groupBy === 'location' ? buildLocationGroups(visibleGroups, zoneNameById) : []),
-    [groupBy, visibleGroups, zoneNameById],
-  );
-
   // Группировка видимых видов работ по категориям (порядок — как пришли,
   // groups уже отсортированы по категории→виду).
   const sections = useMemo(() => {
@@ -289,14 +272,6 @@ export function SmetaPanel({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-
-  const toggleZone = (key: string) =>
-    setCollapsedZones((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
       return next;
     });
 
@@ -482,9 +457,7 @@ export function SmetaPanel({
     onUpdateWork,
     onDeleteWork,
     onReorderWorks,
-    // Перестановка работ ↑/↓ — только в группировке «по виду работ» (в режиме локации
-    // список работ вида разбит по зонам, перестановка по неполному списку некорректна).
-    canReorderWorks: groupBy === 'cost_type',
+    canReorderWorks: true,
     onCreateMaterial,
     onUpdateMaterial,
     onDeleteMaterial,
@@ -501,8 +474,7 @@ export function SmetaPanel({
     deleteMode: mode === 'delete' || mode === 'replicate',
     selectedWorkIds,
     onToggleWork: toggleWork,
-    // Колонку локации показываем только в группировке «по виду работ» (иначе локация — в заголовке секции).
-    showLocationColumn: groupBy === 'cost_type',
+    showLocationColumn: true,
     zones: zonesData?.data.roots ?? [],
   };
 
@@ -629,7 +601,6 @@ export function SmetaPanel({
     >
       {groups.length > 0 ? (
         <>
-          {editable && <LocationContextBar projectId={projectId} estimateId={estimateId} />}
           <Space style={{ marginBottom: 12 }} wrap>
             <Select
               allowClear
@@ -654,31 +625,17 @@ export function SmetaPanel({
               options={typeOptions}
               style={{ width: 240 }}
             />
-            <Tooltip title="Показать только несогласованные позиции (добавленные ИИ или без привязки к справочнику)">
-              <Space size={6}>
-                <Switch size="small" checked={onlyUnreconciled} onChange={setOnlyUnreconciled} />
-                <span style={{ fontSize: 13, color: '#595959' }}>Не согласованные</span>
-              </Space>
-            </Tooltip>
+            <LocationFilterPopover zones={zonesData?.data.roots ?? []} />
+            <EstimateFilterSettingsPopover
+              estimateId={estimateId}
+              zones={zonesData?.data.roots ?? []}
+              editable={editable}
+              onlyUnreconciled={onlyUnreconciled}
+              onUnreconciledChange={setOnlyUnreconciled}
+            />
           </Space>
 
-          {groupBy === 'location' ? (
-            <LocationSections
-              sections={locationSections}
-              collapsed={collapsedZones}
-              onToggle={toggleZone}
-              renderGroup={(group, i, key) => (
-                <CostTypeGroupBlock
-                  key={key}
-                  group={group}
-                  index={i}
-                  collapsed={collapsedTypes.has(typeKey(group))}
-                  onToggleCollapsed={() => toggleType(group.costTypeId)}
-                  {...blockProps}
-                />
-              )}
-            />
-          ) : sections.length === 0 ? (
+          {sections.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Ничего не найдено по отбору" style={{ padding: '24px 0' }} />
           ) : (
             sections.map((sec) => {

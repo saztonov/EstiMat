@@ -130,7 +130,7 @@ export function ReplicateWorksModal({ open, sourceWorks, zones, loading, onCance
           <Alert
             type="info"
             showIcon
-            message={`Будет создано до ${estimatedRows} строк (${sourceWorks.length} работ × ${contours} контур(ов))${skipExisting ? '; дубли по локации пропускаются' : ''}.`}
+            message={`Будет создано до ${estimatedRows} строк (${sourceWorks.length} работ × ${contours} контур(ов))${skipExisting ? '; дубли по местоположению пропускаются' : ''}.`}
           />
         )}
       </Space>

@@ -1,9 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-// Ось группировки таблицы сметы.
-export type LocationGroupBy = 'cost_type' | 'location' | 'location_cost_type';
-
 // Контекст добавления — одна точная локация, куда падают новые работы.
 // Тип помещения временно скрыт во всём локационном UX (roomTypeId не задаётся).
 export interface LocationAddContext {
@@ -24,17 +21,18 @@ interface LocationContextState {
   setAddContext: (estimateId: string, ctx: LocationAddContext) => void;
   clearAddContext: (estimateId: string) => void;
 
-  // ФИЛЬТР отображения (транзиент, НЕ персистится): срезы по локации.
+  // Флаг «добавлять в указанное местоположение» (персистится per-estimate):
+  // применять контекст добавления к новым работам только когда true.
+  addEnabled: Record<string, boolean>;
+  setAddEnabled: (estimateId: string, enabled: boolean) => void;
+
+  // ФИЛЬТР отображения (транзиент, НЕ персистится): срезы по местоположению.
   filterZoneIds: string[];
   filterFloorFrom: number | null;
   filterFloorTo: number | null;
   setFilter: (f: Partial<Pick<LocationContextState,
     'filterZoneIds' | 'filterFloorFrom' | 'filterFloorTo'>>) => void;
   clearFilter: () => void;
-
-  // Ось группировки (транзиент).
-  groupBy: LocationGroupBy;
-  setGroupBy: (g: LocationGroupBy) => void;
 }
 
 export const useLocationContextStore = create<LocationContextState>()(
@@ -46,21 +44,22 @@ export const useLocationContextStore = create<LocationContextState>()(
       clearAddContext: (estimateId) =>
         set((s) => ({ byEstimate: { ...s.byEstimate, [estimateId]: EMPTY_ADD_CONTEXT } })),
 
+      addEnabled: {},
+      setAddEnabled: (estimateId, enabled) =>
+        set((s) => ({ addEnabled: { ...s.addEnabled, [estimateId]: enabled } })),
+
       filterZoneIds: [],
       filterFloorFrom: null,
       filterFloorTo: null,
       setFilter: (f) => set((s) => ({ ...s, ...f })),
       clearFilter: () =>
         set({ filterZoneIds: [], filterFloorFrom: null, filterFloorTo: null }),
-
-      groupBy: 'cost_type',
-      setGroupBy: (groupBy) => set({ groupBy }),
     }),
     {
       name: 'estimat:loc-ctx',
       version: 1,
-      // Персистим только контекст добавления; фильтр и группировка — транзиентные.
-      partialize: (s) => ({ byEstimate: s.byEstimate }),
+      // Персистим контекст добавления и флаг применения; фильтр — транзиентный.
+      partialize: (s) => ({ byEstimate: s.byEstimate, addEnabled: s.addEnabled }),
     },
   ),
 );
@@ -68,4 +67,15 @@ export const useLocationContextStore = create<LocationContextState>()(
 // Хелпер: контекст добавления для сметы (с дефолтом).
 export function useAddContext(estimateId: string): LocationAddContext {
   return useLocationContextStore((s) => s.byEstimate[estimateId] ?? EMPTY_ADD_CONTEXT);
+}
+
+// Хелпер: включён ли контекст добавления для сметы.
+export function useAddEnabled(estimateId: string): boolean {
+  return useLocationContextStore((s) => s.addEnabled[estimateId] ?? false);
+}
+
+// Текущий контекст добавления с учётом флага: EMPTY, если выключен.
+export function getEffectiveAddContext(estimateId: string): LocationAddContext {
+  const s = useLocationContextStore.getState();
+  return s.addEnabled[estimateId] ? (s.byEstimate[estimateId] ?? EMPTY_ADD_CONTEXT) : EMPTY_ADD_CONTEXT;
 }

@@ -340,7 +340,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
   if (viewerIsContractor) {
     const myColumns: ColumnsType<EstimateItem> = [
       {
-        title: 'Локация',
+        title: 'Местоположение',
         key: 'location',
         width: 200,
         render: (_, it) => formatLocationLabel(it) || <span style={{ color: '#bfbfbf' }}>—</span>,

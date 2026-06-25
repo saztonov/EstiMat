@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router';
 import { Button, Modal, Space, Tooltip, Typography, App } from 'antd';
 import {
   ArrowLeftOutlined,
-  PlusOutlined,
   EditOutlined,
   TableOutlined,
   RobotOutlined,
@@ -24,7 +23,6 @@ interface Props {
   groupCount: number;
   onBack: () => void;
   onEdit: () => void;
-  onAddCostType: () => void;
   onHistory: () => void;
 }
 
@@ -62,7 +60,6 @@ export function WorkspaceToolbar({
   groupCount,
   onBack,
   onEdit,
-  onAddCostType,
   onHistory,
 }: Props) {
   const { visibility, toggleArea } = useWorkspaceLayoutStore();
@@ -132,9 +129,6 @@ export function WorkspaceToolbar({
 
       <AiProcessingIndicator estimateId={estimate.id} />
 
-      <Button type="dashed" icon={<PlusOutlined />} onClick={onAddCostType}>
-        Вид работ
-      </Button>
       <Tooltip title="История изменений">
         <Button type="text" icon={<HistoryOutlined />} onClick={onHistory} />
       </Tooltip>

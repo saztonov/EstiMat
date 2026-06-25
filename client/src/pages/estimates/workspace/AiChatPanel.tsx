@@ -20,7 +20,7 @@ import {
 import { useAiChatStore } from '../../../store/aiChatStore';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkScopeStore } from '../../../store/workScopeStore';
-import { useLocationContextStore, EMPTY_ADD_CONTEXT } from '../../../store/locationContextStore';
+import { getEffectiveAddContext } from '../../../store/locationContextStore';
 import { usePersistedTab } from '../../../hooks/usePersistedTab';
 
 type AiMode = 'chat' | 'extract';
@@ -100,8 +100,8 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
 
   const applyMut = useMutation({
     mutationFn: (items: ApplyItem[]) => {
-      // Домешиваем текущий контекст добавления локации к работам (материалы наследуют от targetItemId).
-      const ctx = useLocationContextStore.getState().byEstimate[estimateId] ?? EMPTY_ADD_CONTEXT;
+      // Домешиваем текущий контекст добавления местоположения к работам (материалы наследуют от targetItemId).
+      const ctx = getEffectiveAddContext(estimateId);
       const withLoc = items.map((it) =>
         it.kind === 'work'
           ? { ...it, zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo }

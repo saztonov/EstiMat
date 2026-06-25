@@ -205,7 +205,7 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
   };
 
   const onSaveZones = () => {
-    if (draft.some((d) => !d.name.trim())) { message.error('У каждой локации должно быть название'); return; }
+    if (draft.some((d) => !d.name.trim())) { message.error('У каждого местоположения должно быть название'); return; }
     const bad = draft.find((d) => d.floorMin != null && d.floorMax != null && d.floorMin > d.floorMax);
     if (bad) { message.error(`«${bad.name}»: нижний этаж больше верхнего`); return; }
 
@@ -237,7 +237,7 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
   if (isLoading) return <div style={{ padding: 40, textAlign: 'center' }}><Spin size="large" /></div>;
   if (isError) {
     return (
-      <Alert type="error" showIcon message="Не удалось загрузить локации объекта"
+      <Alert type="error" showIcon message="Не удалось загрузить местоположения объекта"
         action={<Button size="small" onClick={() => refetch()}>Повторить</Button>} />
     );
   }
@@ -348,7 +348,7 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
           <Button key="dup" icon={<CopyOutlined />} onClick={() => duplicate(editing)} style={{ float: 'left' }}>Дублировать</Button>
         ),
         editing.kind !== 'street' && canEdit && (
-          <Popconfirm key="del" title="Удалить локацию?" description="Строки сметы этой локации станут «без локации»." onConfirm={() => removeZone(editing)}>
+          <Popconfirm key="del" title="Удалить местоположение?" description="Строки сметы этого местоположения станут «без местоположения»." onConfirm={() => removeZone(editing)}>
             <Button danger icon={<DeleteOutlined />} style={{ float: 'left', marginLeft: 8 }}>Удалить</Button>
           </Popconfirm>
         ),
@@ -420,7 +420,7 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
 
         {editing.kind === 'street' && (
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Наружная локация (благоустройство, сети). Есть всегда, без этажей. Удалить нельзя.
+            Наружное местоположение (благоустройство, сети). Есть всегда, без этажей. Удалить нельзя.
           </Typography.Text>
         )}
       </Space>
@@ -440,12 +440,12 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
       )}
 
       {draft.length === 0 && canEdit ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Локации ещё не заданы" style={{ flex: 1 }} />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Местоположения ещё не заданы" style={{ flex: 1 }} />
       ) : sliceView}
 
       {others.length > 0 && (
         <div style={{ flexShrink: 0, paddingTop: 8 }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>Прочие локации:</Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>Прочие местоположения:</Typography.Text>
           <Space wrap size={4}>
             {others.map((z) => (
               <Tag key={z.id} style={{ cursor: 'pointer' }} onClick={() => setEditingId(z.id)}>

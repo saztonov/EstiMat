@@ -4,7 +4,7 @@ import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-quer
 import { api } from '../../services/api';
 import { invalidateEstimateQueries } from '../../lib/estimateQueries';
 import { useEstimateRealtime } from '../../hooks/useEstimateRealtime';
-import { useLocationContextStore, EMPTY_ADD_CONTEXT } from '../../store/locationContextStore';
+import { getEffectiveAddContext } from '../../store/locationContextStore';
 import type { ReplicateTargets } from './components/ReplicateWorksModal';
 import type { SaveWorkPayload, SaveMaterialPayload } from './components/CostTypeGroupBlock';
 import { AddCostTypeModal, type CostTypeFormPayload } from './components/AddCostTypeModal';
@@ -61,9 +61,10 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
-  // Текущий контекст добавления локации (читается на момент мутации, не из замыкания рендера).
+  // Текущий контекст добавления местоположения (с учётом флага «Добавлять в указанное
+  // местоположение»; читается на момент мутации, не из замыкания рендера).
   const currentAddLocation = () => {
-    const ctx = useLocationContextStore.getState().byEstimate[estimateId] ?? EMPTY_ADD_CONTEXT;
+    const ctx = getEffectiveAddContext(estimateId);
     return { zoneId: ctx.zoneId, floorFrom: ctx.floorFrom, floorTo: ctx.floorTo };
   };
 

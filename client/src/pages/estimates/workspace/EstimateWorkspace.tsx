@@ -154,7 +154,6 @@ export function EstimateWorkspace(props: Props) {
         groupCount={groupCount}
         onBack={props.onBack}
         onEdit={props.onEdit}
-        onAddCostType={props.onAddCostType}
         onHistory={() => setHistoryOpen(true)}
       />
 

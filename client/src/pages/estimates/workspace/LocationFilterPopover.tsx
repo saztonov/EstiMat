@@ -65,9 +65,9 @@ export function LocationFilterPopover({ zones }: Props) {
   );
 
   return (
-    <Popover trigger="click" placement="bottomRight" title="Фильтр по локации" content={content}>
+    <Popover trigger="click" placement="bottomRight" title="Фильтр по местоположению" content={content}>
       <Badge count={activeCount} size="small">
-        <Button icon={<FilterOutlined />}>Фильтр локации</Button>
+        <Button icon={<FilterOutlined />}>Фильтр местоположения</Button>
       </Badge>
     </Popover>
   );
