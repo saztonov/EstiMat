@@ -6,6 +6,8 @@
  * Экспоненциальный backoff на 429/5xx, прерывание через AbortSignal.
  */
 
+import { randomUUID } from 'node:crypto';
+
 const MAX_RETRIES = 4;
 const BASE_BACKOFF_MS = 1500;
 
@@ -96,6 +98,9 @@ export async function chatWithTools(
       headers: {
         Authorization: `Bearer ${opts.apiKey}`,
         'Content-Type': 'application/json',
+        // Трейсинг в журнале proxy_llm (если baseUrl указывает на прокси). Свежий id
+        // на каждую попытку — прокси сам сгенерирует его при отсутствии заголовка.
+        'X-Request-Id': randomUUID(),
       },
       body: JSON.stringify(body),
     });

@@ -6,6 +6,7 @@
  * Это единственное место, знающее про OpenRouter. Ядро (pipeline/matcher)
  * остаётся провайдеро-независимым.
  */
+import { randomUUID } from 'node:crypto';
 import type {
   LlmPort,
   LlmExtractContext,
@@ -84,6 +85,9 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
         headers: {
           Authorization: `Bearer ${opts.apiKey}`,
           'Content-Type': 'application/json',
+          // Трейсинг в журнале proxy_llm (если baseUrl указывает на прокси). Свежий id
+          // на каждую попытку — прокси сам сгенерирует его при отсутствии заголовка.
+          'X-Request-Id': randomUUID(),
         },
         body: JSON.stringify({
           model: opts.model,
