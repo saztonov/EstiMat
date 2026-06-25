@@ -149,34 +149,41 @@ export default async function aiRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
 
   // POST /api/ai/jobs — создать задание извлечения (и сразу запустить движок)
-  fastify.post('/jobs', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
-    const body = createAiJobSchema.parse(request.body);
+  fastify.post(
+    '/jobs',
+    {
+      preHandler: [requireRole('admin', 'engineer')],
+      bodyLimit: 20 * 1024 * 1024, // РД-.md приходит строкой в JSON; дефолт Fastify 1 МБ мал
+    },
+    async (request, reply) => {
+      const body = createAiJobSchema.parse(request.body);
 
-    const est = await fastify.pool.query('SELECT id FROM estimates WHERE id = $1', [body.estimateId]);
-    if (est.rows.length === 0) return reply.status(404).send({ error: 'Смета не найдена' });
+      const est = await fastify.pool.query('SELECT id FROM estimates WHERE id = $1', [body.estimateId]);
+      if (est.rows.length === 0) return reply.status(404).send({ error: 'Смета не найдена' });
 
-    const input = {
-      markdown: body.markdown ?? null,
-      query: body.query ?? null,
-      sourceRef: body.sourceRef ?? null,
-      sectionScope: body.sectionScope ?? null,
-    };
+      const input = {
+        markdown: body.markdown ?? null,
+        query: body.query ?? null,
+        sourceRef: body.sourceRef ?? null,
+        sectionScope: body.sectionScope ?? null,
+      };
 
-    const { rows } = await fastify.pool.query(
-      `INSERT INTO ai_jobs (estimate_id, source_kind, source_ref, input, status, created_by)
-       VALUES ($1, $2, $3, $4::jsonb, 'pending', $5)
-       RETURNING *`,
-      [body.estimateId, body.sourceKind, body.sourceRef ?? null, JSON.stringify(input), request.currentUser.id],
-    );
-    const job = rows[0];
+      const { rows } = await fastify.pool.query(
+        `INSERT INTO ai_jobs (estimate_id, source_kind, source_ref, input, status, created_by)
+         VALUES ($1, $2, $3, $4::jsonb, 'pending', $5)
+         RETURNING *`,
+        [body.estimateId, body.sourceKind, body.sourceRef ?? null, JSON.stringify(input), request.currentUser.id],
+      );
+      const job = rows[0];
 
-    // Встроенный движок: при наличии ключа OpenRouter и markdown — запускаем извлечение в фоне.
-    if (config.ai.enabled && body.markdown) {
-      void runJobInBackground(fastify, job.id);
-    }
+      // Встроенный движок: при наличии ключа OpenRouter и markdown — запускаем извлечение в фоне.
+      if (config.ai.enabled && body.markdown) {
+        void runJobInBackground(fastify, job.id);
+      }
 
-    return reply.status(201).send({ data: job });
-  });
+      return reply.status(201).send({ data: job });
+    },
+  );
 
   // GET /api/ai/jobs?estimateId= — задания сметы; без estimateId — админский список всех заданий
   fastify.get('/jobs', async (request, reply) => {
