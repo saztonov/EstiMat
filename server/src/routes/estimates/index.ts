@@ -16,6 +16,7 @@ import {
   setEstimateContractorSchema,
   bulkDeleteEstimateItemsSchema,
   bulkConfirmEstimateItemsSchema,
+  reorderEstimateItemsSchema,
   replicateItemsSchema,
   type EstimateChangeReason,
   type LocationEntry,
@@ -125,7 +126,9 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
               r.name  AS rate_name,
               r.code  AS rate_code,
               ct.name AS cost_type_name,
+              ct.sort_order AS cost_type_sort_order,
               cc.name AS cost_category_name,
+              cc.sort_order AS cost_category_sort_order,
               z.name  AS zone_name,
               z.kind  AS zone_kind,
               rt.name AS room_type_name,
@@ -562,6 +565,31 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       await client.query('COMMIT');
       await emit('item_updated', rows[0].estimate_id, rows[0].project_id, request.currentUser.id, { auditLogId: auditId });
       return { data: rows[0] };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
+
+  // PATCH /api/estimates/:id/items/reorder — нормализующая перестановка работ внутри вида
+  // (клиент шлёт полный упорядоченный список id → sort_order = 0,1,2,…).
+  fastify.patch<{ Params: { id: string } }>('/:id/items/reorder', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+    const body = reorderEstimateItemsSchema.parse(request.body);
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rowCount } = await client.query(
+        `UPDATE estimate_items ei SET sort_order = t.ord - 1, updated_by = $3
+         FROM unnest($2::uuid[]) WITH ORDINALITY AS t(id, ord)
+         WHERE ei.id = t.id AND ei.estimate_id = $1`,
+        [request.params.id, body.ids, request.currentUser.id],
+      );
+      const projectId = await loadProjectId(client, request.params.id);
+      await client.query('COMMIT');
+      if (rowCount) await emit('item_updated', request.params.id, projectId, request.currentUser.id);
+      return reply.send({ success: true, updated: rowCount ?? 0 });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

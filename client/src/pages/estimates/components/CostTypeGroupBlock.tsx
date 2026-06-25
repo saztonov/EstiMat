@@ -24,6 +24,8 @@ import {
   CaretRightOutlined,
   CaretDownOutlined,
   SwapOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
 } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -413,6 +415,10 @@ interface Props {
   onCreateWork?: (costTypeId: string | null, payload: SaveWorkPayload) => Promise<void>;
   onUpdateWork?: (workId: string, payload: SaveWorkPayload) => Promise<void>;
   onDeleteWork?: (workId: string) => void;
+  /** Перестановка работ внутри вида: полный список id работ в новом порядке. */
+  onReorderWorks?: (orderedIds: string[]) => void;
+  /** Показывать кнопки ↑/↓ у работ (выкл. в группировке «по локации»). */
+  canReorderWorks?: boolean;
   onCreateMaterial?: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
   onUpdateMaterial?: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDeleteMaterial?: (materialId: string) => void;
@@ -462,6 +468,8 @@ export function CostTypeGroupBlock({
   onCreateWork = noopAsync,
   onUpdateWork = noopAsync,
   onDeleteWork = noop,
+  onReorderWorks = noop,
+  canReorderWorks = false,
   onCreateMaterial = noopAsync,
   onUpdateMaterial = noopAsync,
   onDeleteMaterial = noop,
@@ -601,6 +609,17 @@ export function CostTypeGroupBlock({
       originalDescription: r.description,
       originalRateId: r.rate_id,
     });
+  }
+
+  // Переставить работу внутри вида: меняем местами с соседом и шлём полный список id.
+  function moveWork(pos: number, dir: -1 | 1) {
+    const arr = group.works.slice();
+    const j = pos + dir;
+    if (pos < 0 || j < 0 || j >= arr.length) return;
+    const [moved] = arr.splice(pos, 1);
+    if (!moved) return;
+    arr.splice(j, 0, moved);
+    onReorderWorks(arr.map((w) => w.id));
   }
 
   async function doSave(payload: SaveWorkPayload, workId: string | null) {
@@ -758,7 +777,7 @@ export function CostTypeGroupBlock({
       : []),
     ...(showLocationColumn
       ? [{
-          title: 'Локация', width: 158,
+          title: 'Местоположение', width: 158,
           render: (_: unknown, r: EstimateItem) => {
             if (r.id === DRAFT_ID) return null; // у черновика локация подставится из контекста добавления
             return (
@@ -784,7 +803,7 @@ export function CostTypeGroupBlock({
       : []),
     ...(editable && !deleteMode
       ? [{
-          title: '', width: 64,
+          title: '', width: canReorderWorks ? 116 : 64,
           render: (_: unknown, r: EstimateItem) => {
             if (isRowInEdit(r)) {
               return (
@@ -794,8 +813,17 @@ export function CostTypeGroupBlock({
                 </Space>
               );
             }
+            const pos = group.works.findIndex((w) => w.id === r.id);
             return (
               <Space size={4}>
+                {canReorderWorks && (
+                  <>
+                    <Button type="text" size="small" title="Переместить выше" icon={<ArrowUpOutlined />}
+                      disabled={!!editing || pos <= 0} onClick={() => moveWork(pos, -1)} />
+                    <Button type="text" size="small" title="Переместить ниже" icon={<ArrowDownOutlined />}
+                      disabled={!!editing || pos < 0 || pos >= group.works.length - 1} onClick={() => moveWork(pos, 1)} />
+                  </>
+                )}
                 <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
                   onClick={() => startEditWork(r)} />
                 <Popconfirm title="Удалить работу со всеми материалами?" onConfirm={() => onDeleteWork(r.id)}>

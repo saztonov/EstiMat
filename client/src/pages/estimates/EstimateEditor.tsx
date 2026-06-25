@@ -110,6 +110,13 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
+  // Перестановка работ внутри вида (кнопки ↑/↓): шлём полный список id в новом порядке.
+  const reorderWorksMutation = useMutation({
+    mutationFn: (ids: string[]) => api.patch(`/estimates/${estimateId}/items/reorder`, { ids }),
+    onSuccess: () => invalidate(),
+    onError: (e: Error) => message.error(e.message),
+  });
+
   const createMaterialMutation = useMutation({
     mutationFn: ({ workId, payload }: { workId: string; payload: SaveMaterialPayload }) =>
       api.post(`/estimate-items/${workId}/materials`, payload),
@@ -240,8 +247,10 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
             {
               costTypeId: payload.costTypeId,
               costTypeName: payload.costTypeName,
+              costTypeSortOrder: null,
               costCategoryId: payload.costCategoryId,
               costCategoryName: payload.costCategoryName,
+              costCategorySortOrder: null,
               works: [],
               contractor: null,
             },
@@ -273,8 +282,10 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
             {
               costTypeId: p.costTypeId,
               costTypeName: p.costTypeName,
+              costTypeSortOrder: null,
               costCategoryId: p.costCategoryId,
               costCategoryName: p.costCategoryName,
+              costCategorySortOrder: null,
               works: [],
               contractor: null,
             },
@@ -308,6 +319,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         onCreateWork={createWork}
         onUpdateWork={updateWork}
         onDeleteWork={(workId) => deleteWorkMutation.mutate(workId)}
+        onReorderWorks={(ids) => reorderWorksMutation.mutate(ids)}
         onCreateMaterial={createMaterial}
         onUpdateMaterial={updateMaterial}
         onDeleteMaterial={(materialId) => deleteMaterialMutation.mutate(materialId)}

@@ -87,6 +87,11 @@ export const bulkConfirmEstimateItemsSchema = z
     message: 'Не выбрано ни одной позиции',
   });
 
+// Нормализующая перестановка работ внутри вида: полный список id работ в новом порядке.
+export const reorderEstimateItemsSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, 'Список работ пуст').max(1000, 'Слишком много работ'),
+});
+
 // === Подрядчик на вид затрат (estimate + cost_type) ===
 export const setEstimateContractorSchema = z.object({
   costTypeId: z.string().uuid(),
@@ -173,4 +178,5 @@ export type AssignItemContractorsInput = z.infer<typeof assignItemContractorsSch
 export type ClearItemContractorsInput = z.infer<typeof clearItemContractorsSchema>;
 export type BulkDeleteEstimateItemsInput = z.infer<typeof bulkDeleteEstimateItemsSchema>;
 export type BulkConfirmEstimateItemsInput = z.infer<typeof bulkConfirmEstimateItemsSchema>;
+export type ReorderEstimateItemsInput = z.infer<typeof reorderEstimateItemsSchema>;
 export type Estimate = z.infer<typeof estimateSchema>;

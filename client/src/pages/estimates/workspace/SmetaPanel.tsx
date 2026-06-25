@@ -48,6 +48,7 @@ interface Props {
   onCreateWork: (costTypeId: string | null, payload: SaveWorkPayload) => Promise<void>;
   onUpdateWork: (workId: string, payload: SaveWorkPayload) => Promise<void>;
   onDeleteWork: (workId: string) => void;
+  onReorderWorks: (orderedIds: string[]) => void;
   onCreateMaterial: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
   onUpdateMaterial: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDeleteMaterial: (materialId: string) => void;
@@ -92,6 +93,7 @@ export function SmetaPanel({
   onCreateWork,
   onUpdateWork,
   onDeleteWork,
+  onReorderWorks,
   onCreateMaterial,
   onUpdateMaterial,
   onDeleteMaterial,
@@ -479,6 +481,10 @@ export function SmetaPanel({
     onCreateWork,
     onUpdateWork,
     onDeleteWork,
+    onReorderWorks,
+    // Перестановка работ ↑/↓ — только в группировке «по виду работ» (в режиме локации
+    // список работ вида разбит по зонам, перестановка по неполному списку некорректна).
+    canReorderWorks: groupBy === 'cost_type',
     onCreateMaterial,
     onUpdateMaterial,
     onDeleteMaterial,

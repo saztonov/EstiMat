@@ -2,7 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import ExcelJS from 'exceljs';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { createCostCategorySchema, createCostTypeSchema, createRateSchema, updateRateSchema } from '@estimat/shared';
+import {
+  createCostCategorySchema,
+  createCostTypeSchema,
+  createRateSchema,
+  updateRateSchema,
+  updateCostCategorySchema,
+  updateCostTypeSchema,
+  reorderCategoriesSchema,
+  reorderTypesSchema,
+} from '@estimat/shared';
 
 export default async function rateRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -26,6 +35,37 @@ export default async function rateRoutes(fastify: FastifyInstance) {
       [body.name, body.code || null, body.sortOrder],
     );
     return reply.status(201).send({ data: rows[0] });
+  });
+
+  // PATCH /api/rates/categories/reorder — нормализующая перестановка (sort_order = 0,1,2,…)
+  fastify.patch('/categories/reorder', { preHandler: [requireRole('admin', 'engineer')] }, async (request) => {
+    const body = reorderCategoriesSchema.parse(request.body);
+    await fastify.pool.query(
+      `UPDATE cost_categories c SET sort_order = t.ord - 1
+       FROM unnest($1::uuid[]) WITH ORDINALITY AS t(id, ord)
+       WHERE c.id = t.id`,
+      [body.ids],
+    );
+    return { success: true };
+  });
+
+  // PUT /api/rates/categories/:id — переименование / код / порядок
+  fastify.put<{ Params: { id: string } }>('/categories/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+    const body = updateCostCategorySchema.parse(request.body);
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    let i = 1;
+    if (body.name !== undefined) { sets.push(`name = $${i++}`); values.push(body.name); }
+    if (body.code !== undefined) { sets.push(`code = $${i++}`); values.push(body.code || null); }
+    if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
+    if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
+    values.push(request.params.id);
+    const { rows } = await fastify.pool.query(
+      `UPDATE cost_categories SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+      values,
+    );
+    if (rows.length === 0) return reply.status(404).send({ error: 'Категория не найдена' });
+    return { data: rows[0] };
   });
 
   // DELETE /api/rates/categories/:id (каскадное удаление видов и расценок)
@@ -63,6 +103,37 @@ export default async function rateRoutes(fastify: FastifyInstance) {
       [body.categoryId, body.name, body.code || null, body.sortOrder],
     );
     return reply.status(201).send({ data: rows[0] });
+  });
+
+  // PATCH /api/rates/types/reorder — перестановка видов внутри категории (sort_order = 0,1,2,…)
+  fastify.patch('/types/reorder', { preHandler: [requireRole('admin', 'engineer')] }, async (request) => {
+    const body = reorderTypesSchema.parse(request.body);
+    await fastify.pool.query(
+      `UPDATE cost_types ct SET sort_order = t.ord - 1
+       FROM unnest($2::uuid[]) WITH ORDINALITY AS t(id, ord)
+       WHERE ct.id = t.id AND ct.category_id = $1`,
+      [body.categoryId, body.ids],
+    );
+    return { success: true };
+  });
+
+  // PUT /api/rates/types/:id — переименование / код / порядок
+  fastify.put<{ Params: { id: string } }>('/types/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+    const body = updateCostTypeSchema.parse(request.body);
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    let i = 1;
+    if (body.name !== undefined) { sets.push(`name = $${i++}`); values.push(body.name); }
+    if (body.code !== undefined) { sets.push(`code = $${i++}`); values.push(body.code || null); }
+    if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
+    if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
+    values.push(request.params.id);
+    const { rows } = await fastify.pool.query(
+      `UPDATE cost_types SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+      values,
+    );
+    if (rows.length === 0) return reply.status(404).send({ error: 'Вид затрат не найден' });
+    return { data: rows[0] };
   });
 
   // DELETE /api/rates/types/:id (каскадное удаление расценок)

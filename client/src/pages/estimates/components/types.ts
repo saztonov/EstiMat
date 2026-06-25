@@ -28,8 +28,10 @@ export interface EstimateItem {
   project_id?: string | null;
   cost_category_id: string | null;
   cost_category_name?: string | null;
+  cost_category_sort_order?: number | null;
   cost_type_id: string | null;
   cost_type_name?: string | null;
+  cost_type_sort_order?: number | null;
   rate_id: string | null;
   description: string;
   quantity: string;
@@ -112,8 +114,10 @@ export interface EstimateDetail {
 export interface CostTypeGroup {
   costTypeId: string | null;
   costTypeName: string | null;
+  costTypeSortOrder: number | null;
   costCategoryId: string | null;
   costCategoryName: string | null;
+  costCategorySortOrder: number | null;
   works: EstimateItem[];
   contractor: EstimateContractor | null;
 }
@@ -140,8 +144,10 @@ export function buildCostTypeGroups(
       g = {
         costTypeId: id,
         costTypeName: null,
+        costTypeSortOrder: null,
         costCategoryId: null,
         costCategoryName: null,
+        costCategorySortOrder: null,
         works: [],
         contractor: null,
       };
@@ -153,16 +159,20 @@ export function buildCostTypeGroups(
   for (const it of items) {
     const g = ensure(it.cost_type_id);
     g.costTypeName ??= it.cost_type_name ?? null;
+    g.costTypeSortOrder ??= it.cost_type_sort_order ?? null;
     g.costCategoryId ??= it.cost_category_id ?? null;
     g.costCategoryName ??= it.cost_category_name ?? null;
+    g.costCategorySortOrder ??= it.cost_category_sort_order ?? null;
     g.works.push(it);
   }
 
   for (const p of pending) {
     const g = ensure(p.costTypeId);
     g.costTypeName ??= p.costTypeName;
+    g.costTypeSortOrder ??= p.costTypeSortOrder;
     g.costCategoryId ??= p.costCategoryId;
     g.costCategoryName ??= p.costCategoryName;
+    g.costCategorySortOrder ??= p.costCategorySortOrder;
   }
 
   for (const c of contractors) {
@@ -173,9 +183,18 @@ export function buildCostTypeGroups(
     g.costCategoryName ??= c.cost_category_name ?? null;
   }
 
+  // Порядок групп — как в справочнике: сначала по sort_order категории, затем по sort_order
+  // вида работ. Имя — вторичный ключ (после импорта Excel все sort_order = 0). Группы без
+  // sort_order (отложенные, ещё без работ) падают в конец.
+  const catRank = (g: CostTypeGroup) => g.costCategorySortOrder ?? Number.MAX_SAFE_INTEGER;
+  const typeRank = (g: CostTypeGroup) => g.costTypeSortOrder ?? Number.MAX_SAFE_INTEGER;
   return [...map.values()].sort((a, b) => {
-    const ca = (a.costCategoryName ?? '').localeCompare(b.costCategoryName ?? '', 'ru');
-    if (ca !== 0) return ca;
+    const cr = catRank(a) - catRank(b);
+    if (cr !== 0) return cr;
+    const cn = (a.costCategoryName ?? '').localeCompare(b.costCategoryName ?? '', 'ru');
+    if (cn !== 0) return cn;
+    const tr = typeRank(a) - typeRank(b);
+    if (tr !== 0) return tr;
     return (a.costTypeName ?? '').localeCompare(b.costTypeName ?? '', 'ru');
   });
 }

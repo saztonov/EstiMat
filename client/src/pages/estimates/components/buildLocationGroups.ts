@@ -68,8 +68,10 @@ export function buildLocationGroups(
           ctg = {
             costTypeId: g.costTypeId,
             costTypeName: g.costTypeName,
+            costTypeSortOrder: g.costTypeSortOrder,
             costCategoryId: g.costCategoryId,
             costCategoryName: g.costCategoryName,
+            costCategorySortOrder: g.costCategorySortOrder,
             works: [],
             contractor: g.costTypeId ? contractorByType.get(g.costTypeId) ?? null : null,
           };
@@ -82,8 +84,11 @@ export function buildLocationGroups(
 
   const sections: LocationSection[] = [];
   for (const [zoneKey, cts] of zoneMap) {
-    const groupsArr = [...cts.values()].sort((a, b) =>
-      (a.costTypeName ?? '').localeCompare(b.costTypeName ?? '', 'ru'));
+    const groupsArr = [...cts.values()].sort((a, b) => {
+      const tr = (a.costTypeSortOrder ?? Number.MAX_SAFE_INTEGER) - (b.costTypeSortOrder ?? Number.MAX_SAFE_INTEGER);
+      if (tr !== 0) return tr;
+      return (a.costTypeName ?? '').localeCompare(b.costTypeName ?? '', 'ru');
+    });
     const name = zoneKey === NONE ? 'Без локации' : zoneNameById.get(zoneKey) ?? 'Зона';
     // Если во всей зоне один и тот же набор этажей — покажем его в подписи.
     const labels = zoneFloorLabels.get(zoneKey);

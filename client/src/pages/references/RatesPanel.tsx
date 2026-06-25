@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, App } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined, SearchOutlined, ApartmentOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { UnitSelect } from '../../components/UnitSelect';
+import { CategoriesTypesModal } from './CategoriesTypesModal';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile } from 'antd/es/upload';
@@ -25,6 +26,7 @@ interface CostType { id: string; name: string; category_id: string }
 
 export function RatesPanel() {
   const [modalOpen, setModalOpen] = useState(false);
+  const [catTypesOpen, setCatTypesOpen] = useState(false);
   const [editRecord, setEditRecord] = useState<Rate | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | undefined>();
   const [selectedCostTypeId, setSelectedCostTypeId] = useState<string | undefined>();
@@ -222,6 +224,7 @@ export function RatesPanel() {
           onChange={(e) => setSearch(e.target.value)}
         />
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Добавить</Button>
+        <Button icon={<ApartmentOutlined />} onClick={() => setCatTypesOpen(true)}>Категории и виды</Button>
         <Upload
           accept=".xlsx"
           showUploadList={false}
@@ -279,6 +282,8 @@ export function RatesPanel() {
           </Form.Item>
         </Form>
       </Modal>
+
+      <CategoriesTypesModal open={catTypesOpen} onClose={() => setCatTypesOpen(false)} />
     </div>
   );
 }
