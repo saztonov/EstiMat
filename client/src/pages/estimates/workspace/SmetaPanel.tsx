@@ -20,6 +20,7 @@ import { ReviewUnconfirmedModal } from '../components/ReviewUnconfirmedModal';
 import { ReplicateWorksModal, type ReplicateTargets } from '../components/ReplicateWorksModal';
 import { LocationFilterPopover } from './LocationFilterPopover';
 import { EstimateFilterSettingsPopover } from './EstimateFilterSettingsPopover';
+import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
 import { formatLocationsLabel } from '../components/location';
@@ -120,6 +121,9 @@ export function SmetaPanel({
   const [typeFilter, setTypeFilter] = useState<string | undefined>();
   const [onlyUnreconciled, setOnlyUnreconciled] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  // Полная история выбранной строки — один Drawer на всю панель (а не на каждую строку).
+  const [historyItem, setHistoryItem] = useState<EstimateItem | null>(null);
+  const openRowHistory = useCallback((item: EstimateItem) => setHistoryItem(item), []);
   // Раскрытие работ и свёрнутость видов вынесены в estimateExpandStore: SmetaGroupBlock подписан
   // на свой узкий срез (разворот одной работы не каскадит). SmetaPanel на эти срезы НЕ подписан —
   // читает их в обработчиках через getState(). collapsedCats оставлен в локальном state: категорий
@@ -556,12 +560,13 @@ export function SmetaPanel({
       showLocationColumn: true,
       zones: zoneRoots,
       projectId,
+      onOpenHistory: openRowHistory,
     }),
     [
       editable, orgs, onCreateWork, onUpdateWork, onDeleteWork, onReorderWorks,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onConfirmWork,
       onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
-      toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId,
+      toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId, openRowHistory,
     ],
   );
 
@@ -852,6 +857,14 @@ export function SmetaPanel({
         loading={replicating}
         onCancel={() => setReplicateOpen(false)}
         onConfirm={handleReplicate}
+      />
+
+      <EstimateHistoryDrawer
+        estimateId={estimateId}
+        entityId={historyItem?.id}
+        title={historyItem ? `История: ${historyItem.description}` : undefined}
+        open={!!historyItem}
+        onClose={() => setHistoryItem(null)}
       />
     </PanelShell>
   );

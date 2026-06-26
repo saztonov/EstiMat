@@ -71,6 +71,11 @@ export interface EstimateItem {
   my_effective_qty?: string | number | null;
   my_assigned_qty?: string | null;
   my_assigned_percent?: string | null;
+  // Аудит строки (приходит с сервера: даты + денормализованные имена создателя/редактора).
+  created_at?: string;
+  updated_at?: string;
+  created_by_name?: string | null;
+  updated_by_name?: string | null;
 }
 
 // Назначение подрядчика (организации) на строку сметы с распределённым объёмом.

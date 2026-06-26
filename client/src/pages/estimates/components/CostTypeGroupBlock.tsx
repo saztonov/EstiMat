@@ -47,6 +47,7 @@ import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/esti
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
 import { LocationCell } from './LocationCell';
+import { RowInfoPopover } from './RowInfoPopover';
 import type { ZoneNode, LocationEntry } from './location';
 import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
 import { formatMoney } from './types';
@@ -536,6 +537,8 @@ interface Props {
   /** Scroll-контейнер сметы — root для IntersectionObserver ленивых материалов. Передаётся
    *  только на «Смете»; когда задан и нет режима выбора, материалы рендерятся лениво. */
   scrollRootRef?: RefObject<HTMLDivElement | null>;
+  /** Открыть полную историю строки (единый Drawer живёт в SmetaPanel). */
+  onOpenHistory?: (item: EstimateItem) => void;
 }
 
 const noopAsync = async () => {};
@@ -580,6 +583,7 @@ function CostTypeGroupBlockImpl({
   showPrices = true,
   headerExtra,
   scrollRootRef,
+  onOpenHistory,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -931,7 +935,7 @@ function CostTypeGroupBlockImpl({
       : []),
     ...(editable && !deleteMode
       ? [{
-          title: '', width: 64,
+          title: '', width: 96,
           render: (_: unknown, r: EstimateItem) => {
             if (isRowInEdit(r)) {
               return (
@@ -948,6 +952,7 @@ function CostTypeGroupBlockImpl({
                 <Popconfirm title="Удалить работу со всеми материалами?" onConfirm={() => onDeleteWork(r.id)}>
                   <Button type="text" size="small" danger disabled={!!editing} icon={<DeleteOutlined />} />
                 </Popconfirm>
+                {r.id !== DRAFT_ID && <RowInfoPopover item={r} onOpenHistory={onOpenHistory} />}
               </Space>
             );
           },
@@ -960,7 +965,7 @@ function CostTypeGroupBlockImpl({
     editing, saving, nameOptions, ratesData,
     editable, deleteMode, showPrices, showLocationColumn, zones, projectId,
     materialsControlled, expandedWorkIds, expandedKeys, onWorkExpandChange,
-    onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork,
+    onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onOpenHistory,
   ]);
 
   const contractorOptions = orgs
