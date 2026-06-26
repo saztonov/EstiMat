@@ -18,6 +18,8 @@ export interface EstimateMaterial {
   source?: 'manual' | 'ai' | 'catalog';
   needs_review?: boolean;
   confidence?: string | number | null;
+  // OCC: версия строки, снимается при открытии формы редактирования; растёт при каждом UPDATE.
+  version?: number;
 }
 
 // Строка сметы = работа. Несёт измерения (объект/категория/вид затрат)
@@ -71,6 +73,8 @@ export interface EstimateItem {
   my_effective_qty?: string | number | null;
   my_assigned_qty?: string | null;
   my_assigned_percent?: string | null;
+  // OCC: версия строки, снимается при открытии формы редактирования; растёт при каждом UPDATE.
+  version?: number;
   // Аудит строки (приходит с сервера: даты + денормализованные имена создателя/редактора).
   created_at?: string;
   updated_at?: string;

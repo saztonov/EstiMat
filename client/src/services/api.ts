@@ -28,12 +28,18 @@ interface FetchOptions {
 }
 
 // Ошибка API с HTTP-статусом и уже подготовленным понятным текстом для пользователя.
+// data/code несут тело ответа (например, при 409 — актуальная строка и code:'CONFLICT'),
+// чтобы вызывающий код мог отреагировать на конфликт, не теряя черновик пользователя.
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  data?: unknown;
+  code?: string;
+  constructor(status: number, message: string, opts?: { data?: unknown; code?: string }) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.data = opts?.data;
+    this.code = opts?.code;
   }
 }
 
@@ -126,7 +132,11 @@ export async function apiFetch<T = unknown>(
       throw new ApiError(res.status, 'Ошибка сервера. Попробуйте позже.');
     }
     // Прочие 4xx: серверный текст уже на русском и осмысленный.
-    throw new ApiError(res.status, serverError || `HTTP ${res.status}`);
+    // Пробрасываем тело (data/code) — нужно для обработки 409 (OCC-конфликт).
+    throw new ApiError(res.status, serverError || `HTTP ${res.status}`, {
+      data: body?.data,
+      code: body?.code as string | undefined,
+    });
   }
 
   return res.json();

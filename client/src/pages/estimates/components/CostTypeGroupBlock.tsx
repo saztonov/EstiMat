@@ -39,7 +39,7 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../../../services/api';
+import { api, ApiError } from '../../../services/api';
 import { DragHandle, SortableTableRow, SortableVerticalContext } from '../../../components/dndSortable';
 import { UnitSelect } from '../../../components/UnitSelect';
 import { WorkTreeSelect, type WorkOption } from './WorkTreeSelect';
@@ -91,6 +91,8 @@ export interface SaveWorkPayload {
   roomTypeId?: string | null;
   // Произвольный «тип» строки (на всю работу). Пустая строка/null очищает тип.
   locationTypeName?: string | null;
+  // OCC: версия строки на момент открытия формы — сервер сверит и при расхождении вернёт 409.
+  expectedVersion?: number | null;
 }
 
 export interface SaveMaterialPayload {
@@ -99,6 +101,8 @@ export interface SaveMaterialPayload {
   unit: string;
   quantity: number;
   unitPrice: number;
+  // OCC: версия материала на момент открытия формы.
+  expectedVersion?: number | null;
 }
 
 interface WorkEdit {
@@ -111,6 +115,8 @@ interface WorkEdit {
   // Исходные значения — чтобы поймать изменение названия существующей работы
   originalDescription: string;
   originalRateId: string | null;
+  // OCC: версия строки на момент открытия формы (обновляется при 409 для повторного сохранения).
+  expectedVersion?: number | null;
 }
 
 interface MaterialEdit {
@@ -120,6 +126,8 @@ interface MaterialEdit {
   unit: string;
   quantity: number;
   unitPrice: number;
+  // OCC: версия материала на момент открытия формы.
+  expectedVersion?: number | null;
 }
 
 // ============================================================
@@ -246,14 +254,21 @@ function MaterialsSubTableImpl({
       unit,
       quantity: editing.quantity,
       unitPrice: editing.unitPrice,
+      expectedVersion: editing.expectedVersion,
     };
     setSaving(true);
     try {
       if (editing.materialId) await onUpdate(editing.materialId, payload);
       else await onCreate(work.id, payload);
       setEditing(null);
-    } catch {
-      /* ошибку покажет мутация */
+    } catch (e) {
+      // OCC-конфликт: материал изменил другой пользователь. Форму не закрываем, обновляем
+      // version из ответа — повторное «сохранить» осознанно ляжет поверх (см. doSave работ).
+      if (e instanceof ApiError && e.status === 409) {
+        const v = (e.data as { version?: number } | undefined)?.version;
+        if (typeof v === 'number') setEditing((prev) => (prev ? { ...prev, expectedVersion: v } : prev));
+      }
+      /* прочие ошибки покажет мутация */
     } finally {
       setSaving(false);
     }
@@ -373,7 +388,7 @@ function MaterialsSubTableImpl({
             return (
               <Space size={4}>
                 <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
-                  onClick={() => setEditing({ materialId: r.id, refMaterialId: r.material_id, description: r.description, unit: r.unit, quantity: Number(r.quantity), unitPrice: Number(r.unit_price) })} />
+                  onClick={() => setEditing({ materialId: r.id, refMaterialId: r.material_id, description: r.description, unit: r.unit, quantity: Number(r.quantity), unitPrice: Number(r.unit_price), expectedVersion: r.version })} />
                 {reassignBtn(r)}
                 <Popconfirm title="Удалить материал?" onConfirm={() => onDelete(r.id)}>
                   <Button type="text" size="small" danger disabled={!!editing} icon={<DeleteOutlined />} />
@@ -734,6 +749,7 @@ function CostTypeGroupBlockImpl({
       unitPrice: Number(r.unit_price),
       originalDescription: r.description,
       originalRateId: r.rate_id,
+      expectedVersion: r.version,
     });
   }
 
@@ -753,8 +769,15 @@ function CostTypeGroupBlockImpl({
       if (workId) await onUpdateWork(workId, payload);
       else await onCreateWork(group.costTypeId, payload);
       setEditing(null);
-    } catch {
-      /* ошибку покажет мутация */
+    } catch (e) {
+      // OCC-конфликт: строку изменил другой пользователь. Форму НЕ закрываем (черновик
+      // сохраняется), а обновляем version из ответа — повторное «сохранить» осознанно
+      // ляжет поверх. Предупреждение и подтягивание данных уже сделала мутация.
+      if (e instanceof ApiError && e.status === 409) {
+        const v = (e.data as { version?: number } | undefined)?.version;
+        if (typeof v === 'number') setEditing((prev) => (prev ? { ...prev, expectedVersion: v } : prev));
+      }
+      /* прочие ошибки покажет мутация */
     } finally {
       setSaving(false);
     }
@@ -776,6 +799,7 @@ function CostTypeGroupBlockImpl({
       unit,
       quantity: editing.quantity,
       unitPrice: editing.unitPrice,
+      expectedVersion: editing.expectedVersion,
     };
 
     // Название существующей работы изменили вручную (не выбором другой расценки) —
@@ -926,6 +950,7 @@ function CostTypeGroupBlockImpl({
                     unitPrice: Number(r.unit_price),
                     locations,
                     locationTypeName,
+                    expectedVersion: r.version,
                   })
                 }
               />

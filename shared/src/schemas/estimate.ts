@@ -37,7 +37,12 @@ export const createEstimateItemSchema = z.object({
   sortOrder: z.number().int().default(0),
 }).merge(sourceTraceSchema).merge(locationContextSchema);
 
-export const updateEstimateItemSchema = createEstimateItemSchema.partial();
+// OCC: клиент передаёт version строки, снятый при открытии формы редактирования.
+// Сервер сверяет его с актуальным и при расхождении отвечает 409 (см. routes).
+// optional — обратная совместимость со старым клиентом и confirm/needsReview-вызовами.
+const occSchema = z.object({ expectedVersion: z.number().int().optional() });
+
+export const updateEstimateItemSchema = createEstimateItemSchema.partial().merge(occSchema);
 
 // === Материалы (привязаны к строке работы) ===
 // status: 'suggested' — материал добавлен автоматически по типовому набору расценки
@@ -54,7 +59,7 @@ export const createEstimateMaterialSchema = z.object({
   status: estimateMaterialStatusSchema.default('confirmed'),
 }).merge(sourceTraceSchema);
 
-export const updateEstimateMaterialSchema = createEstimateMaterialSchema.partial();
+export const updateEstimateMaterialSchema = createEstimateMaterialSchema.partial().merge(occSchema);
 
 // Массовый перенос материалов к другой работе (within one estimate).
 // materialIds дедуплицируются; пустой список и >500 элементов отклоняются.

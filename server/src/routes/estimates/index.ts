@@ -522,6 +522,16 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         await client.query('ROLLBACK');
         return reply.status(404).send({ error: 'Позиция не найдена' });
       }
+      // OCC: строку успел изменить другой пользователь — не затираем его правки.
+      // Возвращаем актуальную строку (с новым version), чтобы клиент обновил снимок.
+      if (body.expectedVersion !== undefined && oldRows[0].version !== body.expectedVersion) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({
+          error: 'Строку изменил другой пользователь. Проверьте актуальные данные и сохраните заново.',
+          code: 'CONFLICT',
+          data: oldRows[0],
+        });
+      }
       // Произвольный «тип» строки: upsert в project_location_types (нужен project_id строки).
       if (body.locationTypeName !== undefined) {
         const locationTypeId = await upsertLocationType(client, oldRows[0].project_id, body.locationTypeName);

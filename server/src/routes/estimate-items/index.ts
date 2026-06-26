@@ -114,6 +114,15 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
           await client.query('ROLLBACK');
           return reply.status(404).send({ error: 'Материал не найден' });
         }
+        // OCC: материал успел изменить другой пользователь — не затираем его правки.
+        if (body.expectedVersion !== undefined && oldRows[0].version !== body.expectedVersion) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({
+            error: 'Материал изменил другой пользователь. Проверьте актуальные данные и сохраните заново.',
+            code: 'CONFLICT',
+            data: oldRows[0],
+          });
+        }
         values.push(request.params.id);
         const { rows } = await client.query(`UPDATE estimate_materials SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, values);
         const estimateId = rows[0].estimate_id as string;

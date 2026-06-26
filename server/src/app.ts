@@ -48,11 +48,6 @@ export async function buildApp() {
     },
   });
 
-  await app.register(rateLimit, {
-    max: 500,
-    timeWindow: '1 minute',
-  });
-
   // CORS (раздельные домены SPA/API) — все параметры заданы явно.
   await app.register(cors, {
     origin: config.cors.origin, // адрес: только https://estimat.su10.ru (из CORS_ORIGIN), не wildcard
@@ -71,6 +66,26 @@ export async function buildApp() {
     cookie: {
       cookieName: 'access_token',
       signed: false,
+    },
+  });
+
+  // Rate-limit. Ключ — по пользователю (sub из JWT в cookie), иначе по IP.
+  // Регистрируется ПОСЛЕ cookie и jwt: keyGenerator использует request.cookies и
+  // request.server.jwt. Per-user важен при общем офисном NAT — иначе 500 req/min
+  // делились бы на всех. Неаутентифицированные запросы (логин/refresh) остаются
+  // по IP, сохраняя брутфорс-защиту.
+  await app.register(rateLimit, {
+    max: 500,
+    timeWindow: '1 minute',
+    keyGenerator: (req) => {
+      const token = req.cookies?.['access_token'];
+      if (token) {
+        try {
+          const { sub } = req.server.jwt.verify<{ sub: string }>(token);
+          if (sub) return `u:${sub}`;
+        } catch { /* токен невалиден/просрочен — лимитируем по IP */ }
+      }
+      return req.ip;
     },
   });
 
@@ -135,8 +150,8 @@ export async function buildApp() {
       return reply.status(503).send({ status: 'unavailable' });
     }
   });
-  // Совместимость со старым health-check.
-  app.get('/api/health', async () => ({ status: 'ok' }));
+  // Совместимость со старым health-check — без rate-limit (его дёргает мониторинг).
+  app.get('/api/health', { config: { rateLimit: false } }, async () => ({ status: 'ok' }));
 
   // Глобальный обработчик ошибок. Хендлеры используют schema.parse(request.body)
   // без try/catch — без этого хука ZodError уходил бы в дефолт Fastify как 500.

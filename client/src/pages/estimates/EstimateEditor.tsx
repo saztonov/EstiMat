@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { App } from 'antd';
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { api } from '../../services/api';
+import { api, ApiError } from '../../services/api';
 import { invalidateEstimateQueries } from '../../lib/estimateQueries';
 import { useEstimateRealtime } from '../../hooks/useEstimateRealtime';
 import { getEffectiveAddContext } from '../../store/locationContextStore';
@@ -95,7 +95,17 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       queryClient.invalidateQueries({ queryKey: ['project-location-types', projectId] });
       message.success('Работа обновлена');
     },
-    onError: (e: Error) => message.error(e.message),
+    // OCC-конфликт (409): строку изменил другой пользователь. Не показываем «ошибку»,
+    // а предупреждаем и подтягиваем актуальные данные; ошибка пробрасывается дальше
+    // в форму (CostTypeGroupBlock), чтобы та обновила version и сохранила черновик.
+    onError: (e: Error) => {
+      if (e instanceof ApiError && e.status === 409) {
+        message.warning(e.message);
+        invalidate();
+        return;
+      }
+      message.error(e.message);
+    },
   });
 
   const deleteWorkMutation = useMutation({
@@ -152,7 +162,15 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       invalidate();
       message.success('Материал обновлён');
     },
-    onError: (e: Error) => message.error(e.message),
+    // OCC-конфликт (409) — см. комментарий в updateWorkMutation.
+    onError: (e: Error) => {
+      if (e instanceof ApiError && e.status === 409) {
+        message.warning(e.message);
+        invalidate();
+        return;
+      }
+      message.error(e.message);
+    },
   });
 
   const deleteMaterialMutation = useMutation({
