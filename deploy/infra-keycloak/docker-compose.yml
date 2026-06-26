@@ -26,6 +26,10 @@ services:
       KC_DB_URL: ${KC_DB_URL}
       KC_DB_USERNAME: ${KC_DB_USERNAME}
       KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      # Явный лимит пула к БД (§7 connection budget). По умолчанию Keycloak держит до 100
+      # соединений — для single-VPS это лишнее. conn_limit пользователя keycloak_runtime в
+      # Yandex PG должен быть >= этого значения.
+      KC_DB_POOL_MAX_SIZE: ${KC_DB_POOL_MAX_SIZE:-20}
 
       # --- Hostname/issuer: публичный домен через HTTPS, админка — на отдельном домене (§9) ---
       KC_HOSTNAME: ${KC_HOSTNAME}                 # https://auth.su10.ru
