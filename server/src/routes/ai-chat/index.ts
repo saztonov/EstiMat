@@ -12,6 +12,8 @@ import { config } from '../../config.js';
 import type { SectionScope } from '../../lib/extract/types.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import { runAgentTurn } from '../../lib/chat/agent.js';
+import { loadLlmRuntime, resolveLlmEndpoint, type ResolvedEndpoint } from '../../lib/llm/endpoint.js';
+import { withLmStudioSlot } from '../../lib/llm/limiter.js';
 import { CHAT_SCOPE_NOTE } from '../../lib/chat/prompt.js';
 import { applySelected, applySection, type ApplyContext } from '../../lib/chat/apply.js';
 import { hasPgTrgm, searchCatalogWorks, isScopeActive, CHAT_CATALOG_MODE } from '../../lib/chat/search.js';
@@ -27,7 +29,7 @@ function chatUser(u: { id: string; orgId: string | null; role: ChatUser['role'] 
   return { id: u.id, orgId: u.orgId, role: u.role };
 }
 
-/** Модель чата: ai_chat_model_default → ai_model_default → env. */
+/** Модель чата (квалифицирована провайдером): ai_chat_model_default → ai_model_default → env. */
 async function resolveChatModel(fastify: FastifyInstance): Promise<string> {
   const r = await fastify.pool.query(
     `SELECT key, value FROM app_settings WHERE key IN ('ai_chat_model_default', 'ai_model_default')`,
@@ -38,6 +40,13 @@ async function resolveChatModel(fastify: FastifyInstance): Promise<string> {
   const rd = byKey.get('ai_model_default');
   if (typeof rd === 'string' && rd.trim()) return rd.trim();
   return config.ai.model;
+}
+
+/** Режим Qwen без рассуждений (ai_qwen_no_think, по умолчанию включён). */
+async function resolveQwenNoThink(fastify: FastifyInstance): Promise<boolean> {
+  const r = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_qwen_no_think'`);
+  const v = r.rows[0]?.value;
+  return typeof v === 'boolean' ? v : true;
 }
 
 function mapSession(r: any): ChatSession {
@@ -79,11 +88,13 @@ async function runChatTurn(
     projectId: string;
     user: ChatUser;
     userText: string;
-    model: string;
+    endpoint: ResolvedEndpoint;
+    noThink: boolean;
     sectionScope?: SectionScope;
   },
 ): Promise<void> {
-  const { assistantId, userMsgId, chatId, estimateId, projectId, user, userText, model, sectionScope } = params;
+  const { assistantId, userMsgId, chatId, estimateId, projectId, user, userText, endpoint, noThink, sectionScope } =
+    params;
   const controller = new AbortController();
   runningChats.set(assistantId, controller);
   try {
@@ -114,22 +125,32 @@ async function runChatTurn(
       .filter((m) => typeof m.content === 'string' && m.content)
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content as string }));
 
-    const result = await runAgentTurn({
-      llm: { apiKey: config.ai.apiKey, model, baseUrl: config.ai.baseUrl, signal: controller.signal },
-      history,
-      userText,
-      ctx,
-      scopeNote: isScopeActive(sectionScope) ? CHAT_SCOPE_NOTE : undefined,
-      onStep: async (steps, cards) => {
-        await fastify.pool
-          .query(
-            `UPDATE ai_chat_messages SET steps = $2::jsonb, cards = $3::jsonb
-             WHERE id = $1 AND status = 'running'`,
-            [assistantId, JSON.stringify(steps), JSON.stringify(cards)],
-          )
-          .catch(() => {});
-      },
-    });
+    const runTurn = () =>
+      runAgentTurn({
+        llm: {
+          apiKey: endpoint.apiKey,
+          model: endpoint.model,
+          baseUrl: endpoint.baseUrl,
+          signal: controller.signal,
+          maxTokens: endpoint.maxTokens,
+        },
+        history,
+        userText,
+        ctx,
+        noThink,
+        scopeNote: isScopeActive(sectionScope) ? CHAT_SCOPE_NOTE : undefined,
+        onStep: async (steps, cards) => {
+          await fastify.pool
+            .query(
+              `UPDATE ai_chat_messages SET steps = $2::jsonb, cards = $3::jsonb
+               WHERE id = $1 AND status = 'running'`,
+              [assistantId, JSON.stringify(steps), JSON.stringify(cards)],
+            )
+            .catch(() => {});
+        },
+      });
+    // У LM Studio (Qwen) worker=1 — сериализуем тяжёлые ходы через слот.
+    const result = endpoint.isLmStudio ? await withLmStudioSlot(runTurn) : await runTurn();
 
     await fastify.pool.query(
       `UPDATE ai_chat_messages
@@ -242,7 +263,11 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
         throw err;
       }
 
-      const model = await resolveChatModel(fastify);
+      // Выбранная модель и её эндпоинт (OpenRouter/прокси или собственный сервер LM Studio).
+      const qualifiedModel = await resolveChatModel(fastify);
+      const rt = await loadLlmRuntime(fastify.pool);
+      const endpoint = resolveLlmEndpoint(qualifiedModel, rt);
+      const noThink = endpoint.isLmStudio && (await resolveQwenNoThink(fastify));
 
       // user-сообщение
       const userRow = (
@@ -258,8 +283,8 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
         [chat.id, body.content],
       );
 
-      if (!config.ai.enabled) {
-        // Деградация без ключа: детерминированный поиск-карточки, без диалога.
+      if (!endpoint.enabled) {
+        // Деградация без настроенного провайдера: детерминированный поиск-карточки, без диалога.
         const hasTrgm = await hasPgTrgm(fastify.pool);
         const ctx: AgentContext = {
           db: fastify.pool, estimateId: chat.estimateId, projectId: chat.projectId,
@@ -268,14 +293,17 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
         };
         const items = await searchCatalogWorks(ctx, { query: body.content, limit: 8 });
         const cards: ChatCard[] = items.length ? [{ type: 'work_candidates', title: body.content, items }] : [];
+        const reason = endpoint.isLmStudio
+          ? 'не настроен сервер моделей LM Studio'
+          : 'не настроен ключ OpenRouter';
         const content =
-          'ИИ-диалог недоступен (не настроен ключ OpenRouter). ' +
+          `ИИ-диалог недоступен (${reason}). ` +
           (items.length ? 'Вот что нашлось в справочнике по вашему запросу:' : 'Ничего подходящего в справочнике не нашлось.');
         const asstRow = (
           await fastify.pool.query(
             `INSERT INTO ai_chat_messages (chat_id, role, status, content, model, steps, cards)
              VALUES ($1, 'assistant', 'done', $2, $3, '[]'::jsonb, $4::jsonb) RETURNING *`,
-            [chat.id, content, model, JSON.stringify(cards)],
+            [chat.id, content, endpoint.model, JSON.stringify(cards)],
           )
         ).rows[0];
         return reply.status(201).send({ data: { user: mapMessage(userRow), assistant: mapMessage(asstRow) } });
@@ -286,7 +314,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
         await fastify.pool.query(
           `INSERT INTO ai_chat_messages (chat_id, role, status, model, steps, cards)
            VALUES ($1, 'assistant', 'running', $2, '[]'::jsonb, '[]'::jsonb) RETURNING *`,
-          [chat.id, model],
+          [chat.id, endpoint.model],
         )
       ).rows[0];
 
@@ -298,7 +326,8 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
         projectId: chat.projectId,
         user: chatUser(request.currentUser),
         userText: body.content,
-        model,
+        endpoint,
+        noThink,
         sectionScope: body.sectionScope,
       });
 

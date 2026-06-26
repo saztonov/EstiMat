@@ -20,6 +20,8 @@ export interface OpenRouterClientOptions {
   model: string;
   baseUrl: string;
   signal?: AbortSignal;
+  /** Лимит токенов ответа (для LM Studio/Qwen — чтобы рассуждение не съедало ответ). */
+  maxTokens?: number;
 }
 
 /** Описание инструмента (function calling), формат OpenAI/OpenRouter. */
@@ -85,6 +87,7 @@ export async function chatWithTools(
     temperature: 0.1,
     messages,
   };
+  if (opts.maxTokens) body.max_tokens = opts.maxTokens;
   if (tools.length > 0) {
     body.tools = tools;
     body.tool_choice = 'auto';

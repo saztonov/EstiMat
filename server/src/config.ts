@@ -80,4 +80,26 @@ export const config = {
       return Boolean(this.apiKey);
     },
   },
+
+  // Собственный сервер моделей LM Studio (OpenAI-совместимый). Используется, когда
+  // выбранная модель помечена провайдером lmstudio (см. lib/llm/endpoint.ts).
+  // Адрес можно переопределить в Администрировании (app_settings.lm_studio_base_url);
+  // токен — ТОЛЬКО из env (секрет, в БД/логи не попадает). baseUrl включает путь /v1.
+  lmstudio: {
+    // fallback-адрес; БД переопределяет. Хост из него — базовый allowlist для адреса из БД.
+    baseUrl: (process.env.LMSTUDIO_BASE_URL || '').replace(/\/+$/, ''),
+    apiKey: process.env.LMSTUDIO_API_KEY || '',
+    maxTokens: Number(process.env.LMSTUDIO_MAX_TOKENS || '8192'),
+    // У Qwen параллелизм 1 — ограничиваем одновременные тяжёлые вызовы.
+    maxConcurrency: Number(process.env.LMSTUDIO_MAX_CONCURRENCY || '1'),
+    timeoutMs: Number(process.env.LMSTUDIO_TIMEOUT_MS || '120000'),
+    // Доп. разрешённые хосты для адреса из БД (защита от SSRF/утечки токена).
+    allowedHosts: (process.env.LMSTUDIO_ALLOWED_HOSTS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    get tokenConfigured(): boolean {
+      return Boolean(this.apiKey);
+    },
+  },
 } as const;

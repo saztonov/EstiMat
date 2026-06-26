@@ -11,12 +11,17 @@ export interface AppSettings {
    * (см. CHAT_CATALOG_MODE на сервере). Пользовательского управления нет.
    */
   aiCatalogSource: AiCatalogSource;
-  /** Список доступных LLM-моделей (id OpenRouter, напр. 'anthropic/claude-opus-4-8') */
+  /** Список доступных LLM-моделей OpenRouter (id, напр. 'anthropic/claude-opus-4-8') */
   aiModels: string[];
-  /** Модель по умолчанию для ИИ-извлечения из РД (должна быть из aiModels) */
+  /**
+   * Модель по умолчанию для ИИ-извлечения из РД. Значение квалифицировано провайдером:
+   * 'openrouter:<id>' или 'lmstudio:<id>' (голый id без префикса трактуется как openrouter).
+   */
   aiModelDefault: string;
-  /** Модель по умолчанию для ИИ-ассистента в режиме чата (должна быть из aiModels) */
+  /** Модель по умолчанию для ИИ-чата. Квалифицирована провайдером, см. aiModelDefault. */
   aiChatModelDefault: string;
+  /** Режим Qwen (LM Studio) без рассуждений: добавлять /no_think в промпт. */
+  aiQwenNoThink: boolean;
 }
 
 export const updateAppSettingsSchema = z.object({
@@ -25,6 +30,7 @@ export const updateAppSettingsSchema = z.object({
   aiModels: z.array(z.string().min(1)).optional(),
   aiModelDefault: z.string().optional(),
   aiChatModelDefault: z.string().optional(),
+  aiQwenNoThink: z.boolean().optional(),
 });
 
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;

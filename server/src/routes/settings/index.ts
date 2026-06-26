@@ -10,6 +10,7 @@ const SETTING_KEYS: Record<keyof AppSettings, string> = {
   aiModels: 'ai_models',
   aiModelDefault: 'ai_model_default',
   aiChatModelDefault: 'ai_chat_model_default',
+  aiQwenNoThink: 'ai_qwen_no_think',
 };
 
 const DEFAULTS: AppSettings = {
@@ -18,6 +19,7 @@ const DEFAULTS: AppSettings = {
   aiModels: ['google/gemini-2.5-flash'],
   aiModelDefault: 'google/gemini-2.5-flash',
   aiChatModelDefault: 'google/gemini-2.5-flash',
+  aiQwenNoThink: true,
 };
 
 export default async function settingsRoutes(fastify: FastifyInstance) {
@@ -39,6 +41,8 @@ export default async function settingsRoutes(fastify: FastifyInstance) {
     if (typeof def === 'string' && def) settings.aiModelDefault = def;
     const chatDef = byKey.get(SETTING_KEYS.aiChatModelDefault);
     if (typeof chatDef === 'string' && chatDef) settings.aiChatModelDefault = chatDef;
+    const noThink = byKey.get(SETTING_KEYS.aiQwenNoThink);
+    if (typeof noThink === 'boolean') settings.aiQwenNoThink = noThink;
     return settings;
   }
 

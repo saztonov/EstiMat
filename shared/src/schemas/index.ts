@@ -8,6 +8,7 @@ export * from './estimate.js';
 export * from './rate.js';
 export * from './rd.js';
 export * from './settings.js';
+export * from './llm.js';
 export * from './user.js';
 export * from './ai.js';
 export * from './aiChat.js';

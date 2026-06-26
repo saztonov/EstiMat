@@ -40,6 +40,12 @@ export interface OpenRouterOptions {
   baseUrl: string;
   /** Сигнал отмены: прерывает in-flight запрос при остановке задания. */
   signal?: AbortSignal;
+  /** Лимит токенов ответа (LM Studio/Qwen). */
+  maxTokens?: number;
+  /** Режим Qwen без рассуждений: добавить /no_think в системный промпт. */
+  noThink?: boolean;
+  /** Считать пустой ответ ошибкой (LM Studio): не отдавать молча '' в JSON-парсер. */
+  failOnEmpty?: boolean;
 }
 
 interface ChatMessage {
@@ -77,6 +83,10 @@ function extractJson(text: string): unknown {
 
 export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
   async function chat(messages: ChatMessage[]): Promise<string> {
+    // Режим Qwen без рассуждений: /no_think в системный промпт (чувствительно к позиции).
+    const outMessages = opts.noThink
+      ? messages.map((m) => (m.role === 'system' ? { ...m, content: `${m.content}\n\n/no_think` } : m))
+      : messages;
     let lastErr: unknown;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       const res = await fetch(`${opts.baseUrl}/chat/completions`, {
@@ -92,13 +102,22 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
         body: JSON.stringify({
           model: opts.model,
           temperature: 0.1,
-          messages,
+          messages: outMessages,
+          ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
         }),
       });
 
       if (res.ok) {
         const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-        return data.choices?.[0]?.message?.content ?? '';
+        const content = data.choices?.[0]?.message?.content ?? '';
+        // Пустой ответ (у Qwen бюджет мог уйти в reasoning) — для LM Studio это ошибка,
+        // иначе JSON-парсер тихо получит '' и позиция потеряется. Ретраим с backoff.
+        if (!content.trim() && opts.failOnEmpty) {
+          lastErr = new Error('LM Studio вернул пустой ответ');
+          await sleep(BASE_BACKOFF_MS * 2 ** attempt);
+          continue;
+        }
+        return content;
       }
 
       // Ретраим только на 429 и 5xx.

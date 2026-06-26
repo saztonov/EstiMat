@@ -20,6 +20,8 @@ export interface RunAgentArgs {
   ctx: AgentContext;
   /** Доп. строка к системному промпту (напр. подсказка об активной области подбора). */
   scopeNote?: string;
+  /** Режим без рассуждений (Qwen/LM Studio): добавить /no_think в промпт. */
+  noThink?: boolean;
   onStep?: (steps: ChatStep[], cards: ChatCard[]) => Promise<void> | void;
 }
 
@@ -27,11 +29,14 @@ export async function runAgentTurn(args: RunAgentArgs): Promise<AgentTurnResult>
   const { llm, ctx, userText } = args;
   const history = args.history.slice(-HISTORY_LIMIT);
 
-  const systemContent = args.scopeNote ? `${CHAT_SYSTEM_PROMPT}\n\n${args.scopeNote}` : CHAT_SYSTEM_PROMPT;
+  let systemContent = args.scopeNote ? `${CHAT_SYSTEM_PROMPT}\n\n${args.scopeNote}` : CHAT_SYSTEM_PROMPT;
+  // /no_think гасит «рассуждения» у Qwen — кладём и в system, и в текущее сообщение
+  // (у Qwen директива чувствительна к позиции в чат-шаблоне).
+  if (args.noThink) systemContent += '\n\n/no_think';
   const messages: ChatTurnMessage[] = [
     { role: 'system', content: systemContent },
     ...history.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: userText },
+    { role: 'user', content: args.noThink ? `${userText} /no_think` : userText },
   ];
 
   const steps: ChatStep[] = [];
@@ -50,7 +55,27 @@ export async function runAgentTurn(args: RunAgentArgs): Promise<AgentTurnResult>
 
     const toolCalls = res.message.tool_calls ?? [];
     if (toolCalls.length === 0) {
-      return { content: res.message.content ?? '', steps, cards };
+      if ((res.message.content ?? '').trim()) {
+        return { content: res.message.content as string, steps, cards };
+      }
+      // Пустой ответ без вызова инструментов (частый кейс «думающих» моделей: весь
+      // бюджет ушёл в reasoning). Один форс-ретрай за финальным текстом — reasoning
+      // пользователю не показываем. Убираем пустое assistant-сообщение из контекста.
+      messages.pop();
+      messages.push({
+        role: 'user',
+        content:
+          'Дай финальный ответ пользователю кратко и по делу, без рассуждений и без вызова инструментов.' +
+          (args.noThink ? ' /no_think' : ''),
+      });
+      const forced = await chatWithTools(llm, messages, []);
+      return {
+        content:
+          (forced.message.content ?? '').trim() ||
+          'Не удалось сформировать ответ. Попробуйте переформулировать запрос.',
+        steps,
+        cards,
+      };
     }
 
     for (const call of toolCalls) {

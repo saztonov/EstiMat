@@ -12,6 +12,8 @@ import { loadLegacyWorksSnapshot } from '../../lib/extract/catalog-source.js';
 import { runExtraction } from '../../lib/extract/pipeline.js';
 import { createOpenRouterPort } from '../../lib/extract/llm/openrouter.js';
 import type { SectionScope, ExtractRules } from '../../lib/extract/types.js';
+import { loadLlmRuntime, resolveLlmEndpoint } from '../../lib/llm/endpoint.js';
+import { withLmStudioSlot } from '../../lib/llm/limiter.js';
 
 // Накопленные правила (sectionToWork/lessons/синонимы) — поверх вшитых дефолтов кода.
 // Best-effort: критичные алиасы уже в коде, файла может не быть в прод-образе.
@@ -41,11 +43,18 @@ function loadExtractRules(): ExtractRules {
 // запуск» дополнительно закрывают УСЛОВНЫЕ переходы статуса (WHERE status=...).
 const runningJobs = new Map<string, AbortController>();
 
-/** Модель LLM: дефолт из настроек (app_settings.ai_model_default), иначе из env. */
+/** Модель LLM (квалифицирована провайдером): app_settings.ai_model_default, иначе env. */
 async function resolveAiModel(fastify: FastifyInstance): Promise<string> {
   const r = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_model_default'`);
   const v = r.rows[0]?.value;
   return typeof v === 'string' && v.trim() ? v.trim() : config.ai.model;
+}
+
+/** Режим Qwen без рассуждений (ai_qwen_no_think, по умолчанию включён). */
+async function resolveQwenNoThink(fastify: FastifyInstance): Promise<boolean> {
+  const r = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_qwen_no_think'`);
+  const v = r.rows[0]?.value;
+  return typeof v === 'boolean' ? v : true;
 }
 
 // Фаза 2: фоновое извлечение встроенным движком (OpenRouter). Берёт markdown из
@@ -72,14 +81,23 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
     // Источник для AI-извлечения фиксирован: только legacy-справочник работ
     // (настройка ai_catalog_source AI-блок не управляет). Материалы — из РД.
     const catalog = await loadLegacyWorksSnapshot(fastify.pool, scope);
-    const model = await resolveAiModel(fastify);
+    const qualifiedModel = await resolveAiModel(fastify);
+    const rt = await loadLlmRuntime(fastify.pool);
+    const ep = resolveLlmEndpoint(qualifiedModel, rt);
+    const noThink = ep.isLmStudio && (await resolveQwenNoThink(fastify));
     const port = createOpenRouterPort({
-      apiKey: config.ai.apiKey,
-      model,
-      baseUrl: config.ai.baseUrl,
+      apiKey: ep.apiKey,
+      model: ep.model,
+      baseUrl: ep.baseUrl,
       signal: controller.signal,
+      maxTokens: ep.isLmStudio ? ep.maxTokens : undefined,
+      noThink,
+      failOnEmpty: ep.isLmStudio,
     });
-    const result = await runExtraction(markdown, catalog, loadExtractRules(), port, scope, controller.signal);
+    // У LM Studio (Qwen) worker=1 — сериализуем тяжёлый прогон извлечения через слот.
+    const result = ep.isLmStudio
+      ? await withLmStudioSlot(() => runExtraction(markdown, catalog, loadExtractRules(), port, scope, controller.signal))
+      : await runExtraction(markdown, catalog, loadExtractRules(), port, scope, controller.signal);
     if (controller.signal.aborted) throw new Error('aborted');
 
     const projectId = (await fastify.pool.query('SELECT project_id FROM estimates WHERE id = $1', [job.estimate_id])).rows[0]?.project_id ?? null;
@@ -92,7 +110,7 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
       const upd = await client.query(
         `UPDATE ai_jobs SET status = 'applied', result = $2::jsonb, model = $3
          WHERE id = $1 AND status = 'running' RETURNING id`,
-        [jobId, JSON.stringify(result), `openrouter:${model}`],
+        [jobId, JSON.stringify(result), `${ep.provider}:${ep.model}`],
       );
       if (upd.rowCount === 0) {
         await client.query('ROLLBACK');
@@ -176,9 +194,11 @@ export default async function aiRoutes(fastify: FastifyInstance) {
       );
       const job = rows[0];
 
-      // Встроенный движок: при наличии ключа OpenRouter и markdown — запускаем извлечение в фоне.
-      if (config.ai.enabled && body.markdown) {
-        void runJobInBackground(fastify, job.id);
+      // Встроенный движок: при настроенном провайдере выбранной модели и markdown —
+      // запускаем извлечение в фоне (OpenRouter/прокси или собственный сервер LM Studio).
+      if (body.markdown) {
+        const ep = resolveLlmEndpoint(await resolveAiModel(fastify), await loadLlmRuntime(fastify.pool));
+        if (ep.enabled) void runJobInBackground(fastify, job.id);
       }
 
       return reply.status(201).send({ data: job });
