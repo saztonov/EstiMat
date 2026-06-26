@@ -81,37 +81,40 @@ export function SettingsPanel() {
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-      <div style={{ padding: '16px 0', maxWidth: 760 }}>
-      <Typography.Title level={5} style={{ marginTop: 0 }}>
-        Смета
-      </Typography.Title>
-      <Checkbox
-        checked={settings?.rdSectionEnabled ?? true}
-        disabled={updateMutation.isPending}
-        onChange={(e) => updateMutation.mutate({ rdSectionEnabled: e.target.checked })}
-      >
-        Активация блока справочника Рабочая документация
-      </Checkbox>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginTop: 4, marginLeft: 24 }}>
-        При снятии флажка блок «Рабочая документация» скрывается из панели справочников
-        в рабочем пространстве сметы у всех пользователей.
-      </Typography.Paragraph>
+      <div style={{ padding: '16px 0' }}>
+        <div style={{ maxWidth: 760 }}>
+          <Typography.Title level={5} style={{ marginTop: 0 }}>
+            Смета
+          </Typography.Title>
+          <Checkbox
+            checked={settings?.rdSectionEnabled ?? true}
+            disabled={updateMutation.isPending}
+            onChange={(e) => updateMutation.mutate({ rdSectionEnabled: e.target.checked })}
+          >
+            Активация блока справочника Рабочая документация
+          </Checkbox>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginTop: 4, marginLeft: 24 }}>
+            При снятии флажка блок «Рабочая документация» скрывается из панели справочников
+            в рабочем пространстве сметы у всех пользователей.
+          </Typography.Paragraph>
 
-      <Typography.Title level={5}>Модели ИИ</Typography.Title>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 8 }}>
-        Отдельно выбираются модель для ИИ-извлечения из РД и для ИИ-чата. «OpenRouter (прокси)» —
-        запросы идут через прокси, конкретную модель задаёт сам прокси. Модели собственного сервера
-        (LM Studio) появляются после обновления каталога на вкладке «Сервер моделей».
-      </Typography.Paragraph>
+          <Typography.Title level={5}>Модели ИИ</Typography.Title>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 8 }}>
+            Отдельно выбираются модель для ИИ-извлечения из РД и для ИИ-чата. «OpenRouter (прокси)» —
+            запросы идут через прокси, конкретную модель задаёт сам прокси. Модели собственного сервера
+            (LM Studio) появляются после обновления каталога на вкладке «Сервер моделей».
+          </Typography.Paragraph>
+        </div>
 
-      <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
-        {renderColumn('Модель для извлечения РД', rdSelected, (value) =>
-          updateMutation.mutate({ aiModelDefault: value }),
-        )}
-        {renderColumn('Модель для ИИ-чата', chatSelected, (value) =>
-          updateMutation.mutate({ aiChatModelDefault: value }),
-        )}
-      </div>
+        {/* Колонки на полной ширине (не ограничены 760), чтобы стоять рядом, а не переноситься. */}
+        <div style={{ display: 'flex', gap: 56, flexWrap: 'wrap' }}>
+          {renderColumn('Модель для извлечения РД', rdSelected, (value) =>
+            updateMutation.mutate({ aiModelDefault: value }),
+          )}
+          {renderColumn('Модель для ИИ-чата', chatSelected, (value) =>
+            updateMutation.mutate({ aiChatModelDefault: value }),
+          )}
+        </div>
       </div>
     </div>
   );
