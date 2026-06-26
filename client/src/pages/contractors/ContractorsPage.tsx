@@ -118,7 +118,7 @@ export function ContractorsPage() {
       <Card
         title="Подрядчики"
         style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-        styles={{ body: { flex: 1, overflow: 'auto' } }}
+        styles={{ header: { paddingLeft: 48 }, body: { flex: 1, overflow: 'auto' } }}
       >
         <ObjectList />
       </Card>
@@ -145,7 +145,7 @@ export function ContractorsPage() {
         </Space>
       }
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-      styles={{ body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
+      styles={{ header: { paddingLeft: 48 }, body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
     >
       {isLoading ? (
         <Spin size="large" />

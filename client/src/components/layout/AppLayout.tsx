@@ -74,6 +74,9 @@ export function AppLayout() {
   // Точное сопоставление: список /estimates и /estimates/:id/materials НЕ затрагиваются.
   const isEstimateWorkspace =
     /^\/estimates\/[^/]+$/.test(location.pathname) || /^\/projects\/[^/]+$/.test(location.pathname);
+  // Раздел «Подрядчики» (список и карточка объекта) — тот же компактный вид, что и у сметы.
+  const isContractors = location.pathname.startsWith('/contractors');
+  const isCompactLayout = isEstimateWorkspace || isContractors;
 
   const userMenuItems: MenuProps['items'] = [
     {
@@ -141,9 +144,10 @@ export function AppLayout() {
 
       <Content
         style={{
-          // Workspace: шапка поднята в верхнюю полосу (верх 0; гамбургер обходится левым
-          // отступом тулбара), компактные боковые/нижний отступы. Прочие страницы — как было.
-          margin: isEstimateWorkspace ? '0 6px 6px' : '48px 24px 24px',
+          // Workspace и раздел «Подрядчики»: шапка поднята в верхнюю полосу (верх 0; гамбургер
+          // обходится левым отступом шапки — тулбара сметы / шапки Card подрядчиков), компактные
+          // боковые/нижний отступы. Прочие страницы — как было.
+          margin: isCompactLayout ? '0 6px 6px' : '48px 24px 24px',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
