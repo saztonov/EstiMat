@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { App, Button, Empty, Popconfirm, Popover, Select, Space, Tooltip } from 'antd';
 import {
   PlusOutlined,
@@ -13,7 +13,8 @@ import {
   CopyOutlined,
   EnvironmentOutlined,
 } from '@ant-design/icons';
-import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
+import { type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
+import { SmetaGroupBlock } from './SmetaGroupBlock';
 import { WorkTreeSelect } from '../components/WorkTreeSelect';
 import { ReviewUnconfirmedModal } from '../components/ReviewUnconfirmedModal';
 import { ReplicateWorksModal, type ReplicateTargets } from '../components/ReplicateWorksModal';
@@ -23,6 +24,7 @@ import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
 import { formatLocationsLabel } from '../components/location';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
+import { useEstimateExpandStore, typeKeyOf } from '../../../store/estimateExpandStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { useLocationContextStore } from '../../../store/locationContextStore';
 import { useProjectZones } from '../../../hooks/useProjectLocations';
@@ -118,16 +120,18 @@ export function SmetaPanel({
   const [typeFilter, setTypeFilter] = useState<string | undefined>();
   const [onlyUnreconciled, setOnlyUnreconciled] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
-  const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
-  // Раскрытые материалы (общий набор id работ) — поднят сюда для поэтапного «свернуть/развернуть всё».
-  const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set());
-  const setWorkExpanded = (id: string, expanded: boolean) =>
-    setExpandedWorkIds((prev) => {
-      const next = new Set(prev);
-      if (expanded) next.add(id);
-      else next.delete(id);
-      return next;
-    });
+  // Раскрытие работ и свёрнутость видов вынесены в estimateExpandStore: SmetaGroupBlock подписан
+  // на свой узкий срез (разворот одной работы не каскадит). SmetaPanel на эти срезы НЕ подписан —
+  // читает их в обработчиках через getState(). collapsedCats оставлен в локальном state: категорий
+  // мало, и их свёртка реально меняет видимую структуру (рендер секций здесь).
+  // Scroll-контейнер сметы — root для IntersectionObserver ленивых материалов в блоках.
+  const scrollRootRef = useRef<HTMLDivElement>(null);
+  // Сброс раскрытия при смене сметы (глобальный store сам не обнуляется при размонтировании).
+  const resetExpand = useEstimateExpandStore((s) => s.reset);
+  useEffect(() => {
+    resetExpand();
+    return resetExpand;
+  }, [estimateId, resetExpand]);
   // Единый режим выбора с чекбоксами: перенос ('reassign'), удаление ('delete'),
   // тиражирование ('replicate') или назначение местоположения ('assignloc').
   const [mode, setMode] = useState<SelectionMode>('none');
@@ -157,21 +161,21 @@ export function SmetaPanel({
   const role = useAuthStore((s) => s.user?.role);
   const canBulkDelete = editable && (role === 'admin' || role === 'engineer');
 
-  const toggleMaterial = (id: string, selected: boolean) =>
+  const toggleMaterial = useCallback((id: string, selected: boolean) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (selected) next.add(id);
       else next.delete(id);
       return next;
-    });
+    }), []);
 
-  const toggleWork = (id: string, selected: boolean) =>
+  const toggleWork = useCallback((id: string, selected: boolean) =>
     setSelectedWorkIds((prev) => {
       const next = new Set(prev);
       if (selected) next.add(id);
       else next.delete(id);
       return next;
-    });
+    }), []);
 
   const cancelSelection = () => {
     setSelectedIds(new Set());
@@ -322,46 +326,41 @@ export function SmetaPanel({
       return next;
     });
 
-  const typeKey = (g: CostTypeGroup) => g.costTypeId ?? NO_CATEGORY;
-  const toggleType = (id: string | null) =>
-    setCollapsedTypes((prev) => {
-      const next = new Set(prev);
-      const k = id ?? NO_CATEGORY;
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
-    });
-
   // Поэтапное сворачивание/разворачивание дерева сметы. Уровни (снаружи внутрь):
   // категории → виды работ → работы → материалы. Каждое нажатие двигает на один уровень,
   // ориентируясь на текущее состояние (без счётчика — устойчиво к ручным кликам по строкам).
-  const allCatKeys = groups.map((g) => g.costCategoryId ?? NO_CATEGORY);
-  const allTypeKeys = groups.map(typeKey);
-  const workIdsWithMaterials = groups.flatMap((g) =>
-    g.works.filter((w) => (w.materials?.length ?? 0) > 0).map((w) => w.id),
+  const allCatKeys = useMemo(() => groups.map((g) => g.costCategoryId ?? NO_CATEGORY), [groups]);
+  const allTypeKeys = useMemo(() => groups.map((g) => typeKeyOf(g.costTypeId)), [groups]);
+  const workIdsWithMaterials = useMemo(
+    () => groups.flatMap((g) => g.works.filter((w) => (w.materials?.length ?? 0) > 0).map((w) => w.id)),
+    [groups],
   );
 
-  // Свернуть на один уровень: материалы → работы (до видов) → виды (до категорий).
-  const collapseStep = () => {
-    if (workIdsWithMaterials.some((id) => expandedWorkIds.has(id))) {
-      setExpandedWorkIds(new Set());
-    } else if (allTypeKeys.some((k) => !collapsedTypes.has(k))) {
-      setCollapsedTypes(new Set(allTypeKeys));
+  // Состояние раскрытия/свёрнутости видов читаем императивно из store (getState), а не подпиской —
+  // иначе одиночный разворот работы снова ререндерил бы весь SmetaPanel. Массовую установку
+  // раскрытых работ деферим через startTransition: клик отзывается мгновенно, а монтаж/демонтаж
+  // материалов идёт прерываемой работой (плюс ленивый рендер не монтирует невидимые таблицы).
+  const collapseStep = useCallback(() => {
+    const st = useEstimateExpandStore.getState();
+    if (workIdsWithMaterials.some((id) => st.expandedWorkIds.has(id))) {
+      startTransition(() => st.setExpandedWorkIds(new Set()));
+    } else if (allTypeKeys.some((k) => !st.collapsedTypes.has(k))) {
+      st.setCollapsedTypes(new Set(allTypeKeys));
     } else if (allCatKeys.some((k) => !collapsedCats.has(k))) {
       setCollapsedCats(new Set(allCatKeys));
     }
-  };
+  }, [workIdsWithMaterials, allTypeKeys, allCatKeys, collapsedCats]);
 
-  // Развернуть на один уровень (обратный порядок): категории → виды → работы (материалы).
-  const expandStep = () => {
+  const expandStep = useCallback(() => {
+    const st = useEstimateExpandStore.getState();
     if (allCatKeys.some((k) => collapsedCats.has(k))) {
       setCollapsedCats(new Set());
-    } else if (allTypeKeys.some((k) => collapsedTypes.has(k))) {
-      setCollapsedTypes(new Set());
-    } else if (workIdsWithMaterials.some((id) => !expandedWorkIds.has(id))) {
-      setExpandedWorkIds(new Set(workIdsWithMaterials));
+    } else if (allTypeKeys.some((k) => st.collapsedTypes.has(k))) {
+      st.setCollapsedTypes(new Set());
+    } else if (workIdsWithMaterials.some((id) => !st.expandedWorkIds.has(id))) {
+      startTransition(() => st.setExpandedWorkIds(new Set(workIdsWithMaterials)));
     }
-  };
+  }, [allCatKeys, allTypeKeys, workIdsWithMaterials, collapsedCats]);
 
   // Список работ сметы — для выбора цели при переносе материала (дерево Категория → Вид работ → Работа).
   const allWorks = useMemo(
@@ -502,55 +501,73 @@ export function SmetaPanel({
     setTypeFilter(undefined);
     setOnlyUnreconciled(false);
     setCollapsedCats((prev) => { if (!prev.has(catKey)) return prev; const n = new Set(prev); n.delete(catKey); return n; });
-    setCollapsedTypes((prev) => { if (!prev.has(tKey)) return prev; const n = new Set(prev); n.delete(tKey); return n; });
+    useEstimateExpandStore.getState().expandType(tKey);
     selectWork(id, target.description, {
       costTypeId: target.g.costTypeId,
       costTypeName: target.g.costTypeName,
       costCategoryId: target.g.costCategoryId,
       costCategoryName: target.g.costCategoryName,
     });
-    const t = setTimeout(() => {
+    const scrollToRow = () =>
       document.querySelector('.estimat-row-selected')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const t = setTimeout(() => {
+      scrollToRow();
+      // Повторный проход после кадра: высоты ленивых placeholder’ов материалов могли сместить позицию.
+      requestAnimationFrame(scrollToRow);
     }, 200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [estimateReveal?.nonce]);
 
-  const blockProps = {
-    editable,
-    orgs,
-    collapsible: true,
-    showCategoryInTitle: false,
-    onCreateWork,
-    onUpdateWork,
-    onDeleteWork,
-    onReorderWorks,
-    canReorderWorks: true,
-    onCreateMaterial,
-    onUpdateMaterial,
-    onDeleteMaterial,
-    onConfirmMaterial,
-    onConfirmWork,
-    onReassignMaterial,
-    allWorks,
-    onSetContractor,
-    onClearContractor,
-    selectionMode,
-    selectedIds,
-    onToggleMaterial: toggleMaterial,
-    // Чекбоксы работ активны в delete и replicate (выбор шаблона для тиражирования).
-    deleteMode: mode === 'delete' || mode === 'replicate' || mode === 'assignloc',
-    selectedWorkIds,
-    onToggleWork: toggleWork,
-    showLocationColumn: true,
-    zones: zonesData?.data.roots ?? [],
-    projectId,
-    expandedWorkIds,
-    onWorkExpandChange: setWorkExpanded,
-  };
+  // Стабильный объект зон — общий root-список для блоков и фильтров (вместо []-литерала каждый рендер).
+  const zoneRoots = useMemo(() => zonesData?.data.roots ?? [], [zonesData]);
+  // Чекбоксы работ активны в delete и replicate (выбор шаблона для тиражирования).
+  const deleteModeFlag = mode === 'delete' || mode === 'replicate' || mode === 'assignloc';
+
+  // Стабильный (useMemo) набор общих пропсов блоков: пока не меняется выбор/режим, blockProps не
+  // пересоздаётся, поэтому memo-обёртки SmetaGroupBlock не ререндерятся при не связанных изменениях.
+  // Раскрытие материалов и свёрнутость вида в blockProps НЕ входят — их адаптер берёт из store.
+  const blockProps = useMemo(
+    () => ({
+      editable,
+      orgs,
+      collapsible: true,
+      showCategoryInTitle: false,
+      onCreateWork,
+      onUpdateWork,
+      onDeleteWork,
+      onReorderWorks,
+      canReorderWorks: true,
+      onCreateMaterial,
+      onUpdateMaterial,
+      onDeleteMaterial,
+      onConfirmMaterial,
+      onConfirmWork,
+      onReassignMaterial,
+      allWorks,
+      onSetContractor,
+      onClearContractor,
+      selectionMode,
+      selectedIds,
+      onToggleMaterial: toggleMaterial,
+      deleteMode: deleteModeFlag,
+      selectedWorkIds,
+      onToggleWork: toggleWork,
+      showLocationColumn: true,
+      zones: zoneRoots,
+      projectId,
+    }),
+    [
+      editable, orgs, onCreateWork, onUpdateWork, onDeleteWork, onReorderWorks,
+      onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onConfirmWork,
+      onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
+      toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId,
+    ],
+  );
 
   return (
     <PanelShell
+      bodyRef={scrollRootRef}
       icon={<TableOutlined />}
       title="Сметная часть"
       meta={
@@ -792,13 +809,12 @@ export function SmetaPanel({
                   {!collapsed && (
                     <div style={{ paddingLeft: 8 }}>
                       {sec.groups.map((group, i) => (
-                        <CostTypeGroupBlock
+                        <SmetaGroupBlock
                           key={group.costTypeId ?? '__none__'}
                           group={group}
                           index={i}
-                          collapsed={collapsedTypes.has(typeKey(group))}
-                          onToggleCollapsed={() => toggleType(group.costTypeId)}
-                          {...blockProps}
+                          blockProps={blockProps}
+                          scrollRootRef={scrollRootRef}
                         />
                       ))}
                     </div>

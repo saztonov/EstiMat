@@ -1,4 +1,14 @@
-import { useEffect, useState, type Key, type ReactNode } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Key,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import {
   Table,
   Button,
@@ -14,6 +24,7 @@ import {
   App,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import type { ExpandableConfig } from 'antd/es/table/interface';
 import {
   PlusOutlined,
   DeleteOutlined,
@@ -113,7 +124,7 @@ interface MaterialEdit {
 // ============================================================
 // Вложенная таблица материалов под работой
 // ============================================================
-function MaterialsSubTable({
+function MaterialsSubTableImpl({
   work,
   editable,
   showPrices = true,
@@ -161,42 +172,49 @@ function MaterialsSubTable({
     enabled: !!editing,
   });
 
-  const rows: EstimateMaterial[] = work.materials.map((m) =>
-    editing && editing.materialId === m.id
-      ? {
-          ...m,
-          material_id: editing.refMaterialId,
-          description: editing.description,
-          unit: editing.unit,
-          quantity: String(editing.quantity),
-          unit_price: String(editing.unitPrice),
-          total: String(editing.quantity * editing.unitPrice),
-        }
-      : m,
-  );
-  if (editing && editing.materialId === null) {
-    rows.push({
-      id: DRAFT_ID,
-      item_id: work.id,
-      material_id: editing.refMaterialId,
-      description: editing.description,
-      unit: editing.unit,
-      quantity: String(editing.quantity),
-      unit_price: String(editing.unitPrice),
-      total: String(editing.quantity * editing.unitPrice),
-      material_name: null,
-      status: 'confirmed',
-    });
-  }
+  const rows: EstimateMaterial[] = useMemo(() => {
+    const list = work.materials.map((m) =>
+      editing && editing.materialId === m.id
+        ? {
+            ...m,
+            material_id: editing.refMaterialId,
+            description: editing.description,
+            unit: editing.unit,
+            quantity: String(editing.quantity),
+            unit_price: String(editing.unitPrice),
+            total: String(editing.quantity * editing.unitPrice),
+          }
+        : m,
+    );
+    if (editing && editing.materialId === null) {
+      list.push({
+        id: DRAFT_ID,
+        item_id: work.id,
+        material_id: editing.refMaterialId,
+        description: editing.description,
+        unit: editing.unit,
+        quantity: String(editing.quantity),
+        unit_price: String(editing.unitPrice),
+        total: String(editing.quantity * editing.unitPrice),
+        material_name: null,
+        status: 'confirmed',
+      });
+    }
+    return list;
+  }, [work.materials, work.id, editing]);
 
   const isRowInEdit = (r: EstimateMaterial) =>
     !!editing && (r.id === DRAFT_ID || r.id === editing.materialId);
 
-  const nameOptions = materialsData?.data.map((m) => ({
-    key: m.id,
-    value: m.name,
-    label: `${m.name} · ${m.unit} · ${Number(m.unit_price ?? 0).toLocaleString('ru-RU')} ₽`,
-  }));
+  const nameOptions = useMemo(
+    () =>
+      materialsData?.data.map((m) => ({
+        key: m.id,
+        value: m.name,
+        label: `${m.name} · ${m.unit} · ${Number(m.unit_price ?? 0).toLocaleString('ru-RU')} ₽`,
+      })),
+    [materialsData],
+  );
 
   function selectRef(id: string) {
     if (!editing) return;
@@ -255,7 +273,7 @@ function MaterialsSubTable({
       </Popover>
     ) : null;
 
-  const columns: ColumnsType<EstimateMaterial> = [
+  const columns = useMemo<ColumnsType<EstimateMaterial>>(() => [
     { title: 'Материал', dataIndex: 'description', render: (v: string, r) => {
         if (isRowInEdit(r) && editing) {
           return (
@@ -364,7 +382,10 @@ function MaterialsSubTable({
           },
         }]
       : []),
-  ];
+  ], [
+    editing, saving, nameOptions, materialsData, editable, deleteMode, showPrices,
+    onConfirm, onDelete, onReassign, onUpdate, onCreate, works, work.id,
+  ]);
 
   return (
     <div style={{ padding: '2px 0 2px 12px' }}>
@@ -405,6 +426,54 @@ function MaterialsSubTable({
       )}
     </div>
   );
+}
+
+// memo: при стабильных пропсах таблица материалов не пересобирается, когда родительский блок
+// ререндерится по не связанной с ней причине.
+const MaterialsSubTable = memo(MaterialsSubTableImpl);
+
+type MaterialsSubTableProps = Parameters<typeof MaterialsSubTableImpl>[0];
+
+// Высота строки в компактной таблице материалов (estimat-compact size="small"); выверена эмпирически.
+const MATERIAL_ROW_H = 30;
+const MATERIALS_HEADER_H = 36;
+const MATERIALS_ADD_H = 28;
+
+// Ленивая обёртка над таблицей материалов: пока раскрытая строка вне видимой области (+overscan),
+// рендерим лёгкий placeholder расчётной высоты вместо тяжёлой таблицы. Это убирает фриз при
+// массовом «развернуть всё»: монтируются только видимые таблицы материалов. После первого показа
+// таблица остаётся смонтированной (повторный скролл к ней мгновенный).
+function LazyMaterialsSubTable({
+  scrollRootRef,
+  ...props
+}: MaterialsSubTableProps & { scrollRootRef?: RefObject<HTMLDivElement | null> }) {
+  const placeholderRef = useRef<HTMLDivElement | null>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (visible) return; // уже смонтировали — наблюдать больше не нужно
+    const el = placeholderRef.current;
+    if (!el) return;
+    // Если IntersectionObserver недоступен — монтируем сразу (безопасная деградация).
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setVisible(true);
+      },
+      { root: scrollRootRef?.current ?? null, rootMargin: '1000px 0px' },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [visible, scrollRootRef]);
+
+  if (visible) return <MaterialsSubTable {...props} />;
+
+  const count = props.work.materials.length;
+  const height = MATERIALS_HEADER_H + count * MATERIAL_ROW_H + (props.editable ? MATERIALS_ADD_H : 0);
+  return <div ref={placeholderRef} style={{ height, padding: '2px 0 2px 12px' }} aria-hidden />;
 }
 
 // ============================================================
@@ -464,12 +533,15 @@ interface Props {
   showPrices?: boolean;
   /** Дополнительный контент в шапке блока вида работ (напр. «Назначить на весь вид»). */
   headerExtra?: ReactNode;
+  /** Scroll-контейнер сметы — root для IntersectionObserver ленивых материалов. Передаётся
+   *  только на «Смете»; когда задан и нет режима выбора, материалы рендерятся лениво. */
+  scrollRootRef?: RefObject<HTMLDivElement | null>;
 }
 
 const noopAsync = async () => {};
 const noop = () => {};
 
-export function CostTypeGroupBlock({
+function CostTypeGroupBlockImpl({
   group,
   index,
   editable,
@@ -507,6 +579,7 @@ export function CostTypeGroupBlock({
   leadingColumns = [],
   showPrices = true,
   headerExtra,
+  scrollRootRef,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -531,9 +604,17 @@ export function CostTypeGroupBlock({
     if (materialsControlled) onWorkExpandChange!(id, expanded);
     else setExpandedKeys((keys) => (expanded ? [...keys, id] : keys.filter((k) => k !== id)));
   };
-  const selectedWorkId = useEstimateSelectionStore((s) => s.selectedWorkId);
+  // Узкие подписки на selection-store: возвращают производные значения, относящиеся только к этому
+  // блоку, поэтому клик по строке/шапке в ДРУГОМ виде работ не ререндерит этот блок.
+  // selectedWorkId — id, только если выбранная работа принадлежит этой группе, иначе null.
+  const selectedWorkId = useEstimateSelectionStore((s) =>
+    s.selectedWorkId != null && group.works.some((w) => w.id === s.selectedWorkId) ? s.selectedWorkId : null,
+  );
+  // isActiveType — булев флаг активности именно этого вида работ.
+  const isActiveType = useEstimateSelectionStore(
+    (s) => !!group.costTypeId && s.activeCostTypeId === group.costTypeId,
+  );
   const selectWork = useEstimateSelectionStore((s) => s.selectWork);
-  const activeCostTypeId = useEstimateSelectionStore((s) => s.activeCostTypeId);
   const selectCostType = useEstimateSelectionStore((s) => s.selectCostType);
   const revealInRatesTree = useEstimateSelectionStore((s) => s.revealInRatesTree);
   const showArea = useWorkspaceLayoutStore((s) => s.showArea);
@@ -550,8 +631,6 @@ export function CostTypeGroupBlock({
     costCategoryId: group.costCategoryId,
     costCategoryName: group.costCategoryName,
   };
-  const isActiveType = !!group.costTypeId && group.costTypeId === activeCostTypeId;
-
   const { data: ratesData } = useQuery({
     queryKey: ['rates', group.costTypeId],
     queryFn: () => api.get<{ data: Rate[] }>(`/rates?costTypeId=${encodeURIComponent(group.costTypeId ?? '')}`),
@@ -563,55 +642,68 @@ export function CostTypeGroupBlock({
       ? `${group.costCategoryName} / ${group.costTypeName ?? '—'}`
       : group.costTypeName ?? 'Без вида работ';
 
-  const groupTotal = group.works.reduce(
-    (acc, w) => acc + Number(w.total ?? 0) + w.materials.reduce((a, m) => a + Number(m.total ?? 0), 0),
-    0,
+  const groupTotal = useMemo(
+    () =>
+      group.works.reduce(
+        (acc, w) => acc + Number(w.total ?? 0) + w.materials.reduce((a, m) => a + Number(m.total ?? 0), 0),
+        0,
+      ),
+    [group.works],
   );
 
-  const rows: EstimateItem[] = group.works.map((w) =>
-    editing && editing.workId === w.id
-      ? {
-          ...w,
-          rate_id: editing.rateId,
-          description: editing.description,
-          unit: editing.unit,
-          quantity: String(editing.quantity),
-          unit_price: String(editing.unitPrice),
-          total: String(editing.quantity * editing.unitPrice),
-        }
-      : w,
-  );
-  if (editing && editing.workId === null) {
-    rows.push({
-      id: DRAFT_ID,
-      estimate_id: '',
-      cost_category_id: group.costCategoryId,
-      cost_type_id: group.costTypeId,
-      rate_id: editing.rateId,
-      description: editing.description,
-      quantity: String(editing.quantity),
-      unit: editing.unit,
-      unit_price: String(editing.unitPrice),
-      total: String(editing.quantity * editing.unitPrice),
-      sort_order: 9999,
-      rate_name: null,
-      rate_code: null,
-      materials: [],
-    });
-  }
+  const rows: EstimateItem[] = useMemo(() => {
+    const list = group.works.map((w) =>
+      editing && editing.workId === w.id
+        ? {
+            ...w,
+            rate_id: editing.rateId,
+            description: editing.description,
+            unit: editing.unit,
+            quantity: String(editing.quantity),
+            unit_price: String(editing.unitPrice),
+            total: String(editing.quantity * editing.unitPrice),
+          }
+        : w,
+    );
+    if (editing && editing.workId === null) {
+      list.push({
+        id: DRAFT_ID,
+        estimate_id: '',
+        cost_category_id: group.costCategoryId,
+        cost_type_id: group.costTypeId,
+        rate_id: editing.rateId,
+        description: editing.description,
+        quantity: String(editing.quantity),
+        unit: editing.unit,
+        unit_price: String(editing.unitPrice),
+        total: String(editing.quantity * editing.unitPrice),
+        sort_order: 9999,
+        rate_name: null,
+        rate_code: null,
+        materials: [],
+      });
+    }
+    return list;
+  }, [group.works, group.costCategoryId, group.costTypeId, editing]);
 
   // Ключи раскрытых строк для таблицы: в управляемом режиме — пересечение работ блока с общим набором.
-  const effectiveExpandedKeys: readonly Key[] = materialsControlled
-    ? rows.filter((r) => expandedWorkIds!.has(r.id)).map((r) => r.id)
-    : expandedKeys;
+  // Стабильная ссылка (useMemo) важна для AntD expandable, иначе Table переинициализирует раскрытие.
+  const effectiveExpandedKeys: readonly Key[] = useMemo(
+    () => (materialsControlled ? rows.filter((r) => expandedWorkIds!.has(r.id)).map((r) => r.id) : expandedKeys),
+    [materialsControlled, rows, expandedWorkIds, expandedKeys],
+  );
 
   const isRowInEdit = (r: EstimateItem) => !!editing && (r.id === DRAFT_ID || r.id === editing.workId);
 
-  const nameOptions = ratesData?.data.map((r) => ({
-    key: r.id,
-    value: r.code ? `[${r.code}] ${r.name}` : r.name,
-    label: `${r.code ? `[${r.code}] ` : ''}${r.name} · ${r.unit} · ${Number(r.price).toLocaleString('ru-RU')} ₽`,
-  }));
+  const nameOptions = useMemo(
+    () =>
+      ratesData?.data.map((r) => ({
+        key: r.id,
+        value: r.code ? `[${r.code}] ${r.name}` : r.name,
+        label: `${r.code ? `[${r.code}] ` : ''}${r.name} · ${r.unit} · ${Number(r.price).toLocaleString('ru-RU')} ₽`,
+      })),
+    [ratesData],
+  );
 
   function selectRate(id: string) {
     if (!editing) return;
@@ -713,7 +805,7 @@ export function CostTypeGroupBlock({
   // работы»: ширина лидирующих колонок + колонка раскрытия (56) + «№» (36). На «Смете» — 0.
   const materialsIndent = leadingWidth ? leadingWidth + 56 + 36 : 0;
 
-  const columns: ColumnsType<EstimateItem> = [
+  const columns = useMemo<ColumnsType<EstimateItem>>(() => [
     // Грип-колонка слева (только в режиме DnD). Грип скрыт у черновика и когда работа одна.
     ...(dndEnabled
       ? [{
@@ -861,15 +953,107 @@ export function CostTypeGroupBlock({
           },
         }]
       : []),
-  ];
+    // editing/saving/expandedWorkIds в deps гарантируют свежесть замыкаемых функций
+    // (commit/selectRate/setWorkExpanded/isWorkExpanded); ESLint-deps выверены вручную.
+  ], [
+    dndEnabled, group.works.length, group.costTypeId, leadingColumns,
+    editing, saving, nameOptions, ratesData,
+    editable, deleteMode, showPrices, showLocationColumn, zones, projectId,
+    materialsControlled, expandedWorkIds, expandedKeys, onWorkExpandChange,
+    onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork,
+  ]);
 
   const contractorOptions = orgs
     ?.filter((o) => o.type === 'subcontractor' || o.type === 'general_contractor')
     .map((o) => ({ value: o.id, label: o.name }));
 
+  // Стабильный объект components: без useMemo AntD пересоздаёт обёртку строки при каждом рендере.
+  const tableComponents = useMemo(
+    () => (dndEnabled ? { body: { row: SortableTableRow } } : undefined),
+    [dndEnabled],
+  );
+
+  // Ленивый рендер материалов — только на «Смете» (задан scrollRootRef) и вне режима выбора
+  // (в режиме чекбоксов таблицы нужны сразу, чтобы не усложнять массовый выбор/перенос).
+  const useLazyMaterials = !!scrollRootRef && !selectionMode && !deleteMode;
+
+  const expandable = useMemo<ExpandableConfig<EstimateItem>>(
+    () => ({
+      expandedRowKeys: effectiveExpandedKeys,
+      onExpand: (expanded, record) => setWorkExpanded(record.id, expanded),
+      rowExpandable: (r) => r.id !== DRAFT_ID,
+      columnWidth: 56,
+      // Кастомная иконка раскрытия: штатная кнопка «+/−» + число материалов работы,
+      // чтобы по свёрнутой строке было видно, есть ли материалы и сколько их.
+      expandIcon: ({ expanded, onExpand, record }) => {
+        if (record.id === DRAFT_ID) return <span style={{ display: 'inline-block', width: 17 }} />;
+        const count = record.materials?.length ?? 0;
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <button
+              type="button"
+              className={`ant-table-row-expand-icon ant-table-row-expand-icon-${expanded ? 'expanded' : 'collapsed'}`}
+              aria-label={expanded ? 'Свернуть' : 'Развернуть'}
+              onClick={(e) => onExpand(record, e)}
+            />
+            {count > 0 && (
+              <span className="estimat-mat-count" title={`Материалов: ${count}`}>{count}</span>
+            )}
+          </span>
+        );
+      },
+      expandedRowRender: (r) => (
+        <div style={{ marginLeft: materialsIndent }}>
+          {useLazyMaterials ? (
+            <LazyMaterialsSubTable
+              scrollRootRef={scrollRootRef}
+              work={r}
+              editable={editable}
+              showPrices={showPrices}
+              onCreate={onCreateMaterial}
+              onUpdate={onUpdateMaterial}
+              onDelete={onDeleteMaterial}
+              onConfirm={onConfirmMaterial}
+              onReassign={onReassignMaterial}
+              works={allWorks}
+              selectionMode={selectionMode}
+              selectedIds={selectedIds}
+              onToggleMaterial={onToggleMaterial}
+              deleteMode={deleteMode}
+              workSelected={!!selectedWorkIds?.has(r.id)}
+            />
+          ) : (
+            <MaterialsSubTable
+              work={r}
+              editable={editable}
+              showPrices={showPrices}
+              onCreate={onCreateMaterial}
+              onUpdate={onUpdateMaterial}
+              onDelete={onDeleteMaterial}
+              onConfirm={onConfirmMaterial}
+              onReassign={onReassignMaterial}
+              works={allWorks}
+              selectionMode={selectionMode}
+              selectedIds={selectedIds}
+              onToggleMaterial={onToggleMaterial}
+              deleteMode={deleteMode}
+              workSelected={!!selectedWorkIds?.has(r.id)}
+            />
+          )}
+        </div>
+      ),
+    }),
+    [
+      effectiveExpandedKeys, materialsControlled, onWorkExpandChange, materialsIndent,
+      useLazyMaterials, scrollRootRef, editable, showPrices,
+      onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onReassignMaterial,
+      allWorks, selectionMode, selectedIds, onToggleMaterial, deleteMode, selectedWorkIds,
+    ],
+  );
+
   return (
     <div
-      className={isActiveType ? 'estimat-group-active' : undefined}
+      className={`estimat-cv-block${isActiveType ? ' estimat-group-active' : ''}`}
       style={{ background: '#fff', borderRadius: 8, marginBottom: 8, border: '1px solid #f0f0f0' }}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && editing && !saving) {
@@ -960,7 +1144,7 @@ export function CostTypeGroupBlock({
           rowKey="id"
           size="small"
           className="estimat-compact"
-          components={dndEnabled ? { body: { row: SortableTableRow } } : undefined}
+          components={tableComponents}
           columns={columns}
           dataSource={rows}
           pagination={false}
@@ -1012,51 +1196,7 @@ export function CostTypeGroupBlock({
                 })
               : undefined
           }
-          expandable={{
-            expandedRowKeys: effectiveExpandedKeys,
-            onExpand: (expanded, record) => setWorkExpanded(record.id, expanded),
-            rowExpandable: (r) => r.id !== DRAFT_ID,
-            columnWidth: 56,
-            // Кастомная иконка раскрытия: штатная кнопка «+/−» + число материалов работы,
-            // чтобы по свёрнутой строке было видно, есть ли материалы и сколько их.
-            expandIcon: ({ expanded, onExpand, record }) => {
-              if (record.id === DRAFT_ID) return <span style={{ display: 'inline-block', width: 17 }} />;
-              const count = record.materials?.length ?? 0;
-              return (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <button
-                    type="button"
-                    className={`ant-table-row-expand-icon ant-table-row-expand-icon-${expanded ? 'expanded' : 'collapsed'}`}
-                    aria-label={expanded ? 'Свернуть' : 'Развернуть'}
-                    onClick={(e) => onExpand(record, e)}
-                  />
-                  {count > 0 && (
-                    <span className="estimat-mat-count" title={`Материалов: ${count}`}>{count}</span>
-                  )}
-                </span>
-              );
-            },
-            expandedRowRender: (r) => (
-              <div style={{ marginLeft: materialsIndent }}>
-                <MaterialsSubTable
-                  work={r}
-                  editable={editable}
-                  showPrices={showPrices}
-                  onCreate={onCreateMaterial}
-                  onUpdate={onUpdateMaterial}
-                  onDelete={onDeleteMaterial}
-                  onConfirm={onConfirmMaterial}
-                  onReassign={onReassignMaterial}
-                  works={allWorks}
-                  selectionMode={selectionMode}
-                  selectedIds={selectedIds}
-                  onToggleMaterial={onToggleMaterial}
-                  deleteMode={deleteMode}
-                  workSelected={!!selectedWorkIds?.has(r.id)}
-                />
-              </div>
-            ),
-          }}
+          expandable={expandable}
         />
         </SortableVerticalContext>
       )}
@@ -1076,3 +1216,8 @@ export function CostTypeGroupBlock({
     </div>
   );
 }
+
+// React.memo: при стабильных пропсах (стабилизированы колбэки в EstimateEditor + useMemo blockProps
+// в SmetaPanel) блок не ререндерится при операциях в других видах работ. Раскрытие/выбор приходят
+// узкими подписками внутри компонента — затрагивается только изменившийся блок.
+export const CostTypeGroupBlock = memo(CostTypeGroupBlockImpl);

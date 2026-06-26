@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 
 interface Props {
   icon?: ReactNode;
@@ -9,11 +9,13 @@ interface Props {
   toolbar?: ReactNode;
   /** Если true — тело без внутреннего padding (например, для своего Splitter). */
   flush?: boolean;
+  /** Ref на скроллящееся тело — нужен как root для IntersectionObserver (ленивый рендер сметы). */
+  bodyRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }
 
 // Универсальная панель workspace: фиксированная шапка (+ опц. тулбар) + независимо скроллящееся тело.
-export function PanelShell({ icon, title, meta, extra, toolbar, flush, children }: Props) {
+export function PanelShell({ icon, title, meta, extra, toolbar, flush, bodyRef, children }: Props) {
   return (
     <div
       style={{
@@ -63,6 +65,7 @@ export function PanelShell({ icon, title, meta, extra, toolbar, flush, children 
         </div>
       )}
       <div
+        ref={bodyRef}
         style={{
           flex: 1,
           minHeight: 0,

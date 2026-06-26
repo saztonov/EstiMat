@@ -291,18 +291,93 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     setCostTypeModalOpen(false);
   };
 
-  const createWork = (costTypeId: string | null, payload: SaveWorkPayload) =>
-    createWorkMutation.mutateAsync({ costTypeId, payload }).then(() => undefined);
-  const updateWork = (workId: string, payload: SaveWorkPayload) =>
-    updateWorkMutation.mutateAsync({ workId, payload }).then(() => undefined);
-  const createMaterial = (workId: string, payload: SaveMaterialPayload) =>
-    createMaterialMutation.mutateAsync({ workId, payload }).then(() => undefined);
-  const updateMaterial = (materialId: string, payload: SaveMaterialPayload) =>
-    updateMaterialMutation.mutateAsync({ materialId, payload }).then(() => undefined);
+  // Все колбэки, уходящие в дерево SmetaPanel → CostTypeGroupBlock, стабилизируем через useCallback:
+  // их ссылочная стабильность — обязательное условие для React.memo на блоках сметы.
+  // В зависимостях используем .mutate/.mutateAsync (стабильны по ссылке в TanStack Query v5),
+  // а не сам объект мутации (он меняет identity, неся isPending).
+  const createWork = useCallback(
+    (costTypeId: string | null, payload: SaveWorkPayload) =>
+      createWorkMutation.mutateAsync({ costTypeId, payload }).then(() => undefined),
+    [createWorkMutation.mutateAsync],
+  );
+  const updateWork = useCallback(
+    (workId: string, payload: SaveWorkPayload) =>
+      updateWorkMutation.mutateAsync({ workId, payload }).then(() => undefined),
+    [updateWorkMutation.mutateAsync],
+  );
+  const createMaterial = useCallback(
+    (workId: string, payload: SaveMaterialPayload) =>
+      createMaterialMutation.mutateAsync({ workId, payload }).then(() => undefined),
+    [createMaterialMutation.mutateAsync],
+  );
+  const updateMaterial = useCallback(
+    (materialId: string, payload: SaveMaterialPayload) =>
+      updateMaterialMutation.mutateAsync({ materialId, payload }).then(() => undefined),
+    [updateMaterialMutation.mutateAsync],
+  );
+  const deleteWork = useCallback(
+    (workId: string) => deleteWorkMutation.mutate(workId),
+    [deleteWorkMutation.mutate],
+  );
+  const reorderWorks = useCallback(
+    (ids: string[]) => reorderWorksMutation.mutate(ids),
+    [reorderWorksMutation.mutate],
+  );
+  const deleteMaterial = useCallback(
+    (materialId: string) => deleteMaterialMutation.mutate(materialId),
+    [deleteMaterialMutation.mutate],
+  );
+  const confirmMaterial = useCallback(
+    (materialId: string) => confirmMaterialMutation.mutate(materialId),
+    [confirmMaterialMutation.mutate],
+  );
+  const confirmWork = useCallback(
+    (workId: string) => confirmWorkMutation.mutate(workId),
+    [confirmWorkMutation.mutate],
+  );
+  const bulkConfirm = useCallback(
+    (workIds: string[], materialIds: string[]) =>
+      bulkConfirmMutation.mutateAsync({ workIds, materialIds }).then(() => undefined),
+    [bulkConfirmMutation.mutateAsync],
+  );
+  const reassignMaterial = useCallback(
+    (materialId: string, itemId: string) => reassignMaterialMutation.mutate({ materialId, itemId }),
+    [reassignMaterialMutation.mutate],
+  );
+  const reassignMaterials = useCallback(
+    (materialIds: string[], itemId: string) =>
+      reassignMaterialsBulkMutation.mutateAsync({ materialIds, itemId }).then(() => undefined),
+    [reassignMaterialsBulkMutation.mutateAsync],
+  );
+  const bulkDelete = useCallback(
+    (workIds: string[], materialIds: string[]) =>
+      bulkDeleteMutation.mutateAsync({ workIds, materialIds }),
+    [bulkDeleteMutation.mutateAsync],
+  );
+  const bulkAssignLocation = useCallback(
+    (workIds: string[], locations: { zoneId: string | null; floors: number[] }[]) =>
+      bulkAssignLocationMutation.mutateAsync({ workIds, locations }),
+    [bulkAssignLocationMutation.mutateAsync],
+  );
+  const replicate = useCallback(
+    (sourceWorkIds: string[], targets: ReplicateTargets) =>
+      replicateWorksMutation.mutateAsync({ sourceWorkIds, targets }).then(() => undefined),
+    [replicateWorksMutation.mutateAsync],
+  );
+  const setContractor = useCallback(
+    (costTypeId: string, contractorId: string) =>
+      setContractorMutation.mutate({ costTypeId, contractorId }),
+    [setContractorMutation.mutate],
+  );
+  const clearContractor = useCallback(
+    (costTypeId: string) => clearContractorMutation.mutate(costTypeId),
+    [clearContractorMutation.mutate],
+  );
+  const openCostTypeModal = useCallback(() => setCostTypeModalOpen(true), []);
 
   // Добавление работы из дерева справочника: регистрируем «отложенную» группу
   // (чтобы заголовок вида работ показался сразу с правильным именем) и создаём работу.
-  const handleAddRate = (p: RateLeafPayload) => {
+  const handleAddRate = useCallback((p: RateLeafPayload) => {
     setPendingGroups((prev) =>
       prev.some((g) => g.costTypeId === p.costTypeId)
         ? prev
@@ -331,7 +406,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         unitPrice: p.price,
       },
     });
-  };
+  }, [createWorkMutation.mutate]);
 
   return (
     <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
@@ -343,31 +418,24 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         totalItems={totalItems}
         groupCount={groups.length}
         onBack={onBack}
-        onAddCostType={() => setCostTypeModalOpen(true)}
+        onAddCostType={openCostTypeModal}
         onCreateWork={createWork}
         onUpdateWork={updateWork}
-        onDeleteWork={(workId) => deleteWorkMutation.mutate(workId)}
-        onReorderWorks={(ids) => reorderWorksMutation.mutate(ids)}
+        onDeleteWork={deleteWork}
+        onReorderWorks={reorderWorks}
         onCreateMaterial={createMaterial}
         onUpdateMaterial={updateMaterial}
-        onDeleteMaterial={(materialId) => deleteMaterialMutation.mutate(materialId)}
-        onConfirmMaterial={(materialId) => confirmMaterialMutation.mutate(materialId)}
-        onConfirmWork={(workId) => confirmWorkMutation.mutate(workId)}
-        onBulkConfirm={(workIds, materialIds) =>
-          bulkConfirmMutation.mutateAsync({ workIds, materialIds }).then(() => undefined)}
-        onReassignMaterial={(materialId, itemId) => reassignMaterialMutation.mutate({ materialId, itemId })}
-        onReassignMaterials={(materialIds, itemId) =>
-          reassignMaterialsBulkMutation.mutateAsync({ materialIds, itemId }).then(() => undefined)}
-        onBulkDelete={(workIds, materialIds) =>
-          bulkDeleteMutation.mutateAsync({ workIds, materialIds })}
-        onBulkAssignLocation={(workIds, locations) =>
-          bulkAssignLocationMutation.mutateAsync({ workIds, locations })}
-        onReplicate={(sourceWorkIds, targets) =>
-          replicateWorksMutation.mutateAsync({ sourceWorkIds, targets }).then(() => undefined)}
-        onSetContractor={(costTypeId, contractorId) =>
-          setContractorMutation.mutate({ costTypeId, contractorId })
-        }
-        onClearContractor={(costTypeId) => clearContractorMutation.mutate(costTypeId)}
+        onDeleteMaterial={deleteMaterial}
+        onConfirmMaterial={confirmMaterial}
+        onConfirmWork={confirmWork}
+        onBulkConfirm={bulkConfirm}
+        onReassignMaterial={reassignMaterial}
+        onReassignMaterials={reassignMaterials}
+        onBulkDelete={bulkDelete}
+        onBulkAssignLocation={bulkAssignLocation}
+        onReplicate={replicate}
+        onSetContractor={setContractor}
+        onClearContractor={clearContractor}
         onAddRate={handleAddRate}
       />
 

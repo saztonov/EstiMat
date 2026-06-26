@@ -116,6 +116,12 @@ html, body, #root {
   border-color: #1677ff !important;
   box-shadow: 0 0 0 1px #1677ff;
 }
+/* Блок вида работ: пропускаем layout/paint вне вьюпорта (быстрее скролл больших смет).
+   contain-intrinsic-size — оценка типовой высоты, чтобы скролл-якорь не прыгал. */
+.estimat-cv-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
 .estimat-cat-active {
   border-color: #1677ff !important;
   background: #e6f0ff !important;
