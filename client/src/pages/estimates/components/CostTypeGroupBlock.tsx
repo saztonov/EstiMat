@@ -811,7 +811,7 @@ export function CostTypeGroupBlock({
       : []),
     ...(showLocationColumn
       ? [{
-          title: 'Местоположение', width: 158,
+          title: 'Местоположение', width: 237,
           render: (_: unknown, r: EstimateItem) => {
             if (r.id === DRAFT_ID) return null; // у черновика локация подставится из контекста добавления
             return (

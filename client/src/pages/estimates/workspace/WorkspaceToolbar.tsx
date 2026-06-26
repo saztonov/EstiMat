@@ -1,18 +1,18 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { Button, Modal, Space, Tooltip, Typography, App } from 'antd';
+import { Badge, Button, Modal, Popover, Switch, Tooltip, Typography, App } from 'antd';
 import {
   ArrowLeftOutlined,
   TableOutlined,
   RobotOutlined,
   AppstoreOutlined,
+  LayoutOutlined,
   HistoryOutlined,
   ContainerOutlined,
 } from '@ant-design/icons';
 import type { EstimateDetail } from '../components/types';
 import { formatMoney } from '../components/types';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
-import { AiProcessingIndicator } from './AiProcessingIndicator';
 import { LocationBuilder } from '../../projects/LocationBuilder';
 import { BuildingsIcon } from '../../../components/shared/BuildingsIcon';
 
@@ -24,32 +24,27 @@ interface Props {
   onHistory: () => void;
 }
 
-// Кнопка-переключатель области («горящая» когда активна)
-function AreaToggle({
-  active,
-  locked,
+// Строка-переключатель области внутри поповера «Панели»
+function PanelSwitchRow({
   icon,
   label,
-  onClick,
+  checked,
+  disabled,
+  onChange,
 }: {
-  active: boolean;
-  locked?: boolean;
   icon: ReactNode;
   label: string;
-  onClick?: () => void;
+  checked: boolean;
+  disabled?: boolean;
+  onChange?: (v: boolean) => void;
 }) {
-  const btn = (
-    <Button
-      type={active ? 'primary' : 'default'}
-      icon={icon}
-      disabled={locked}
-      onClick={locked ? undefined : onClick}
-      style={locked ? { opacity: 1, cursor: 'not-allowed' } : undefined}
-    >
-      {label}
-    </Button>
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+      <span style={{ color: '#8c8c8c', display: 'flex' }}>{icon}</span>
+      <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{label}</span>
+      <Switch size="small" checked={checked} disabled={disabled} onChange={onChange} />
+    </div>
   );
-  return locked ? <Tooltip title="Сметная часть всегда включена">{btn}</Tooltip> : btn;
 }
 
 export function WorkspaceToolbar({
@@ -65,6 +60,8 @@ export function WorkspaceToolbar({
   const [zonesOpen, setZonesOpen] = useState(false);
   const [zonesDirty, setZonesDirty] = useState(false);
   const title = estimate.work_type || 'Смета';
+  // Сметная часть всегда включена (+1); ИИ и Справочники — по тумблерам.
+  const activeCount = 1 + (visibility.ai ? 1 : 0) + (visibility.refs ? 1 : 0);
 
   const closeZones = () => {
     if (zonesDirty) {
@@ -126,29 +123,41 @@ export function WorkspaceToolbar({
 
       <span style={{ flex: 1 }} />
 
-      <AiProcessingIndicator estimateId={estimate.id} />
-
       <Tooltip title="История изменений">
         <Button type="text" icon={<HistoryOutlined />} onClick={onHistory} />
       </Tooltip>
 
       <span style={{ width: 1, height: 22, background: '#f0f0f0', margin: '0 2px' }} />
 
-      <Space size={8}>
-        <AreaToggle active locked icon={<TableOutlined />} label="Сметная часть" />
-        <AreaToggle
-          active={visibility.ai}
-          icon={<RobotOutlined />}
-          label="ИИ часть"
-          onClick={() => toggleArea('ai')}
-        />
-        <AreaToggle
-          active={visibility.refs}
-          icon={<AppstoreOutlined />}
-          label="Справочники"
-          onClick={() => toggleArea('refs')}
-        />
-      </Space>
+      <Popover
+        trigger="click"
+        placement="bottomRight"
+        content={
+          <div style={{ minWidth: 200 }}>
+            <Tooltip title="Сметная часть всегда включена" placement="left">
+              <div>
+                <PanelSwitchRow icon={<TableOutlined />} label="Сметная часть" checked disabled />
+              </div>
+            </Tooltip>
+            <PanelSwitchRow
+              icon={<RobotOutlined />}
+              label="ИИ часть"
+              checked={visibility.ai}
+              onChange={() => toggleArea('ai')}
+            />
+            <PanelSwitchRow
+              icon={<AppstoreOutlined />}
+              label="Справочники"
+              checked={visibility.refs}
+              onChange={() => toggleArea('refs')}
+            />
+          </div>
+        }
+      >
+        <Badge count={activeCount} size="small" color="#1677ff" offset={[-2, 2]}>
+          <Button icon={<LayoutOutlined />}>Панели</Button>
+        </Badge>
+      </Popover>
 
       <Modal
         title="Местоположение"

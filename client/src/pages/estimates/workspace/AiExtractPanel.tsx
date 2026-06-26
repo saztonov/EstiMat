@@ -215,27 +215,6 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
         </Upload.Dragger>
       )}
 
-      <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
-        <Typography.Text strong style={{ fontSize: 13 }}>Область подбора работ</Typography.Text>
-        <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '2px 0 8px' }}>
-          Выберите разделы <b>до</b> загрузки документа (или нажмите «Запустить заново»). Работы
-          подбираются из справочника в выбранных разделах; без выбора — из всего справочника.
-          Материалы извлекаются из спецификаций РД.
-        </Typography.Paragraph>
-        <WorkScopeSelect />
-      </div>
-
-      {lastSource.current && (
-        <Button
-          icon={<ReloadOutlined />}
-          loading={creating}
-          disabled={ACTIVE(job?.status)}
-          onClick={() => lastSource.current && void startJob(lastSource.current, true)}
-        >
-          Запустить заново
-        </Button>
-      )}
-
       {job && (
         <div style={{ marginTop: 4 }}>
           <Steps
@@ -281,6 +260,27 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
             <Alert type="error" showIcon style={{ marginTop: 8 }} message={job.error ?? 'Ошибка извлечения'} />
           )}
         </div>
+      )}
+
+      <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
+        <Typography.Text strong style={{ fontSize: 13 }}>Область подбора работ</Typography.Text>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '2px 0 8px' }}>
+          Выберите разделы <b>до</b> загрузки документа (или нажмите «Запустить заново»). Работы
+          подбираются из справочника в выбранных разделах; без выбора — из всего справочника.
+          Материалы извлекаются из спецификаций РД.
+        </Typography.Paragraph>
+        <WorkScopeSelect />
+      </div>
+
+      {lastSource.current && (
+        <Button
+          icon={<ReloadOutlined />}
+          loading={creating}
+          disabled={ACTIVE(job?.status)}
+          onClick={() => lastSource.current && void startJob(lastSource.current, true)}
+        >
+          Запустить заново
+        </Button>
       )}
     </div>
   );
