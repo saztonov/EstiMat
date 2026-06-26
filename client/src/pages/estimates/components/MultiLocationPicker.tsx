@@ -32,25 +32,35 @@ export function MultiLocationPicker({ zones, value, onChange, size = 'small' }: 
   return (
     <Flex vertical gap={6} style={{ width: '100%' }}>
       <Flex gap={6} align="flex-start" style={{ width: '100%' }}>
-        <Select
-          mode="multiple"
-          size={size}
-          allowClear
-          style={{ flex: 1, minWidth: 0 }}
-          placeholder="Зоны (можно несколько)"
-          value={value.zoneIds}
-          onChange={(v) => onChange({ ...value, zoneIds: v })}
-          optionFilterProp="label"
-          options={zoneOptions}
-        />
-        <Input
-          size={size}
-          style={{ width: 130, flexShrink: 0 }}
-          placeholder="Этажи: 1-4, 6"
-          value={value.floorsText}
-          status={floorsValid ? undefined : 'error'}
-          onChange={(e) => onChange({ ...value, floorsText: e.target.value })}
-        />
+        <Flex vertical gap={2} style={{ flex: 1, minWidth: 0 }}>
+          <Typography.Text strong style={{ fontSize: 12 }}>
+            Локации
+          </Typography.Text>
+          <Select
+            mode="multiple"
+            size={size}
+            allowClear
+            style={{ width: '100%' }}
+            placeholder="Зоны (можно несколько)"
+            value={value.zoneIds}
+            onChange={(v) => onChange({ ...value, zoneIds: v })}
+            optionFilterProp="label"
+            options={zoneOptions}
+          />
+        </Flex>
+        <Flex vertical gap={2} style={{ width: 130, flexShrink: 0 }}>
+          <Typography.Text strong style={{ fontSize: 12 }}>
+            Этажи
+          </Typography.Text>
+          <Input
+            size={size}
+            style={{ width: '100%' }}
+            placeholder="Этажи: 1-4, 6"
+            value={value.floorsText}
+            status={floorsValid ? undefined : 'error'}
+            onChange={(e) => onChange({ ...value, floorsText: e.target.value })}
+          />
+        </Flex>
       </Flex>
       {!floorsValid && (
         <Typography.Text type="danger" style={{ fontSize: 12 }}>

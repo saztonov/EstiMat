@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Tag, Popover, Button, Space, AutoComplete, Typography } from 'antd';
+import { Tag, Popover, Button, Space, AutoComplete, Typography, Flex } from 'antd';
 import { EnvironmentOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -167,16 +167,21 @@ export function LocationCell({ work, editable, zones, projectId, onChange }: Pro
       content={
         <Space direction="vertical" style={{ width: 400 }}>
           <MultiLocationPicker size="small" zones={zones} value={draft} onChange={setDraft} />
-          <AutoComplete
-            size="small"
-            allowClear
-            style={{ width: '100%' }}
-            placeholder="Тип (например, Тип 1)"
-            value={typeName}
-            options={typeOptions}
-            filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
-            onChange={(v) => setTypeName(v ?? '')}
-          />
+          <Flex vertical gap={2}>
+            <Typography.Text strong style={{ fontSize: 12 }}>
+              Типы
+            </Typography.Text>
+            <AutoComplete
+              size="small"
+              allowClear
+              style={{ width: '100%' }}
+              placeholder="Тип (например, Тип 1)"
+              value={typeName}
+              options={typeOptions}
+              filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+              onChange={(v) => setTypeName(v ?? '')}
+            />
+          </Flex>
           {cells > 0 && qty > 0 && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               Объём {fmtQty(qty)} {work.unit} ÷ {cells} {plural(cells, ['ячейка', 'ячейки', 'ячеек'])} = по{' '}
