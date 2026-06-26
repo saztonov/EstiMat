@@ -6,7 +6,8 @@ import { MaterialsPanel } from './MaterialsPanel';
 import { RatesPanel } from './RatesPanel';
 import { UnitsPanel } from './UnitsPanel';
 import { RoomTypesPanel } from './RoomTypesPanel';
-import { CatalogComparePanel } from './CatalogComparePanel';
+// Временно скрыто (см. память проекта, вернуться ~2026-07-03)
+// import { CatalogComparePanel } from './CatalogComparePanel';
 
 const tabs = [
   { key: 'projects', label: 'Проекты', children: <ProjectsPanel /> },
@@ -15,7 +16,8 @@ const tabs = [
   { key: 'rates', label: 'Работы', children: <RatesPanel /> },
   { key: 'units', label: 'Единицы измерения', children: <UnitsPanel /> },
   { key: 'room-types', label: 'Типы помещений', children: <RoomTypesPanel /> },
-  { key: 'catalog-compare', label: 'Сравнение справочников', children: <CatalogComparePanel /> },
+  // Временно скрыто (см. память проекта, вернуться ~2026-07-03)
+  // { key: 'catalog-compare', label: 'Сравнение справочников', children: <CatalogComparePanel /> },
 ];
 
 export function ReferencesPage() {
