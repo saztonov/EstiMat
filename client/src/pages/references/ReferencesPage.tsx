@@ -12,7 +12,7 @@ const tabs = [
   { key: 'projects', label: 'Проекты', children: <ProjectsPanel /> },
   { key: 'organizations', label: 'Организации', children: <OrganizationsPanel /> },
   { key: 'materials', label: 'Материалы', children: <MaterialsPanel /> },
-  { key: 'rates', label: 'Расценки', children: <RatesPanel /> },
+  { key: 'rates', label: 'Работы', children: <RatesPanel /> },
   { key: 'units', label: 'Единицы измерения', children: <UnitsPanel /> },
   { key: 'room-types', label: 'Типы помещений', children: <RoomTypesPanel /> },
   { key: 'catalog-compare', label: 'Сравнение справочников', children: <CatalogComparePanel /> },

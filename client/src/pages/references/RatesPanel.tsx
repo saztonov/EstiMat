@@ -84,7 +84,7 @@ export function RatesPanel() {
     onSuccess: () => {
       invalidateAll();
       closeModal();
-      message.success('Расценка добавлена');
+      message.success('Работа добавлена');
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -94,7 +94,7 @@ export function RatesPanel() {
     onSuccess: () => {
       invalidateAll();
       closeModal();
-      message.success('Расценка обновлена');
+      message.success('Работа обновлена');
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -103,7 +103,7 @@ export function RatesPanel() {
     mutationFn: (id: string) => api.delete(`/rates/${id}`),
     onSuccess: () => {
       invalidateAll();
-      message.success('Расценка удалена');
+      message.success('Работа удалена');
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -116,7 +116,7 @@ export function RatesPanel() {
     },
     onSuccess: (result) => {
       invalidateAll();
-      message.success(`Импортировано: ${result.imported} расценок, ${result.categoriesCreated} категорий, ${result.typesCreated} видов`);
+      message.success(`Импортировано: ${result.imported} работ, ${result.categoriesCreated} категорий, ${result.typesCreated} видов`);
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -175,7 +175,7 @@ export function RatesPanel() {
       render: (_: unknown, record: Rate) => (
         <Space>
           <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(record)} />
-          <Popconfirm title="Удалить расценку?" onConfirm={() => deleteMutation.mutate(record.id)}>
+          <Popconfirm title="Удалить работу?" onConfirm={() => deleteMutation.mutate(record.id)}>
             <Button type="text" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -248,7 +248,7 @@ export function RatesPanel() {
       />
 
       <Modal
-        title={editRecord ? 'Редактирование расценки' : 'Новая расценка'}
+        title={editRecord ? 'Редактирование работы' : 'Новая работа'}
         open={modalOpen}
         onCancel={closeModal}
         onOk={() => form.submit()}
