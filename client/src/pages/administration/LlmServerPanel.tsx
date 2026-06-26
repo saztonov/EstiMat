@@ -98,7 +98,8 @@ export function LlmServerPanel() {
   ];
 
   return (
-    <div style={{ padding: '16px 0', maxWidth: 820 }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div style={{ padding: '16px 0', maxWidth: 820 }}>
       <Typography.Title level={5} style={{ marginTop: 0 }}>
         Подключение
       </Typography.Title>
@@ -181,6 +182,7 @@ export function LlmServerPanel() {
         Для «думающих» моделей Qwen ускоряет ответ и снижает риск пустого ответа в чате/извлечении. Отключите, если
         нужны развёрнутые рассуждения.
       </Typography.Paragraph>
+      </div>
     </div>
   );
 }

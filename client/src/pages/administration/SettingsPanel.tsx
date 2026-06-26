@@ -80,7 +80,8 @@ export function SettingsPanel() {
   );
 
   return (
-    <div style={{ padding: '16px 0', maxWidth: 760 }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div style={{ padding: '16px 0', maxWidth: 760 }}>
       <Typography.Title level={5} style={{ marginTop: 0 }}>
         Смета
       </Typography.Title>
@@ -110,6 +111,7 @@ export function SettingsPanel() {
         {renderColumn('Модель для ИИ-чата', chatSelected, (value) =>
           updateMutation.mutate({ aiChatModelDefault: value }),
         )}
+      </div>
       </div>
     </div>
   );
