@@ -239,6 +239,37 @@ export function formatFloors(floors: number[]): string {
   return parts.join(', ');
 }
 
+// Число «ячеек» (зона × этаж) для равномерного распределения объёма.
+// Явные этажи — как есть; пустые («весь корпус») — по диапазону зоны floor_min..floor_max;
+// если диапазона нет — считаем 1 ячейкой (zone-level).
+export function countLocationCells(
+  locations: LocationEntry[] | null | undefined,
+  roots: ZoneNode[],
+): number {
+  if (!locations || locations.length === 0) return 0;
+  let cells = 0;
+  for (const loc of locations) {
+    if (loc.floors && loc.floors.length > 0) {
+      cells += loc.floors.length;
+      continue;
+    }
+    const span = rangeToFloorCount(findZone(roots, loc.zoneId)?.floor_min ?? null, findZone(roots, loc.zoneId)?.floor_max ?? null);
+    cells += span > 0 ? span : 1;
+  }
+  return cells;
+}
+
+// Доля объёма на одну ячейку «зона×этаж» при равномерном распределении (0, если нет ячеек/объёма).
+export function distributePerCell(
+  locations: LocationEntry[] | null | undefined,
+  quantity: number,
+  roots: ZoneNode[],
+): number {
+  const cells = countLocationCells(locations, roots);
+  if (cells <= 0 || !(quantity > 0)) return 0;
+  return quantity / cells;
+}
+
 // Подпись мультилокации строки: «Корпус 1, Корпус 2 · эт. -1-4, 6». Имена зон — из дерева.
 export function formatLocationsLabel(
   locations: LocationEntry[] | null | undefined,

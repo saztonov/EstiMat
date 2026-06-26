@@ -17,6 +17,7 @@ import {
   setEstimateContractorSchema,
   bulkDeleteEstimateItemsSchema,
   bulkConfirmEstimateItemsSchema,
+  bulkAssignEstimateItemsLocationSchema,
   reorderEstimateItemsSchema,
   replicateItemsSchema,
   type EstimateChangeReason,
@@ -95,6 +96,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
               z.name  AS zone_name,
               z.kind  AS zone_kind,
               rt.name AS room_type_name,
+              lt.name AS location_type_name,
               uc.full_name AS created_by_name,
               uu.full_name AS updated_by_name
        FROM estimate_items ei
@@ -103,6 +105,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
        LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
        LEFT JOIN project_zones z    ON ei.zone_id = z.id
        LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
+       LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
        LEFT JOIN users uc           ON ei.created_by = uc.id
        LEFT JOIN users uu           ON ei.updated_by = uu.id
        WHERE ei.estimate_id = $1
@@ -209,7 +212,10 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
          LIMIT $${limIdx} OFFSET $${offIdx}`,
         values,
       );
-      return { data: rows.map(mapAuditRow) };
+      const mapped = rows.map(mapAuditRow);
+      // Резолвим UUID в имена и форматируем locations — клиенту отдаём готовые строки.
+      await attachChangesView(fastify.pool, mapped);
+      return { data: mapped };
     },
   );
 
@@ -391,11 +397,14 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
+        // Произвольный «тип» строки: upsert в project_location_types (уникально на объект).
+        const projectId = await loadProjectId(client, request.params.id);
+        const locationTypeId = await upsertLocationType(client, projectId, body.locationTypeName ?? null);
         const { rows } = await client.query(
           `INSERT INTO estimate_items
              (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
-              zone_id, floor_from, floor_to, room_type_id, locations, created_by, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $14) RETURNING *`,
+              zone_id, floor_from, floor_to, room_type_id, location_type_id, locations, created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $15) RETURNING *`,
           [
             request.params.id,
             body.costTypeId ?? null,
@@ -409,6 +418,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
             primary.floorFrom,
             primary.floorTo,
             body.roomTypeId ?? null,
+            locationTypeId,
             JSON.stringify(locations),
             request.currentUser.id,
           ],
@@ -501,7 +511,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     // Снятие «не согласовано» (согласование ИИ-позиции) — отдельным флагом needsReview.
     if (body.needsReview !== undefined) { sets.push(`needs_review = $${i++}`); values.push(body.needsReview); fields.push('needs_review'); }
 
-    if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
+    if (sets.length === 0 && body.locationTypeName === undefined) return reply.status(400).send({ error: 'Нет данных для обновления' });
     sets.push(`updated_by = $${i++}`); values.push(request.currentUser.id);
 
     const client = await fastify.pool.connect();
@@ -511,6 +521,11 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       if (oldRows.length === 0) {
         await client.query('ROLLBACK');
         return reply.status(404).send({ error: 'Позиция не найдена' });
+      }
+      // Произвольный «тип» строки: upsert в project_location_types (нужен project_id строки).
+      if (body.locationTypeName !== undefined) {
+        const locationTypeId = await upsertLocationType(client, oldRows[0].project_id, body.locationTypeName);
+        sets.push(`location_type_id = $${i++}`); values.push(locationTypeId); fields.push('location_type_id');
       }
       values.push(request.params.id);
       const { rows } = await client.query(`UPDATE estimate_items SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, values);
@@ -661,6 +676,57 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         await client.query('COMMIT');
         if (audits.length) await emit('confirmed_all', eid, projectId, request.currentUser.id);
         return reply.send({ works: works.rowCount ?? 0, materials: materials.rowCount ?? 0 });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // POST /api/estimates/:id/bulk-assign-location — массово назначить одно местоположение выбранным работам.
+  // Перезаписывает locations (источник истины) + зеркало zone_id/floor_from/floor_to. Аудит — с before/after
+  // по каждой строке (diffChanges), чтобы история показывала старое и новое местоположение.
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/bulk-assign-location',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const eid = z.string().uuid().safeParse(request.params.id);
+      if (!eid.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
+      const { workIds, locations } = bulkAssignEstimateItemsLocationSchema.parse(request.body);
+      const primary = deriveLegacyLocation(locations);
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: oldRows } = await client.query(
+          'SELECT * FROM estimate_items WHERE estimate_id = $1 AND id = ANY($2::uuid[]) FOR UPDATE',
+          [eid.data, workIds],
+        );
+        const oldById = new Map(oldRows.map((r) => [r.id as string, r]));
+        const { rows } = await client.query(
+          `UPDATE estimate_items
+              SET locations = $1::jsonb, zone_id = $2, floor_from = $3, floor_to = $4, updated_by = $5
+            WHERE estimate_id = $6 AND id = ANY($7::uuid[])
+            RETURNING *`,
+          [JSON.stringify(locations), primary.zoneId, primary.floorFrom, primary.floorTo,
+           request.currentUser.id, eid.data, workIds],
+        );
+        const projectId = await loadProjectId(client, eid.data);
+        const audits: AuditInput[] = rows.map((r) => ({
+          estimateId: eid.data,
+          projectId,
+          entityType: 'estimate_item',
+          entityId: r.id as string,
+          action: 'update',
+          userId: request.currentUser.id,
+          changes: diffChanges(oldById.get(r.id as string)!, r, ['locations', 'zone_id', 'floor_from', 'floor_to']),
+        }));
+        await recordAuditBatch(client, audits);
+        await client.query('COMMIT');
+        if (rows.length) await emit('item_updated', eid.data, projectId, request.currentUser.id);
+        return reply.send({ updated: rows.length });
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -966,6 +1032,25 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   );
 }
 
+// Get-or-create произвольного «типа» строки в рамках объекта (уникально по name_norm).
+// Пустое имя/нет проекта → null (тип очищается). Имя триммится (в т.ч. в Zod-схеме).
+async function upsertLocationType(
+  db: Pick<PoolClient, 'query'>,
+  projectId: string | null,
+  rawName: string | null,
+): Promise<string | null> {
+  const name = (rawName ?? '').trim();
+  if (!projectId || !name) return null;
+  const { rows } = await db.query(
+    `INSERT INTO project_location_types (project_id, name, name_norm)
+     VALUES ($1, $2, lower(btrim($2)))
+     ON CONFLICT (project_id, name_norm) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+     RETURNING id`,
+    [projectId, name],
+  );
+  return (rows[0]?.id as string | undefined) ?? null;
+}
+
 // Снимок изменённых полей для журнала: before/after по затронутым колонкам.
 function diffChanges(oldRow: Record<string, unknown>, newRow: Record<string, unknown>, fields: string[]) {
   const before: Record<string, unknown> = {};
@@ -977,6 +1062,8 @@ function diffChanges(oldRow: Record<string, unknown>, newRow: Record<string, unk
   return { before, after, changedFields: fields };
 }
 
+type HistoryChangeView = { key: string; label: string; before: string | null; after: string | null };
+
 // Маппинг строки audit_log в read-модель истории (snake → camel).
 function mapAuditRow(r: Record<string, unknown>) {
   return {
@@ -985,11 +1072,149 @@ function mapAuditRow(r: Record<string, unknown>) {
     projectId: r.project_id,
     entityType: r.entity_type,
     entityId: r.entity_id,
-    action: r.action,
+    action: r.action as string,
     userId: r.user_id,
     userName: r.user_name ?? null,
     correlationId: r.correlation_id ?? null,
-    changes: r.changes ?? null,
+    changes: (r.changes ?? null) as Record<string, unknown> | null,
+    // Готовые к показу изменения (резолвятся в attachChangesView для update/confirm).
+    changesView: null as HistoryChangeView[] | null,
     createdAt: r.created_at,
   };
+}
+
+// ---------- Человекочитаемая история: резолв UUID и форматирование ----------
+
+// Поле-ссылка → справочник (whitelist; имена таблиц не из пользовательского ввода).
+const HISTORY_REF_TABLE: Record<string, string> = {
+  cost_type_id: 'cost_types',
+  rate_id: 'rates',
+  room_type_id: 'room_types',
+  cost_category_id: 'cost_categories',
+  material_id: 'material_catalog',
+  location_type_id: 'project_location_types',
+  zone_id: 'project_zones',
+};
+
+// Русские подписи полей журнала.
+const HISTORY_FIELD_LABEL: Record<string, string> = {
+  description: 'наименование',
+  quantity: 'кол-во',
+  unit: 'ед.',
+  unit_price: 'цена',
+  needs_review: 'согласование',
+  status: 'статус',
+  sort_order: 'порядок',
+  cost_type_id: 'вид работ',
+  rate_id: 'расценка',
+  cost_category_id: 'категория',
+  room_type_id: 'тип помещения',
+  material_id: 'материал',
+  location_type_id: 'тип',
+  zone_id: 'корпус/зона',
+  floor_from: 'этаж с',
+  floor_to: 'этаж по',
+  locations: 'местоположение',
+  work_type: 'вид работ',
+  notes: 'примечания',
+};
+
+// Свернуть набор этажей в строку «-1-4, 6» (смежность учитывает пропуск нуля).
+function formatFloorsList(floors: number[]): string {
+  const uniq = [...new Set(floors)].sort((a, b) => a - b);
+  if (uniq.length === 0) return '';
+  const parts: string[] = [];
+  const flush = (a: number, b: number) => parts.push(a === b ? `${a}` : `${a}-${b}`);
+  let start = uniq[0]!;
+  let prev = uniq[0]!;
+  for (let k = 1; k < uniq.length; k++) {
+    const cur = uniq[k]!;
+    const expected = prev === -1 ? 1 : prev + 1;
+    if (cur === expected) { prev = cur; continue; }
+    flush(start, prev);
+    start = cur;
+    prev = cur;
+  }
+  flush(start, prev);
+  return parts.join(', ');
+}
+
+// Форматировать jsonb locations: «Корпус 1: эт. 3-5; Корпус 2: эт. 3-5».
+function formatLocationsValue(value: unknown, zoneNames: Map<string, string>): string {
+  if (!Array.isArray(value) || value.length === 0) return '—';
+  return value
+    .map((loc) => {
+      const l = loc as { zoneId?: string | null; floors?: number[] };
+      const zoneName = l.zoneId ? zoneNames.get(l.zoneId) ?? 'Зона' : 'Без зоны';
+      const fl = formatFloorsList(Array.isArray(l.floors) ? l.floors : []);
+      return fl ? `${zoneName}: эт. ${fl}` : zoneName;
+    })
+    .join('; ');
+}
+
+// Значение поля «до»/«после» как строка (null → рисуется «—» на клиенте).
+function formatHistoryValue(
+  field: string,
+  value: unknown,
+  names: Map<string, Map<string, string>>,
+): string | null {
+  const zoneNames = names.get('project_zones') ?? new Map<string, string>();
+  if (field === 'locations') return formatLocationsValue(value, zoneNames);
+  if (value == null) return null;
+  const table = HISTORY_REF_TABLE[field];
+  if (table) return names.get(table)?.get(String(value)) ?? null;
+  if (field === 'needs_review') return value ? 'требует проверки' : 'согласовано';
+  return String(value);
+}
+
+// Для каждой update/confirm-записи собрать changesView: резолвить UUID и форматировать.
+async function attachChangesView(pool: Pool, entries: ReturnType<typeof mapAuditRow>[]): Promise<void> {
+  // 1. Собрать id по справочникам из всех изменений.
+  const idsByTable = new Map<string, Set<string>>();
+  const addId = (table: string, id: unknown) => {
+    if (typeof id !== 'string' || !id) return;
+    if (!idsByTable.has(table)) idsByTable.set(table, new Set());
+    idsByTable.get(table)!.add(id);
+  };
+  for (const e of entries) {
+    if (e.action !== 'update' && e.action !== 'confirm') continue;
+    const fields = e.changes?.changedFields;
+    if (!Array.isArray(fields)) continue;
+    const before = (e.changes?.before ?? {}) as Record<string, unknown>;
+    const after = (e.changes?.after ?? {}) as Record<string, unknown>;
+    for (const f of fields as string[]) {
+      if (f === 'locations') {
+        for (const side of [before[f], after[f]]) {
+          if (Array.isArray(side)) for (const loc of side) addId('project_zones', (loc as { zoneId?: unknown })?.zoneId);
+        }
+      } else if (HISTORY_REF_TABLE[f]) {
+        addId(HISTORY_REF_TABLE[f]!, before[f]);
+        addId(HISTORY_REF_TABLE[f]!, after[f]);
+      }
+    }
+  }
+  // 2. Батч-резолв имён.
+  const names = new Map<string, Map<string, string>>();
+  for (const [table, ids] of idsByTable) {
+    if (!ids.size) continue;
+    const { rows } = await pool.query(`SELECT id, name FROM ${table} WHERE id = ANY($1::uuid[])`, [[...ids]]);
+    names.set(table, new Map(rows.map((r) => [r.id as string, r.name as string])));
+  }
+  // 3. Построить changesView (locations скрывает производные zone_id/floor_from/floor_to).
+  for (const e of entries) {
+    if (e.action !== 'update' && e.action !== 'confirm') continue;
+    const fields = e.changes?.changedFields;
+    if (!Array.isArray(fields) || fields.length === 0) continue;
+    const before = (e.changes?.before ?? {}) as Record<string, unknown>;
+    const after = (e.changes?.after ?? {}) as Record<string, unknown>;
+    const hasLocations = (fields as string[]).includes('locations');
+    e.changesView = (fields as string[])
+      .filter((f) => !(hasLocations && (f === 'zone_id' || f === 'floor_from' || f === 'floor_to')))
+      .map((f) => ({
+        key: f,
+        label: HISTORY_FIELD_LABEL[f] ?? f,
+        before: formatHistoryValue(f, before[f], names),
+        after: formatHistoryValue(f, after[f], names),
+      }));
+  }
 }

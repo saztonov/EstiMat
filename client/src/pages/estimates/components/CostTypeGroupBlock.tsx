@@ -76,6 +76,8 @@ export interface SaveWorkPayload {
   floorFrom?: number | null;
   floorTo?: number | null;
   roomTypeId?: string | null;
+  // Произвольный «тип» строки (на всю работу). Пустая строка/null очищает тип.
+  locationTypeName?: string | null;
 }
 
 export interface SaveMaterialPayload {
@@ -444,11 +446,17 @@ interface Props {
    *  состояние берётся из collapsed, иначе используется внутренний стейт. */
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  /** Управляемое раскрытие материалов работ (для поэтапного «свернуть/развернуть всё»).
+   *  Если заданы оба — состояние берётся из expandedWorkIds, иначе внутренний стейт. */
+  expandedWorkIds?: Set<string>;
+  onWorkExpandChange?: (workId: string, expanded: boolean) => void;
   /** Показывать ли категорию в заголовке блока (false — когда категория уже в заголовке секции). */
   showCategoryInTitle?: boolean;
   /** Показывать колонку «Локация» (в группировке «по виду работ»). */
   showLocationColumn?: boolean;
   zones?: ZoneNode[];
+  /** Объект строки — для автодополнения произвольных «типов» в поповере локации. */
+  projectId?: string;
   /** Дополнительные колонки слева (перед «№»). Напр. «Исполнитель» в разделе «Подрядчики». */
   leadingColumns?: ColumnsType<EstimateItem>;
   /** Показывать колонки «Цена»/«Сумма» и сумму группы (false — скрываем деньги). */
@@ -489,9 +497,12 @@ export function CostTypeGroupBlock({
   defaultCollapsed = false,
   collapsed: controlledCollapsed,
   onToggleCollapsed,
+  expandedWorkIds,
+  onWorkExpandChange,
   showCategoryInTitle = true,
   showLocationColumn = false,
   zones = [],
+  projectId = '',
   leadingColumns = [],
   showPrices = true,
   headerExtra,
@@ -510,6 +521,15 @@ export function CostTypeGroupBlock({
   const collapsed = onToggleCollapsed ? !!controlledCollapsed : internalCollapsed;
   const toggleCollapsed = onToggleCollapsed ?? (() => setInternalCollapsed((c) => !c));
   const [expandedKeys, setExpandedKeys] = useState<readonly Key[]>([]);
+  // Раскрытие материалов: управляемое (из родителя, для поэтапного «свернуть/развернуть всё»)
+  // либо локальное (expandedKeys), если родитель не передал контроллеры.
+  const materialsControlled = !!expandedWorkIds && !!onWorkExpandChange;
+  const isWorkExpanded = (id: string) =>
+    materialsControlled ? expandedWorkIds!.has(id) : expandedKeys.includes(id);
+  const setWorkExpanded = (id: string, expanded: boolean) => {
+    if (materialsControlled) onWorkExpandChange!(id, expanded);
+    else setExpandedKeys((keys) => (expanded ? [...keys, id] : keys.filter((k) => k !== id)));
+  };
   const selectedWorkId = useEstimateSelectionStore((s) => s.selectedWorkId);
   const selectWork = useEstimateSelectionStore((s) => s.selectWork);
   const activeCostTypeId = useEstimateSelectionStore((s) => s.activeCostTypeId);
@@ -574,6 +594,11 @@ export function CostTypeGroupBlock({
       materials: [],
     });
   }
+
+  // Ключи раскрытых строк для таблицы: в управляемом режиме — пересечение работ блока с общим набором.
+  const effectiveExpandedKeys: readonly Key[] = materialsControlled
+    ? rows.filter((r) => expandedWorkIds!.has(r.id)).map((r) => r.id)
+    : expandedKeys;
 
   const isRowInEdit = (r: EstimateItem) => !!editing && (r.id === DRAFT_ID || r.id === editing.workId);
 
@@ -703,9 +728,7 @@ export function CostTypeGroupBlock({
           // гасим всплытие, чтобы НЕ сработал row-onClick (selectWork): клик по названию —
           // только сворачивание/разворачивание, без выделения работы
           e.stopPropagation();
-          setExpandedKeys((keys) =>
-            keys.includes(r.id) ? keys.filter((k) => k !== r.id) : [...keys, r.id],
-          );
+          setWorkExpanded(r.id, !isWorkExpanded(r.id));
         },
         style: r.id === DRAFT_ID ? undefined : { cursor: 'pointer' },
       }),
@@ -785,7 +808,8 @@ export function CostTypeGroupBlock({
                 work={r}
                 editable={editable && !deleteMode && !editing}
                 zones={zones}
-                onChange={({ locations }) =>
+                projectId={projectId}
+                onChange={({ locations, locationTypeName }) =>
                   onUpdateWork(r.id, {
                     costTypeId: r.cost_type_id,
                     rateId: r.rate_id,
@@ -794,6 +818,7 @@ export function CostTypeGroupBlock({
                     quantity: Number(r.quantity),
                     unitPrice: Number(r.unit_price),
                     locations,
+                    locationTypeName,
                   })
                 }
               />
@@ -980,8 +1005,8 @@ export function CostTypeGroupBlock({
               : undefined
           }
           expandable={{
-            expandedRowKeys: expandedKeys,
-            onExpandedRowsChange: (keys) => setExpandedKeys(keys),
+            expandedRowKeys: effectiveExpandedKeys,
+            onExpand: (expanded, record) => setWorkExpanded(record.id, expanded),
             rowExpandable: (r) => r.id !== DRAFT_ID,
             columnWidth: 56,
             // Кастомная иконка раскрытия: штатная кнопка «+/−» + число материалов работы,

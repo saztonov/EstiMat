@@ -1,15 +1,18 @@
 import { useState } from 'react';
-import { Tag, Popover, Button, Space } from 'antd';
+import { Tag, Popover, Button, Space, AutoComplete, Typography } from 'antd';
 import { EnvironmentOutlined } from '@ant-design/icons';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '../../../services/api';
 import { MultiLocationPicker, type MultiLocationDraft } from './MultiLocationPicker';
 import {
   type ZoneNode,
   type LocationEntry,
-  formatLocationsLabel,
-  hasLocation,
-  parseFloors,
+  findZone,
   formatFloors,
+  parseFloors,
   isValidFloorsInput,
+  countLocationCells,
+  distributePerCell,
 } from './location';
 import type { EstimateItem } from './types';
 
@@ -17,7 +20,9 @@ interface Props {
   work: EstimateItem;
   editable: boolean;
   zones: ZoneNode[];
-  onChange: (payload: { locations: LocationEntry[] }) => void;
+  /** Объект строки — для автодополнения произвольных «типов» в поповере. */
+  projectId: string;
+  onChange: (payload: { locations: LocationEntry[]; locationTypeName: string | null }) => void;
 }
 
 // Черновик мультилокации из строки: зоны + объединённый набор этажей (одно поле на всю строку).
@@ -49,33 +54,108 @@ function draftToLocations(draft: MultiLocationDraft): LocationEntry[] {
   return [];
 }
 
-// Ячейка локации работы: тег с подписью + поповер редактирования (мультизона + этажи).
-export function LocationCell({ work, editable, zones, onChange }: Props) {
+// Объём как число: до 3 знаков, без хвостовых нулей.
+function fmtQty(n: number): string {
+  return n.toLocaleString('ru-RU', { maximumFractionDigits: 3 });
+}
+
+// Русская форма для счётного слова (1 ячейка, 2 ячейки, 5 ячеек).
+function plural(n: number, forms: [string, string, string]): string {
+  const a = Math.abs(n) % 100;
+  const b = a % 10;
+  if (a > 10 && a < 20) return forms[2];
+  if (b > 1 && b < 5) return forms[1];
+  if (b === 1) return forms[0];
+  return forms[2];
+}
+
+// Ячейка локации работы: раздельные бейджи (зоны / этажи / тип) + поповер редактирования.
+export function LocationCell({ work, editable, zones, projectId, onChange }: Props) {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<MultiLocationDraft>(() => toDraft(work));
+  const [typeName, setTypeName] = useState<string>(work.location_type_name ?? '');
 
-  const label = formatLocationsLabel(work.locations, zones);
-  const tag = hasLocation(work) ? (
-    <Tag color="geekblue" style={{ maxWidth: 150, cursor: editable ? 'pointer' : 'default', whiteSpace: 'normal' }}>
-      {label}
-    </Tag>
-  ) : (
-    <Tag style={{ cursor: editable ? 'pointer' : 'default', color: '#bfbfbf' }}>
+  // Типы объекта для автодополнения (грузим при открытии поповера).
+  const { data: typeData } = useQuery({
+    queryKey: ['project-location-types', projectId],
+    queryFn: () => api.get<{ data: { id: string; name: string }[] }>(`/projects/${projectId}/location-types`),
+    enabled: open && !!projectId,
+  });
+  const typeOptions = (typeData?.data ?? []).map((t) => ({ value: t.name }));
+
+  // Раздельные бейджи: каждая зона своим тегом + тег этажей + тег типа.
+  const locs = work.locations ?? [];
+  const zoneNames = [
+    ...new Set(
+      locs.map((l) => (l.zoneId ? findZone(zones, l.zoneId)?.name ?? null : null)).filter((n): n is string => !!n),
+    ),
+  ];
+  const floorsLabel = formatFloors(locs.flatMap((l) => l.floors ?? []));
+  const typeLabel = work.location_type_name ?? '';
+  const empty = zoneNames.length === 0 && !floorsLabel && !typeLabel;
+
+  const badges = empty ? (
+    <Tag style={{ margin: 0, cursor: editable ? 'pointer' : 'default', color: '#bfbfbf' }}>
       <EnvironmentOutlined /> —
     </Tag>
+  ) : (
+    <>
+      {zoneNames.map((n) => (
+        <Tag key={n} color="geekblue" style={{ margin: 0, whiteSpace: 'normal' }}>
+          {n}
+        </Tag>
+      ))}
+      {floorsLabel && (
+        <Tag color="cyan" style={{ margin: 0 }}>
+          эт. {floorsLabel}
+        </Tag>
+      )}
+      {typeLabel && (
+        <Tag color="gold" style={{ margin: 0 }}>
+          {typeLabel}
+        </Tag>
+      )}
+    </>
   );
 
-  if (!editable) return tag;
+  const trigger = (
+    <span
+      style={{
+        display: 'inline-flex',
+        flexWrap: 'wrap',
+        gap: 4,
+        alignItems: 'center',
+        maxWidth: '100%',
+        cursor: editable ? 'pointer' : 'default',
+      }}
+    >
+      {badges}
+    </span>
+  );
+
+  if (!editable) return trigger;
 
   const onOpenChange = (v: boolean) => {
-    if (v) setDraft(toDraft(work));
+    if (v) {
+      setDraft(toDraft(work));
+      setTypeName(work.location_type_name ?? '');
+    }
     setOpen(v);
   };
 
   const apply = () => {
-    onChange({ locations: draftToLocations(draft) });
+    onChange({ locations: draftToLocations(draft), locationTypeName: typeName.trim() || null });
+    // Новый тип появится в подсказках — обновим кэш списка типов объекта.
+    queryClient.invalidateQueries({ queryKey: ['project-location-types', projectId] });
     setOpen(false);
   };
+
+  // Live-сводка равномерного распределения объёма по ячейкам «зона×этаж».
+  const previewLocations = draftToLocations(draft);
+  const qty = Number(work.quantity);
+  const cells = countLocationCells(previewLocations, zones);
+  const perCell = distributePerCell(previewLocations, qty, zones);
 
   return (
     <Popover
@@ -87,16 +167,34 @@ export function LocationCell({ work, editable, zones, onChange }: Props) {
       content={
         <Space direction="vertical" style={{ width: 400 }}>
           <MultiLocationPicker size="small" zones={zones} value={draft} onChange={setDraft} />
+          <AutoComplete
+            size="small"
+            allowClear
+            style={{ width: '100%' }}
+            placeholder="Тип (например, Тип 1)"
+            value={typeName}
+            options={typeOptions}
+            filterOption={(input, option) => (option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+            onChange={(v) => setTypeName(v ?? '')}
+          />
+          {cells > 0 && qty > 0 && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Объём {fmtQty(qty)} {work.unit} ÷ {cells} {plural(cells, ['ячейка', 'ячейки', 'ячеек'])} = по{' '}
+              {fmtQty(perCell)} {work.unit}
+            </Typography.Text>
+          )}
           <Space>
             <Button size="small" type="primary" disabled={!isValidFloorsInput(draft.floorsText)} onClick={apply}>
               Применить
             </Button>
-            <Button size="small" onClick={() => setOpen(false)}>Отмена</Button>
+            <Button size="small" onClick={() => setOpen(false)}>
+              Отмена
+            </Button>
           </Space>
         </Space>
       }
     >
-      {tag}
+      {trigger}
     </Popover>
   );
 }

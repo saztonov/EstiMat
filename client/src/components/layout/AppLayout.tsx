@@ -70,8 +70,10 @@ export function AppLayout() {
   // (на средний клик событие click не возникает — Drawer останется открытым).
   const onMenuClick: MenuProps['onClick'] = () => setOpen(false);
 
-  // Рабочее пространство сметы (/estimates/:id) — узкие горизонтальные поля; список /estimates не затрагивается.
-  const isEstimateWorkspace = /^\/estimates\/.+/.test(location.pathname);
+  // Рабочее пространство сметы рендерится на /estimates/:id и /projects/:id (оба → EstimateEditor).
+  // Точное сопоставление: список /estimates и /estimates/:id/materials НЕ затрагиваются.
+  const isEstimateWorkspace =
+    /^\/estimates\/[^/]+$/.test(location.pathname) || /^\/projects\/[^/]+$/.test(location.pathname);
 
   const userMenuItems: MenuProps['items'] = [
     {
@@ -139,7 +141,9 @@ export function AppLayout() {
 
       <Content
         style={{
-          margin: isEstimateWorkspace ? '48px 8px 24px' : '48px 24px 24px',
+          // Workspace: шапка поднята в верхнюю полосу (верх 0; гамбургер обходится левым
+          // отступом тулбара), компактные боковые/нижний отступы. Прочие страницы — как было.
+          margin: isEstimateWorkspace ? '0 6px 6px' : '48px 24px 24px',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',

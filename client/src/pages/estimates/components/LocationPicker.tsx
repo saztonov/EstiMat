@@ -36,26 +36,28 @@ export function LocationPicker({ zones, value, onChange, size = 'middle' }: Prop
 
   return (
     <Flex vertical gap={6} style={{ width: '100%' }}>
-      <TreeSelect
-        size={size}
-        allowClear
-        showSearch
-        treeDefaultExpandAll
-        placeholder="Зона (корпус/парковка)"
-        style={{ width: '100%' }}
-        value={value.zoneId ?? undefined}
-        treeData={treeData}
-        treeNodeFilterProp="title"
-        onChange={(v) => onChange({ ...value, zoneId: (v as string) ?? null })}
-      />
-      <Input
-        size={size}
-        style={{ width: '100%' }}
-        placeholder="Этажи: -1-10, 12, 16-18 (пусто = весь корпус)"
-        value={value.floorsText}
-        status={floorsValid ? undefined : 'error'}
-        onChange={(e) => onChange({ ...value, floorsText: e.target.value })}
-      />
+      <Flex gap={6} align="flex-start" style={{ width: '100%' }}>
+        <TreeSelect
+          size={size}
+          allowClear
+          showSearch
+          treeDefaultExpandAll
+          placeholder="Зона (корпус/парковка)"
+          style={{ flex: 1, minWidth: 0 }}
+          value={value.zoneId ?? undefined}
+          treeData={treeData}
+          treeNodeFilterProp="title"
+          onChange={(v) => onChange({ ...value, zoneId: (v as string) ?? null })}
+        />
+        <Input
+          size={size}
+          style={{ width: 130, flexShrink: 0 }}
+          placeholder="Этажи: 1-4, 6"
+          value={value.floorsText}
+          status={floorsValid ? undefined : 'error'}
+          onChange={(e) => onChange({ ...value, floorsText: e.target.value })}
+        />
+      </Flex>
       {!floorsValid && (
         <Typography.Text type="danger" style={{ fontSize: 12 }}>
           Формат: числа и диапазоны через запятую, например «1-4, 6» или «-1-8».

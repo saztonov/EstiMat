@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Empty, Popover, Select, Space, Tooltip } from 'antd';
+import { App, Button, Empty, Popconfirm, Popover, Select, Space, Tooltip } from 'antd';
 import {
   PlusOutlined,
   TableOutlined,
@@ -11,6 +11,7 @@ import {
   DeleteOutlined,
   CheckCircleOutlined,
   CopyOutlined,
+  EnvironmentOutlined,
 } from '@ant-design/icons';
 import { CostTypeGroupBlock, type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import { WorkTreeSelect } from '../components/WorkTreeSelect';
@@ -20,6 +21,7 @@ import { LocationFilterPopover } from './LocationFilterPopover';
 import { EstimateFilterSettingsPopover } from './EstimateFilterSettingsPopover';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
+import { formatLocationsLabel } from '../components/location';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { useLocationContextStore } from '../../../store/locationContextStore';
@@ -56,13 +58,18 @@ interface Props {
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
+  onBulkAssignLocation: (workIds: string[], locations: AssignLocation[]) => Promise<unknown>;
   onReplicate: (sourceWorkIds: string[], targets: ReplicateTargets) => Promise<void>;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;
 }
 
-// Режим выбора в шапке: перенос материалов, массовое удаление или тиражирование набора.
-type SelectionMode = 'none' | 'reassign' | 'delete' | 'replicate';
+// Режим выбора в шапке: перенос материалов, массовое удаление, тиражирование набора
+// или назначение местоположения выбранным работам.
+type SelectionMode = 'none' | 'reassign' | 'delete' | 'replicate' | 'assignloc';
+
+// Снапшот местоположения для массового назначения (фиксируется на старте режима assignloc).
+type AssignLocation = { zoneId: string | null; floors: number[] };
 
 const NO_CATEGORY = '__none__';
 
@@ -101,6 +108,7 @@ export function SmetaPanel({
   onReassignMaterial,
   onReassignMaterials,
   onBulkDelete,
+  onBulkAssignLocation,
   onReplicate,
   onSetContractor,
   onClearContractor,
@@ -111,15 +119,29 @@ export function SmetaPanel({
   const [onlyUnreconciled, setOnlyUnreconciled] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
-  // Единый режим выбора с чекбоксами: перенос ('reassign'), удаление ('delete') или тиражирование ('replicate').
+  // Раскрытые материалы (общий набор id работ) — поднят сюда для поэтапного «свернуть/развернуть всё».
+  const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set());
+  const setWorkExpanded = (id: string, expanded: boolean) =>
+    setExpandedWorkIds((prev) => {
+      const next = new Set(prev);
+      if (expanded) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  // Единый режим выбора с чекбоксами: перенос ('reassign'), удаление ('delete'),
+  // тиражирование ('replicate') или назначение местоположения ('assignloc').
   const [mode, setMode] = useState<SelectionMode>('none');
-  const selectionMode = mode !== 'none'; // чекбоксы материалов видны в reassign/delete
+  // Чекбоксы материалов видны в reassign/delete; в assignloc выбираем только работы.
+  const selectionMode = mode !== 'none' && mode !== 'assignloc';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // выбранные материалы (общий набор)
-  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set()); // выбранные работы (delete/replicate)
+  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set()); // выбранные работы (delete/replicate/assignloc)
   const [reassigning, setReassigning] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [replicateOpen, setReplicateOpen] = useState(false);
   const [replicating, setReplicating] = useState(false);
+  // Назначение местоположения выбранным работам: снапшот локации + флаг выполнения.
+  const [assignLoc, setAssignLoc] = useState<AssignLocation | null>(null);
+  const [assigning, setAssigning] = useState(false);
 
   // Местоположение: фильтр-срезы + справочник зон для размножения.
   const filterZoneIds = useLocationContextStore((s) => s.filterZoneIds);
@@ -154,7 +176,32 @@ export function SmetaPanel({
   const cancelSelection = () => {
     setSelectedIds(new Set());
     setSelectedWorkIds(new Set());
+    setAssignLoc(null);
     setMode('none');
+  };
+
+  // Старт режима назначения местоположения: снапшот локации из поповера, чистый выбор работ.
+  const startAssignLocation = (loc: AssignLocation) => {
+    setAssignLoc(loc);
+    setSelectedIds(new Set());
+    setSelectedWorkIds(new Set());
+    setMode('assignloc');
+  };
+
+  // Назначение снапшота локации выбранным работам. Выделение сбрасываем только после успеха.
+  const handleBulkAssign = async () => {
+    if (!assignLoc || selectedWorkIds.size === 0 || assigning) return;
+    setAssigning(true);
+    try {
+      await onBulkAssignLocation([...selectedWorkIds], [assignLoc]);
+      setSelectedWorkIds(new Set());
+      setAssignLoc(null);
+      setMode('none');
+    } catch {
+      /* ошибку покажет мутация; выделение сохраняется */
+    } finally {
+      setAssigning(false);
+    }
   };
 
   // Перенос выбранных материалов к работе. Выделение сбрасываем только после успеха.
@@ -285,14 +332,35 @@ export function SmetaPanel({
       return next;
     });
 
-  // Развернуть/свернуть всё дерево сметы (категории + виды работ).
-  const expandAll = () => {
-    setCollapsedCats(new Set());
-    setCollapsedTypes(new Set());
+  // Поэтапное сворачивание/разворачивание дерева сметы. Уровни (снаружи внутрь):
+  // категории → виды работ → работы → материалы. Каждое нажатие двигает на один уровень,
+  // ориентируясь на текущее состояние (без счётчика — устойчиво к ручным кликам по строкам).
+  const allCatKeys = groups.map((g) => g.costCategoryId ?? NO_CATEGORY);
+  const allTypeKeys = groups.map(typeKey);
+  const workIdsWithMaterials = groups.flatMap((g) =>
+    g.works.filter((w) => (w.materials?.length ?? 0) > 0).map((w) => w.id),
+  );
+
+  // Свернуть на один уровень: материалы → работы (до видов) → виды (до категорий).
+  const collapseStep = () => {
+    if (workIdsWithMaterials.some((id) => expandedWorkIds.has(id))) {
+      setExpandedWorkIds(new Set());
+    } else if (allTypeKeys.some((k) => !collapsedTypes.has(k))) {
+      setCollapsedTypes(new Set(allTypeKeys));
+    } else if (allCatKeys.some((k) => !collapsedCats.has(k))) {
+      setCollapsedCats(new Set(allCatKeys));
+    }
   };
-  const collapseAll = () => {
-    setCollapsedCats(new Set(groups.map((g) => g.costCategoryId ?? NO_CATEGORY)));
-    setCollapsedTypes(new Set(groups.map(typeKey)));
+
+  // Развернуть на один уровень (обратный порядок): категории → виды → работы (материалы).
+  const expandStep = () => {
+    if (allCatKeys.some((k) => collapsedCats.has(k))) {
+      setCollapsedCats(new Set());
+    } else if (allTypeKeys.some((k) => collapsedTypes.has(k))) {
+      setCollapsedTypes(new Set());
+    } else if (workIdsWithMaterials.some((id) => !expandedWorkIds.has(id))) {
+      setExpandedWorkIds(new Set(workIdsWithMaterials));
+    }
   };
 
   // Список работ сметы — для выбора цели при переносе материала (дерево Категория → Вид работ → Работа).
@@ -471,11 +539,14 @@ export function SmetaPanel({
     selectedIds,
     onToggleMaterial: toggleMaterial,
     // Чекбоксы работ активны в delete и replicate (выбор шаблона для тиражирования).
-    deleteMode: mode === 'delete' || mode === 'replicate',
+    deleteMode: mode === 'delete' || mode === 'replicate' || mode === 'assignloc',
     selectedWorkIds,
     onToggleWork: toggleWork,
     showLocationColumn: true,
     zones: zonesData?.data.roots ?? [],
+    projectId,
+    expandedWorkIds,
+    onWorkExpandChange: setWorkExpanded,
   };
 
   return (
@@ -549,6 +620,33 @@ export function SmetaPanel({
                 <Button size="small" onClick={cancelSelection}>Отмена</Button>
               </Space>
             )}
+            {editable && mode === 'assignloc' && (
+              <Space size={6} style={{ marginRight: 4 }}>
+                <span style={{ fontSize: 12.5, color: '#595959' }}>
+                  Локация: {formatLocationsLabel([{ zoneId: assignLoc?.zoneId ?? null, floors: assignLoc?.floors ?? [] }], zonesData?.data.roots ?? []) || '—'}
+                  {' · '}Выбрано: {selectedWorkIds.size}
+                </span>
+                <Popconfirm
+                  title="Назначить местоположение"
+                  description="Перезаписать местоположение у выбранных работ?"
+                  okText="Назначить"
+                  cancelText="Отмена"
+                  disabled={selectedWorkIds.size === 0 || assigning}
+                  onConfirm={handleBulkAssign}
+                >
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<EnvironmentOutlined />}
+                    disabled={selectedWorkIds.size === 0 || assigning}
+                    loading={assigning}
+                  >
+                    Назначить {selectedWorkIds.size} работам
+                  </Button>
+                </Popconfirm>
+                <Button size="small" disabled={assigning} onClick={cancelSelection}>Отмена</Button>
+              </Space>
+            )}
             {editable && mode === 'none' && (
               <>
                 {canBulkDelete && rejectableCount > 0 && (
@@ -589,19 +687,18 @@ export function SmetaPanel({
                 )}
               </>
             )}
-            <Tooltip title="Развернуть всё">
-              <Button type="text" size="small" icon={<DownOutlined />} onClick={expandAll} />
+            <Tooltip title="Развернуть на уровень глубже (категории → виды → работы → материалы)">
+              <Button type="text" size="small" icon={<DownOutlined />} onClick={expandStep} />
             </Tooltip>
-            <Tooltip title="Свернуть всё">
-              <Button type="text" size="small" icon={<UpOutlined />} onClick={collapseAll} />
+            <Tooltip title="Свернуть на уровень (материалы → работы → виды → категории)">
+              <Button type="text" size="small" icon={<UpOutlined />} onClick={collapseStep} />
             </Tooltip>
           </Space>
         ) : undefined
       }
-    >
-      {groups.length > 0 ? (
-        <>
-          <Space style={{ marginBottom: 12 }} wrap>
+      toolbar={
+        groups.length > 0 ? (
+          <Space wrap>
             <Select
               allowClear
               showSearch
@@ -632,8 +729,14 @@ export function SmetaPanel({
               editable={editable}
               onlyUnreconciled={onlyUnreconciled}
               onUnreconciledChange={setOnlyUnreconciled}
+              onAssignLocation={canBulkDelete ? startAssignLocation : undefined}
             />
           </Space>
+        ) : undefined
+      }
+    >
+      {groups.length > 0 ? (
+        <>
 
           {sections.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Ничего не найдено по отбору" style={{ padding: '24px 0' }} />

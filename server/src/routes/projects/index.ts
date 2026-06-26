@@ -472,6 +472,26 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     return { data: { roots } };
   });
 
+  // GET /api/projects/:id/location-types — произвольные «типы» строк объекта (для автодополнения
+  // в поповере локации). Опциональный ?search= фильтрует по подстроке (без учёта регистра).
+  fastify.get<{ Params: { id: string }; Querystring: { search?: string } }>(
+    '/:id/location-types',
+    async (request) => {
+      const search = (request.query.search ?? '').trim().toLowerCase();
+      const values: unknown[] = [request.params.id];
+      let where = 'project_id = $1';
+      if (search) {
+        values.push(`%${search}%`);
+        where += ` AND name_norm LIKE $${values.length}`;
+      }
+      const { rows } = await fastify.pool.query(
+        `SELECT id, name FROM project_location_types WHERE ${where} ORDER BY sort_order, name LIMIT 50`,
+        values,
+      );
+      return { data: rows };
+    },
+  );
+
   // POST /api/projects/:id/zones
   fastify.post<{ Params: { id: string } }>(
     '/:id/zones',

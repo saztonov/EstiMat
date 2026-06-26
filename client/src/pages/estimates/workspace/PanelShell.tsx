@@ -5,13 +5,15 @@ interface Props {
   title: ReactNode;
   meta?: ReactNode;
   extra?: ReactNode;
+  /** Закреплённая строка (фильтры) между шапкой и скроллом — не уезжает при прокрутке тела. */
+  toolbar?: ReactNode;
   /** Если true — тело без внутреннего padding (например, для своего Splitter). */
   flush?: boolean;
   children: ReactNode;
 }
 
-// Универсальная панель workspace: фиксированная шапка + независимо скроллящееся тело.
-export function PanelShell({ icon, title, meta, extra, flush, children }: Props) {
+// Универсальная панель workspace: фиксированная шапка (+ опц. тулбар) + независимо скроллящееся тело.
+export function PanelShell({ icon, title, meta, extra, toolbar, flush, children }: Props) {
   return (
     <div
       style={{
@@ -48,6 +50,18 @@ export function PanelShell({ icon, title, meta, extra, flush, children }: Props)
         )}
         {extra}
       </div>
+      {toolbar && (
+        <div
+          style={{
+            flexShrink: 0,
+            padding: '10px 12px',
+            borderBottom: '1px solid #f0f0f0',
+            background: '#fff',
+          }}
+        >
+          {toolbar}
+        </div>
+      )}
       <div
         style={{
           flex: 1,

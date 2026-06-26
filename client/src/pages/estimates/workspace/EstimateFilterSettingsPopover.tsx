@@ -1,12 +1,13 @@
-import { Badge, Button, Checkbox, Divider, Popover, Space, Switch, Typography } from 'antd';
-import { SettingOutlined } from '@ant-design/icons';
+import { useState } from 'react';
+import { Badge, Button, Checkbox, Divider, Popover, Space, Switch, Tooltip, Typography } from 'antd';
+import { EnvironmentOutlined, SettingOutlined } from '@ant-design/icons';
 import {
   useLocationContextStore,
   useAddContext,
   useAddEnabled,
 } from '../../../store/locationContextStore';
 import { LocationPicker } from '../components/LocationPicker';
-import type { ZoneNode } from '../components/location';
+import { parseFloors, isValidFloorsInput, type ZoneNode } from '../components/location';
 
 interface Props {
   estimateId: string;
@@ -15,6 +16,9 @@ interface Props {
   editable: boolean;
   onlyUnreconciled: boolean;
   onUnreconciledChange: (v: boolean) => void;
+  /** Запустить режим массового назначения выбранного местоположения работам.
+   *  Передаётся только при наличии прав (admin/engineer) — иначе кнопка скрыта. */
+  onAssignLocation?: (loc: { zoneId: string | null; floors: number[] }) => void;
 }
 
 // Колесико настроек: контекст добавления местоположения + фильтр «Не согласованные».
@@ -24,7 +28,9 @@ export function EstimateFilterSettingsPopover({
   editable,
   onlyUnreconciled,
   onUnreconciledChange,
+  onAssignLocation,
 }: Props) {
+  const [open, setOpen] = useState(false);
   const add = useAddContext(estimateId);
   const addEnabled = useAddEnabled(estimateId);
   const setAddContext = useLocationContextStore((s) => s.setAddContext);
@@ -32,8 +38,17 @@ export function EstimateFilterSettingsPopover({
 
   const activeCount = (editable && addEnabled ? 1 : 0) + (onlyUnreconciled ? 1 : 0);
 
+  // Местоположение выбрано (зона или этажи) и поле этажей валидно — можно назначать.
+  const floorsValid = isValidFloorsInput(add.floorsText);
+  const hasLocation = !!add.zoneId || add.floorsText.trim().length > 0;
+
+  const handleAssign = () => {
+    onAssignLocation?.({ zoneId: add.zoneId, floors: parseFloors(add.floorsText) });
+    setOpen(false);
+  };
+
   const content = (
-    <Space direction="vertical" size="middle" style={{ width: 360 }}>
+    <Space direction="vertical" size="middle" style={{ width: 360, maxWidth: 'calc(100vw - 32px)' }}>
       {editable && (
         <>
           <div>
@@ -53,6 +68,18 @@ export function EstimateFilterSettingsPopover({
           >
             Добавлять в указанное местоположение
           </Checkbox>
+          {onAssignLocation && (
+            <Tooltip title="Выбрать работы чекбоксами и назначить им это местоположение">
+              <Button
+                block
+                icon={<EnvironmentOutlined />}
+                disabled={!hasLocation || !floorsValid}
+                onClick={handleAssign}
+              >
+                Назначить выбранное местоположение
+              </Button>
+            </Tooltip>
+          )}
           <Divider style={{ margin: 0 }} />
         </>
       )}
@@ -64,7 +91,14 @@ export function EstimateFilterSettingsPopover({
   );
 
   return (
-    <Popover trigger="click" placement="bottomRight" title="Настройки фильтров" content={content}>
+    <Popover
+      trigger="click"
+      placement="bottomRight"
+      title="Настройки фильтров"
+      content={content}
+      open={open}
+      onOpenChange={setOpen}
+    >
       <Badge count={activeCount} size="small">
         <Button icon={<SettingOutlined />} />
       </Badge>

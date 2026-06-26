@@ -9,7 +9,6 @@ import { parseFloors } from './components/location';
 import type { ReplicateTargets } from './components/ReplicateWorksModal';
 import type { SaveWorkPayload, SaveMaterialPayload } from './components/CostTypeGroupBlock';
 import { AddCostTypeModal, type CostTypeFormPayload } from './components/AddCostTypeModal';
-import { EditEstimateModal, type EditEstimatePayload } from './components/EditEstimateModal';
 import { buildCostTypeGroups, type CostTypeGroup, type EstimateDetail } from './components/types';
 import { EstimateWorkspace } from './workspace/EstimateWorkspace';
 import type { RateLeafPayload } from './workspace/types';
@@ -35,7 +34,6 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   const { message } = App.useApp();
 
   const [costTypeModalOpen, setCostTypeModalOpen] = useState(false);
-  const [editEstimateOpen, setEditEstimateOpen] = useState(false);
   const [pendingGroups, setPendingGroups] = useState<CostTypeGroup[]>([]);
 
   const estimateId = estimate.id;
@@ -52,16 +50,6 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   // Realtime: изменения коллег (и ИИ) подтягиваются без перезагрузки страницы.
   useEstimateRealtime(estimateId, projectId);
 
-  const editEstimateMutation = useMutation({
-    mutationFn: (payload: EditEstimatePayload) => api.put(`/estimates/${estimateId}`, payload),
-    onSuccess: () => {
-      invalidate();
-      setEditEstimateOpen(false);
-      message.success('Смета обновлена');
-    },
-    onError: (e: Error) => message.error(e.message),
-  });
-
   // Текущий контекст добавления местоположения (с учётом флага «Добавлять в указанное
   // местоположение»; читается на момент мутации, не из замыкания рендера).
   // Точный набор этажей с разрывами → источник истины locations: [{zoneId, floors}].
@@ -77,6 +65,8 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       api.post(`/estimates/${estimateId}/items`, { ...currentAddLocation(), ...payload, costTypeId }),
     onSuccess: () => {
       invalidate();
+      // Новый произвольный «тип» строки мог появиться — обновляем подсказки автодополнения.
+      queryClient.invalidateQueries({ queryKey: ['project-location-types', projectId] });
       message.success('Работа добавлена');
     },
     onError: (e: Error) => message.error(e.message),
@@ -101,6 +91,8 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       api.put(`/estimates/items/${workId}`, payload),
     onSuccess: () => {
       invalidate();
+      // Новый произвольный «тип» строки мог появиться — обновляем подсказки автодополнения.
+      queryClient.invalidateQueries({ queryKey: ['project-location-types', projectId] });
       message.success('Работа обновлена');
     },
     onError: (e: Error) => message.error(e.message),
@@ -156,6 +148,17 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     mutationFn: ({ workIds, materialIds }: { workIds: string[]; materialIds: string[] }) =>
       api.post(`/estimates/${estimateId}/bulk-delete`, { workIds, materialIds }),
     onSuccess: () => invalidate(),
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  // Массовое назначение одного местоположения выбранным работам (перезаписывает locations).
+  const bulkAssignLocationMutation = useMutation({
+    mutationFn: ({ workIds, locations }: { workIds: string[]; locations: { zoneId: string | null; floors: number[] }[] }) =>
+      api.post<{ updated: number }>(`/estimates/${estimateId}/bulk-assign-location`, { workIds, locations }),
+    onSuccess: (res) => {
+      invalidate();
+      message.success(`Местоположение назначено: работ ${res.updated}`);
+    },
     onError: (e: Error) => message.error(e.message),
   });
 
@@ -319,7 +322,6 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         totalItems={totalItems}
         groupCount={groups.length}
         onBack={onBack}
-        onEdit={() => setEditEstimateOpen(true)}
         onAddCostType={() => setCostTypeModalOpen(true)}
         onCreateWork={createWork}
         onUpdateWork={updateWork}
@@ -337,6 +339,8 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
           reassignMaterialsBulkMutation.mutateAsync({ materialIds, itemId }).then(() => undefined)}
         onBulkDelete={(workIds, materialIds) =>
           bulkDeleteMutation.mutateAsync({ workIds, materialIds })}
+        onBulkAssignLocation={(workIds, locations) =>
+          bulkAssignLocationMutation.mutateAsync({ workIds, locations })}
         onReplicate={(sourceWorkIds, targets) =>
           replicateWorksMutation.mutateAsync({ sourceWorkIds, targets }).then(() => undefined)}
         onSetContractor={(costTypeId, contractorId) =>
@@ -352,18 +356,6 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         onCancel={() => setCostTypeModalOpen(false)}
         onSubmit={handleAddCostType}
         loading={setContractorMutation.isPending}
-      />
-
-      <EditEstimateModal
-        open={editEstimateOpen}
-        initialValues={{
-          costCategoryId: estimate.cost_category_id,
-          workType: estimate.work_type,
-          notes: estimate.notes,
-        }}
-        onCancel={() => setEditEstimateOpen(false)}
-        onSubmit={(payload) => editEstimateMutation.mutate(payload)}
-        loading={editEstimateMutation.isPending}
       />
     </div>
   );

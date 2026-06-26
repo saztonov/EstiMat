@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { locationContextSchema } from './location.js';
+import { locationContextSchema, locationEntrySchema } from './location.js';
 
 export const createEstimateSchema = z.object({
   projectId: z.string().uuid(),
@@ -90,6 +90,17 @@ export const bulkConfirmEstimateItemsSchema = z
 // Нормализующая перестановка работ внутри вида: полный список id работ в новом порядке.
 export const reorderEstimateItemsSchema = z.object({
   ids: z.array(z.string().uuid()).min(1, 'Список работ пуст').max(1000, 'Слишком много работ'),
+});
+
+// Массовое назначение одного местоположения набору выбранных работ (перезаписывает locations + зеркало).
+// locations — источник истины (одна запись {zoneId, floors}); очистка локации этой операцией не предусмотрена.
+export const bulkAssignEstimateItemsLocationSchema = z.object({
+  workIds: z
+    .array(z.string().uuid())
+    .min(1, 'Не выбрано ни одной работы')
+    .max(1000, 'Слишком много работ за одно назначение')
+    .transform((ids) => [...new Set(ids)]),
+  locations: z.array(locationEntrySchema).min(1, 'Не выбрано местоположение').max(100),
 });
 
 // === Подрядчик на вид затрат (estimate + cost_type) ===

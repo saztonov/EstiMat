@@ -40,6 +40,17 @@ export const auditChangesSchema = z
   .passthrough();
 export type AuditChanges = z.infer<typeof auditChangesSchema>;
 
+// Готовая к показу строка изменения: подпись поля + значения «до»/«после» как строки.
+// Сервер резолвит UUID в имена (виды работ, расценки, зоны, типы…) и форматирует
+// locations — клиенту остаётся только отрисовать.
+export const auditChangeViewSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  before: z.string().nullable(),
+  after: z.string().nullable(),
+});
+export type AuditChangeView = z.infer<typeof auditChangeViewSchema>;
+
 // Запись истории (read-модель для ленты «История»). action/entityType хранятся как
 // строки в БД — на чтении не валидируем жёстко enum'ом, чтобы пережить legacy-значения.
 export const auditLogEntrySchema = z.object({
@@ -53,6 +64,8 @@ export const auditLogEntrySchema = z.object({
   userName: z.string().nullable().optional(),
   correlationId: z.string().uuid().nullable().optional(),
   changes: auditChangesSchema.nullable(),
+  // Готовые к показу изменения (резолвятся сервером для update/confirm); иначе null.
+  changesView: z.array(auditChangeViewSchema).nullable().optional(),
   createdAt: z.string(),
 });
 export type AuditLogEntry = z.infer<typeof auditLogEntrySchema>;

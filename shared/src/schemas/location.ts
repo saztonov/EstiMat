@@ -26,6 +26,10 @@ export const locationContextSchema = z.object({
   floorFrom: z.number().int().nullable().optional(),
   floorTo: z.number().int().nullable().optional(),
   roomTypeId: z.string().uuid().nullable().optional(),
+  // Произвольный «тип» строки (на всю работу). Сервер upsert'ит его в
+  // project_location_types (уникально на объект) и хранит FK location_type_id.
+  // Пустая строка/null очищает тип. trim — чтобы « Тип 1 » не плодил дублей.
+  locationTypeName: z.string().trim().max(100).nullable().optional(),
 });
 
 // ---------- Зоны объекта ----------

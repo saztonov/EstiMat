@@ -56,6 +56,9 @@ export interface EstimateItem {
   floor_to?: number | null;
   room_type_id?: string | null;
   room_type_name?: string | null;
+  // Произвольный «тип» строки (на всю работу), уникальный в рамках объекта.
+  location_type_id?: string | null;
+  location_type_name?: string | null;
   // Трассировка тиражирования.
   copy_batch_id?: string | null;
   copy_source_item_id?: string | null;

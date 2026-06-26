@@ -25,7 +25,6 @@ interface Props {
   totalItems: number;
   groupCount: number;
   onBack: () => void;
-  onEdit: () => void;
   onAddCostType: () => void;
   /** Инвалидация кэшей сметы — пробрасывается в ИИ-панели для обновления после применения. */
   onEstimateChanged: () => void;
@@ -42,6 +41,7 @@ interface Props {
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
+  onBulkAssignLocation: (workIds: string[], locations: { zoneId: string | null; floors: number[] }[]) => Promise<unknown>;
   onReplicate: (sourceWorkIds: string[], targets: ReplicateTargets) => Promise<void>;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;
@@ -121,6 +121,7 @@ export function EstimateWorkspace(props: Props) {
           onReassignMaterial={props.onReassignMaterial}
           onReassignMaterials={props.onReassignMaterials}
           onBulkDelete={props.onBulkDelete}
+          onBulkAssignLocation={props.onBulkAssignLocation}
           onReplicate={props.onReplicate}
           onSetContractor={props.onSetContractor}
           onClearContractor={props.onClearContractor}
@@ -153,7 +154,6 @@ export function EstimateWorkspace(props: Props) {
         totalItems={totalItems}
         groupCount={groupCount}
         onBack={props.onBack}
-        onEdit={props.onEdit}
         onHistory={() => setHistoryOpen(true)}
       />
 
@@ -163,7 +163,7 @@ export function EstimateWorkspace(props: Props) {
         onClose={() => setHistoryOpen(false)}
       />
 
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: '12px 8px', background: '#f5f5f5' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: '6px 6px', background: '#f5f5f5' }}>
         <Splitter
           style={{ flex: 1, height: '100%' }}
           onResize={(sizes) => setColSizes(panels.map((p) => p.id), sizes)}

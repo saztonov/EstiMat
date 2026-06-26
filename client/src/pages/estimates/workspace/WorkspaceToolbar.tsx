@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router';
 import { Button, Modal, Space, Tooltip, Typography, App } from 'antd';
 import {
   ArrowLeftOutlined,
-  EditOutlined,
   TableOutlined,
   RobotOutlined,
   AppstoreOutlined,
@@ -22,7 +21,6 @@ interface Props {
   totalItems: number;
   groupCount: number;
   onBack: () => void;
-  onEdit: () => void;
   onHistory: () => void;
 }
 
@@ -59,7 +57,6 @@ export function WorkspaceToolbar({
   totalItems,
   groupCount,
   onBack,
-  onEdit,
   onHistory,
 }: Props) {
   const { visibility, toggleArea } = useWorkspaceLayoutStore();
@@ -90,7 +87,9 @@ export function WorkspaceToolbar({
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '8px 12px',
+        // Левый отступ 48px — чтобы «К объекту» и прочее не перекрывались фикс-гамбургером
+        // (position: fixed; top:8; left:8; ~32px) в верхней полосе.
+        padding: '8px 12px 8px 48px',
         background: '#fff',
         borderBottom: '1px solid #f0f0f0',
       }}
@@ -132,7 +131,6 @@ export function WorkspaceToolbar({
       <Tooltip title="История изменений">
         <Button type="text" icon={<HistoryOutlined />} onClick={onHistory} />
       </Tooltip>
-      <Button type="text" icon={<EditOutlined />} onClick={onEdit} />
 
       <span style={{ width: 1, height: 22, background: '#f0f0f0', margin: '0 2px' }} />
 

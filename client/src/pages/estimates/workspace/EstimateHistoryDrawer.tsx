@@ -37,14 +37,27 @@ const ACTION_COLOR: Record<string, string> = {
   ai_apply: 'purple',
 };
 
+// Подписи полей — только для фолбэка (старые/неизвестные записи без серверного changesView).
 const FIELD_LABEL: Record<string, string> = {
   description: 'наименование',
   quantity: 'кол-во',
   unit: 'ед.',
   unit_price: 'цена',
   needs_review: 'согласование',
-  cost_type_id: 'вид работ',
   status: 'статус',
+  sort_order: 'порядок',
+  cost_type_id: 'вид работ',
+  rate_id: 'расценка',
+  cost_category_id: 'категория',
+  room_type_id: 'тип помещения',
+  material_id: 'материал',
+  location_type_id: 'тип',
+  zone_id: 'корпус/зона',
+  floor_from: 'этаж с',
+  floor_to: 'этаж по',
+  locations: 'местоположение',
+  work_type: 'вид работ',
+  notes: 'примечания',
 };
 
 function entityName(e: AuditLogEntry): string | null {
@@ -67,13 +80,24 @@ function describe(e: AuditLogEntry): string {
   return `${who} ${act} ${ent}${name ? `: ${name}` : ''}`;
 }
 
-// Изменённые поля (для update): «поле: старое → новое».
-function changedRows(e: AuditLogEntry): { field: string; before: unknown; after: unknown }[] {
+// Значение для фолбэка: избегаем «[object Object]» для jsonb/массивов.
+function fallbackValue(v: unknown): string {
+  if (v == null) return '—';
+  if (typeof v === 'object') return '…';
+  return String(v);
+}
+
+// Изменённые поля «подпись: старое → новое». Предпочитаем серверный changesView
+// (UUID уже резолвлены в имена, locations отформатирован); иначе — сырой фолбэк.
+function changedRows(e: AuditLogEntry): { label: string; before: string; after: string }[] {
+  if (e.changesView && e.changesView.length > 0) {
+    return e.changesView.map((c) => ({ label: c.label, before: c.before ?? '—', after: c.after ?? '—' }));
+  }
   const fields = e.changes?.changedFields;
   if (!Array.isArray(fields) || e.action !== 'update') return [];
   const before = (e.changes?.before ?? {}) as Record<string, unknown>;
   const after = (e.changes?.after ?? {}) as Record<string, unknown>;
-  return fields.map((f) => ({ field: FIELD_LABEL[f] ?? f, before: before[f], after: after[f] }));
+  return fields.map((f) => ({ label: FIELD_LABEL[f] ?? f, before: fallbackValue(before[f]), after: fallbackValue(after[f]) }));
 }
 
 export function EstimateHistoryDrawer({ estimateId, entityId, title, open, onClose }: Props) {
@@ -101,7 +125,7 @@ export function EstimateHistoryDrawer({ estimateId, entityId, title, open, onClo
                 </div>
                 {changedRows(e).map((c, idx) => (
                   <Typography.Text key={idx} type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                    {c.field}: {String(c.before ?? '—')} → {String(c.after ?? '—')}
+                    {c.label}: {c.before} → {c.after}
                   </Typography.Text>
                 ))}
                 <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
