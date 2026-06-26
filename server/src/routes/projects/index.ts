@@ -71,13 +71,15 @@ async function buildEstimateDetail(fastify: FastifyInstance, estimateId: string)
   const items = await fastify.pool.query(
     `SELECT ei.*, r.name AS rate_name, r.code AS rate_code,
             ct.name AS cost_type_name, cc.name AS cost_category_name,
-            z.name AS zone_name, z.kind AS zone_kind, rt.name AS room_type_name
+            z.name AS zone_name, z.kind AS zone_kind, rt.name AS room_type_name,
+            lt.name AS location_type_name
        FROM estimate_items ei
        LEFT JOIN rates r            ON ei.rate_id = r.id
        LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
        LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
        LEFT JOIN project_zones z    ON ei.zone_id = z.id
        LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
+       LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
       WHERE ei.estimate_id = $1
       ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
                cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
@@ -235,13 +237,15 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                     cc.name AS cost_category_name,
                     z.name  AS zone_name,
                     z.kind  AS zone_kind,
-                    rt.name AS room_type_name
+                    rt.name AS room_type_name,
+                    lt.name AS location_type_name
                FROM estimate_items ei
                LEFT JOIN rates r            ON ei.rate_id = r.id
                LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
                LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
                LEFT JOIN project_zones z    ON ei.zone_id = z.id
                LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
+               LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
                WHERE ei.estimate_id = ANY($1)
                ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
                         cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,

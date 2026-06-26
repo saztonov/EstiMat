@@ -22,7 +22,7 @@ interface Props {
   zones: ZoneNode[];
   /** Объект строки — для автодополнения произвольных «типов» в поповере. */
   projectId: string;
-  onChange: (payload: { locations: LocationEntry[]; locationTypeName: string | null }) => void;
+  onChange: (payload: { locations: LocationEntry[]; locationTypeName?: string | null }) => void;
 }
 
 // Черновик мультилокации из строки: зоны + объединённый набор этажей (одно поле на всю строку).
@@ -145,7 +145,14 @@ export function LocationCell({ work, editable, zones, projectId, onChange }: Pro
   };
 
   const apply = () => {
-    onChange({ locations: draftToLocations(draft), locationTypeName: typeName.trim() || null });
+    // Тип шлём только если он реально изменился относительно read-модели: иначе пустой
+    // (не пришедший с сервера) тип затёр бы сохранённый location_type_id значением null.
+    const nextType = typeName.trim() || null;
+    const currentType = work.location_type_name ?? null;
+    onChange({
+      locations: draftToLocations(draft),
+      ...(nextType !== currentType ? { locationTypeName: nextType } : {}),
+    });
     // Новый тип появится в подсказках — обновим кэш списка типов объекта.
     queryClient.invalidateQueries({ queryKey: ['project-location-types', projectId] });
     setOpen(false);
