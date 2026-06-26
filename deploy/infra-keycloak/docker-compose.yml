@@ -1,0 +1,63 @@
+# Keycloak — корпоративный Identity Provider контура su10 (§9 корп-стандарта).
+# ОТДЕЛЬНЫЙ инфраструктурный compose-проект, НЕ внутри compose портала EstiMat (§4, §9).
+# Разворачивается один раз на хост в /opt/infra/keycloak и обновляется независимо от порталов
+# (deploy-estimat его НЕ трогает).
+#
+#   docker network create edge   # если ещё не создана (общая с infra-nginx и порталами)
+#   cp .env.example .env          # заполнить секреты (НЕ коммитить .env)
+#   docker compose -p keycloak up -d
+#
+# Наружу порты НЕ публикуются: TLS терминирует infra-nginx, обращаясь к keycloak:8080
+# по имени сервиса в сети edge. Management-порт 9000 (health/metrics) — только внутри сети.
+
+services:
+  keycloak:
+    # Pin конкретной поддерживаемой версии (§8/§19 — без latest). Тег задаётся в .env.
+    image: ${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.1}
+    container_name: keycloak
+    restart: unless-stopped
+    # start (без --optimized): официальный образ сам выполняет build при старте по env-конфигу
+    # (+10-20с к старту, но не нужен кастомный образ). Оптимизированный вариант (kc.sh build →
+    # start --optimized через свой Dockerfile/registry, §19) — см. README.
+    command: start
+    environment:
+      # --- БД: отдельная keycloak_db в Yandex Managed PostgreSQL, TLS обязателен (§7, §9) ---
+      KC_DB: postgres
+      KC_DB_URL: ${KC_DB_URL}
+      KC_DB_USERNAME: ${KC_DB_USERNAME}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+
+      # --- Hostname/issuer: публичный домен через HTTPS, админка — на отдельном домене (§9) ---
+      KC_HOSTNAME: ${KC_HOSTNAME}                 # https://auth.su10.ru
+      KC_HOSTNAME_ADMIN: ${KC_HOSTNAME_ADMIN}     # https://auth-admin.su10.ru
+
+      # --- За reverse proxy: TLS терминирует nginx, доверяем X-Forwarded-* (§3) ---
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+
+      # --- Health/metrics на management-порту 9000 (наружу не публикуется, §9/§20) ---
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+
+      # --- Bootstrap-админ (ВРЕМЕННО): после первичной настройки создать постоянного
+      #     админа и удалить bootstrap-учётку, затем убрать эти переменные (§9). ---
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+
+      # Heap внутри memory-лимита контейнера (см. mem_limit ниже).
+      JAVA_OPTS_KC_HEAP: "-XX:MaxRAMPercentage=70"
+
+    # Resource limits (§9). Compose v2 учитывает mem_limit/cpus без swarm.
+    mem_limit: 1536m
+    cpus: 1.5
+
+    networks: [edge]
+
+    # Healthcheck Keycloak требует обращения к management-порту 9000 (/health/ready).
+    # Официальный образ — ubi9-minimal без curl/wget, поэтому встроенный docker healthcheck
+    # хрупок. Надёжный мониторинг доступности вынесен в uptime-проверку OIDC discovery
+    # снаружи (§20, см. README). При желании включить внутренний healthcheck — см. README.
+
+networks:
+  edge:
+    external: true
