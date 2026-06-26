@@ -68,7 +68,9 @@ export function resolveLlmEndpoint(qualifiedModel: string, rt: LlmRuntime): Reso
   }
   return {
     provider: 'openrouter',
-    model,
+    // «OpenRouter (прокси)» хранится как 'openrouter:' без id — модель задаёт прокси,
+    // поэтому подставляем дефолт из env (для прямого OpenRouter в dev — рабочее значение).
+    model: model || config.ai.model,
     baseUrl: config.ai.baseUrl,
     apiKey: config.ai.apiKey,
     enabled: config.ai.enabled,

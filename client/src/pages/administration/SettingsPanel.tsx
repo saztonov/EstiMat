@@ -1,31 +1,31 @@
-import { useState } from 'react';
-import { Button, Checkbox, Input, Radio, Space, Spin, Tag, Typography, App } from 'antd';
-import { DeleteOutlined } from '@ant-design/icons';
+import { Checkbox, Radio, Space, Spin, Tag, Typography, App } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AppSettingsResponse, UpdateAppSettingsInput } from '@estimat/shared';
 import { api } from '../../services/api';
 import { useAppSettings } from '../../hooks/useAppSettings';
 import { getLlmConnection } from '../../services/llm';
 
-// Квалифицировать выбор модели провайдером. Старое «голое» значение → openrouter.
-function qualify(v: string): string {
-  if (!v) return '';
-  return /^(openrouter|lmstudio):/.test(v) ? v : `openrouter:${v}`;
+// Единая опция OpenRouter: конкретная модель на проде задаётся прокси, выбор её в UI не нужен.
+const OPENROUTER_VALUE = 'openrouter:';
+
+// Привести сохранённое значение к опции выбора: любой openrouter (или старое «голое»
+// значение / пусто) → единая опция «OpenRouter (прокси)»; lmstudio:<id> — как есть.
+function toOption(stored: string | undefined): string {
+  const v = (stored ?? '').trim();
+  return v.startsWith('lmstudio:') ? v : OPENROUTER_VALUE;
 }
 
-// Вкладка «Настройки»: глобальные переключатели приложения и выбор моделей ИИ.
+// Вкладка «Настройки»: переключатели приложения и выбор моделей для РД и для чата.
 export function SettingsPanel() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const { data, isLoading } = useAppSettings();
-  const [newModel, setNewModel] = useState('');
 
-  // Каталог моделей LM Studio (для выбора их в качестве модели чата/РД).
+  // Каталог моделей собственного сервера LM Studio (выбираемы наравне с OpenRouter).
   const connQuery = useQuery({ queryKey: ['llm-connection'], queryFn: getLlmConnection, retry: false });
 
   const updateMutation = useMutation({
-    mutationFn: (values: UpdateAppSettingsInput) =>
-      api.put<AppSettingsResponse>('/settings', values),
+    mutationFn: (values: UpdateAppSettingsInput) => api.put<AppSettingsResponse>('/settings', values),
     onSuccess: (res) => {
       queryClient.setQueryData(['app-settings'], res);
       message.success('Настройки сохранены');
@@ -44,55 +44,43 @@ export function SettingsPanel() {
   }
 
   const settings = data?.data;
-  const orModels = settings?.aiModels ?? []; // id моделей OpenRouter
-  const lmModels = connQuery.data?.data.models ?? []; // id моделей LM Studio (каталог)
-  const defaultModel = qualify(settings?.aiModelDefault ?? '');
-  const chatModel = qualify(settings?.aiChatModelDefault ?? '');
+  const lmModels = connQuery.data?.data.models ?? [];
 
-  // Опции выбора: OpenRouter (из aiModels) + LM Studio (из каталога), квалифицированы провайдером.
-  const modelOptions: { value: string; id: string; provider: 'OpenRouter' | 'LM Studio' }[] = [
-    ...orModels.map((id) => ({ value: `openrouter:${id}`, id, provider: 'OpenRouter' as const })),
-    ...lmModels.map((id) => ({ value: `lmstudio:${id}`, id, provider: 'LM Studio' as const })),
+  // Опции выбора: OpenRouter (прокси) + модели LM Studio из каталога.
+  const modelOptions: { value: string; label: string; provider: 'OpenRouter' | 'LM Studio' }[] = [
+    { value: OPENROUTER_VALUE, label: 'OpenRouter (прокси)', provider: 'OpenRouter' },
+    ...lmModels.map((id) => ({ value: `lmstudio:${id}`, label: id, provider: 'LM Studio' as const })),
   ];
 
-  function addModel() {
-    const id = newModel.trim();
-    setNewModel('');
-    if (!id || orModels.includes(id)) return;
-    const next = [...orModels, id];
-    // Первая добавленная модель становится дефолтом РД и чата, если он ещё не задан.
-    const patch: UpdateAppSettingsInput = { aiModels: next };
-    if (!settings?.aiModelDefault) patch.aiModelDefault = `openrouter:${id}`;
-    if (!settings?.aiChatModelDefault) patch.aiChatModelDefault = `openrouter:${id}`;
-    updateMutation.mutate(patch);
-  }
+  const rdSelected = toOption(settings?.aiModelDefault);
+  const chatSelected = toOption(settings?.aiChatModelDefault);
 
-  function removeModel(id: string) {
-    const next = orModels.filter((m) => m !== id);
-    const qid = `openrouter:${id}`;
-    const patch: UpdateAppSettingsInput = { aiModels: next };
-    if (defaultModel === qid) patch.aiModelDefault = next[0] ? `openrouter:${next[0]}` : '';
-    if (chatModel === qid) patch.aiChatModelDefault = next[0] ? `openrouter:${next[0]}` : '';
-    updateMutation.mutate(patch);
-  }
-
-  const renderRadios = (selected: string, onChange: (value: string) => void) => (
-    <Radio.Group value={selected} disabled={updateMutation.isPending} onChange={(e) => onChange(e.target.value)}>
-      <Space direction="vertical">
-        {modelOptions.map((o) => (
-          <Radio key={o.value} value={o.value}>
-            {o.id}{' '}
-            <Tag color={o.provider === 'LM Studio' ? 'geekblue' : 'default'} style={{ marginInlineStart: 4 }}>
-              {o.provider}
-            </Tag>
-          </Radio>
-        ))}
-      </Space>
-    </Radio.Group>
+  const renderColumn = (title: string, selected: string, onPick: (value: string) => void) => (
+    <div style={{ minWidth: 240 }}>
+      <Typography.Title level={5}>{title}</Typography.Title>
+      <Radio.Group
+        value={selected}
+        disabled={updateMutation.isPending}
+        onChange={(e) => onPick(e.target.value)}
+      >
+        <Space direction="vertical">
+          {modelOptions.map((o) => (
+            <Radio key={o.value} value={o.value}>
+              {o.label}
+              {o.provider === 'LM Studio' && (
+                <Tag color="geekblue" style={{ marginInlineStart: 6 }}>
+                  LM Studio
+                </Tag>
+              )}
+            </Radio>
+          ))}
+        </Space>
+      </Radio.Group>
+    </div>
   );
 
   return (
-    <div style={{ padding: '16px 0', maxWidth: 640 }}>
+    <div style={{ padding: '16px 0', maxWidth: 760 }}>
       <Typography.Title level={5} style={{ marginTop: 0 }}>
         Смета
       </Typography.Title>
@@ -108,56 +96,21 @@ export function SettingsPanel() {
         в рабочем пространстве сметы у всех пользователей.
       </Typography.Paragraph>
 
-      <Typography.Title level={5}>Модели OpenRouter</Typography.Title>
+      <Typography.Title level={5}>Модели ИИ</Typography.Title>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 8 }}>
-        Список доступных моделей OpenRouter (id). Модели собственного сервера добавляются на вкладке
-        «Сервер моделей». Ниже отдельно выбираются модель для ИИ-извлечения из РД и для ИИ-чата.
+        Отдельно выбираются модель для ИИ-извлечения из РД и для ИИ-чата. «OpenRouter (прокси)» —
+        запросы идут через прокси, конкретную модель задаёт сам прокси. Модели собственного сервера
+        (LM Studio) появляются после обновления каталога на вкладке «Сервер моделей».
       </Typography.Paragraph>
-      <Space direction="vertical" style={{ width: '100%' }}>
-        {orModels.length === 0 && (
-          <Typography.Text type="secondary">Список моделей OpenRouter пуст — добавьте ниже.</Typography.Text>
+
+      <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
+        {renderColumn('Модель для извлечения РД', rdSelected, (value) =>
+          updateMutation.mutate({ aiModelDefault: value }),
         )}
-        {orModels.map((m) => (
-          <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Typography.Text style={{ flex: 1 }}>{m}</Typography.Text>
-            <Button
-              size="small"
-              type="text"
-              danger
-              icon={<DeleteOutlined />}
-              disabled={updateMutation.isPending}
-              onClick={() => removeModel(m)}
-            />
-          </div>
-        ))}
-      </Space>
-      <Space.Compact style={{ marginTop: 8, width: '100%', maxWidth: 480 }}>
-        <Input
-          placeholder="например, anthropic/claude-opus-4-8"
-          value={newModel}
-          onChange={(e) => setNewModel(e.target.value)}
-          onPressEnter={addModel}
-          disabled={updateMutation.isPending}
-        />
-        <Button onClick={addModel} disabled={updateMutation.isPending || !newModel.trim()}>
-          Добавить
-        </Button>
-      </Space.Compact>
-
-      {modelOptions.length > 0 && (
-        <>
-          <Typography.Title level={5}>Модель для извлечения РД</Typography.Title>
-          {renderRadios(defaultModel, (value) => updateMutation.mutate({ aiModelDefault: value }))}
-
-          <Typography.Title level={5}>Модель для ИИ-чата</Typography.Title>
-          {renderRadios(chatModel, (value) => updateMutation.mutate({ aiChatModelDefault: value }))}
-
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginTop: 12 }}>
-            Выбор определяет, на какой сервер уходит запрос: модели OpenRouter — на OpenRouter/прокси
-            (там модель может задавать сам прокси), модели LM Studio — на собственный сервер.
-          </Typography.Paragraph>
-        </>
-      )}
+        {renderColumn('Модель для ИИ-чата', chatSelected, (value) =>
+          updateMutation.mutate({ aiChatModelDefault: value }),
+        )}
+      </div>
     </div>
   );
 }
