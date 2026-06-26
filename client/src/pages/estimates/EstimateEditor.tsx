@@ -107,11 +107,32 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
-  // Перестановка работ внутри вида (кнопки ↑/↓): шлём полный список id в новом порядке.
+  // Перестановка работ внутри вида (drag за грип): шлём полный список id в новом порядке.
+  // Optimistic — переставляем работы в кэше сразу, иначе строка «прыгает» назад до refetch
+  // (buildCostTypeGroups сохраняет порядок работ как в массиве items, без сортировки внутри группы).
   const reorderWorksMutation = useMutation({
     mutationFn: (ids: string[]) => api.patch(`/estimates/${estimateId}/items/reorder`, { ids }),
-    onSuccess: () => invalidate(),
-    onError: (e: Error) => message.error(e.message),
+    onMutate: async (ids: string[]) => {
+      const key = refetchKeyRef.current;
+      await queryClient.cancelQueries({ queryKey: key });
+      const prev = queryClient.getQueryData<{ data: EstimateDetail }>(key);
+      if (prev?.data) {
+        const byId = new Map(prev.data.items.map((it) => [it.id, it]));
+        const idSet = new Set(ids);
+        let k = 0;
+        const items = prev.data.items.map((it) => {
+          if (!idSet.has(it.id)) return it;
+          return byId.get(ids[k++] as string) ?? it;
+        });
+        queryClient.setQueryData(key, { ...prev, data: { ...prev.data, items } });
+      }
+      return { prev, key };
+    },
+    onError: (e: Error, _ids, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(ctx.key, ctx.prev);
+      message.error(e.message);
+    },
+    onSettled: () => invalidate(),
   });
 
   const createMaterialMutation = useMutation({

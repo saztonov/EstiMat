@@ -24,11 +24,12 @@ import {
   CaretRightOutlined,
   CaretDownOutlined,
   SwapOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
 } from '@ant-design/icons';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { arrayMove } from '@dnd-kit/sortable';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
+import { DragHandle, SortableTableRow, SortableVerticalContext } from '../../../components/dndSortable';
 import { UnitSelect } from '../../../components/UnitSelect';
 import { WorkTreeSelect, type WorkOption } from './WorkTreeSelect';
 import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/estimateSelectionStore';
@@ -538,6 +539,10 @@ export function CostTypeGroupBlock({
   const showArea = useWorkspaceLayoutStore((s) => s.showArea);
   const openSection = useWorkspaceLayoutStore((s) => s.openSection);
 
+  // DnD-перестановка работ внутри вида. Грип и обёртка появляются только в редактируемой смете
+  // вне режима выбора (delete/replicate — там чекбоксы массовых операций).
+  const dndEnabled = editable && !deleteMode && canReorderWorks;
+
   // Контекст вида работ — для активации (клик по шапке/строке) и подсветки.
   const ctx: CostTypeCtx = {
     costTypeId: group.costTypeId,
@@ -636,15 +641,14 @@ export function CostTypeGroupBlock({
     });
   }
 
-  // Переставить работу внутри вида: меняем местами с соседом и шлём полный список id.
-  function moveWork(pos: number, dir: -1 | 1) {
-    const arr = group.works.slice();
-    const j = pos + dir;
-    if (pos < 0 || j < 0 || j >= arr.length) return;
-    const [moved] = arr.splice(pos, 1);
-    if (!moved) return;
-    arr.splice(j, 0, moved);
-    onReorderWorks(arr.map((w) => w.id));
+  // Перетащили работу за грип: вычисляем новый порядок и шлём полный список id.
+  function onWorksDragEnd({ active, over }: DragEndEvent) {
+    if (!over || active.id === over.id) return;
+    const ids = group.works.map((w) => w.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    onReorderWorks(arrayMove(ids, oldIndex, newIndex));
   }
 
   async function doSave(payload: SaveWorkPayload, workId: string | null) {
@@ -710,10 +714,17 @@ export function CostTypeGroupBlock({
   const materialsIndent = leadingWidth ? leadingWidth + 56 + 36 : 0;
 
   const columns: ColumnsType<EstimateItem> = [
+    // Грип-колонка слева (только в режиме DnD). Грип скрыт у черновика и когда работа одна.
+    ...(dndEnabled
+      ? [{
+          title: '', width: 32, align: 'center' as const,
+          render: (_: unknown, r: EstimateItem) =>
+            r.id === DRAFT_ID || group.works.length <= 1 ? null : <DragHandle disabled={!!editing} />,
+        }]
+      : []),
     ...leadingColumns,
-    // Когда есть лидирующие колонки (напр. «Исполнитель» в разделе «Подрядчики»),
-    // ставим колонку раскрытия материалов после них — иначе AntD рисует её самой левой.
-    ...(leadingColumns.length ? [Table.EXPAND_COLUMN] : []),
+    // Колонку раскрытия материалов ставим явно (иначе AntD вставит её самой левой, перед грипом).
+    Table.EXPAND_COLUMN,
     { title: '№', width: 36, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
     {
       title: 'Наименование работы', dataIndex: 'description',
@@ -828,7 +839,7 @@ export function CostTypeGroupBlock({
       : []),
     ...(editable && !deleteMode
       ? [{
-          title: '', width: canReorderWorks ? 116 : 64,
+          title: '', width: 64,
           render: (_: unknown, r: EstimateItem) => {
             if (isRowInEdit(r)) {
               return (
@@ -838,17 +849,8 @@ export function CostTypeGroupBlock({
                 </Space>
               );
             }
-            const pos = group.works.findIndex((w) => w.id === r.id);
             return (
               <Space size={4}>
-                {canReorderWorks && (
-                  <>
-                    <Button type="text" size="small" title="Переместить выше" icon={<ArrowUpOutlined />}
-                      disabled={!!editing || pos <= 0} onClick={() => moveWork(pos, -1)} />
-                    <Button type="text" size="small" title="Переместить ниже" icon={<ArrowDownOutlined />}
-                      disabled={!!editing || pos < 0 || pos >= group.works.length - 1} onClick={() => moveWork(pos, 1)} />
-                  </>
-                )}
                 <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
                   onClick={() => startEditWork(r)} />
                 <Popconfirm title="Удалить работу со всеми материалами?" onConfirm={() => onDeleteWork(r.id)}>
@@ -949,10 +951,16 @@ export function CostTypeGroupBlock({
       </div>
 
       {!(collapsible && collapsed) && (
+        <SortableVerticalContext
+          enabled={dndEnabled}
+          items={group.works.map((w) => w.id)}
+          onDragEnd={onWorksDragEnd}
+        >
         <Table
           rowKey="id"
           size="small"
           className="estimat-compact"
+          components={dndEnabled ? { body: { row: SortableTableRow } } : undefined}
           columns={columns}
           dataSource={rows}
           pagination={false}
@@ -1050,6 +1058,7 @@ export function CostTypeGroupBlock({
             ),
           }}
         />
+        </SortableVerticalContext>
       )}
 
       {editing && (

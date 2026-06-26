@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Modal, Row, Col, Button, Input, Space, Empty, App } from 'antd';
 import {
-  ArrowUpOutlined,
-  ArrowDownOutlined,
   EditOutlined,
   CheckOutlined,
   CloseOutlined,
   PlusOutlined,
 } from '@ant-design/icons';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { arrayMove } from '@dnd-kit/sortable';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { DragHandle, SortableItem, SortableVerticalContext } from '../../components/dndSortable';
 
 interface Category { id: string; name: string }
 interface CostType { id: string; name: string; category_id: string }
@@ -75,8 +76,23 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
   });
   const reorderCategories = useMutation({
     mutationFn: (ids: string[]) => api.patch('/rates/categories/reorder', { ids }),
-    onSuccess: () => invalidate(),
-    onError: onErr,
+    // Optimistic: переставляем категории в кэше сразу, иначе строка «прыгает» назад до refetch.
+    onMutate: async (ids: string[]) => {
+      const key = ['rate-categories'];
+      await queryClient.cancelQueries({ queryKey: key });
+      const prev = queryClient.getQueryData<{ data: Category[] }>(key);
+      if (prev?.data) {
+        const byId = new Map(prev.data.map((c) => [c.id, c]));
+        const data = ids.map((id) => byId.get(id)).filter((c): c is Category => !!c);
+        queryClient.setQueryData(key, { ...prev, data });
+      }
+      return { prev, key };
+    },
+    onError: (err: Error, _ids, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(ctx.key, ctx.prev);
+      onErr(err);
+    },
+    onSettled: () => invalidate(),
   });
 
   const createType = useMutation({
@@ -93,29 +109,45 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
   const reorderTypes = useMutation({
     mutationFn: ({ categoryId, ids }: { categoryId: string; ids: string[] }) =>
       api.patch('/rates/types/reorder', { categoryId, ids }),
-    onSuccess: () => invalidate(),
-    onError: onErr,
+    // Optimistic: переставляем виды выбранной категории внутри плоского кэша всех видов.
+    onMutate: async ({ categoryId, ids }: { categoryId: string; ids: string[] }) => {
+      const key = ['rate-types-all'];
+      await queryClient.cancelQueries({ queryKey: key });
+      const prev = queryClient.getQueryData<{ data: CostType[] }>(key);
+      if (prev?.data) {
+        const byId = new Map(prev.data.map((t) => [t.id, t]));
+        const idSet = new Set(ids);
+        let k = 0;
+        const data = prev.data.map((t) =>
+          t.category_id === categoryId && idSet.has(t.id) ? (byId.get(ids[k++] as string) ?? t) : t,
+        );
+        queryClient.setQueryData(key, { ...prev, data });
+      }
+      return { prev, key };
+    },
+    onError: (err: Error, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(ctx.key, ctx.prev);
+      onErr(err);
+    },
+    onSettled: () => invalidate(),
   });
 
-  // Перестановка соседей: меняем местами и шлём полный список id в новом порядке.
-  function moveCategory(pos: number, dir: -1 | 1) {
-    const arr = categories.slice();
-    const j = pos + dir;
-    if (pos < 0 || j < 0 || j >= arr.length) return;
-    const [moved] = arr.splice(pos, 1);
-    if (!moved) return;
-    arr.splice(j, 0, moved);
-    reorderCategories.mutate(arr.map((c) => c.id));
+  // Перетащили строку за грип: вычисляем новый порядок и шлём полный список id.
+  function onCategoryDragEnd({ active, over }: DragEndEvent) {
+    if (!over || active.id === over.id) return;
+    const ids = categories.map((c) => c.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    reorderCategories.mutate(arrayMove(ids, oldIndex, newIndex));
   }
-  function moveType(pos: number, dir: -1 | 1) {
-    if (!selectedCategoryId) return;
-    const arr = types.slice();
-    const j = pos + dir;
-    if (pos < 0 || j < 0 || j >= arr.length) return;
-    const [moved] = arr.splice(pos, 1);
-    if (!moved) return;
-    arr.splice(j, 0, moved);
-    reorderTypes.mutate({ categoryId: selectedCategoryId, ids: arr.map((t) => t.id) });
+  function onTypeDragEnd({ active, over }: DragEndEvent) {
+    if (!selectedCategoryId || !over || active.id === over.id) return;
+    const ids = types.map((t) => t.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    reorderTypes.mutate({ categoryId: selectedCategoryId, ids: arrayMove(ids, oldIndex, newIndex) });
   }
 
   function commitRename() {
@@ -126,20 +158,20 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
     else renameType.mutate({ id: editing.id, name });
   }
 
-  // Строка списка: ↑ ↓ название [✎] либо инлайн-редактор названия.
+  // Строка списка: ⠿ название [✎] либо инлайн-редактор названия.
   function renderRow(
     kind: 'cat' | 'type',
     row: { id: string; name: string },
-    pos: number,
-    count: number,
-    onMove: (pos: number, dir: -1 | 1) => void,
     selected?: boolean,
     onSelect?: () => void,
   ) {
     const isEditing = editing?.kind === kind && editing.id === row.id;
+    const pending = kind === 'cat' ? reorderCategories.isPending : reorderTypes.isPending;
     return (
-      <div
+      <SortableItem
         key={row.id}
+        id={row.id}
+        disabled={isEditing || pending}
         onClick={onSelect}
         style={{
           display: 'flex',
@@ -151,10 +183,7 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
           background: selected ? '#e6f4ff' : undefined,
         }}
       >
-        <Button type="text" size="small" title="Выше" icon={<ArrowUpOutlined />}
-          disabled={pos <= 0} onClick={(e) => { e.stopPropagation(); onMove(pos, -1); }} />
-        <Button type="text" size="small" title="Ниже" icon={<ArrowDownOutlined />}
-          disabled={pos >= count - 1} onClick={(e) => { e.stopPropagation(); onMove(pos, 1); }} />
+        <DragHandle disabled={isEditing || pending} />
         {isEditing ? (
           <Space.Compact style={{ flex: 1 }} onClick={(e) => e.stopPropagation()}>
             <Input
@@ -174,7 +203,7 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
               onClick={(e) => { e.stopPropagation(); setEditing({ kind, id: row.id, value: row.name }); }} />
           </>
         )}
-      </div>
+      </SortableItem>
     );
   }
 
@@ -195,10 +224,15 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
             {categories.length === 0 ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Нет категорий" />
             ) : (
-              categories.map((c, i) =>
-                renderRow('cat', c, i, categories.length, moveCategory,
-                  c.id === selectedCategoryId, () => setSelectedCategoryId(c.id)),
-              )
+              <SortableVerticalContext
+                enabled
+                items={categories.map((c) => c.id)}
+                onDragEnd={onCategoryDragEnd}
+              >
+                {categories.map((c) =>
+                  renderRow('cat', c, c.id === selectedCategoryId, () => setSelectedCategoryId(c.id)),
+                )}
+              </SortableVerticalContext>
             )}
           </div>
           <Space.Compact style={{ width: '100%', marginTop: 8 }}>
@@ -228,7 +262,9 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
             ) : types.length === 0 ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Нет видов работ" />
             ) : (
-              types.map((t, i) => renderRow('type', t, i, types.length, moveType))
+              <SortableVerticalContext enabled items={types.map((t) => t.id)} onDragEnd={onTypeDragEnd}>
+                {types.map((t) => renderRow('type', t))}
+              </SortableVerticalContext>
             )}
           </div>
           <Space.Compact style={{ width: '100%', marginTop: 8 }}>
