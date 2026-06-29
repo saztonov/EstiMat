@@ -41,26 +41,31 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
-        const { rows: work } = await client.query('SELECT estimate_id FROM estimate_items WHERE id = $1', [request.params.itemId]);
+        const { rows: work } = await client.query('SELECT estimate_id, quantity FROM estimate_items WHERE id = $1', [request.params.itemId]);
         if (work.length === 0) {
           await client.query('ROLLBACK');
           return reply.status(404).send({ error: 'Работа не найдена' });
         }
         const estimateId = work[0].estimate_id as string;
+        // Коэффициент расхода: если задан — количество = qtyRatio × объём работы (сервер — источник
+        // истины); иначе берём ручное quantity. round(…, 4) — как при автодобавлении по расценке.
+        const qtyRatio = body.qtyRatio ?? null;
+        const quantity = qtyRatio != null ? roundQty(qtyRatio * Number(work[0].quantity)) : body.quantity;
         const { rows } = await client.query(
           `INSERT INTO estimate_materials
-             (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status, created_by, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING *`,
+             (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status, qty_ratio, created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11) RETURNING *`,
           [
             request.params.itemId,
             estimateId,
             body.materialId ?? null,
             body.description,
-            body.quantity,
+            quantity,
             body.unit,
             body.unitPrice,
             body.sortOrder,
             body.status,
+            qtyRatio,
             request.currentUser.id,
           ],
         );
@@ -94,7 +99,6 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
 
       if (body.materialId !== undefined) { sets.push(`material_id = $${i++}`); values.push(body.materialId); fields.push('material_id'); }
       if (body.description !== undefined) { sets.push(`description = $${i++}`); values.push(body.description); fields.push('description'); }
-      if (body.quantity !== undefined) { sets.push(`quantity = $${i++}`); values.push(body.quantity); fields.push('quantity'); }
       if (body.unit !== undefined) { sets.push(`unit = $${i++}`); values.push(body.unit); fields.push('unit'); }
       if (body.unitPrice !== undefined) { sets.push(`unit_price = $${i++}`); values.push(body.unitPrice); fields.push('unit_price'); }
       if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); fields.push('sort_order'); }
@@ -102,9 +106,6 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
       // Снятие «не согласовано»: явный needsReview либо подтверждение материала (status='confirmed').
       if (body.needsReview !== undefined) { sets.push(`needs_review = $${i++}`); values.push(body.needsReview); fields.push('needs_review'); }
       else if (body.status === 'confirmed') { sets.push('needs_review = false'); fields.push('needs_review'); }
-
-      if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
-      sets.push(`updated_by = $${i++}`); values.push(request.currentUser.id);
 
       const client = await fastify.pool.connect();
       try {
@@ -123,6 +124,29 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
             data: oldRows[0],
           });
         }
+
+        // Коэффициент расхода и количество (нужен объём работы — берём внутри транзакции).
+        // Трогаем quantity только когда правка реально про коэф-т или количество — чтобы
+        // чистое «согласование» (needsReview/status) не пересчитывало и не зашумляло журнал.
+        if (body.qtyRatio !== undefined || body.quantity !== undefined) {
+          // Эффективный коэф-т: новый из body или уже сохранённый. Если не NULL — quantity
+          // считает сервер (qtyRatio × объём работы); иначе берём ручное quantity из body.
+          const effRatio = body.qtyRatio !== undefined ? body.qtyRatio : (oldRows[0].qty_ratio as number | null);
+          if (body.qtyRatio !== undefined) { sets.push(`qty_ratio = $${i++}`); values.push(body.qtyRatio); fields.push('qty_ratio'); }
+          if (effRatio != null) {
+            const { rows: work } = await client.query('SELECT quantity FROM estimate_items WHERE id = $1', [oldRows[0].item_id]);
+            const quantity = roundQty(Number(effRatio) * Number(work[0]?.quantity ?? 0));
+            sets.push(`quantity = $${i++}`); values.push(quantity); fields.push('quantity');
+          } else if (body.quantity !== undefined) {
+            sets.push(`quantity = $${i++}`); values.push(body.quantity); fields.push('quantity');
+          }
+        }
+
+        if (fields.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Нет данных для обновления' });
+        }
+        sets.push(`updated_by = $${i++}`); values.push(request.currentUser.id);
         values.push(request.params.id);
         const { rows } = await client.query(`UPDATE estimate_materials SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, values);
         const estimateId = rows[0].estimate_id as string;
@@ -293,6 +317,11 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
       }
     },
   );
+}
+
+// Округление количества материала до 4 знаков — как ROUND(…, 4) при автодобавлении по расценке.
+function roundQty(n: number): number {
+  return Math.round(n * 10000) / 10000;
 }
 
 // Снимок изменённых полей для журнала: before/after по затронутым колонкам.

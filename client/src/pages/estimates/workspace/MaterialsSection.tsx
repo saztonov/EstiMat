@@ -134,6 +134,7 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
       unit: m.unit,
       quantity: 1,
       unitPrice: Number(m.unit_price ?? 0),
+      qtyRatio: null,
     });
   }
 

@@ -57,6 +57,9 @@ export const createEstimateMaterialSchema = z.object({
   unitPrice: z.number().min(0, 'Цена не может быть отрицательной'),
   sortOrder: z.number().int().default(0),
   status: estimateMaterialStatusSchema.default('confirmed'),
+  // Коэффициент расхода: если задан — quantity = qtyRatio × объём работы (считает сервер);
+  // null/не передан — количество вводится вручную (берётся quantity).
+  qtyRatio: z.number().positive('Коэффициент должен быть больше 0').nullable().optional(),
 }).merge(sourceTraceSchema);
 
 export const updateEstimateMaterialSchema = createEstimateMaterialSchema.partial().merge(occSchema);

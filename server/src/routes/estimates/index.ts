@@ -430,10 +430,10 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         if (body.rateId) {
           const inserted = await client.query(
             `INSERT INTO estimate_materials
-               (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status, created_by, updated_by)
+               (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status, qty_ratio, created_by, updated_by)
              SELECT $1, $2, mc.id, mc.name,
                     ROUND($3::numeric * rm.qty_ratio, 4), mc.unit,
-                    COALESCE(mc.unit_price, 0), rm.sort_order, 'suggested', $5, $5
+                    COALESCE(mc.unit_price, 0), rm.sort_order, 'suggested', rm.qty_ratio, $5, $5
              FROM rate_materials rm
              JOIN material_catalog mc ON mc.id = rm.material_id
              WHERE rm.rate_id = $4 AND mc.is_active
@@ -550,6 +550,43 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         userId: request.currentUser.id,
         changes: diffChanges(oldRows[0], rows[0], fields),
       });
+
+      // Авто-синхронизация количества материалов: при изменении объёма работы пересчитываем
+      // кол-во материалов с заданным коэф-том (quantity = коэф × объём). Материалы без коэф-та
+      // (ручное количество) не трогаем. total/version/итог сметы следуют через триггеры.
+      if (body.quantity !== undefined && Number(oldRows[0].quantity) !== Number(rows[0].quantity)) {
+        const { rows: recalced } = await client.query(
+          `WITH before AS (
+             SELECT id, quantity FROM estimate_materials
+              WHERE item_id = $1 AND qty_ratio IS NOT NULL FOR UPDATE
+           )
+           UPDATE estimate_materials em
+              SET quantity = ROUND(em.qty_ratio * $2::numeric, 4), updated_by = $3
+             FROM before
+            WHERE em.id = before.id
+           RETURNING em.id, em.quantity, before.quantity AS old_quantity`,
+          [rows[0].id, rows[0].quantity, request.currentUser.id],
+        );
+        if (recalced.length) {
+          await recordAuditBatch(
+            client,
+            recalced.map((m) => ({
+              estimateId: rows[0].estimate_id,
+              projectId: rows[0].project_id,
+              entityType: 'estimate_material' as const,
+              entityId: m.id as string,
+              action: 'update' as const,
+              userId: request.currentUser.id,
+              changes: {
+                before: { quantity: m.old_quantity },
+                after: { quantity: m.quantity },
+                changedFields: ['quantity'],
+                reason: 'work_quantity_changed',
+              },
+            })),
+          );
+        }
+      }
       await client.query('COMMIT');
       await emit('item_updated', rows[0].estimate_id, rows[0].project_id, request.currentUser.id, { auditLogId: auditId });
       return { data: rows[0] };

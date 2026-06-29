@@ -10,6 +10,9 @@ export interface EstimateMaterial {
   unit_price: string;
   total: string;
   sort_order?: number;
+  /** Коэффициент расхода: если задан, кол-во = коэф × объём работы (держится сервером);
+   *  null — ручное количество. Числовой, приходит строкой из NUMERIC. */
+  qty_ratio?: string | null;
   material_name: string | null;
   /** 'suggested' — добавлен автоматически по типовому набору расценки («предложение»),
    *  требует подтверждения ✓ или удаления ✗; 'confirmed' — подтверждён. */

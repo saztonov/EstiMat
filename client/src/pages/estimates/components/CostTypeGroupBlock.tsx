@@ -101,6 +101,8 @@ export interface SaveMaterialPayload {
   unit: string;
   quantity: number;
   unitPrice: number;
+  // Коэффициент расхода: число — кол-во считает сервер (коэф × объём работы); null — ручное кол-во.
+  qtyRatio: number | null;
   // OCC: версия материала на момент открытия формы.
   expectedVersion?: number | null;
 }
@@ -126,6 +128,9 @@ interface MaterialEdit {
   unit: string;
   quantity: number;
   unitPrice: number;
+  // Коэффициент расхода: число — кол-во вычисляется (коэф × объём работы), поле кол-ва заблокировано;
+  // null — ручной ввод количества.
+  qtyRatio: number | null;
   // OCC: версия материала на момент открытия формы.
   expectedVersion?: number | null;
 }
@@ -181,6 +186,9 @@ function MaterialsSubTableImpl({
     enabled: !!editing,
   });
 
+  // Объём работы — база для пересчёта количества материала с коэф-том.
+  const workQty = Number(work.quantity);
+
   const rows: EstimateMaterial[] = useMemo(() => {
     const list = work.materials.map((m) =>
       editing && editing.materialId === m.id
@@ -192,6 +200,7 @@ function MaterialsSubTableImpl({
             quantity: String(editing.quantity),
             unit_price: String(editing.unitPrice),
             total: String(editing.quantity * editing.unitPrice),
+            qty_ratio: editing.qtyRatio != null ? String(editing.qtyRatio) : null,
           }
         : m,
     );
@@ -205,6 +214,7 @@ function MaterialsSubTableImpl({
         quantity: String(editing.quantity),
         unit_price: String(editing.unitPrice),
         total: String(editing.quantity * editing.unitPrice),
+        qty_ratio: editing.qtyRatio != null ? String(editing.qtyRatio) : null,
         material_name: null,
         status: 'confirmed',
       });
@@ -254,6 +264,7 @@ function MaterialsSubTableImpl({
       unit,
       quantity: editing.quantity,
       unitPrice: editing.unitPrice,
+      qtyRatio: editing.qtyRatio,
       expectedVersion: editing.expectedVersion,
     };
     setSaving(true);
@@ -344,9 +355,36 @@ function MaterialsSubTableImpl({
           <UnitSelect size="small" style={{ width: '100%' }} value={editing.unit || undefined} onChange={(val) => setEditing({ ...editing, unit: val ?? '' })} />
         ) : v,
     },
+    { title: 'Коэф.', dataIndex: 'qty_ratio', width: 76, align: 'center',
+      // Коэффициент расхода: задан → кол-во = коэф × объём работы (поле кол-ва блокируется);
+      // пусто → ручной ввод количества.
+      render: (v: string | null, r) =>
+        isRowInEdit(r) && editing ? (
+          <InputNumber
+            size="small"
+            min={0}
+            step={0.01}
+            decimalSeparator=","
+            placeholder="—"
+            style={{ width: '100%' }}
+            value={editing.qtyRatio ?? undefined}
+            onChange={(val) => {
+              const ratio = val == null || Number(val) <= 0 ? null : Number(val);
+              setEditing({
+                ...editing,
+                qtyRatio: ratio,
+                // При заданном коэф-те кол-во вычисляется сразу (для отображения суммы);
+                // сервер пересчитает авторитетно. При очистке кол-во остаётся прежним (ручной ввод).
+                quantity: ratio != null ? ratio * workQty : editing.quantity,
+              });
+            }}
+            onPressEnter={commit}
+          />
+        ) : v != null ? Number(v).toLocaleString('ru-RU') : '—',
+    },
     { title: 'Кол-во', dataIndex: 'quantity', width: 76, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
-          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
+          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} disabled={editing.qtyRatio != null} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
         ) : <span className="estimat-qty-chip">{Number(v).toLocaleString('ru-RU')}</span>,
     },
     ...(showPrices
@@ -388,7 +426,7 @@ function MaterialsSubTableImpl({
             return (
               <Space size={4}>
                 <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
-                  onClick={() => setEditing({ materialId: r.id, refMaterialId: r.material_id, description: r.description, unit: r.unit, quantity: Number(r.quantity), unitPrice: Number(r.unit_price), expectedVersion: r.version })} />
+                  onClick={() => setEditing({ materialId: r.id, refMaterialId: r.material_id, description: r.description, unit: r.unit, quantity: Number(r.quantity), unitPrice: Number(r.unit_price), qtyRatio: r.qty_ratio != null ? Number(r.qty_ratio) : null, expectedVersion: r.version })} />
                 {reassignBtn(r)}
                 <Popconfirm title="Удалить материал?" onConfirm={() => onDelete(r.id)}>
                   <Button type="text" size="small" danger disabled={!!editing} icon={<DeleteOutlined />} />
@@ -399,7 +437,7 @@ function MaterialsSubTableImpl({
         }]
       : []),
   ], [
-    editing, saving, nameOptions, materialsData, editable, deleteMode, showPrices,
+    editing, saving, nameOptions, materialsData, editable, deleteMode, showPrices, workQty,
     onConfirm, onDelete, onReassign, onUpdate, onCreate, works, work.id,
   ]);
 
@@ -434,7 +472,7 @@ function MaterialsSubTableImpl({
           size="small"
           icon={<PlusOutlined />}
           disabled={!!editing}
-          onClick={() => setEditing({ materialId: null, refMaterialId: null, description: '', unit: '', quantity: 1, unitPrice: 0 })}
+          onClick={() => setEditing({ materialId: null, refMaterialId: null, description: '', unit: '', quantity: 1, unitPrice: 0, qtyRatio: null })}
           style={{ marginTop: 4 }}
         >
           Материал
