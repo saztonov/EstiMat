@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Badge, Button, Checkbox, Divider, Popover, Space, Switch, Tooltip, Typography } from 'antd';
+import { Badge, Button, Checkbox, Divider, Popover, Space, Tooltip, Typography } from 'antd';
 import { EnvironmentOutlined, SettingOutlined } from '@ant-design/icons';
 import {
   useLocationContextStore,
@@ -14,20 +14,16 @@ interface Props {
   zones: ZoneNode[];
   /** Доступен ли контекст добавления (только при редактируемой смете). */
   editable: boolean;
-  onlyUnreconciled: boolean;
-  onUnreconciledChange: (v: boolean) => void;
   /** Запустить режим массового назначения выбранного местоположения работам.
    *  Передаётся только при наличии прав (admin/engineer) — иначе кнопка скрыта. */
   onAssignLocation?: (loc: { zoneId: string | null; floors: number[] }) => void;
 }
 
-// Колесико настроек: контекст добавления местоположения + фильтр «Не согласованные».
+// Колесико: контекст добавления местоположения + массовое назначение выбранным работам.
 export function EstimateFilterSettingsPopover({
   estimateId,
   zones,
   editable,
-  onlyUnreconciled,
-  onUnreconciledChange,
   onAssignLocation,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -36,7 +32,8 @@ export function EstimateFilterSettingsPopover({
   const setAddContext = useLocationContextStore((s) => s.setAddContext);
   const setAddEnabled = useLocationContextStore((s) => s.setAddEnabled);
 
-  const activeCount = (editable && addEnabled ? 1 : 0) + (onlyUnreconciled ? 1 : 0);
+  // Бейдж на кнопке — количество указанных местоположений (зона), без учёта этажей.
+  const addLocCount = add.zoneId ? 1 : 0;
 
   // Местоположение выбрано (зона или этажи) и поле этажей валидно — можно назначать.
   const floorsValid = isValidFloorsInput(add.floorsText);
@@ -80,13 +77,8 @@ export function EstimateFilterSettingsPopover({
               </Button>
             </Tooltip>
           )}
-          <Divider style={{ margin: 0 }} />
         </>
       )}
-      <Space size={6}>
-        <Switch size="small" checked={onlyUnreconciled} onChange={onUnreconciledChange} />
-        <span style={{ fontSize: 13, color: '#595959' }}>Не согласованные</span>
-      </Space>
     </Space>
   );
 
@@ -94,12 +86,12 @@ export function EstimateFilterSettingsPopover({
     <Popover
       trigger="click"
       placement="bottomRight"
-      title="Настройки фильтров"
+      title="Назначение местоположения для добавляемых работ"
       content={content}
       open={open}
       onOpenChange={setOpen}
     >
-      <Badge count={activeCount} size="small">
+      <Badge count={addLocCount} size="small">
         <Button icon={<SettingOutlined />} />
       </Badge>
     </Popover>

@@ -1,4 +1,4 @@
-import { Badge, Button, Popover, Select, Input, Segmented, Space, Typography, Divider } from 'antd';
+import { Badge, Button, Popover, Select, Input, Segmented, Space, Switch, Typography, Divider } from 'antd';
 import { FilterOutlined } from '@ant-design/icons';
 import { useLocationContextStore } from '../../../store/locationContextStore';
 import { type ZoneNode, flattenZones, ZONE_KIND_LABEL, isValidFloorsInput } from '../components/location';
@@ -7,11 +7,14 @@ interface Props {
   zones: ZoneNode[];
   // Произвольные «типы» строк, присутствующие в смете (id → подпись).
   typeOptions: { value: string; label: string }[];
+  // Фильтр «Не согласованные» (состояние держит SmetaPanel).
+  onlyUnreconciled: boolean;
+  onUnreconciledChange: (v: boolean) => void;
 }
 
 // Расширенный множественный фильтр локаций (срезы: «все корпуса 2,3 по этажам»),
-// плюс отбор по типу строки и по типу объёма (осн/доп).
-export function LocationFilterPopover({ zones, typeOptions }: Props) {
+// плюс отбор по типу строки, по типу объёма (осн/доп) и по согласованности.
+export function LocationFilterPopover({ zones, typeOptions, onlyUnreconciled, onUnreconciledChange }: Props) {
   const filterZoneIds = useLocationContextStore((s) => s.filterZoneIds);
   const filterFloorsText = useLocationContextStore((s) => s.filterFloorsText);
   const filterLocationTypeIds = useLocationContextStore((s) => s.filterLocationTypeIds);
@@ -29,7 +32,8 @@ export function LocationFilterPopover({ zones, typeOptions }: Props) {
     filterZoneIds.length +
     (filterFloorsText.trim() ? 1 : 0) +
     filterLocationTypeIds.length +
-    (filterVolumeType !== 'all' ? 1 : 0);
+    (filterVolumeType !== 'all' ? 1 : 0) +
+    (onlyUnreconciled ? 1 : 0);
 
   const content = (
     <Space direction="vertical" size="middle" style={{ width: 320 }}>
@@ -85,8 +89,19 @@ export function LocationFilterPopover({ zones, typeOptions }: Props) {
           />
         </div>
       </div>
+      <Space size={6}>
+        <Switch size="small" checked={onlyUnreconciled} onChange={onUnreconciledChange} />
+        <span style={{ fontSize: 13, color: '#595959' }}>Не согласованные</span>
+      </Space>
       <Divider style={{ margin: 0 }} />
-      <Button size="small" disabled={activeCount === 0} onClick={clearFilter}>
+      <Button
+        size="small"
+        disabled={activeCount === 0}
+        onClick={() => {
+          clearFilter();
+          onUnreconciledChange(false);
+        }}
+      >
         Сбросить фильтр
       </Button>
     </Space>

@@ -98,11 +98,6 @@ export interface ItemContractor {
   effective_qty: string | number;
 }
 
-/** Есть ли в работе несогласованные позиции (сама работа или её материалы). */
-export function hasUnreconciled(item: EstimateItem): boolean {
-  return !!item.needs_review || item.materials.some((m) => m.needs_review);
-}
-
 // Подрядчик на вид затрат (estimate + cost_type)
 export interface EstimateContractor {
   cost_type_id: string;

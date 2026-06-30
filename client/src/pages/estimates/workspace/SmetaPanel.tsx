@@ -24,7 +24,7 @@ import { LocationFilterPopover } from './LocationFilterPopover';
 import { EstimateFilterSettingsPopover } from './EstimateFilterSettingsPopover';
 import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
-import { formatMoney, hasUnreconciled } from '../components/types';
+import { formatMoney } from '../components/types';
 import { formatLocationsLabel, parseFloors } from '../components/location';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useEstimateExpandStore, typeKeyOf } from '../../../store/estimateExpandStore';
@@ -340,7 +340,7 @@ export function SmetaPanel({
       .map((g) => ({
         ...g,
         works: g.works.filter(
-          (w) => (!onlyUnreconciled || hasUnreconciled(w)) && (!locationActive || matchesLocation(w)),
+          (w) => (!onlyUnreconciled || !!w.needs_review) && (!locationActive || matchesLocation(w)),
         ),
       }))
       .filter((g) => g.works.length > 0);
@@ -844,15 +844,20 @@ export function SmetaPanel({
               options={typeOptions}
               style={{ width: 240 }}
             />
-            <LocationFilterPopover zones={zonesData?.data.roots ?? []} typeOptions={locationTypeOptions} />
-            <EstimateFilterSettingsPopover
-              estimateId={estimateId}
+            <LocationFilterPopover
               zones={zonesData?.data.roots ?? []}
-              editable={editable}
+              typeOptions={locationTypeOptions}
               onlyUnreconciled={onlyUnreconciled}
               onUnreconciledChange={setOnlyUnreconciled}
-              onAssignLocation={canBulkDelete ? startAssignLocation : undefined}
             />
+            {editable && (
+              <EstimateFilterSettingsPopover
+                estimateId={estimateId}
+                zones={zonesData?.data.roots ?? []}
+                editable={editable}
+                onAssignLocation={canBulkDelete ? startAssignLocation : undefined}
+              />
+            )}
           </Space>
         ) : undefined
       }
