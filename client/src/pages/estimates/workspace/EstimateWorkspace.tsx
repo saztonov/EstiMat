@@ -37,6 +37,7 @@ interface Props {
   onDeleteMaterial: (materialId: string) => void;
   onConfirmMaterial: (materialId: string) => void;
   onConfirmWork: (workId: string) => void;
+  onToggleVolumeType: (itemId: string, current: 'main' | 'additional') => void;
   onBulkConfirm: (workIds: string[], materialIds: string[]) => Promise<void>;
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
@@ -117,6 +118,7 @@ export function EstimateWorkspace(props: Props) {
           onDeleteMaterial={props.onDeleteMaterial}
           onConfirmMaterial={props.onConfirmMaterial}
           onConfirmWork={props.onConfirmWork}
+          onToggleVolumeType={props.onToggleVolumeType}
           onBulkConfirm={props.onBulkConfirm}
           onReassignMaterial={props.onReassignMaterial}
           onReassignMaterials={props.onReassignMaterials}

@@ -76,6 +76,8 @@ export interface EstimateItem {
   my_effective_qty?: string | number | null;
   my_assigned_qty?: string | null;
   my_assigned_percent?: string | null;
+  // Тип объёма строки: 'main' (осн) / 'additional' (доп). undefined трактуется как 'main'.
+  volume_type?: 'main' | 'additional';
   // OCC: версия строки, снимается при открытии формы редактирования; растёт при каждом UPDATE.
   version?: number;
   // Аудит строки (приходит с сервера: даты + денормализованные имена создателя/редактора).

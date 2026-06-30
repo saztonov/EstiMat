@@ -19,6 +19,7 @@ import {
   bulkConfirmEstimateItemsSchema,
   bulkAssignEstimateItemsLocationSchema,
   reorderEstimateItemsSchema,
+  setEstimateItemsVolumeTypeSchema,
   replicateItemsSchema,
   type EstimateChangeReason,
 } from '@estimat/shared';
@@ -637,6 +638,76 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // PATCH /api/estimates/:id/items/volume-type — батч-переключение типа объёма (осн/доп).
+  // Ленивая запись очереди тумблеров: last-write-wins, БЕЗ OCC (expectedVersion не нужен).
+  // SET LOCAL estimat.skip_version_bump='on' → этот UPDATE не поднимает version, чтобы чужая
+  // открытая форма правки другого поля той же строки не словила ложный 409 при сохранении.
+  fastify.patch<{ Params: { id: string } }>(
+    '/:id/items/volume-type',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const estimateId = z.string().uuid().safeParse(request.params.id);
+      if (!estimateId.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
+      const body = setEstimateItemsVolumeTypeSchema.parse(request.body);
+      const eid = estimateId.data;
+
+      // Дедуп по id — последнее значение в батче побеждает.
+      const desired = new Map<string, 'main' | 'additional'>();
+      for (const it of body.items) desired.set(it.id, it.volumeType);
+      const ids = [...desired.keys()];
+      const vts = [...desired.values()];
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SET LOCAL estimat.skip_version_bump = 'on'");
+        // Снимок старых значений + UPDATE только реально изменившихся (before/after для журнала).
+        const { rows } = await client.query(
+          `WITH input AS (
+             SELECT id, volume_type FROM unnest($2::uuid[], $3::text[]) AS t(id, volume_type)
+           ),
+           snapshot AS (
+             SELECT ei.id, ei.volume_type AS old_vt
+             FROM estimate_items ei JOIN input i ON i.id = ei.id
+             WHERE ei.estimate_id = $1
+           )
+           UPDATE estimate_items ei
+              SET volume_type = i.volume_type, updated_by = $4
+             FROM input i JOIN snapshot s ON s.id = i.id
+            WHERE ei.id = i.id AND ei.estimate_id = $1
+              AND ei.volume_type IS DISTINCT FROM i.volume_type
+           RETURNING ei.id, s.old_vt AS before_volume_type, ei.volume_type AS after_volume_type`,
+          [eid, ids, vts, request.currentUser.id],
+        );
+        const projectId = await loadProjectId(client, eid);
+        const audits: AuditInput[] = rows.map((r) => ({
+          estimateId: eid,
+          projectId,
+          entityType: 'estimate_item',
+          entityId: r.id as string,
+          action: 'update',
+          userId: request.currentUser.id,
+          changes: {
+            changedFields: ['volume_type'],
+            before: { volume_type: r.before_volume_type },
+            after: { volume_type: r.after_volume_type },
+          },
+        }));
+        await recordAuditBatch(client, audits);
+        await client.query('COMMIT');
+        if (rows.length) await emit('item_updated', eid, projectId, request.currentUser.id);
+        return reply.send({
+          data: rows.map((r) => ({ id: r.id as string, volume_type: r.after_volume_type as string })),
+        });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
   // POST /api/estimates/:id/confirm-all — согласовать все ИИ-позиции (снять needs_review),
   // row-level аудит по каждой затронутой работе/материалу.
   fastify.post<{ Params: { id: string } }>('/:id/confirm-all', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
@@ -926,8 +997,9 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       const dupKey = (r: {
         cost_type_id: unknown; rate_id: unknown; description: unknown;
         zone_id: unknown; floor_from: unknown; floor_to: unknown; room_type_id: unknown;
+        volume_type: unknown;
       }) =>
-        [r.cost_type_id, r.rate_id ?? r.description, r.zone_id, r.floor_from, r.floor_to, r.room_type_id].join('|');
+        [r.cost_type_id, r.rate_id ?? r.description, r.zone_id, r.floor_from, r.floor_to, r.room_type_id, r.volume_type].join('|');
 
       const client = await fastify.pool.connect();
       try {
@@ -946,7 +1018,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         const existing = new Set<string>();
         if (body.skipExisting) {
           const { rows: all } = await client.query(
-            'SELECT cost_type_id, rate_id, description, zone_id, floor_from, floor_to, room_type_id FROM estimate_items WHERE estimate_id = $1',
+            'SELECT cost_type_id, rate_id, description, zone_id, floor_from, floor_to, room_type_id, volume_type FROM estimate_items WHERE estimate_id = $1',
             [eid],
           );
           for (const r of all) existing.add(dupKey(r));
@@ -974,6 +1046,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
                 floor_from: targetFloorFrom,
                 floor_to: targetFloorTo,
                 room_type_id: targetRoom,
+                volume_type: src.volume_type,
               });
               if (body.skipExisting && existing.has(key)) {
                 skipped++;
@@ -984,15 +1057,15 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
               const { rows: ins } = await client.query(
                 `INSERT INTO estimate_items
                    (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
-                    zone_id, floor_from, floor_to, room_type_id, locations, source, needs_review,
+                    zone_id, floor_from, floor_to, room_type_id, locations, volume_type, source, needs_review,
                     copy_batch_id, copy_source_item_id, created_by, updated_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, 'manual', false, $14, $15, $16, $16)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $17, 'manual', false, $14, $15, $16, $16)
                  RETURNING *`,
                 [
                   eid, src.cost_type_id, src.rate_id, src.description, src.quantity, src.unit,
                   src.unit_price, src.sort_order, targetZone, targetFloorFrom, targetFloorTo, targetRoom,
                   JSON.stringify(legacyToLocations(targetZone, targetFloorFrom, targetFloorTo)),
-                  copyBatchId, src.id, request.currentUser.id,
+                  copyBatchId, src.id, request.currentUser.id, src.volume_type,
                 ],
               );
               const copy = ins[0];
@@ -1176,6 +1249,7 @@ const HISTORY_FIELD_LABEL: Record<string, string> = {
   floor_from: 'этаж с',
   floor_to: 'этаж по',
   locations: 'местоположение',
+  volume_type: 'тип объёма',
   work_type: 'вид работ',
   notes: 'примечания',
 };
@@ -1225,6 +1299,7 @@ function formatHistoryValue(
   const table = HISTORY_REF_TABLE[field];
   if (table) return names.get(table)?.get(String(value)) ?? null;
   if (field === 'needs_review') return value ? 'требует проверки' : 'согласовано';
+  if (field === 'volume_type') return value === 'additional' ? 'дополнительный' : 'основной';
   return String(value);
 }
 

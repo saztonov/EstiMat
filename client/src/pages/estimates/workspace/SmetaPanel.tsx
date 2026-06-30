@@ -57,6 +57,7 @@ interface Props {
   onDeleteMaterial: (materialId: string) => void;
   onConfirmMaterial: (materialId: string) => void;
   onConfirmWork: (workId: string) => void;
+  onToggleVolumeType: (itemId: string, current: 'main' | 'additional') => void;
   onBulkConfirm: (workIds: string[], materialIds: string[]) => Promise<void>;
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
@@ -107,6 +108,7 @@ export function SmetaPanel({
   onDeleteMaterial,
   onConfirmMaterial,
   onConfirmWork,
+  onToggleVolumeType,
   onBulkConfirm,
   onReassignMaterial,
   onReassignMaterials,
@@ -549,6 +551,7 @@ export function SmetaPanel({
       onDeleteMaterial,
       onConfirmMaterial,
       onConfirmWork,
+      onToggleVolumeType,
       onReassignMaterial,
       allWorks,
       onSetContractor,
@@ -567,7 +570,7 @@ export function SmetaPanel({
     [
       editable, orgs, onCreateWork, onUpdateWork, onDeleteWork, onReorderWorks,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onConfirmWork,
-      onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
+      onToggleVolumeType, onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
       toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId, openRowHistory,
     ],
   );

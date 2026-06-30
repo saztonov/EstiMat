@@ -11,6 +11,7 @@ import type { ReplicateTargets } from './components/ReplicateWorksModal';
 import type { SaveWorkPayload, SaveMaterialPayload } from './components/CostTypeGroupBlock';
 import { AddCostTypeModal, type CostTypeFormPayload } from './components/AddCostTypeModal';
 import { buildCostTypeGroups, type CostTypeGroup, type EstimateDetail } from './components/types';
+import { useVolumeTypeQueue } from './hooks/useVolumeTypeQueue';
 import { EstimateWorkspace } from './workspace/EstimateWorkspace';
 import type { RateLeafPayload } from './workspace/types';
 
@@ -53,6 +54,14 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
 
   // Realtime: изменения коллег (и ИИ) подтягиваются без перезагрузки страницы.
   useEstimateRealtime(estimateId, projectId);
+
+  // Очередь ленивой записи переключений типа объёма (осн/доп): optimistic-клик + дебаунс-батч.
+  const { toggleVolumeType, applyPendingOverlay } = useVolumeTypeQueue({
+    estimateId,
+    cacheKey: refetchKeyRef.current,
+    queryClient,
+    messageApi: message,
+  });
 
   // Текущий контекст добавления местоположения (с учётом флага «Добавлять в указанное
   // местоположение»; читается на момент мутации, не из замыкания рендера).
@@ -282,9 +291,11 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
+  // Группы строим поверх overlay очереди: ещё не подтверждённые переключения осн/доп не «мигают»
+  // старым значением при realtime-рефетче (который перезаписывает кэш серверными данными).
   const groups = useMemo(
-    () => buildCostTypeGroups(estimate.items, estimate.contractors, pendingGroups),
-    [estimate, pendingGroups],
+    () => buildCostTypeGroups(applyPendingOverlay(estimate.items), estimate.contractors, pendingGroups),
+    [estimate, pendingGroups, applyPendingOverlay],
   );
 
   const totalItems = estimate.items?.length ?? 0;
@@ -469,6 +480,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         onDeleteMaterial={deleteMaterial}
         onConfirmMaterial={confirmMaterial}
         onConfirmWork={confirmWork}
+        onToggleVolumeType={toggleVolumeType}
         onBulkConfirm={bulkConfirm}
         onReassignMaterial={reassignMaterial}
         onReassignMaterials={reassignMaterials}

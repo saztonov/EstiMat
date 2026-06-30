@@ -27,6 +27,9 @@ export const sourceTraceSchema = z.object({
   sourceSnippet: z.string().nullable().optional(),
 });
 
+// Тип объёма строки: 'main' (осн) / 'additional' (доп). Раздельный учёт работ.
+export const volumeTypeSchema = z.enum(['main', 'additional']);
+
 export const createEstimateItemSchema = z.object({
   costTypeId: z.string().uuid().nullable().optional(),
   rateId: z.string().uuid().nullable().optional(),
@@ -35,6 +38,7 @@ export const createEstimateItemSchema = z.object({
   unit: z.string().min(1, 'Единица измерения обязательна'),
   unitPrice: z.number().min(0, 'Цена не может быть отрицательной'),
   sortOrder: z.number().int().default(0),
+  volumeType: volumeTypeSchema.optional(),
   // Сигнал «поставить строку наверх вида затрат» (не колонка БД): сервер вычислит
   // sort_order ниже всех существующих в этом виде. Используется при добавлении из справочника.
   placeOnTop: z.boolean().optional(),
@@ -101,6 +105,15 @@ export const bulkConfirmEstimateItemsSchema = z
 // Нормализующая перестановка работ внутри вида: полный список id работ в новом порядке.
 export const reorderEstimateItemsSchema = z.object({
   ids: z.array(z.string().uuid()).min(1, 'Список работ пуст').max(1000, 'Слишком много работ'),
+});
+
+// Батч-переключение типа объёма (осн/доп) для набора строк. Last-write-wins, без OCC:
+// ленивая запись очереди тумблеров. Дедуп по id (последнее значение wins) — на сервере.
+export const setEstimateItemsVolumeTypeSchema = z.object({
+  items: z
+    .array(z.object({ id: z.string().uuid(), volumeType: volumeTypeSchema }))
+    .min(1, 'Список строк пуст')
+    .max(1000, 'Слишком много строк за одно переключение'),
 });
 
 // Массовое назначение одного местоположения набору выбранных работ (перезаписывает locations + зеркало).
@@ -201,4 +214,6 @@ export type ClearItemContractorsInput = z.infer<typeof clearItemContractorsSchem
 export type BulkDeleteEstimateItemsInput = z.infer<typeof bulkDeleteEstimateItemsSchema>;
 export type BulkConfirmEstimateItemsInput = z.infer<typeof bulkConfirmEstimateItemsSchema>;
 export type ReorderEstimateItemsInput = z.infer<typeof reorderEstimateItemsSchema>;
+export type VolumeType = z.infer<typeof volumeTypeSchema>;
+export type SetEstimateItemsVolumeTypeInput = z.infer<typeof setEstimateItemsVolumeTypeSchema>;
 export type Estimate = z.infer<typeof estimateSchema>;

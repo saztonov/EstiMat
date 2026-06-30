@@ -553,6 +553,8 @@ interface Props {
   onConfirmMaterial?: (materialId: string) => void;
   /** Согласование ИИ-работы кликом по тегу «не согласовано» (снимает needs_review). */
   onConfirmWork?: (workId: string) => void;
+  /** Переключение типа объёма (осн/доп) кликом по бейджу в ячейке наименования. */
+  onToggleVolumeType?: (itemId: string, current: 'main' | 'additional') => void;
   onReassignMaterial?: (materialId: string, itemId: string) => void;
   /** Все работы сметы — для выбора цели при переносе материала. */
   allWorks?: WorkOption[];
@@ -614,6 +616,7 @@ function CostTypeGroupBlockImpl({
   onDeleteMaterial = noop,
   onConfirmMaterial = noop,
   onConfirmWork = noop,
+  onToggleVolumeType = noop,
   onReassignMaterial,
   allWorks = [],
   selectionMode = false,
@@ -923,15 +926,19 @@ function CostTypeGroupBlockImpl({
             />
           );
         }
-        // Теги «ИИ» и «не согласовано» показываем только пока работа не согласована.
-        // Клик по «не согласовано» снимает needs_review (оба тега исчезают).
-        if (r.needs_review) {
-          return (
-            <div className="estimat-review-cell">
-              <span className="estimat-review-name">{v}</span>
-              <span className="estimat-review-tags">
-                {r.source === 'ai' && <Tag color="blue">ИИ</Tag>}
-                {editable ? (
+        // У черновика бейджей нет.
+        if (r.id === DRAFT_ID) return v;
+        // Бейдж типа объёма (осн/доп) — всегда; теги «ИИ»/«не согласовано» — пока работа не согласована.
+        // Клик по «не согласовано» снимает needs_review; клик по бейджу объёма переключает осн/доп.
+        const vt: 'main' | 'additional' = r.volume_type ?? 'main';
+        const volumeClickable = editable && !deleteMode && !selectionMode && !editing;
+        return (
+          <div className="estimat-review-cell">
+            <span className="estimat-review-name">{v}</span>
+            <span className="estimat-review-tags">
+              {r.needs_review && r.source === 'ai' && <Tag color="blue">ИИ</Tag>}
+              {r.needs_review &&
+                (editable ? (
                   <Tooltip title="Согласовать — снять «не согласовано»">
                     <Tag color="orange" style={{ cursor: 'pointer' }} onClick={() => onConfirmWork(r.id)}>
                       не согласовано
@@ -939,12 +946,23 @@ function CostTypeGroupBlockImpl({
                   </Tooltip>
                 ) : (
                   <Tag color="orange">не согласовано</Tag>
-                )}
-              </span>
-            </div>
-          );
-        }
-        return v;
+                ))}
+              {volumeClickable ? (
+                <Tooltip title="Переключить тип объёма (осн/доп)">
+                  <Tag
+                    color={vt === 'main' ? 'green' : 'gold'}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => onToggleVolumeType(r.id, vt)}
+                  >
+                    {vt === 'main' ? 'осн' : 'доп'}
+                  </Tag>
+                </Tooltip>
+              ) : (
+                <Tag color={vt === 'main' ? 'green' : 'gold'}>{vt === 'main' ? 'осн' : 'доп'}</Tag>
+              )}
+            </span>
+          </div>
+        );
       },
     },
     { title: 'Ед.', dataIndex: 'unit', width: 64, align: 'center', render: (v: string, r) =>
@@ -1028,9 +1046,9 @@ function CostTypeGroupBlockImpl({
   ], [
     dndEnabled, group.works.length, group.costTypeId, leadingColumns,
     editing, saving, nameOptions, ratesData,
-    editable, deleteMode, showPrices, showLocationColumn, zones, projectId,
+    editable, deleteMode, selectionMode, showPrices, showLocationColumn, zones, projectId,
     materialsControlled, expandedWorkIds, expandedKeys, onWorkExpandChange,
-    onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onOpenHistory,
+    onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
   ]);
 
   const contractorOptions = orgs
