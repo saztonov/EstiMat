@@ -26,7 +26,7 @@ export default async function organizationRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/organizations
-  fastify.post('/', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
+  fastify.post('/', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createOrganizationSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       `INSERT INTO organizations (name, inn, type, contacts, address, alternative_names)
@@ -37,7 +37,7 @@ export default async function organizationRoutes(fastify: FastifyInstance) {
   });
 
   // PUT /api/organizations/:id
-  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
+  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = updateOrganizationSchema.parse(request.body);
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -62,7 +62,7 @@ export default async function organizationRoutes(fastify: FastifyInstance) {
   });
 
   // DELETE /api/organizations/:id
-  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin')] }, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
     const { rowCount } = await fastify.pool.query(
       'UPDATE organizations SET is_active = false WHERE id = $1',
       [request.params.id],

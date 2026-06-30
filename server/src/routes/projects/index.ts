@@ -364,7 +364,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   );
 
   // POST /api/projects
-  fastify.post('/', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
+  fastify.post('/', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createProjectSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       `INSERT INTO projects (code, name, full_name, address, status, start_date, end_date, image_url)
@@ -384,7 +384,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   });
 
   // PUT /api/projects/:id
-  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
+  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = updateProjectSchema.parse(request.body);
     const sets: string[] = [];
     const values: unknown[] = [];
