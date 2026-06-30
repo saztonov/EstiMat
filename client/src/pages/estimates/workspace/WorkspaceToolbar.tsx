@@ -1,6 +1,5 @@
-import { useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router';
-import { Badge, Button, Modal, Popover, Switch, Tooltip, Typography, App } from 'antd';
+import { type ReactNode } from 'react';
+import { Badge, Button, Popover, Switch, Tooltip, Typography } from 'antd';
 import {
   ArrowLeftOutlined,
   TableOutlined,
@@ -8,13 +7,10 @@ import {
   AppstoreOutlined,
   LayoutOutlined,
   HistoryOutlined,
-  ContainerOutlined,
 } from '@ant-design/icons';
 import type { EstimateDetail } from '../components/types';
 import { formatMoney } from '../components/types';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
-import { LocationBuilder } from '../../projects/LocationBuilder';
-import { BuildingsIcon } from '../../../components/shared/BuildingsIcon';
 
 interface Props {
   estimate: EstimateDetail;
@@ -55,27 +51,9 @@ export function WorkspaceToolbar({
   onHistory,
 }: Props) {
   const { visibility, toggleArea } = useWorkspaceLayoutStore();
-  const { modal } = App.useApp();
-  const navigate = useNavigate();
-  const [zonesOpen, setZonesOpen] = useState(false);
-  const [zonesDirty, setZonesDirty] = useState(false);
   const title = estimate.work_type || 'Смета';
   // Сметная часть всегда включена (+1); ИИ и Справочники — по тумблерам.
   const activeCount = 1 + (visibility.ai ? 1 : 0) + (visibility.refs ? 1 : 0);
-
-  const closeZones = () => {
-    if (zonesDirty) {
-      modal.confirm({
-        title: 'Закрыть без сохранения?',
-        content: 'Есть несохранённые изменения местоположения.',
-        okText: 'Закрыть',
-        cancelText: 'Остаться',
-        onOk: () => { setZonesDirty(false); setZonesOpen(false); },
-      });
-    } else {
-      setZonesOpen(false);
-    }
-  };
 
   return (
     <div
@@ -94,16 +72,6 @@ export function WorkspaceToolbar({
       <Button icon={<ArrowLeftOutlined />} onClick={onBack}>
         К объекту
       </Button>
-      <Tooltip title="Свод материалов сметы">
-        <Button icon={<ContainerOutlined />} onClick={() => navigate(`/estimates/${estimate.id}/materials`)}>
-          Материалы
-        </Button>
-      </Tooltip>
-      <Tooltip title="Местоположение: корпуса, этажность, типы помещений">
-        <Button icon={<BuildingsIcon />} onClick={() => { setZonesDirty(false); setZonesOpen(true); }}>
-          Местоположение
-        </Button>
-      </Tooltip>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
         <Typography.Text strong style={{ fontSize: 15, whiteSpace: 'nowrap' }}>
@@ -158,20 +126,6 @@ export function WorkspaceToolbar({
           <Button icon={<LayoutOutlined />}>Панели</Button>
         </Badge>
       </Popover>
-
-      <Modal
-        title="Местоположение"
-        open={zonesOpen}
-        onCancel={closeZones}
-        footer={null}
-        width="90%"
-        style={{ top: 24 }}
-        styles={{ body: { height: 'calc(100vh - 180px)', overflow: 'hidden' } }}
-      >
-        {zonesOpen && (
-          <LocationBuilder projectId={estimate.project_id} onDirtyChange={setZonesDirty} />
-        )}
-      </Modal>
     </div>
   );
 }

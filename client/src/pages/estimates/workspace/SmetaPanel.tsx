@@ -31,6 +31,7 @@ import { useLocationContextStore } from '../../../store/locationContextStore';
 import { useProjectZones } from '../../../hooks/useProjectLocations';
 import { useAuthStore } from '../../../store/authStore';
 import { PanelShell } from './PanelShell';
+import { SmetaActions } from './SmetaActions';
 
 interface Organization {
   id: string;
@@ -91,9 +92,6 @@ const groupsTotal = (gs: CostTypeGroup[]) =>
 
 export function SmetaPanel({
   groups,
-  total,
-  totalItems,
-  groupCount,
   editable,
   orgs,
   estimateId,
@@ -597,16 +595,15 @@ export function SmetaPanel({
     <PanelShell
       bodyRef={scrollRootRef}
       icon={<TableOutlined />}
-      title="Сметная часть"
-      meta={
-        <>
-          Работ: {totalItems} · Видов работ: {groupCount} ·{' '}
-          <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(total)}</span>
-        </>
+      title={
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          Сметная часть
+          <SmetaActions estimateId={estimateId} projectId={projectId} />
+        </span>
       }
       extra={
         groups.length > 0 ? (
-          <Space size={2} style={{ marginLeft: 8 }}>
+          <Space size={2} style={{ marginLeft: 'auto' }}>
             {editable && mode === 'reassign' && (
               <Space size={6} style={{ marginRight: 4 }}>
                 <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {selectedIds.size}</span>
