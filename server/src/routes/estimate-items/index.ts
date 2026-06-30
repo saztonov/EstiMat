@@ -286,6 +286,85 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
     },
   );
 
+  // POST /api/estimate-items/materials/copy-bulk — массовое копирование материалов в одну работу.
+  // В отличие от переноса, исходные материалы остаются на месте; создаются новые «чистые» копии:
+  // material_id (ссылка на справочник) сохраняется, но qty_ratio и AI-trace сбрасываются — это новый
+  // ручной материал (quantity фиксируется как видимое число, не пересчитывается от объёма целевой работы).
+  fastify.post(
+    '/materials/copy-bulk',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const { itemId, materialIds } = reassignMaterialsSchema.parse(request.body);
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const { rows: work } = await client.query('SELECT estimate_id FROM estimate_items WHERE id = $1', [itemId]);
+        if (work.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({ error: 'Целевая работа не найдена' });
+        }
+        const targetEstimateId = work[0].estimate_id as string;
+
+        // Исходные материалы той же сметы (детерминированный порядок). estimate_id = $2 запрещает
+        // копирование из другой сметы. Порядок ORDER BY определяет sort_order копий в целевой работе.
+        const { rows: srcRows } = await client.query(
+          `SELECT * FROM estimate_materials
+            WHERE id = ANY($1::uuid[]) AND estimate_id = $2
+            ORDER BY item_id, sort_order, created_at, id`,
+          [materialIds, targetEstimateId],
+        );
+        if (srcRows.length !== materialIds.length) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Часть материалов не найдена или относится к другой смете' });
+        }
+        if (srcRows.some((s) => s.item_id === itemId)) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Нельзя копировать материалы в ту же работу — будут дубли' });
+        }
+
+        const projectId = await loadProjectId(client, targetEstimateId);
+        // sort_order дописываем в конец целевой работы (пустая работа начнётся с 0).
+        const { rows: baseRows } = await client.query(
+          'SELECT COALESCE(MAX(sort_order), -1) AS base FROM estimate_materials WHERE item_id = $1',
+          [itemId],
+        );
+        let nextSort = Number(baseRows[0].base);
+
+        const created: Record<string, unknown>[] = [];
+        const audits: AuditInput[] = [];
+        for (const src of srcRows) {
+          nextSort += 1;
+          const { rows: ins } = await client.query(
+            `INSERT INTO estimate_materials
+                (item_id, estimate_id, material_id, description, quantity, unit, unit_price,
+                 sort_order, status, source, qty_ratio, needs_review, created_by, updated_by)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', 'manual', NULL, false, $9, $9)
+              RETURNING *`,
+            [itemId, targetEstimateId, src.material_id, src.description, src.quantity, src.unit, src.unit_price, nextSort, request.currentUser.id],
+          );
+          created.push(ins[0]);
+          audits.push({
+            estimateId: targetEstimateId, projectId, entityType: 'estimate_material', entityId: ins[0].id as string,
+            action: 'create', userId: request.currentUser.id,
+            changes: { after: ins[0], sourceMaterialId: src.id, sourceItemId: src.item_id, targetItemId: itemId, reason: 'copy' },
+          });
+        }
+
+        await recordAuditBatch(client, audits);
+        await client.query('COMMIT');
+        await emit('materials_reassigned', targetEstimateId, projectId, request.currentUser.id);
+        return { data: created, count: created.length };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
   // DELETE /api/estimate-items/materials/:id — удалить материал (snapshot в журнал)
   fastify.delete<{ Params: { id: string } }>(
     '/materials/:id',

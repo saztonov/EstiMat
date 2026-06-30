@@ -41,6 +41,7 @@ interface Props {
   onBulkConfirm: (workIds: string[], materialIds: string[]) => Promise<void>;
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
+  onCopyMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
   onBulkAssignLocation: (workIds: string[], locations: { zoneId: string | null; floors: number[] }[]) => Promise<unknown>;
   onReplicate: (sourceWorkIds: string[], targets: ReplicateTargets) => Promise<void>;
@@ -122,6 +123,7 @@ export function EstimateWorkspace(props: Props) {
           onBulkConfirm={props.onBulkConfirm}
           onReassignMaterial={props.onReassignMaterial}
           onReassignMaterials={props.onReassignMaterials}
+          onCopyMaterials={props.onCopyMaterials}
           onBulkDelete={props.onBulkDelete}
           onBulkAssignLocation={props.onBulkAssignLocation}
           onReplicate={props.onReplicate}

@@ -12,6 +12,8 @@ import {
   CheckCircleOutlined,
   CopyOutlined,
   EnvironmentOutlined,
+  MoreOutlined,
+  SnippetsOutlined,
 } from '@ant-design/icons';
 import { type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import { SmetaGroupBlock } from './SmetaGroupBlock';
@@ -62,6 +64,7 @@ interface Props {
   onBulkConfirm: (workIds: string[], materialIds: string[]) => Promise<void>;
   onReassignMaterial: (materialId: string, itemId: string) => void;
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
+  onCopyMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
   onBulkAssignLocation: (workIds: string[], locations: AssignLocation[]) => Promise<unknown>;
   onReplicate: (sourceWorkIds: string[], targets: ReplicateTargets) => Promise<void>;
@@ -71,7 +74,7 @@ interface Props {
 
 // Режим выбора в шапке: перенос материалов, массовое удаление, тиражирование набора
 // или назначение местоположения выбранным работам.
-type SelectionMode = 'none' | 'reassign' | 'delete' | 'replicate' | 'assignloc';
+type SelectionMode = 'none' | 'reassign' | 'copy' | 'delete' | 'replicate' | 'assignloc';
 
 // Снапшот местоположения для массового назначения (фиксируется на старте режима assignloc).
 type AssignLocation = { zoneId: string | null; floors: number[] };
@@ -110,6 +113,7 @@ export function SmetaPanel({
   onBulkConfirm,
   onReassignMaterial,
   onReassignMaterials,
+  onCopyMaterials,
   onBulkDelete,
   onBulkAssignLocation,
   onReplicate,
@@ -139,11 +143,13 @@ export function SmetaPanel({
   // Единый режим выбора с чекбоксами: перенос ('reassign'), удаление ('delete'),
   // тиражирование ('replicate') или назначение местоположения ('assignloc').
   const [mode, setMode] = useState<SelectionMode>('none');
-  // Чекбоксы материалов видны в reassign/delete; в assignloc выбираем только работы.
+  // Чекбоксы материалов видны в reassign/copy/delete; в assignloc выбираем только работы.
   const selectionMode = mode !== 'none' && mode !== 'assignloc';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // выбранные материалы (общий набор)
   const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set()); // выбранные работы (delete/replicate/assignloc)
   const [reassigning, setReassigning] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false); // поповер «Действия» в шапке
   const [deleting, setDeleting] = useState(false);
   const [replicateOpen, setReplicateOpen] = useState(false);
   const [replicating, setReplicating] = useState(false);
@@ -162,9 +168,11 @@ export function SmetaPanel({
   const [reviewConfirming, setReviewConfirming] = useState(false);
   const [reviewDeleting, setReviewDeleting] = useState(false);
 
-  // Массовое удаление разрешено сервером только admin/engineer — кнопку остальным не показываем.
+  // Массовые операции разрешены сервером только admin/engineer — кнопки остальным не показываем.
   const role = useAuthStore((s) => s.user?.role);
   const canBulkDelete = editable && (role === 'admin' || role === 'engineer');
+  // Перенос/копирование материалов (reassign-bulk / copy-bulk) — те же права, отдельное имя по смыслу.
+  const canBulkMutateMaterials = canBulkDelete;
 
   const toggleMaterial = useCallback((id: string, selected: boolean) =>
     setSelectedIds((prev) => {
@@ -225,6 +233,21 @@ export function SmetaPanel({
       /* ошибку покажет мутация; выделение сохраняется */
     } finally {
       setReassigning(false);
+    }
+  };
+
+  // Копирование выбранных материалов в работу (источники остаются). Сброс выбора — после успеха.
+  const handleBulkCopy = async (targetItemId: string) => {
+    if (selectedIds.size === 0 || copying) return;
+    setCopying(true);
+    try {
+      await onCopyMaterials([...selectedIds], targetItemId);
+      setSelectedIds(new Set());
+      setMode('none');
+    } catch {
+      /* ошибку покажет мутация; выделение сохраняется */
+    } finally {
+      setCopying(false);
     }
   };
   const selectCategory = useEstimateSelectionStore((s) => s.selectCategory);
@@ -629,6 +652,31 @@ export function SmetaPanel({
                 </Button>
               </Space>
             )}
+            {editable && mode === 'copy' && (
+              <Space size={6} style={{ marginRight: 4 }}>
+                <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {selectedIds.size}</span>
+                <Popover
+                  trigger="click"
+                  title="Копировать материалы в работу"
+                  content={
+                    <WorkTreeSelect works={allWorks} disabled={copying} onPick={handleBulkCopy} />
+                  }
+                >
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<SnippetsOutlined />}
+                    disabled={selectedIds.size === 0 || copying}
+                    loading={copying}
+                  >
+                    Копировать
+                  </Button>
+                </Popover>
+                <Button size="small" disabled={copying} onClick={cancelSelection}>
+                  Отмена
+                </Button>
+              </Space>
+            )}
             {editable && mode === 'delete' && (
               <Space size={6} style={{ marginRight: 4 }}>
                 <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {deleteCount}</span>
@@ -689,45 +737,77 @@ export function SmetaPanel({
                 <Button size="small" disabled={assigning} onClick={cancelSelection}>Отмена</Button>
               </Space>
             )}
-            {editable && mode === 'none' && (
-              <>
-                {canBulkDelete && rejectableCount > 0 && (
-                  <Tooltip title="Согласовать или удалить несогласованные позиции">
-                    <Button
-                      type="primary"
-                      size="small"
-                      icon={<CheckCircleOutlined />}
-                      style={{ marginRight: 4 }}
-                      onClick={() => setReviewOpen(true)}
-                    >
-                      Несогласованные ({rejectableCount})
-                    </Button>
-                  </Tooltip>
-                )}
-                <Tooltip title="Массовый перенос материалов: выбрать чекбоксами и перенести к работе">
-                  <Button type="text" size="small" icon={<SwapOutlined />} onClick={() => setMode('reassign')} />
-                </Tooltip>
-                {canBulkDelete && (
-                  <Tooltip title="Повторить набор работ на другие корпуса/этажи/типы помещений">
-                    <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => setMode('replicate')}>
-                      Повторить набор
-                    </Button>
-                  </Tooltip>
-                )}
-                {canBulkDelete && (
-                  <Tooltip title="Массовое удаление работ и материалов: выбрать чекбоксами и подтвердить">
-                    <Button
-                      type="text"
-                      size="small"
-                      danger
-                      icon={<DeleteOutlined />}
-                      onClick={() => setMode('delete')}
-                    >
-                      Удалить несколько
-                    </Button>
-                  </Tooltip>
-                )}
-              </>
+            {editable && mode === 'none' && (canBulkMutateMaterials || canBulkDelete) && (
+              <Popover
+                trigger="click"
+                placement="bottomRight"
+                open={actionsOpen}
+                onOpenChange={setActionsOpen}
+                content={
+                  <Space direction="vertical" size={2} style={{ minWidth: 210 }}>
+                    {canBulkDelete && rejectableCount > 0 && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CheckCircleOutlined />}
+                        style={{ width: '100%', justifyContent: 'flex-start' }}
+                        onClick={() => { setActionsOpen(false); setReviewOpen(true); }}
+                      >
+                        Несогласованные ({rejectableCount})
+                      </Button>
+                    )}
+                    {canBulkMutateMaterials && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<SwapOutlined />}
+                        style={{ width: '100%', justifyContent: 'flex-start' }}
+                        onClick={() => { setActionsOpen(false); setMode('reassign'); }}
+                      >
+                        Перенос материалов
+                      </Button>
+                    )}
+                    {canBulkMutateMaterials && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<SnippetsOutlined />}
+                        style={{ width: '100%', justifyContent: 'flex-start' }}
+                        onClick={() => { setActionsOpen(false); setMode('copy'); }}
+                      >
+                        Копирование материалов
+                      </Button>
+                    )}
+                    {canBulkDelete && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        style={{ width: '100%', justifyContent: 'flex-start' }}
+                        onClick={() => { setActionsOpen(false); setMode('replicate'); }}
+                      >
+                        Повторить набор
+                      </Button>
+                    )}
+                    {canBulkDelete && (
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        style={{ width: '100%', justifyContent: 'flex-start' }}
+                        onClick={() => { setActionsOpen(false); setMode('delete'); }}
+                      >
+                        Удалить несколько
+                      </Button>
+                    )}
+                  </Space>
+                }
+              >
+                <Button type="text" size="small" icon={<MoreOutlined />}>
+                  Действия
+                </Button>
+              </Popover>
             )}
             <Tooltip title="Развернуть на уровень глубже (категории → виды → работы → материалы)">
               <Button type="text" size="small" icon={<DownOutlined />} onClick={expandStep} />

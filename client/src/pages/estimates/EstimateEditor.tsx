@@ -277,6 +277,17 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
+  // Массовое копирование материалов в одну работу — исходные остаются, создаются «чистые» копии.
+  const copyMaterialsBulkMutation = useMutation({
+    mutationFn: ({ materialIds, itemId }: { materialIds: string[]; itemId: string }) =>
+      api.post<{ count: number }>('/estimate-items/materials/copy-bulk', { materialIds, itemId }),
+    onSuccess: (res) => {
+      invalidate();
+      message.success(`Скопировано материалов: ${res.count}`);
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
   const setContractorMutation = useMutation({
     mutationFn: ({ costTypeId, contractorId }: { costTypeId: string; contractorId: string }) =>
       api.put(`/estimates/${estimateId}/contractors`, { costTypeId, contractorId }),
@@ -382,6 +393,11 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       reassignMaterialsBulkMutation.mutateAsync({ materialIds, itemId }).then(() => undefined),
     [reassignMaterialsBulkMutation.mutateAsync],
   );
+  const copyMaterials = useCallback(
+    (materialIds: string[], itemId: string) =>
+      copyMaterialsBulkMutation.mutateAsync({ materialIds, itemId }).then(() => undefined),
+    [copyMaterialsBulkMutation.mutateAsync],
+  );
   const bulkDelete = useCallback(
     (workIds: string[], materialIds: string[]) =>
       bulkDeleteMutation.mutateAsync({ workIds, materialIds }),
@@ -484,6 +500,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         onBulkConfirm={bulkConfirm}
         onReassignMaterial={reassignMaterial}
         onReassignMaterials={reassignMaterials}
+        onCopyMaterials={copyMaterials}
         onBulkDelete={bulkDelete}
         onBulkAssignLocation={bulkAssignLocation}
         onReplicate={replicate}
