@@ -93,6 +93,8 @@ export interface SaveWorkPayload {
   locationTypeName?: string | null;
   // OCC: версия строки на момент открытия формы — сервер сверит и при расхождении вернёт 409.
   expectedVersion?: number | null;
+  // Сигнал «поставить строку наверх вида затрат» (добавление из справочника). Сервер вычислит sort_order.
+  placeOnTop?: boolean;
 }
 
 export interface SaveMaterialPayload {

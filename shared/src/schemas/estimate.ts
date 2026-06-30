@@ -35,6 +35,9 @@ export const createEstimateItemSchema = z.object({
   unit: z.string().min(1, 'Единица измерения обязательна'),
   unitPrice: z.number().min(0, 'Цена не может быть отрицательной'),
   sortOrder: z.number().int().default(0),
+  // Сигнал «поставить строку наверх вида затрат» (не колонка БД): сервер вычислит
+  // sort_order ниже всех существующих в этом виде. Используется при добавлении из справочника.
+  placeOnTop: z.boolean().optional(),
 }).merge(sourceTraceSchema).merge(locationContextSchema);
 
 // OCC: клиент передаёт version строки, снятый при открытии формы редактирования.

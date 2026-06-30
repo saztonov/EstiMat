@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { App } from 'antd';
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { api, ApiError } from '../../services/api';
 import { invalidateEstimateQueries } from '../../lib/estimateQueries';
 import { useEstimateRealtime } from '../../hooks/useEstimateRealtime';
 import { getEffectiveAddContext } from '../../store/locationContextStore';
+import { useEstimateSelectionStore } from '../../store/estimateSelectionStore';
 import { parseFloors } from './components/location';
 import type { ReplicateTargets } from './components/ReplicateWorksModal';
 import type { SaveWorkPayload, SaveMaterialPayload } from './components/CostTypeGroupBlock';
@@ -35,6 +36,9 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
 
   const [costTypeModalOpen, setCostTypeModalOpen] = useState(false);
   const [pendingGroups, setPendingGroups] = useState<CostTypeGroup[]>([]);
+  // Id только что добавленной из справочника строки — прокрутим/подсветим, когда она появится в данных.
+  const [pendingRevealId, setPendingRevealId] = useState<string | null>(null);
+  const revealEstimateItem = useEstimateSelectionStore((s) => s.revealEstimateItem);
 
   const estimateId = estimate.id;
   const projectId = estimate.project_id;
@@ -62,7 +66,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
 
   const createWorkMutation = useMutation({
     mutationFn: ({ costTypeId, payload }: { costTypeId: string | null; payload: SaveWorkPayload }) =>
-      api.post(`/estimates/${estimateId}/items`, { ...currentAddLocation(), ...payload, costTypeId }),
+      api.post<{ data: { id: string } }>(`/estimates/${estimateId}/items`, { ...currentAddLocation(), ...payload, costTypeId }),
     onSuccess: () => {
       invalidate();
       // Новый произвольный «тип» строки мог появиться — обновляем подсказки автодополнения.
@@ -413,18 +417,37 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
             },
           ],
     );
-    createWorkMutation.mutate({
-      costTypeId: p.costTypeId,
-      payload: {
+    createWorkMutation.mutate(
+      {
         costTypeId: p.costTypeId,
-        rateId: p.rateId,
-        description: p.name,
-        unit: p.unit,
-        quantity: 1,
-        unitPrice: p.price,
+        payload: {
+          costTypeId: p.costTypeId,
+          rateId: p.rateId,
+          description: p.name,
+          unit: p.unit,
+          quantity: 1,
+          unitPrice: p.price,
+          // Строка из справочника встаёт наверх вида затрат (sort_order вычислит сервер).
+          placeOnTop: true,
+        },
       },
-    });
+      // Запоминаем id новой строки — прокрутим/подсветим её, когда она придёт с сервера (см. эффект ниже).
+      { onSuccess: (res) => setPendingRevealId(res.data.id) },
+    );
   }, [createWorkMutation.mutate]);
+
+  // Сброс ожидаемой прокрутки при переключении сметы.
+  useEffect(() => { setPendingRevealId(null); }, [estimateId]);
+
+  // Когда добавленная из справочника строка появилась в данных — прокрутить к ней и подсветить
+  // (эффект reveal в SmetaPanel ищет строку в groups, поэтому ждём завершения рефетча).
+  useEffect(() => {
+    if (!pendingRevealId) return;
+    if (estimate.items.some((it) => it.id === pendingRevealId)) {
+      revealEstimateItem(pendingRevealId);
+      setPendingRevealId(null);
+    }
+  }, [estimate.items, pendingRevealId, revealEstimateItem]);
 
   return (
     <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>

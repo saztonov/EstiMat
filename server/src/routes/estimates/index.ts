@@ -400,6 +400,20 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         // Произвольный «тип» строки: upsert в project_location_types (уникально на объект).
         const projectId = await loadProjectId(client, request.params.id);
         const locationTypeId = await upsertLocationType(client, projectId, body.locationTypeName ?? null);
+        // «Наверх вида затрат»: блокируем смету (сериализация одновременных добавлений) и берём
+        // sort_order строго ниже всех строк этого вида — так строка станет первой в своей
+        // локационной группе при текущем ORDER BY (локация → ei.sort_order → created_at).
+        let sortOrder = body.sortOrder;
+        if (body.placeOnTop) {
+          await client.query('SELECT id FROM estimates WHERE id = $1 FOR UPDATE', [request.params.id]);
+          const { rows: minRows } = await client.query(
+            `SELECT COALESCE(MIN(sort_order), 0) - 1 AS so
+               FROM estimate_items
+              WHERE estimate_id = $1 AND cost_type_id IS NOT DISTINCT FROM $2`,
+            [request.params.id, body.costTypeId ?? null],
+          );
+          sortOrder = Number(minRows[0].so);
+        }
         const { rows } = await client.query(
           `INSERT INTO estimate_items
              (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
@@ -413,7 +427,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
             body.quantity,
             body.unit,
             body.unitPrice,
-            body.sortOrder,
+            sortOrder,
             primary.zoneId,
             primary.floorFrom,
             primary.floorTo,

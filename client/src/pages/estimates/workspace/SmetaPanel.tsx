@@ -504,6 +504,8 @@ export function SmetaPanel({
     setCategoryFilter(undefined);
     setTypeFilter(undefined);
     setOnlyUnreconciled(false);
+    // Снимаем и локационный фильтр — иначе скрытая им строка не отрисуется и scrollIntoView не сработает.
+    useLocationContextStore.getState().clearFilter();
     setCollapsedCats((prev) => { if (!prev.has(catKey)) return prev; const n = new Set(prev); n.delete(catKey); return n; });
     useEstimateExpandStore.getState().expandType(tKey);
     selectWork(id, target.description, {
