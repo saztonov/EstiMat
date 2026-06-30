@@ -26,11 +26,13 @@ interface LocationContextState {
   setAddEnabled: (estimateId: string, enabled: boolean) => void;
 
   // ФИЛЬТР отображения (транзиент, НЕ персистится): срезы по местоположению.
+  // Этажи — сырой текст с диапазонами («2-4, 6, 11-18»), парсится через parseFloors.
   filterZoneIds: string[];
-  filterFloorFrom: number | null;
-  filterFloorTo: number | null;
+  filterFloorsText: string;
+  filterLocationTypeIds: string[];
+  filterVolumeType: 'all' | 'main' | 'additional';
   setFilter: (f: Partial<Pick<LocationContextState,
-    'filterZoneIds' | 'filterFloorFrom' | 'filterFloorTo'>>) => void;
+    'filterZoneIds' | 'filterFloorsText' | 'filterLocationTypeIds' | 'filterVolumeType'>>) => void;
   clearFilter: () => void;
 }
 
@@ -48,11 +50,12 @@ export const useLocationContextStore = create<LocationContextState>()(
         set((s) => ({ addEnabled: { ...s.addEnabled, [estimateId]: enabled } })),
 
       filterZoneIds: [],
-      filterFloorFrom: null,
-      filterFloorTo: null,
+      filterFloorsText: '',
+      filterLocationTypeIds: [],
+      filterVolumeType: 'all',
       setFilter: (f) => set((s) => ({ ...s, ...f })),
       clearFilter: () =>
-        set({ filterZoneIds: [], filterFloorFrom: null, filterFloorTo: null }),
+        set({ filterZoneIds: [], filterFloorsText: '', filterLocationTypeIds: [], filterVolumeType: 'all' }),
     }),
     {
       name: 'estimat:loc-ctx',

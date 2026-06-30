@@ -23,7 +23,7 @@ import { EstimateFilterSettingsPopover } from './EstimateFilterSettingsPopover';
 import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney, hasUnreconciled } from '../components/types';
-import { formatLocationsLabel } from '../components/location';
+import { formatLocationsLabel, parseFloors } from '../components/location';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useEstimateExpandStore, typeKeyOf } from '../../../store/estimateExpandStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
@@ -155,8 +155,9 @@ export function SmetaPanel({
 
   // Местоположение: фильтр-срезы + справочник зон для размножения.
   const filterZoneIds = useLocationContextStore((s) => s.filterZoneIds);
-  const filterFloorFrom = useLocationContextStore((s) => s.filterFloorFrom);
-  const filterFloorTo = useLocationContextStore((s) => s.filterFloorTo);
+  const filterFloorsText = useLocationContextStore((s) => s.filterFloorsText);
+  const filterLocationTypeIds = useLocationContextStore((s) => s.filterLocationTypeIds);
+  const filterVolumeType = useLocationContextStore((s) => s.filterVolumeType);
   const { data: zonesData } = useProjectZones(projectId);
   // Модалка ревью несогласованных позиций (согласовать/удалить выделенное).
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -256,12 +257,27 @@ export function SmetaPanel({
       .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
   }, [groups, categoryFilter]);
 
+  // Опции отбора по произвольному «типу» строки — из самих работ (показываем только присутствующие).
+  const locationTypeOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of groups)
+      for (const w of g.works)
+        if (w.location_type_id) m.set(w.location_type_id, w.location_type_name ?? '—');
+    return [...m.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+  }, [groups]);
+
+  // Набор этажей фильтра из сырого текста («2-4, 6, 11-18»).
+  const filterFloors = useMemo(() => parseFloors(filterFloorsText), [filterFloorsText]);
+
   const locationActive =
     filterZoneIds.length > 0 ||
-    filterFloorFrom != null ||
-    filterFloorTo != null;
+    filterFloors.length > 0 ||
+    filterLocationTypeIds.length > 0 ||
+    filterVolumeType !== 'all';
 
-  // Проходит ли работа фильтр локации (срезы по зоне/набору этажей). Мультизона:
+  // Проходит ли работа фильтр локации (срезы по зоне/набору этажей/типу/объёму). Мультизона:
   // достаточно совпадения хотя бы одной зоны и пересечения хотя бы одного этажа.
   const matchesLocation = (w: EstimateItem): boolean => {
     const locs = w.locations ?? [];
@@ -269,7 +285,7 @@ export function SmetaPanel({
       ? locs.map((l) => l.zoneId).filter((z): z is string => !!z)
       : w.zone_id ? [w.zone_id] : [];
     if (filterZoneIds.length && !zoneIds.some((z) => filterZoneIds.includes(z))) return false;
-    if (filterFloorFrom != null || filterFloorTo != null) {
+    if (filterFloors.length) {
       let floors: number[];
       if (locs.length) {
         floors = locs.flatMap((l) => l.floors ?? []);
@@ -282,10 +298,12 @@ export function SmetaPanel({
         else if (t != null) floors.push(t);
       }
       if (floors.length === 0) return false; // нет этажей — не проходит этажный срез
-      const lo = filterFloorFrom ?? -Infinity;
-      const hi = filterFloorTo ?? Infinity;
-      if (!floors.some((x) => x >= lo && x <= hi)) return false; // нет пересечения
+      const sel = new Set(filterFloors);
+      if (!floors.some((x) => sel.has(x))) return false; // нет пересечения
     }
+    if (filterLocationTypeIds.length && !(w.location_type_id && filterLocationTypeIds.includes(w.location_type_id)))
+      return false;
+    if (filterVolumeType !== 'all' && (w.volume_type ?? 'main') !== filterVolumeType) return false;
     return true;
   };
 
@@ -306,7 +324,7 @@ export function SmetaPanel({
       }))
       .filter((g) => g.works.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorFrom, filterFloorTo]);
+  }, [groups, categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloors, filterLocationTypeIds, filterVolumeType]);
 
   // Группировка видимых видов работ по категориям (порядок — как пришли,
   // groups уже отсортированы по категории→виду).
@@ -465,7 +483,7 @@ export function SmetaPanel({
   useEffect(() => {
     setSelectedIds(new Set());
     setSelectedWorkIds(new Set());
-  }, [categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorFrom, filterFloorTo]);
+  }, [categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorsText, filterLocationTypeIds, filterVolumeType]);
 
   // Выбранные работы-шаблоны для тиражирования (по id из всех групп).
   const selectedSourceWorks = useMemo(() => {
@@ -749,7 +767,7 @@ export function SmetaPanel({
               options={typeOptions}
               style={{ width: 240 }}
             />
-            <LocationFilterPopover zones={zonesData?.data.roots ?? []} />
+            <LocationFilterPopover zones={zonesData?.data.roots ?? []} typeOptions={locationTypeOptions} />
             <EstimateFilterSettingsPopover
               estimateId={estimateId}
               zones={zonesData?.data.roots ?? []}
