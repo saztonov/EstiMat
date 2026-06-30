@@ -31,11 +31,14 @@ export function RowInfoPopover({ item, onOpenHistory }: Props) {
   const lastEdit = entries.find((e) => changedRows(e).length > 0);
   // Фолбэк: история недоступна/пуста, но дата изменения позже создания — строку правили.
   const wasEdited = !!item.updated_at && item.updated_at !== item.created_at;
+  // «Создал»: имя автора, если известно; иначе для ИИ-строк (в т.ч. легаси без created_by) —
+  // «ИИ-ассистент»; иначе прочерк.
+  const creator = item.created_by_name ?? (item.source === 'ai' ? 'ИИ-ассистент' : '—');
 
   const content = (
     <div style={{ minWidth: 240, maxWidth: 340, fontSize: 13 }}>
       <div>
-        Создал: <strong>{item.created_by_name ?? '—'}</strong>
+        Создал: <strong>{creator}</strong>
       </div>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {fmt(item.created_at)}
