@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { AppstoreOutlined } from '@ant-design/icons';
+import { Button, Tooltip } from 'antd';
+import { AppstoreOutlined, DoubleRightOutlined } from '@ant-design/icons';
 import { PanelShell } from './PanelShell';
 import { RdSection } from './RdSection';
 import { WorksTreeSection } from './WorksTreeSection';
@@ -12,12 +13,13 @@ import type { RateLeafPayload } from './types';
 interface Props {
   onAddRate: (payload: RateLeafPayload) => void;
   onAddMaterial: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
+  onCollapse: () => void;
 }
 
 // Правая панель справочников: вертикальный аккордеон из трёх секций
 // (РД / Работы / Материалы). Каждая сворачивается кликом по шапке;
 // развёрнутые делят высоту поровну.
-export function ReferencesPanel({ onAddRate, onAddMaterial }: Props) {
+export function ReferencesPanel({ onAddRate, onAddMaterial, onCollapse }: Props) {
   const { collapsedSections, toggleSection } = useWorkspaceLayoutStore();
   // Блок РД можно отключить в Администрирование → Настройки.
   const { data: settings } = useAppSettings();
@@ -41,7 +43,16 @@ export function ReferencesPanel({ onAddRate, onAddMaterial }: Props) {
   };
 
   return (
-    <PanelShell icon={<AppstoreOutlined />} title="Справочники" flush>
+    <PanelShell
+      icon={<AppstoreOutlined />}
+      title="Справочники"
+      flush
+      extra={
+        <Tooltip title="Свернуть в рельс">
+          <Button type="text" size="small" icon={<DoubleRightOutlined />} onClick={onCollapse} />
+        </Tooltip>
+      }
+    >
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {rdEnabled &&
           wrap('rd', <RdSection collapsed={collapsedSections.rd} onToggle={() => toggleSection('rd')} />)}

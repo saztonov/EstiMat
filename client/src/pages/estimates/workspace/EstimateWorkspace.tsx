@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Splitter } from 'antd';
-import { RobotOutlined, LeftOutlined } from '@ant-design/icons';
+import { RobotOutlined, LeftOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { WorkspaceToolbar } from './WorkspaceToolbar';
 import { SmetaPanel } from './SmetaPanel';
 import { ReferencesPanel } from './ReferencesPanel';
@@ -88,9 +88,48 @@ function AiRail({ onClick }: { onClick: () => void }) {
   );
 }
 
+// Свёрнутый рельс справочников — кликом разворачивает панель в колонку.
+function RefsRail({ onClick }: { onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      title="Открыть справочники"
+      style={{
+        flexShrink: 0,
+        width: 46,
+        marginLeft: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 14,
+        padding: '12px 0',
+        background: '#fff',
+        border: '1px solid #f0f0f0',
+        borderRadius: 8,
+        cursor: 'pointer',
+      }}
+    >
+      <AppstoreOutlined style={{ fontSize: 18, color: '#1677ff' }} />
+      <span
+        style={{
+          writingMode: 'vertical-rl',
+          transform: 'rotate(180deg)',
+          color: 'rgba(0,0,0,0.65)',
+          fontSize: 12.5,
+          letterSpacing: 0.5,
+        }}
+      >
+        Справочники
+      </span>
+      <LeftOutlined style={{ marginTop: 'auto', color: '#bfbfbf' }} />
+    </div>
+  );
+}
+
 export function EstimateWorkspace(props: Props) {
   const { estimate, groups, orgs, totalItems, groupCount } = props;
-  const { visibility, aiExpanded, colSizes, setColSizes, setAiExpanded } = useWorkspaceLayoutStore();
+  const { visibility, aiExpanded, refsExpanded, colSizes, setColSizes, setAiExpanded, setRefsExpanded } =
+    useWorkspaceLayoutStore();
   const [historyOpen, setHistoryOpen] = useState(false);
 
   // Состав видимых колонок: смета всегда; справочники и ИИ — по тумблерам.
@@ -133,12 +172,18 @@ export function EstimateWorkspace(props: Props) {
       ),
     },
   ];
-  if (visibility.refs) {
+  if (visibility.refs && refsExpanded) {
     panels.push({
       id: 'refs',
       min: 300,
       fb: '40%',
-      node: <ReferencesPanel onAddRate={props.onAddRate} onAddMaterial={props.onCreateMaterial} />,
+      node: (
+        <ReferencesPanel
+          onAddRate={props.onAddRate}
+          onAddMaterial={props.onCreateMaterial}
+          onCollapse={() => setRefsExpanded(false)}
+        />
+      ),
     });
   }
   if (visibility.ai && aiExpanded) {
@@ -179,6 +224,7 @@ export function EstimateWorkspace(props: Props) {
           ))}
         </Splitter>
 
+        {visibility.refs && !refsExpanded && <RefsRail onClick={() => setRefsExpanded(true)} />}
         {visibility.ai && !aiExpanded && <AiRail onClick={() => setAiExpanded(true)} />}
       </div>
     </div>

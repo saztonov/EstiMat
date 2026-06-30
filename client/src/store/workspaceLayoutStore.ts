@@ -10,6 +10,8 @@ interface WorkspaceLayoutState {
   visibility: { ai: boolean; refs: boolean };
   // ИИ развёрнут в колонку (true) или свёрнут в рельс (false)
   aiExpanded: boolean;
+  // Справочники развёрнуты в колонку (true) или свёрнуты в рельс (false)
+  refsExpanded: boolean;
   // Размеры колонок — в процентах, по id
   colSizes: Partial<Record<PanelId, number>>;
   // Свёрнутость секций справочника (аккордеон)
@@ -19,6 +21,7 @@ interface WorkspaceLayoutState {
   /** Принудительно показать область (для программного раскрытия справочников). */
   showArea: (area: 'ai' | 'refs') => void;
   setAiExpanded: (v: boolean) => void;
+  setRefsExpanded: (v: boolean) => void;
   setColSizes: (ids: PanelId[], sizesPx: number[]) => void;
   toggleSection: (id: RefSectionId) => void;
   /** Принудительно развернуть секцию справочника. */
@@ -36,6 +39,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutState>()(
     (set) => ({
       visibility: { ai: true, refs: true },
       aiExpanded: false,
+      refsExpanded: true,
       colSizes: {},
       collapsedSections: { rd: true, works: false, mat: false },
 
@@ -46,6 +50,8 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutState>()(
         set((s) => ({ visibility: { ...s.visibility, [area]: true } })),
 
       setAiExpanded: (v) => set({ aiExpanded: v }),
+
+      setRefsExpanded: (v) => set({ refsExpanded: v }),
 
       setColSizes: (ids, sizesPx) =>
         set((s) => {
