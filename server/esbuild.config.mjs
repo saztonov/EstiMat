@@ -40,4 +40,9 @@ await cp(resolve(__dirname, 'src/db/migrations'), resolve(distDir, 'db/migration
   recursive: true,
 });
 
+// Excel-шаблоны (экспорт КП) читаются в рантайме по относительному пути dist/templates.
+await cp(resolve(__dirname, 'src/templates'), resolve(distDir, 'templates'), {
+  recursive: true,
+});
+
 console.log('Server build complete → dist/');

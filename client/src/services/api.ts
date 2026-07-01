@@ -76,12 +76,15 @@ function redirectToLogin() {
   window.location.href = `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
 }
 
-export async function apiFetch<T = unknown>(
+// Ядро запроса с авто-refresh при 401 и понятными ошибками. Возвращает СЫРОЙ Response
+// (тело не вычитано на успехе) — поверх строятся apiFetch (JSON) и download (Blob),
+// чтобы не дублировать логику авторизации/повторов.
+async function apiFetchRaw(
   url: string,
   options: RequestInit = {},
   fetchOpts?: FetchOptions,
   isRetry = false,
-): Promise<T> {
+): Promise<Response> {
   const headers: Record<string, string> = { ...options.headers as Record<string, string> };
   if (options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] ??= 'application/json';
@@ -114,7 +117,7 @@ export async function apiFetch<T = unknown>(
   if (res.status === 401 && !isRetry && !fetchOpts?.skipAuthRefresh) {
     const result = await refreshAccessToken();
     if (result.ok) {
-      return apiFetch(url, options, fetchOpts, true);
+      return apiFetchRaw(url, options, fetchOpts, true);
     }
     if (!fetchOpts?.skipAuthRedirect) {
       redirectToLogin();
@@ -139,7 +142,49 @@ export async function apiFetch<T = unknown>(
     });
   }
 
-  return res.json();
+  return res;
+}
+
+export async function apiFetch<T = unknown>(
+  url: string,
+  options: RequestInit = {},
+  fetchOpts?: FetchOptions,
+): Promise<T> {
+  const res = await apiFetchRaw(url, options, fetchOpts);
+  return res.json() as Promise<T>;
+}
+
+// Имя файла из заголовка Content-Disposition (RFC 5987 filename*=UTF-8'' или filename=).
+function filenameFromDisposition(cd: string | null): string | null {
+  if (!cd) return null;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  if (star?.[1]) {
+    try { return decodeURIComponent(star[1]); } catch { /* fallthrough */ }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(cd);
+  return plain?.[1] ?? null;
+}
+
+// Скачать бинарный ответ (например .xlsx) как файл. Переиспользует авторизацию/refresh
+// из apiFetchRaw; имя берёт из Content-Disposition, иначе fallbackName. Таймаут больше
+// обычного — сервер может собирать файл несколько секунд.
+async function downloadBlob(
+  url: string,
+  options: RequestInit,
+  fallbackName: string,
+  fetchOpts?: FetchOptions,
+): Promise<void> {
+  const res = await apiFetchRaw(url, options, { timeoutMs: 60_000, ...fetchOpts });
+  const blob = await res.blob();
+  const name = filenameFromDisposition(res.headers.get('Content-Disposition')) ?? fallbackName;
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(href);
 }
 
 // Convenience methods
@@ -161,4 +206,13 @@ export const api = {
 
   upload: <T = unknown>(url: string, formData: FormData, opts?: FetchOptions) =>
     apiFetch<T>(url, { method: 'POST', body: formData }, opts),
+
+  // POST с телом → скачивание файла (blob) из ответа.
+  download: (url: string, body?: unknown, fallbackName = 'download', opts?: FetchOptions) =>
+    downloadBlob(
+      url,
+      { method: 'POST', body: body ? JSON.stringify(body) : undefined },
+      fallbackName,
+      opts,
+    ),
 };

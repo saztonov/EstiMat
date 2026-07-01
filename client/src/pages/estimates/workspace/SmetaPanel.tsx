@@ -14,6 +14,7 @@ import {
   EnvironmentOutlined,
   MoreOutlined,
   SnippetsOutlined,
+  FileExcelOutlined,
 } from '@ant-design/icons';
 import { type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
 import { SmetaGroupBlock } from './SmetaGroupBlock';
@@ -34,6 +35,7 @@ import { useProjectZones } from '../../../hooks/useProjectLocations';
 import { useAuthStore } from '../../../store/authStore';
 import { PanelShell } from './PanelShell';
 import { SmetaActions } from './SmetaActions';
+import { api } from '../../../services/api';
 
 interface Organization {
   id: string;
@@ -614,6 +616,31 @@ export function SmetaPanel({
     ],
   );
 
+  // Экспорт в Excel-шаблон «КП»: выгружаем ровно те работы, что видны после фильтров.
+  // Метку локации формируем тем же formatLocationsLabel, что и остальной UI (единый
+  // источник форматирования); порядок и группировку по локации доделывает сервер.
+  const [exporting, setExporting] = useState(false);
+  const handleExportKp = useCallback(async () => {
+    const items = visibleGroups
+      .flatMap((g) => g.works)
+      .map((w) => ({
+        id: w.id,
+        locationLabel: formatLocationsLabel(w.locations ?? [], zoneRoots) || 'Без локации',
+      }));
+    if (items.length === 0) {
+      message.info('Нет строк для экспорта — измените фильтры.');
+      return;
+    }
+    setExporting(true);
+    try {
+      await api.download(`/estimates/${estimateId}/export-kp`, { items }, 'КП.xlsx');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : 'Не удалось выгрузить файл');
+    } finally {
+      setExporting(false);
+    }
+  }, [visibleGroups, zoneRoots, estimateId, message]);
+
   return (
     <PanelShell
       bodyRef={scrollRootRef}
@@ -736,6 +763,19 @@ export function SmetaPanel({
                 </Popconfirm>
                 <Button size="small" disabled={assigning} onClick={cancelSelection}>Отмена</Button>
               </Space>
+            )}
+            {mode === 'none' && (
+              <Tooltip title="Выгрузить отобранные фильтрами строки в Excel-шаблон ВОР (КП)">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<FileExcelOutlined />}
+                  loading={exporting}
+                  onClick={handleExportKp}
+                >
+                  Экспорт в Excel
+                </Button>
+              </Tooltip>
             )}
             {editable && mode === 'none' && (canBulkMutateMaterials || canBulkDelete) && (
               <Popover
