@@ -85,6 +85,21 @@ ws.column_dimensions['C'].width = 18.0
 for i, c in enumerate(range(1, ws.max_column + 1), start=1):
     ws.cell(row=17, column=c).value = i
 
+# 5) заливка колонки «Тип» (C) в динамической зоне: insert_cols вставил её без стиля,
+#    поэтому копируем оформление из D (та же строка) — Тип получает заливку/границы
+#    строки (локация — серый, работа — беж, ИТОГО — жёлтый). Значения пишет writer.
+for r in range(DYN_START, DYN_END + 1):
+    ws.cell(row=r, column=3)._style = copy(ws.cell(row=r, column=4)._style)
+
+# 6) «Наименование затрат» (D): insert_cols не сдвинул ширины — вернуть читаемую ширину.
+ws.column_dimensions['D'].width = 70.0
+
+# 7) шапка формы: инпут-ячейки уехали из C в D, между меткой (B) и инпутом (D) осталась
+#    пустая C. Копируем стиль D→C (у 10–12 это синий инпут) и объединяем C:D — дырки нет.
+for r in (4, 5, 6, 7, 10, 11, 12):
+    ws.cell(row=r, column=3)._style = copy(ws.cell(row=r, column=4)._style)
+    ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 wb.save(OUT)
 print('сохранено:', os.path.relpath(OUT, REPO))
