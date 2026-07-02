@@ -35,7 +35,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
     // Check if user exists
     const existing = await fastify.pool.query(
-      'SELECT id FROM users WHERE email = $1',
+      'SELECT id FROM users WHERE lower(btrim(email)) = lower(btrim($1))',
       [body.email],
     );
     if (existing.rows.length > 0) {
@@ -62,7 +62,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
     const result = await fastify.pool.query(
       `SELECT id, email, password_hash, full_name, org_id, role, is_active
-       FROM users WHERE email = $1`,
+       FROM users WHERE lower(btrim(email)) = lower(btrim($1))`,
       [body.email],
     );
 

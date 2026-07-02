@@ -27,7 +27,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
     const body = createUserSchema.parse(request.body);
 
     const existing = await fastify.pool.query(
-      'SELECT id FROM users WHERE email = $1',
+      'SELECT id FROM users WHERE lower(btrim(email)) = lower(btrim($1))',
       [body.email],
     );
     if (existing.rows.length > 0) {
@@ -54,7 +54,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 
     if (body.email !== undefined) {
       const dup = await fastify.pool.query(
-        'SELECT id FROM users WHERE email = $1 AND id != $2',
+        'SELECT id FROM users WHERE lower(btrim(email)) = lower(btrim($1)) AND id != $2',
         [body.email, request.params.id],
       );
       if (dup.rows.length > 0) {
@@ -80,6 +80,9 @@ export default async function userRoutes(fastify: FastifyInstance) {
     if (!touchesPrivilege) {
       const { rows } = await fastify.pool.query(updateSql, values);
       if (rows.length === 0) return reply.status(404).send({ error: 'Пользователь не найден' });
+      // Кэш пользователя (authenticate) держит email/ФИО/оргу — сбрасываем, чтобы /auth/me
+      // отдавал новые данные сразу, а не через TTL (иначе до 15с окно устаревших значений).
+      invalidateUserCache(request.params.id);
       return { data: rows[0] };
     }
 

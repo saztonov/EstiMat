@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { ROLES } from '../constants/roles.js';
+import { emailSchema } from './auth.js';
 
 export const createUserSchema = z.object({
-  email: z.string().email('Некорректный email'),
+  email: emailSchema,
   password: z.string().min(6, 'Минимум 6 символов'),
   fullName: z.string().min(2, 'Минимум 2 символа'),
   role: z.enum(ROLES),
@@ -11,7 +12,7 @@ export const createUserSchema = z.object({
 });
 
 export const updateUserSchema = z.object({
-  email: z.string().email('Некорректный email').optional(),
+  email: emailSchema.optional(),
   fullName: z.string().min(2).optional(),
   role: z.enum(ROLES).optional(),
   orgId: z.string().uuid().nullable().optional(),

@@ -163,6 +163,11 @@ export async function buildApp() {
         .join('; ');
       return reply.status(400).send({ error: message });
     }
+    // Нарушение уникальности PostgreSQL (unique_violation) — страховка от гонки
+    // check-then-insert: параллельные запросы проходят прекек, но упираются в UNIQUE-индекс.
+    if ((error as { code?: string }).code === '23505') {
+      return reply.status(409).send({ error: 'Запись с такими данными уже существует' });
+    }
     // Клиентские ошибки (rate-limit 429, и пр.) — отдаём как есть с тем же статусом.
     if (error.statusCode && error.statusCode < 500) {
       return reply.status(error.statusCode).send({ error: error.message });
