@@ -133,8 +133,10 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       `SELECT ec.cost_type_id, ec.contractor_id,
               o.name  AS contractor_name,
               ct.name AS cost_type_name,
+              ct.sort_order AS cost_type_sort_order,
               cc.id   AS cost_category_id,
-              cc.name AS cost_category_name
+              cc.name AS cost_category_name,
+              cc.sort_order AS cost_category_sort_order
        FROM estimate_contractors ec
        LEFT JOIN organizations o    ON ec.contractor_id = o.id
        LEFT JOIN cost_types ct      ON ec.cost_type_id = ct.id

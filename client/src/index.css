@@ -221,6 +221,23 @@ html, body, #root {
   text-align: center;
 }
 
+/* Обёртка иконки раскрытия «+»: фиксированный бокс, чтобы кнопка не «прыгала» */
+.estimat-expand-icon-wrap {
+  position: relative;
+  display: inline-block;
+  width: 17px;
+  height: 17px;
+  vertical-align: middle;
+}
+
+/* Счётчик материалов выносим из потока — не влияет на позицию «+» */
+.estimat-mat-count--floating {
+  position: absolute;
+  left: 21px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 /* Навигационное меню-гамбургер: пункты — настоящие ссылки (<a href>),
    средний/Ctrl-клик открывает раздел в новой вкладке. Ссылка растянута
    на всю строку пункта, чтобы клик по любой её части вёл навигацию. */

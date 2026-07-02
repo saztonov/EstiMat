@@ -71,6 +71,8 @@ async function buildEstimateDetail(fastify: FastifyInstance, estimateId: string)
   const items = await fastify.pool.query(
     `SELECT ei.*, r.name AS rate_name, r.code AS rate_code,
             ct.name AS cost_type_name, cc.name AS cost_category_name,
+            ct.sort_order AS cost_type_sort_order,
+            cc.sort_order AS cost_category_sort_order,
             z.name AS zone_name, z.kind AS zone_kind, rt.name AS room_type_name,
             lt.name AS location_type_name
        FROM estimate_items ei
@@ -98,7 +100,9 @@ async function buildEstimateDetail(fastify: FastifyInstance, estimateId: string)
   const contractors = await fastify.pool.query(
     `SELECT ec.cost_type_id, ec.contractor_id,
             o.name AS contractor_name, ct.name AS cost_type_name,
-            cc.id AS cost_category_id, cc.name AS cost_category_name
+            ct.sort_order AS cost_type_sort_order,
+            cc.id AS cost_category_id, cc.name AS cost_category_name,
+            cc.sort_order AS cost_category_sort_order
        FROM estimate_contractors ec
        LEFT JOIN organizations o    ON ec.contractor_id = o.id
        LEFT JOIN cost_types ct      ON ec.cost_type_id = ct.id

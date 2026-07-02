@@ -1076,8 +1076,10 @@ function CostTypeGroupBlockImpl({
       expandIcon: ({ expanded, onExpand, record }) => {
         if (record.id === DRAFT_ID) return <span style={{ display: 'inline-block', width: 17 }} />;
         const count = record.materials?.length ?? 0;
+        // Фиксированный бокс 17×17 (как заглушка черновика), счётчик — вне потока,
+        // чтобы позиция «+» не зависела от наличия материалов.
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span className="estimat-expand-icon-wrap">
             <button
               type="button"
               className={`ant-table-row-expand-icon ant-table-row-expand-icon-${expanded ? 'expanded' : 'collapsed'}`}
@@ -1085,7 +1087,7 @@ function CostTypeGroupBlockImpl({
               onClick={(e) => onExpand(record, e)}
             />
             {count > 0 && (
-              <span className="estimat-mat-count" title={`Материалов: ${count}`}>{count}</span>
+              <span className="estimat-mat-count estimat-mat-count--floating" title={`Материалов: ${count}`}>{count}</span>
             )}
           </span>
         );

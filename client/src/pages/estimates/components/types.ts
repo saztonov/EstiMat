@@ -104,8 +104,10 @@ export interface EstimateContractor {
   contractor_id: string;
   contractor_name: string | null;
   cost_type_name?: string | null;
+  cost_type_sort_order?: number | null;
   cost_category_id?: string | null;
   cost_category_name?: string | null;
+  cost_category_sort_order?: number | null;
 }
 
 export interface EstimateDetail {
@@ -191,8 +193,10 @@ export function buildCostTypeGroups(
     const g = ensure(c.cost_type_id);
     g.contractor = c;
     g.costTypeName ??= c.cost_type_name ?? null;
+    g.costTypeSortOrder ??= c.cost_type_sort_order ?? null;
     g.costCategoryId ??= c.cost_category_id ?? null;
     g.costCategoryName ??= c.cost_category_name ?? null;
+    g.costCategorySortOrder ??= c.cost_category_sort_order ?? null;
   }
 
   // Порядок групп — как в справочнике: сначала по sort_order категории, затем по sort_order

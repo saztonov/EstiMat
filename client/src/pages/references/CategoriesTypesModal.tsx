@@ -60,6 +60,10 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
     queryClient.invalidateQueries({ queryKey: ['rate-types'] });
     queryClient.invalidateQueries({ queryKey: ['rate-types-all'] });
     queryClient.invalidateQueries({ queryKey: ['rates-tree'] });
+    // Порядок категорий/видов в смете берётся из sort_order справочника (живой JOIN),
+    // поэтому после их пересортировки/переименования сбрасываем и кэши открытых смет.
+    queryClient.invalidateQueries({ queryKey: ['estimate'] });
+    queryClient.invalidateQueries({ queryKey: ['project-estimate'] });
   }
 
   const onErr = (err: Error) => message.error(err.message);
