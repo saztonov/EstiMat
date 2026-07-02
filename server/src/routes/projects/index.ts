@@ -74,7 +74,9 @@ async function buildEstimateDetail(fastify: FastifyInstance, estimateId: string)
             ct.sort_order AS cost_type_sort_order,
             cc.sort_order AS cost_category_sort_order,
             z.name AS zone_name, z.kind AS zone_kind, rt.name AS room_type_name,
-            lt.name AS location_type_name
+            lt.name AS location_type_name,
+            uc.full_name AS created_by_name,
+            uu.full_name AS updated_by_name
        FROM estimate_items ei
        LEFT JOIN rates r            ON ei.rate_id = r.id
        LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
@@ -82,6 +84,8 @@ async function buildEstimateDetail(fastify: FastifyInstance, estimateId: string)
        LEFT JOIN project_zones z    ON ei.zone_id = z.id
        LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
        LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
+       LEFT JOIN users uc           ON ei.created_by = uc.id
+       LEFT JOIN users uu           ON ei.updated_by = uu.id
       WHERE ei.estimate_id = $1
       ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
                cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
@@ -89,9 +93,13 @@ async function buildEstimateDetail(fastify: FastifyInstance, estimateId: string)
   );
 
   const materials = await fastify.pool.query(
-    `SELECT em.*, mc.name AS material_name
+    `SELECT em.*, mc.name AS material_name,
+            uc.full_name AS created_by_name,
+            uu.full_name AS updated_by_name
        FROM estimate_materials em
        LEFT JOIN material_catalog mc ON em.material_id = mc.id
+       LEFT JOIN users uc            ON em.created_by = uc.id
+       LEFT JOIN users uu            ON em.updated_by = uu.id
       WHERE em.estimate_id = $1
       ORDER BY em.sort_order, em.created_at`,
     [estimateId],
