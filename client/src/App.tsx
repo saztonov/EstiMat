@@ -6,6 +6,7 @@ import { AppUpdateBanner } from './components/shared/AppUpdateBanner';
 import { useAuthStore } from './store/authStore';
 import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
+import { StatusPage } from './pages/status/StatusPage';
 import { ProjectDetailPage } from './pages/projects/ProjectDetailPage';
 import { EstimatesPage } from './pages/estimates/EstimatesPage';
 import { EstimateDetailPage } from './pages/estimates/EstimateDetailPage';
@@ -28,6 +29,8 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        {/* Публичная страница статуса доступности — без авторизации, вне ProtectedRoute */}
+        <Route path="/status" element={<StatusPage />} />
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route path="/" element={<HomeRedirect />} />

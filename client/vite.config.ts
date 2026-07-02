@@ -34,6 +34,12 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
+      // Health-эндпоинты бэкенда (используются публичной страницей /status).
+      // В проде VITE_API_URL даёт абсолютный origin API — прокси не участвует.
+      '/health': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
     },
   },
 });
