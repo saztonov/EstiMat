@@ -23,6 +23,13 @@ export const changePasswordSchema = z.object({
   newPassword: z.string().min(6, 'Минимум 6 символов'),
 });
 
+// Самостоятельная смена пароля в личном кабинете — с проверкой текущего пароля.
+export const selfChangePasswordSchema = z.object({
+  currentPassword: z.string().min(6, 'Минимум 6 символов'),
+  newPassword: z.string().min(6, 'Минимум 6 символов'),
+});
+
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type SelfChangePasswordInput = z.infer<typeof selfChangePasswordSchema>;

@@ -80,6 +80,15 @@ export function AppLayout() {
 
   const userMenuItems: MenuProps['items'] = [
     {
+      key: 'profile',
+      icon: <UserOutlined />,
+      label: 'Личный кабинет',
+      onClick: () => {
+        navigate('/profile');
+        setOpen(false);
+      },
+    },
+    {
       key: 'logout',
       icon: <LogoutOutlined />,
       label: 'Выйти',

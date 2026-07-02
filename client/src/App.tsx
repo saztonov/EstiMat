@@ -15,6 +15,7 @@ import { ReferencesPage } from './pages/references/ReferencesPage';
 import { AdministrationPage } from './pages/administration/AdministrationPage';
 import { ContractorsPage } from './pages/contractors/ContractorsPage';
 import { ExecutionPage } from './pages/execution/ExecutionPage';
+import { ProfilePage } from './pages/profile/ProfilePage';
 
 // Стартовая страница: Сметы для тех, кому доступны (все, кроме подрядчика), иначе — Подрядчики.
 function HomeRedirect() {
@@ -44,6 +45,7 @@ export default function App() {
               <Route path="/administration" element={<AdministrationPage />} />
             </Route>
             {/* Доступно всем ролям */}
+            <Route path="/profile" element={<ProfilePage />} />
             <Route path="/contractors" element={<ContractorsPage />} />
             <Route path="/contractors/:estimateId" element={<ContractorsPage />} />
             <Route path="/execution" element={<ExecutionPage />} />

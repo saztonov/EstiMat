@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { config } from '../../config.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { loginSchema, registerSchema } from '@estimat/shared';
+import { loginSchema, registerSchema, selfChangePasswordSchema } from '@estimat/shared';
 
 function accessTokenCookie(isProduction: boolean) {
   return {
@@ -171,5 +171,31 @@ export default async function authRoutes(fastify: FastifyInstance) {
   // GET /api/auth/me
   fastify.get('/me', { preHandler: [authenticate] }, async (request) => {
     return { user: request.currentUser };
+  });
+
+  // POST /api/auth/change-password — смена своего пароля (с проверкой текущего)
+  fastify.post('/change-password', { preHandler: [authenticate] }, async (request, reply) => {
+    const body = selfChangePasswordSchema.parse(request.body);
+    const userId = request.currentUser!.id;
+
+    const { rows } = await fastify.pool.query(
+      'SELECT password_hash FROM users WHERE id = $1',
+      [userId],
+    );
+    if (rows.length === 0) {
+      return reply.status(404).send({ error: 'Пользователь не найден' });
+    }
+
+    const valid = await bcrypt.compare(body.currentPassword, rows[0].password_hash);
+    if (!valid) {
+      return reply.status(400).send({ error: 'Текущий пароль указан неверно' });
+    }
+
+    const passwordHash = await bcrypt.hash(body.newPassword, 10);
+    await fastify.pool.query(
+      'UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2',
+      [passwordHash, userId],
+    );
+    return { success: true };
   });
 }
