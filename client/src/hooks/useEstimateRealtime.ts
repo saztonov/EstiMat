@@ -5,6 +5,13 @@ import { estimateChangedEventSchema, REALTIME_PROTOCOL_VERSION } from '@estimat/
 import { invalidateEstimateQueries } from '../lib/estimateQueries';
 import { useAuthStore } from '../store/authStore';
 
+// Предел подряд идущих неуспешных реконнектов, после которого перестаём долбиться (иначе при
+// недоступном realtime консоль заваливается бесконечными ошибками WS-хендшейка). После «сдачи»
+// соединение возобновляется по возврату фокуса/онлайна вкладки.
+const MAX_ATTEMPTS = 6;
+// Минимальный интервал между попытками возобновления — защита от пачек focus/visibility событий.
+const RESUME_COOLDOWN_MS = 10_000;
+
 // WS-адрес /api/realtime. В dev VITE_API_URL пуст — идём через Vite-прокси по host страницы.
 function realtimeUrl(): string {
   const apiBase = import.meta.env.VITE_API_URL ?? '';
@@ -30,6 +37,13 @@ export function useEstimateRealtime(estimateId: string, projectId?: string | nul
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     let backoff = 1000;
     let pendingForeign = false;
+    // attempts — подряд идущие НЕуспешные попытки подключения (инкремент в onclose, сброс в onopen).
+    // После MAX_ATTEMPTS сдаёмся (gaveUp), чтобы не флудить консоль бесконечно при недоступном
+    // realtime; соединение возобновляется по возврату фокуса/онлайна (resume). Пока realtime лежит,
+    // подстраховывает refetchOnWindowFocus на страницах сметы.
+    let attempts = 0;
+    let gaveUp = false;
+    let lastResumeAt = 0;
 
     const flush = () => {
       invalidateEstimateQueries(queryClient, { estimateId, projectId });
@@ -46,6 +60,8 @@ export function useEstimateRealtime(estimateId: string, projectId?: string | nul
       ws = new WebSocket(realtimeUrl());
       ws.onopen = () => {
         backoff = 1000;
+        attempts = 0;
+        gaveUp = false;
         ws?.send(JSON.stringify({ type: 'subscribe_estimate', estimateId }));
         // (Ре)подключение — подтянуть смету, чтобы не упустить события за время простоя.
         invalidateEstimateQueries(queryClient, { estimateId, projectId });
@@ -59,17 +75,46 @@ export function useEstimateRealtime(estimateId: string, projectId?: string | nul
       };
       ws.onclose = () => {
         if (closedByUs) return;
+        attempts += 1;
+        if (attempts >= MAX_ATTEMPTS) {
+          gaveUp = true; // перестаём реконнектить; ждём resume по focus/online/visibility
+          return;
+        }
         reconnectTimer = setTimeout(connect, backoff);
         backoff = Math.min(backoff * 2, 15_000);
       };
       ws.onerror = () => { try { ws?.close(); } catch { /* ignore */ } };
     };
+
+    // Возобновление после «сдачи»: когда пользователь вернулся во вкладку/восстановилась сеть.
+    // Guard от гонок (не открываем второй сокет) + cooldown от пачек событий focus/visibility.
+    const resume = () => {
+      if (closedByUs || !gaveUp) return;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+      const now = Date.now();
+      if (now - lastResumeAt < RESUME_COOLDOWN_MS) return;
+      lastResumeAt = now;
+      attempts = 0;
+      backoff = 1000;
+      gaveUp = false;
+      connect();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') resume();
+    };
+    window.addEventListener('online', resume);
+    window.addEventListener('focus', resume);
+    document.addEventListener('visibilitychange', onVisibility);
+
     connect();
 
     return () => {
       closedByUs = true;
       clearTimeout(reconnectTimer);
       clearTimeout(debounceTimer);
+      window.removeEventListener('online', resume);
+      window.removeEventListener('focus', resume);
+      document.removeEventListener('visibilitychange', onVisibility);
       try { ws?.close(); } catch { /* ignore */ }
     };
   }, [estimateId, projectId, queryClient, currentUserId, message]);

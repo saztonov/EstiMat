@@ -66,6 +66,13 @@ function refreshAccessToken(): Promise<{ ok: boolean; expiresAt: number }> {
   return refreshPromise;
 }
 
+// Проактивный refresh (useAuthRefresh) должен ходить на тот же API-origin, что и остальной REST
+// (${BASE_URL}), а не на относительный путь — иначе при раздельных доменах (app.*/api.*) запрос
+// уходит в SPA-nginx и молча падает. Переиспользуем общий дедуплицированный refreshAccessToken.
+export function refreshSession(): Promise<{ ok: boolean; expiresAt: number }> {
+  return refreshAccessToken();
+}
+
 function safeReturnUrl(path: string): string {
   if (path.startsWith('/') && !path.startsWith('//')) return path;
   return '/';

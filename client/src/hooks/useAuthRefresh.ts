@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAuthStore } from '../store/authStore';
+import { refreshSession } from '../services/api';
 
 const REFRESH_CHECK_INTERVAL = 30_000; // 30 seconds
 const REFRESH_THRESHOLD = 2 * 60_000;  // 2 minutes before expiry
@@ -23,14 +24,10 @@ export function useAuthRefresh() {
 
       refreshingRef.current = true;
       try {
-        const res = await fetch('/api/auth/refresh', {
-          method: 'POST',
-          credentials: 'include',
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setExpiresAt(data.accessTokenExpiresAt);
-        }
+        // Общий с REST refresh: ходит на ${VITE_API_URL}/api/auth/refresh (а не относительный
+        // путь), поэтому работает и при раздельных доменах app.*/api.* в проде.
+        const r = await refreshSession();
+        if (r.ok) setExpiresAt(r.expiresAt);
       } catch { /* ignore */ }
       refreshingRef.current = false;
     }

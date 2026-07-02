@@ -160,13 +160,29 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       [request.params.id],
     );
 
+    // Бакетизация по item_id за один проход вместо вложенных .filter() внутри .map()
+    // (было O(items × строк)). Порядок сохраняется: SQL уже отсортировал строки (ORDER BY),
+    // а вставка в Map идёт в том же порядке.
+    const materialsByItem = new Map<string, typeof materials.rows>();
+    for (const m of materials.rows) {
+      const arr = materialsByItem.get(m.item_id);
+      if (arr) arr.push(m);
+      else materialsByItem.set(m.item_id, [m]);
+    }
+    const contractorsByItem = new Map<string, typeof itemContractors.rows>();
+    for (const c of itemContractors.rows) {
+      const arr = contractorsByItem.get(c.item_id);
+      if (arr) arr.push(c);
+      else contractorsByItem.set(c.item_id, [c]);
+    }
+
     const itemsWithMaterials = items.rows.map((it) => {
-      const its = itemContractors.rows.filter((c) => c.item_id === it.id);
+      const its = contractorsByItem.get(it.id) ?? [];
       const assignedTotal = its.reduce((s, c) => s + Number(c.effective_qty), 0);
       const qty = Number(it.quantity);
       return {
         ...it,
-        materials: materials.rows.filter((m) => m.item_id === it.id),
+        materials: materialsByItem.get(it.id) ?? [],
         item_contractors: its,
         assigned_total: assignedTotal,
         remaining_qty: Math.max(qty - assignedTotal, 0),
