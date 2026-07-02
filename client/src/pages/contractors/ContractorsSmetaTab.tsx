@@ -359,8 +359,8 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
         ),
       },
       { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
-      { title: 'Кол-во', dataIndex: 'quantity', key: 'quantity', width: 90, align: 'right', render: (v) => num(v) },
-      { title: 'Мой объём', key: 'my', width: 120, align: 'right', render: (_, it) => num(it.my_effective_qty) },
+      // Подрядчик видит только назначенный ему объём (без полного объёма строки).
+      { title: 'Кол-во', key: 'quantity', width: 110, align: 'right', render: (_, it) => num(it.my_effective_qty) },
     ];
     return (
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>

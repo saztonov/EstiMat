@@ -1,16 +1,24 @@
 import { useMemo, useState } from 'react';
-import { Table, Tag, Space, Empty, Tooltip, Select } from 'antd';
+import { Table, Tag, Space, Empty, Tooltip, Select, Button, InputNumber, App } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '../../services/api';
 import { buildMaterialGroups, type AggregatedMaterial } from '../estimates/materials/aggregateMaterials';
 import { formatMoney, type EstimateItem } from '../estimates/components/types';
 
 interface Props {
+  estimateId: string;
   items: EstimateItem[];
   /** Подрядчик: материалы масштабируются по его доле строки (effective_qty / quantity). */
   viewerIsContractor: boolean;
 }
 
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
+const EPS = 1e-6;
+
+// Ключ строки заказа/заявки: (вид работ, свёртка материала). agg_key = m.key из свода.
+const rowKey = (costTypeId: string | null, aggKey: string) => `${costTypeId ?? ''}|${aggKey}`;
 
 // Для подрядчика — масштабировать материалы строки по его доле объёма (нельзя показывать 100%).
 function scaleForContractor(items: EstimateItem[]): EstimateItem[] {
@@ -30,8 +38,13 @@ function scaleForContractor(items: EstimateItem[]): EstimateItem[] {
   });
 }
 
-export function ContractorsMaterialsTab({ items, viewerIsContractor }: Props) {
+export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor }: Props) {
   const [filterContractorIds, setFilterContractorIds] = useState<string[]>([]);
+  // Режим заявки на материалы (только подрядчик).
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Map<string, number>>(new Map());
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
 
   // Опции фильтра — только подрядчики, реально назначенные на работы в этой смете
   // (источник — item_contractors, как на вкладке «Смета»).
@@ -55,50 +68,160 @@ export function ContractorsMaterialsTab({ items, viewerIsContractor }: Props) {
     return buildMaterialGroups(src, []);
   }, [items, viewerIsContractor, filterContractorIds]);
 
-  const columns: ColumnsType<AggregatedMaterial> = [
-    {
-      title: 'Материал',
-      dataIndex: 'name',
-      key: 'name',
-      render: (_, m) => (
-        <Space size={4}>
-          {m.name}
-          {m.hasSuggested && <Tag color="orange">предложение</Tag>}
-          {m.hasAi && <Tag color="blue">ИИ</Tag>}
-        </Space>
-      ),
+  // Заказано ранее: подрядчику — по своей организации; сотруднику — по фильтру/суммарно.
+  const orderedQ = useQuery({
+    queryKey: ['material-ordered', estimateId, viewerIsContractor ? 'me' : filterContractorIds.join(',')],
+    queryFn: () => {
+      const params = new URLSearchParams({ estimateId });
+      if (!viewerIsContractor && filterContractorIds.length)
+        params.set('contractorIds', filterContractorIds.join(','));
+      return api.get<{ data: { cost_type_id: string | null; agg_key: string; ordered_qty: string }[] }>(
+        `/material-requests/ordered?${params.toString()}`,
+      );
     },
-    { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
-    {
-      title: 'По смете',
-      dataIndex: 'quantity',
-      key: 'quantity',
-      width: 110,
-      align: 'right',
-      render: (v: number) => Math.round(v * 1e4) / 1e4,
+    enabled: !!estimateId,
+  });
+
+  const orderedMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of orderedQ.data?.data ?? []) m.set(rowKey(r.cost_type_id, r.agg_key), num(r.ordered_qty));
+    return m;
+  }, [orderedQ.data]);
+
+  const submitMutation = useMutation({
+    mutationFn: (lines: unknown[]) => api.post('/material-requests', { estimateId, lines }),
+    onSuccess: () => {
+      message.success('Заявка отправлена');
+      setEditing(false);
+      setDraft(new Map());
+      queryClient.invalidateQueries({ queryKey: ['material-ordered', estimateId] });
     },
-    { title: 'Сумма', dataIndex: 'total', key: 'total', width: 140, align: 'right', render: (v: number) => formatMoney(v) },
-    // Колонки-заглушки под следующую итерацию (заказ материалов).
-    {
-      title: <Tooltip title="Заказ материалов — следующая итерация">Заказано</Tooltip>,
-      key: 'ordered',
-      width: 100,
-      align: 'right',
-      render: () => <span style={{ color: '#bfbfbf' }}>—</span>,
-    },
-    {
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  function updateDraft(key: string, v: number | null) {
+    setDraft((prev) => {
+      const next = new Map(prev);
+      if (v == null || v <= 0) next.delete(key);
+      else next.set(key, v);
+      return next;
+    });
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+    setDraft(new Map());
+  }
+
+  function submit() {
+    const lines: {
+      costTypeId: string | null;
+      aggKey: string;
+      materialId: string | null;
+      name: string;
+      unit: string;
+      quantity: number;
+    }[] = [];
+    for (const g of groups)
+      for (const m of g.materials) {
+        const q = draft.get(rowKey(g.costTypeId, m.key));
+        if (q && q > 0)
+          lines.push({
+            costTypeId: g.costTypeId,
+            aggKey: m.key,
+            materialId: m.materialId,
+            name: m.name,
+            unit: m.unit,
+            quantity: q,
+          });
+      }
+    if (lines.length === 0) {
+      message.warning('Укажите количество хотя бы для одного материала');
+      return;
+    }
+    submitMutation.mutate(lines);
+  }
+
+  // Колонки строятся на группу (нужен costTypeId группы для ключа заказа/заявки).
+  function buildColumns(costTypeId: string | null): ColumnsType<AggregatedMaterial> {
+    const cols: ColumnsType<AggregatedMaterial> = [
+      {
+        title: 'Материал',
+        dataIndex: 'name',
+        key: 'name',
+        render: (_, m) => {
+          const key = rowKey(costTypeId, m.key);
+          const ordered = orderedMap.get(key) ?? 0;
+          const req = draft.get(key) ?? 0;
+          const over = viewerIsContractor ? ordered + req > m.quantity + EPS : ordered > m.quantity + EPS;
+          return (
+            <Space size={4}>
+              {m.name}
+              {m.hasSuggested && <Tag color="orange">предложение</Tag>}
+              {m.hasAi && <Tag color="blue">ИИ</Tag>}
+              {over && <Tag color="red">Сверх сметы</Tag>}
+            </Space>
+          );
+        },
+      },
+      { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
+      {
+        title: 'По смете',
+        dataIndex: 'quantity',
+        key: 'quantity',
+        width: 110,
+        align: 'right',
+        render: (v: number) => Math.round(v * 1e4) / 1e4,
+      },
+      { title: 'Сумма', dataIndex: 'total', key: 'total', width: 140, align: 'right', render: (v: number) => formatMoney(v) },
+      {
+        title: 'Заказано',
+        key: 'ordered',
+        width: 100,
+        align: 'right',
+        render: (_, m) => {
+          const v = orderedMap.get(rowKey(costTypeId, m.key)) ?? 0;
+          return v > 0 ? Math.round(v * 1e4) / 1e4 : <span style={{ color: '#bfbfbf' }}>—</span>;
+        },
+      },
+    ];
+
+    // Колонка «Заявка» — только в режиме заявки (подрядчик).
+    if (editing && viewerIsContractor) {
+      cols.push({
+        title: 'Заявка',
+        key: 'request',
+        width: 120,
+        align: 'right',
+        render: (_, m) => {
+          const key = rowKey(costTypeId, m.key);
+          return (
+            <InputNumber
+              min={0}
+              style={{ width: 100 }}
+              value={draft.get(key)}
+              onChange={(v) => updateDraft(key, v as number | null)}
+            />
+          );
+        },
+      });
+    }
+
+    cols.push({
       title: <Tooltip title="Поставки — следующая итерация">Поставлено</Tooltip>,
       key: 'delivered',
       width: 100,
       align: 'right',
       render: () => <span style={{ color: '#bfbfbf' }}>—</span>,
-    },
-  ];
+    });
+
+    return cols;
+  }
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      {!viewerIsContractor && (
-        <div style={{ flexShrink: 0, marginBottom: 12 }}>
+      <div style={{ flexShrink: 0, marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+        {!viewerIsContractor && (
           <Select
             mode="multiple"
             allowClear
@@ -111,8 +234,21 @@ export function ContractorsMaterialsTab({ items, viewerIsContractor }: Props) {
             optionFilterProp="label"
             maxTagCount={1}
           />
-        </div>
-      )}
+        )}
+        {viewerIsContractor &&
+          (editing ? (
+            <>
+              <Button type="primary" loading={submitMutation.isPending} onClick={submit}>
+                Подтвердить
+              </Button>
+              <Button onClick={cancelEditing}>Отмена</Button>
+            </>
+          ) : (
+            <Button icon={<PlusOutlined />} onClick={() => setEditing(true)}>
+              Заявка на материалы
+            </Button>
+          ))}
+      </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {groups.length === 0 ? (
           <Empty description="Материалов нет" />
@@ -132,7 +268,7 @@ export function ContractorsMaterialsTab({ items, viewerIsContractor }: Props) {
                 size="small"
                 pagination={false}
                 dataSource={g.materials}
-                columns={columns}
+                columns={buildColumns(g.costTypeId)}
               />
             </div>
           ))}

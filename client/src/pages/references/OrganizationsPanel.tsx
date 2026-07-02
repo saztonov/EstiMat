@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, App } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, Tooltip, App } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { ORG_TYPE_LABELS, ORG_TYPES } from '@estimat/shared';
@@ -11,6 +11,9 @@ export function OrganizationsPanel() {
   const [editRecord, setEditRecord] = useState<Record<string, unknown> | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string | undefined>();
+  // Модалка назначения объектов подрядчику.
+  const [projectsOrg, setProjectsOrg] = useState<Record<string, unknown> | null>(null);
+  const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
   const [form] = Form.useForm();
   const queryClient = useQueryClient();
   const { message } = App.useApp();
@@ -18,6 +21,12 @@ export function OrganizationsPanel() {
   const { data, isLoading } = useQuery({
     queryKey: ['organizations'],
     queryFn: () => api.get<{ data: Record<string, unknown>[] }>('/organizations'),
+  });
+
+  // Список объектов для выбора в модалке «Объекты».
+  const { data: projectsData } = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => api.get<{ data: Record<string, unknown>[] }>('/projects'),
   });
 
   const createMutation = useMutation({
@@ -48,6 +57,26 @@ export function OrganizationsPanel() {
     },
     onError: (err: Error) => message.error(err.message),
   });
+
+  const saveProjectsMutation = useMutation({
+    mutationFn: ({ id, projectIds }: { id: string; projectIds: string[] }) =>
+      api.put(`/organizations/${id}/projects`, { projectIds }),
+    onSuccess: () => {
+      setProjectsOrg(null);
+      message.success('Объекты сохранены');
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  // Только подрядчикам (суб-/генподрядчик) можно назначать объекты.
+  const isContractorOrg = (type: unknown) => type === 'subcontractor' || type === 'general_contractor';
+
+  async function openProjects(record: Record<string, unknown>) {
+    setProjectsOrg(record);
+    setSelectedProjects([]);
+    const res = await api.get<{ data: string[] }>(`/organizations/${record.id}/projects`);
+    setSelectedProjects(res.data);
+  }
 
   function closeModal() {
     setModalOpen(false);
@@ -92,9 +121,14 @@ export function OrganizationsPanel() {
     },
     {
       title: 'Действия',
-      width: 120,
+      width: 150,
       render: (_: unknown, record: Record<string, unknown>) => (
         <Space>
+          {isContractorOrg(record.type) && (
+            <Tooltip title="Объекты подрядчика">
+              <Button type="text" icon={<AppstoreOutlined />} onClick={(e) => { e.stopPropagation(); openProjects(record); }} />
+            </Tooltip>
+          )}
           <Button type="text" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); openEdit(record); }} />
           <Popconfirm title="Деактивировать организацию?" onConfirm={() => deleteMutation.mutate(record.id as string)} onPopupClick={(e) => e.stopPropagation()}>
             <Button type="text" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
@@ -163,6 +197,32 @@ export function OrganizationsPanel() {
             <Select mode="tags" tokenSeparators={[',']} open={false} placeholder="Введите и нажмите Enter" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`Объекты подрядчика: ${String(projectsOrg?.name ?? '')}`}
+        open={!!projectsOrg}
+        onCancel={() => setProjectsOrg(null)}
+        onOk={() => projectsOrg && saveProjectsMutation.mutate({ id: projectsOrg.id as string, projectIds: selectedProjects })}
+        confirmLoading={saveProjectsMutation.isPending}
+      >
+        <p style={{ color: '#8c8c8c', marginTop: 0 }}>
+          Подрядчик увидит в личном кабинете только назначенные объекты.
+        </p>
+        <Select
+          mode="multiple"
+          allowClear
+          showSearch
+          style={{ width: '100%' }}
+          placeholder="Выберите объекты"
+          value={selectedProjects}
+          onChange={setSelectedProjects}
+          optionFilterProp="label"
+          options={(projectsData?.data ?? []).map((p) => ({
+            value: p.id as string,
+            label: `${String(p.code ?? '')} · ${String(p.name ?? '')}`,
+          }))}
+        />
       </Modal>
     </div>
   );

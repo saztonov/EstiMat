@@ -38,9 +38,10 @@ export function AppLayout() {
     });
 
     // Подрядчик видит только свои разделы; остальные роли — полное меню.
+    // Для подрядчика раздел «Подрядчики» называется «Сметы».
     if (user?.role === 'contractor') {
       return [
-        navItem('/contractors', <TeamOutlined />, 'Подрядчики'),
+        navItem('/contractors', <TeamOutlined />, 'Сметы'),
         navItem('/execution', <CheckSquareOutlined />, 'Выполнение'),
       ];
     }

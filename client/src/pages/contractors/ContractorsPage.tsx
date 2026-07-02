@@ -116,7 +116,7 @@ export function ContractorsPage() {
   if (!estimateId) {
     return (
       <Card
-        title="Подрядчики"
+        title={viewerIsContractor ? 'Сметы' : 'Подрядчики'}
         style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
         styles={{ header: { paddingLeft: 48 }, body: { flex: 1, overflow: 'auto' } }}
       >
@@ -170,7 +170,7 @@ export function ContractorsPage() {
             {
               key: 'materials',
               label: 'Материалы',
-              children: <ContractorsMaterialsTab items={items} viewerIsContractor={viewerIsContractor} />,
+              children: <ContractorsMaterialsTab estimateId={estimateId} items={items} viewerIsContractor={viewerIsContractor} />,
             },
           ]}
         />

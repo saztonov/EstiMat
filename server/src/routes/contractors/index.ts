@@ -47,7 +47,8 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
   fastify.get('/estimates', async (request) => {
     const user = request.currentUser;
 
-    // Подрядчик: только сметы, где есть строки его организации; счётчики — по его строкам.
+    // Подрядчик: объекты, назначенные его организации (project_contractors); счётчики —
+    // по его строкам. Объект без заведённой сметы тоже виден (estimate_id=null → некликабелен).
     if (isContractor(user)) {
       if (!user.orgId) return { data: [] };
       const { rows } = await fastify.pool.query(
@@ -55,14 +56,16 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
                 p.code AS project_code, p.name AS project_name,
                 p.address, p.image_url,
                 cc.name AS cost_category_name,
-                COUNT(DISTINCT ei.id)::int AS items_total,
+                COUNT(DISTINCT eic.item_id)::int AS items_total,
                 COALESCE(SUM(${EFFECTIVE} * ei.unit_price), 0)::numeric AS my_amount
-           FROM estimate_item_contractors eic
-           JOIN estimate_items ei ON ei.id = eic.item_id
-           JOIN estimates e       ON e.id = ei.estimate_id
-           JOIN projects p        ON p.id = e.project_id
+           FROM project_contractors pc
+           JOIN projects p        ON p.id = pc.project_id
+           LEFT JOIN estimates e  ON e.project_id = p.id
            LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
-          WHERE eic.contractor_id = $1
+           LEFT JOIN estimate_item_contractors eic
+                  ON eic.estimate_id = e.id AND eic.contractor_id = pc.contractor_id
+           LEFT JOIN estimate_items ei ON ei.id = eic.item_id
+          WHERE pc.contractor_id = $1
           GROUP BY e.id, p.id, cc.name
           ORDER BY p.code`,
         [user.orgId],
@@ -139,6 +142,19 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
       const contractorId = isContractor(user) ? user.orgId : (request.query.contractorId ?? null);
       if (!contractorId) {
         return reply.status(400).send({ error: 'Не указана организация-подрядчик' });
+      }
+
+      // Подрядчик может открывать только сметы объектов, назначенных его организации.
+      if (isContractor(user) && request.query.estimateId) {
+        const access = await fastify.pool.query(
+          `SELECT 1 FROM estimates e
+             JOIN project_contractors pc ON pc.project_id = e.project_id
+            WHERE e.id = $1 AND pc.contractor_id = $2`,
+          [request.query.estimateId, contractorId],
+        );
+        if (access.rows.length === 0) {
+          return reply.status(403).send({ error: 'Объект не назначен вашей организации' });
+        }
       }
 
       const values: unknown[] = [contractorId];
@@ -325,6 +341,18 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
           });
         }
         await recordAuditBatch(client, auditInputs);
+
+        // Авто-синк: объекты затронутых смет становятся видимыми подрядчику в его кабинете.
+        // Снятие исполнителя (DELETE /assignments) эту связку НЕ убирает.
+        const affectedEstimateIds = [...new Set(toUpsert.map((u) => u.estimateId))];
+        await client.query(
+          `INSERT INTO project_contractors (project_id, contractor_id, assigned_by)
+           SELECT DISTINCT e.project_id, $2, $3
+             FROM estimates e
+            WHERE e.id = ANY($1) AND e.project_id IS NOT NULL
+           ON CONFLICT (project_id, contractor_id) DO NOTHING`,
+          [affectedEstimateIds, body.contractorId, userId],
+        );
 
         await client.query('COMMIT');
 

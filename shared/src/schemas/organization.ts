@@ -15,6 +15,11 @@ export const createOrganizationSchema = z.object({
 
 export const updateOrganizationSchema = createOrganizationSchema.partial();
 
+// Назначение организации-подрядчику набора объектов (REPLACE): полный список project_id.
+export const assignOrgProjectsSchema = z.object({
+  projectIds: z.array(z.string().uuid()),
+});
+
 export const organizationSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -31,3 +36,4 @@ export const organizationSchema = z.object({
 export type CreateOrganizationInput = z.infer<typeof createOrganizationSchema>;
 export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
 export type Organization = z.infer<typeof organizationSchema>;
+export type AssignOrgProjectsInput = z.infer<typeof assignOrgProjectsSchema>;
