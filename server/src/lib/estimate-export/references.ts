@@ -21,9 +21,41 @@ export interface ExportConflict {
   units: string[]; // исходные различные единицы (пустая — как '')
 }
 
-// Нормализация для ключа группировки: trim + схлопывание пробелов + нижний регистр.
+// Надстрочные цифры → обычные: чтобы «м²»/«м³» не отличались от «м2»/«м3» (иначе одна
+// и та же единица в разных строках даёт ложный конфликт).
+const SUPERSCRIPT: Record<string, string> = {
+  '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4',
+  '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9',
+};
+
+// Нормализация для ключа группировки: trim + схлопывание пробелов + свёртка надстрочных
+// цифр + нижний регистр.
 function norm(s: string | null | undefined): string {
-  return (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  return (s ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[⁰¹²³⁴-⁹]/g, (ch) => SUPERSCRIPT[ch] ?? ch)
+    .toLowerCase();
+}
+
+/**
+ * Карта синонимов единиц: нормализованный вариант → нормализованное каноническое название.
+ * Строится из справочника units (name + synonyms). Каноническое имя маппится само на себя.
+ */
+export function buildUnitAliasMap(
+  units: { name: string; synonyms: string[] | null }[],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const u of units) {
+    const canon = norm(u.name);
+    if (!canon) continue;
+    map.set(canon, canon);
+    for (const s of u.synonyms ?? []) {
+      const k = norm(s);
+      if (k) map.set(k, canon);
+    }
+  }
+  return map;
 }
 
 interface Agg {
@@ -31,7 +63,11 @@ interface Agg {
   units: Map<string, string>; // ключ единицы → первая исходная единица (в порядке появления)
 }
 
-function collect(rows: ExportRow[], kind: 'material' | 'work'): {
+function collect(
+  rows: ExportRow[],
+  kind: 'material' | 'work',
+  unitAliases: Map<string, string>,
+): {
   list: ExportRefRow[];
   conflicts: ExportConflict[];
 } {
@@ -47,7 +83,8 @@ function collect(rows: ExportRow[], kind: 'material' | 'work'): {
       byKey.set(nameKey, agg);
       order.push(nameKey);
     }
-    const unitKey = norm(row.unit);
+    const unitNorm = norm(row.unit);
+    const unitKey = unitAliases.get(unitNorm) ?? unitNorm; // синоним → каноническая единица
     if (!agg.units.has(unitKey)) agg.units.set(unitKey, (row.unit ?? '').trim());
   }
 
@@ -66,15 +103,20 @@ function collect(rows: ExportRow[], kind: 'material' | 'work'): {
 
 /**
  * Собрать уникальные списки материалов и работ + конфликты единиц из блоков экспорта.
+ * unitAliases (см. buildUnitAliasMap) сводит синонимы единиц к канонической — единицы-синонимы
+ * не считаются конфликтом. Без карты работает как раньше (только свёртка надстрочных цифр в norm).
  */
-export function buildReferenceLists(blocks: ExportBlock[]): {
+export function buildReferenceLists(
+  blocks: ExportBlock[],
+  unitAliases: Map<string, string> = new Map(),
+): {
   materials: ExportRefRow[];
   works: ExportRefRow[];
   conflicts: ExportConflict[];
 } {
   const allRows = blocks.flatMap((b) => b.rows);
-  const materials = collect(allRows.filter((r) => r.kind === 'material'), 'material');
-  const works = collect(allRows.filter((r) => r.kind === 'work'), 'work');
+  const materials = collect(allRows.filter((r) => r.kind === 'material'), 'material', unitAliases);
+  const works = collect(allRows.filter((r) => r.kind === 'work'), 'work', unitAliases);
   return {
     materials: materials.list,
     works: works.list,

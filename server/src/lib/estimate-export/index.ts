@@ -5,7 +5,12 @@ import {
   ExportUnitConflictError,
   type ExportItemRef,
 } from './data.js';
-import { buildReferenceLists, type ExportRefRow, type ExportConflict } from './references.js';
+import {
+  buildReferenceLists,
+  buildUnitAliasMap,
+  type ExportRefRow,
+  type ExportConflict,
+} from './references.js';
 import { exportKpWorkbook } from './writer.js';
 
 export { ExportError, ExportUnitConflictError };
@@ -25,7 +30,9 @@ export async function exportEstimateKp(
   opts?: { ignoreUnitConflicts?: boolean },
 ): Promise<Buffer> {
   const blocks = await gatherExportData(pool, estimateId, refs);
-  const ref = buildReferenceLists(blocks);
+  const { rows: unitRows } = await pool.query('SELECT name, synonyms FROM units');
+  const unitAliases = buildUnitAliasMap(unitRows as { name: string; synonyms: string[] | null }[]);
+  const ref = buildReferenceLists(blocks, unitAliases);
   if (ref.conflicts.length && !opts?.ignoreUnitConflicts) {
     throw new ExportUnitConflictError(ref.conflicts);
   }

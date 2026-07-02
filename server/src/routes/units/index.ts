@@ -14,12 +14,17 @@ export default async function unitRoutes(fastify: FastifyInstance) {
     return { data: rows };
   });
 
+  // Нормализация синонимов: trim + отбрасываем пустые и дубли.
+  const cleanSynonyms = (syns: string[]) => [
+    ...new Set(syns.map((s) => s.trim()).filter(Boolean)),
+  ];
+
   // POST /api/units
   fastify.post('/', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
     const body = createUnitSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
-      `INSERT INTO units (name, sort_order) VALUES ($1, $2) RETURNING *`,
-      [body.name, body.sortOrder ?? 0],
+      `INSERT INTO units (name, sort_order, synonyms) VALUES ($1, $2, $3) RETURNING *`,
+      [body.name, body.sortOrder ?? 0, cleanSynonyms(body.synonyms ?? [])],
     );
     return reply.status(201).send({ data: rows[0] });
   });
@@ -33,6 +38,7 @@ export default async function unitRoutes(fastify: FastifyInstance) {
 
     if (body.name !== undefined) { sets.push(`name = $${i++}`); values.push(body.name); }
     if (body.sortOrder !== undefined) { sets.push(`sort_order = $${i++}`); values.push(body.sortOrder); }
+    if (body.synonyms !== undefined) { sets.push(`synonyms = $${i++}`); values.push(cleanSynonyms(body.synonyms)); }
 
     if (sets.length === 0) return reply.status(400).send({ error: 'Нет данных для обновления' });
 

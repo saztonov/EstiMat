@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { exportKpWorkbook } from './writer.js';
-import { buildReferenceLists } from './references.js';
+import { buildReferenceLists, buildUnitAliasMap } from './references.js';
 import { BSM_SHEET, BSR_SHEET, REF_DATA_START_ROW } from './layout.js';
 import type { ExportBlock } from './data.js';
 
@@ -54,6 +54,35 @@ const conflictBlocks: ExportBlock[] = [
 ];
 const refC = buildReferenceLists(conflictBlocks);
 assert(refC.conflicts.length === 1, `ожидался 1 конфликт, получено ${refC.conflicts.length}`);
+
+// 2b) «м²» и «м2» — одна единица (надстрочная цифра), конфликта быть не должно.
+const supBlocks: ExportBlock[] = [
+  {
+    locationLabel: 'Тест',
+    rows: [
+      { kind: 'material', number: '1.1', typeName: null, name: 'Плёнка', unit: 'м²', volume: 1, coef: 1 },
+      { kind: 'material', number: '2.1', typeName: null, name: 'Плёнка', unit: 'м2', volume: 1, coef: 1 },
+    ],
+  },
+];
+const refSup = buildReferenceLists(supBlocks);
+assert(refSup.conflicts.length === 0, `«м²»/«м2» не должны конфликтовать, получено ${refSup.conflicts.length}`);
+assert(refSup.materials.length === 1, `«м²»/«м2» должны схлопнуться в 1 материал, получено ${refSup.materials.length}`);
+
+// 2c) Синонимы из справочника: «шт» и «шт.» — одна единица, конфликта нет; без карты — конфликт.
+const synBlocks: ExportBlock[] = [
+  {
+    locationLabel: 'Тест',
+    rows: [
+      { kind: 'material', number: '1.1', typeName: null, name: 'Дюбель', unit: 'шт', volume: 1, coef: 1 },
+      { kind: 'material', number: '2.1', typeName: null, name: 'Дюбель', unit: 'шт.', volume: 1, coef: 1 },
+    ],
+  },
+];
+assert(buildReferenceLists(synBlocks).conflicts.length === 1, 'без справочника «шт»/«шт.» — конфликт');
+const aliases = buildUnitAliasMap([{ name: 'шт', synonyms: ['шт.', 'штука'] }]);
+const refSyn = buildReferenceLists(synBlocks, aliases);
+assert(refSyn.conflicts.length === 0, `с синонимами «шт»/«шт.» не должны конфликтовать, получено ${refSyn.conflicts.length}`);
 assert(refC.conflicts[0]!.kind === 'material', 'конфликт должен быть по материалу');
 assert(
   refC.conflicts[0]!.units.includes('м2') && refC.conflicts[0]!.units.includes('шт'),

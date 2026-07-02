@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Popconfirm, Space, App } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Popconfirm, Space, Select, Tag, App } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -58,7 +58,11 @@ export function UnitsPanel() {
 
   const openEdit = (row: Record<string, unknown>) => {
     setEditingId(row.id as string);
-    form.setFieldsValue({ name: row.name, sortOrder: Number(row.sort_order ?? 0) });
+    form.setFieldsValue({
+      name: row.name,
+      sortOrder: Number(row.sort_order ?? 0),
+      synonyms: (row.synonyms as string[] | null) ?? [],
+    });
     setModalOpen(true);
   };
 
@@ -74,7 +78,15 @@ export function UnitsPanel() {
   };
 
   const columns = [
-    { title: 'Название', dataIndex: 'name' },
+    { title: 'Название', dataIndex: 'name', width: 160 },
+    {
+      title: 'Синонимы',
+      dataIndex: 'synonyms',
+      render: (syns: string[] | null) =>
+        syns && syns.length > 0
+          ? syns.map((s) => <Tag key={s} style={{ marginBottom: 2 }}>{s}</Tag>)
+          : <span style={{ color: '#bfbfbf' }}>—</span>,
+    },
     { title: 'Порядок', dataIndex: 'sort_order', width: 100, align: 'center' as const },
     {
       title: '',
@@ -107,6 +119,19 @@ export function UnitsPanel() {
         <Form form={form} layout="vertical" onFinish={onSubmit}>
           <Form.Item name="name" label="Название" rules={[{ required: true }]}>
             <Input placeholder="м2, шт, компл" />
+          </Form.Item>
+          <Form.Item
+            name="synonyms"
+            label="Синонимы"
+            tooltip="Варианты записи той же единицы: м², кв.м, шт., штука. Экспорт считает их одной единицей."
+          >
+            <Select
+              mode="tags"
+              tokenSeparators={[',', ';']}
+              placeholder="м², кв.м"
+              open={false}
+              suffixIcon={null}
+            />
           </Form.Item>
           <Form.Item name="sortOrder" label="Порядок сортировки">
             <InputNumber style={{ width: '100%' }} min={0} step={1} />
