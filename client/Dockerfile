@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Build context = корень репозитория. API-origin задаётся при сборке:
 #   docker build -f client/Dockerfile --build-arg VITE_API_URL=https://api.estimat.example -t estimat-web .
 

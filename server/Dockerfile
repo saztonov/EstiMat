@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Build context = корень репозитория (монорепо npm workspaces):
 #   docker build -f server/Dockerfile -t estimat-api .
 
