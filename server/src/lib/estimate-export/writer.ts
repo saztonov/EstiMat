@@ -106,6 +106,20 @@ const M = colLetter(COL.costSmr); //  M
 const N = colLetter(COL.costTotal); // N
 const I = colLetter(COL.priceMat); //  I
 const J = colLetter(COL.priceSmr); //  J
+const G = colLetter(COL.volume); //   G — объём
+const D = colLetter(COL.name); //     D — наименование (ключ поиска в БСМ/БСР)
+const REF_NAME_COL = colLetter(REF_COL.name); //  B — наименование в справочнике
+const REF_PRICE_COL = colLetter(REF_COL.price); // D — цена в справочнике
+
+// XLOOKUP цены по наименованию (ячейка D{row}) в листе-справочнике sheet (БСМ/БСР), диапазон
+// данных REF_DATA_START_ROW..lastRow. 4-й аргумент 0 → «не найдено/не заполнено» = 0.
+// Префикс _xlfn. обязателен в XML для XLOOKUP.
+function refLookup(sheet: string, lastRow: number, row: number): string {
+  const first = REF_DATA_START_ROW;
+  const nameRange = `${sheet}!$${REF_NAME_COL}$${first}:$${REF_NAME_COL}$${lastRow}`;
+  const priceRange = `${sheet}!$${REF_PRICE_COL}$${first}:$${REF_PRICE_COL}$${lastRow}`;
+  return `_xlfn.XLOOKUP(${D}${row},${nameRange},${priceRange},0)`;
+}
 
 /** Собрать .xlsx (Buffer): заполнить лист «КП» блоками и листы-справочники БСМ/БСР. */
 export async function exportKpWorkbook(
@@ -119,6 +133,15 @@ export async function exportKpWorkbook(
   const ws = wb.getWorksheet(KP_SHEET);
   if (!ws) throw new Error(`В шаблоне нет листа «${KP_SHEET}»`);
 
+  // КП — активный лист по умолчанию (индекс 0). В шаблоне унаследован activeTab=2 (БСР) —
+  // переопределяем. activeTab (workbook) и tabSelected (пер-лист) в ExcelJS не синхронизированы,
+  // поэтому вручную снимаем выделение со всех листов, кроме КП.
+  wb.views = [{ x: 0, y: 0, width: 20000, height: 20000, firstSheet: 0, activeTab: 0, visibility: 'visible' }];
+  for (const sheet of wb.worksheets) {
+    const v0 = (sheet.views && sheet.views[0]) || {};
+    sheet.views = [{ ...v0, tabSelected: sheet.name === KP_SHEET } as unknown as ExcelJS.WorksheetView];
+  }
+
   // Снимки стилей строк-образцов ДО сдвига строк (splice их подвинет/удалит).
   const style = {
     location: captureRowStyle(ws, STYLE_ROW.location),
@@ -127,6 +150,10 @@ export async function exportKpWorkbook(
     itogo: captureRowStyle(ws, STYLE_ROW.itogo),
     nds: captureRowStyle(ws, STYLE_ROW.nds),
   };
+  // Столбец J (цена СМР) у строки-материала в исходной форме без ячейки → стиль без рамки.
+  // Берём оформление соседней ценовой ячейки I (полная рамка, тот же fill/шрифт), чтобы у
+  // материалов J имел рамку «как у соседей».
+  style.material[COL.priceSmr] = JSON.parse(JSON.stringify(style.material[COL.priceMat]));
 
   // Сколько строк займёт динамическая зона: по каждому блоку строка-локация + её строки,
   // плюс ИТОГО и НДС.
@@ -145,10 +172,16 @@ export async function exportKpWorkbook(
     row.getCell(col).value = { formula };
   };
 
+  // Последние строки данных справочников — для диапазонов XLOOKUP.
+  const bsmLast = REF_DATA_START_ROW + refs.materials.length - 1; // БСМ (материалы)
+  const bsrLast = REF_DATA_START_ROW + refs.works.length - 1; //     БСР (работы)
+
   let r = TABLE_START_ROW;
   for (const block of blocks) {
     const locRow = ws.getRow(r);
     applyRowStyle(locRow, style.location);
+    locRow.outlineLevel = 0; // локация — верхний уровень группировки
+    locRow.hidden = false;
     locRow.getCell(COL.name).value = block.locationLabel;
     const detailFirst = r + 1;
     const detailLast = r + block.rows.length;
@@ -158,32 +191,64 @@ export async function exportKpWorkbook(
     setFormula(locRow, COL.costTotal, `SUBTOTAL(9,${N}${detailFirst}:${N}${detailLast})`);
     r += 1;
 
+    // Текущая работа и диапазон её материалов (материалы идут подряд сразу за работой) —
+    // для формулы цены материалов работы (SUMPRODUCT). Флашим в конце и при новой работе.
+    let workRow = 0;
+    let matFirst = 0;
+    let matLast = 0;
+    const flushWorkMat = () => {
+      if (workRow && matFirst) {
+        // Цена материалов работы = Σ(объём·цена материала) / объём работы.
+        setFormula(
+          ws.getRow(workRow),
+          COL.priceMat,
+          `IFERROR(SUMPRODUCT(${G}${matFirst}:${G}${matLast},${I}${matFirst}:${I}${matLast})/${G}${workRow},0)`,
+        );
+      }
+    };
+
     for (const item of block.rows) {
       const row = ws.getRow(r);
       const isWork = item.kind === 'work';
       applyRowStyle(row, isWork ? style.work : style.material);
+      row.outlineLevel = isWork ? 1 : 2; // работа — 1, материал — 2
+      row.hidden = false;
       row.getCell(COL.num).value = item.number;
       row.getCell(COL.code).value = isWork ? CODE_WORK : CODE_MATERIAL;
       row.getCell(COL.type).value = item.typeName ?? null;
       row.getCell(COL.name).value = item.name;
       row.getCell(COL.unit).value = item.unit ?? null;
       row.getCell(COL.volume).value = item.volume ?? null;
-      if (!isWork) row.getCell(COL.coef).value = item.coef ?? null;
       if (isWork) {
-        // Цены I/J пустые; цена-итого и стоимости — живые формулы.
+        flushWorkMat(); // завершить предыдущую работу
+        workRow = r;
+        matFirst = 0;
+        matLast = 0;
+        // Цена СМР (J) — XLOOKUP из БСР по наименованию; цена материалов (I) — SUMPRODUCT (позже);
+        // цена-итого и стоимости — живые формулы.
+        if (refs.works.length) setFormula(row, COL.priceSmr, refLookup(BSR_SHEET, bsrLast, r));
         setFormula(row, COL.priceTotal, `SUM(${I}${r}:${J}${r})`);
-        setFormula(row, COL.costMat, `${I}${r}*${colLetter(COL.volume)}${r}`);
-        setFormula(row, COL.costSmr, `${J}${r}*${colLetter(COL.volume)}${r}`);
+        setFormula(row, COL.costMat, `${I}${r}*${G}${r}`);
+        setFormula(row, COL.costSmr, `${J}${r}*${G}${r}`);
         setFormula(row, COL.costTotal, `SUM(${L}${r}:${M}${r})`);
+      } else {
+        row.getCell(COL.coef).value = item.coef ?? null;
+        // Цена материала (I) — XLOOKUP из БСМ по наименованию; J у материала пусто.
+        if (refs.materials.length) setFormula(row, COL.priceMat, refLookup(BSM_SHEET, bsmLast, r));
+        if (!matFirst) matFirst = r;
+        matLast = r;
       }
       r += 1;
     }
+    flushWorkMat(); // завершить последнюю работу блока
   }
 
   // ИТОГО и «в т.ч. НДС».
   const tableLast = r - 1;
   const itogoRow = ws.getRow(r);
   applyRowStyle(itogoRow, style.itogo);
+  itogoRow.outlineLevel = 0;
+  itogoRow.hidden = false;
   itogoRow.getCell(COL.name).value = ITOGO_LABEL;
   setFormula(itogoRow, COL.costMat, `SUBTOTAL(9,${L}${TABLE_START_ROW}:${L}${tableLast})`);
   setFormula(itogoRow, COL.costSmr, `SUBTOTAL(9,${M}${TABLE_START_ROW}:${M}${tableLast})`);
@@ -193,10 +258,16 @@ export async function exportKpWorkbook(
 
   const ndsRow = ws.getRow(r);
   applyRowStyle(ndsRow, style.nds);
+  ndsRow.outlineLevel = 0;
+  ndsRow.hidden = false;
   ndsRow.getCell(COL.name).value = NDS_LABEL;
   setFormula(ndsRow, COL.costMat, `${L}${itogoRowNum}/122*22`);
   setFormula(ndsRow, COL.costSmr, `${M}${itogoRowNum}/122*22`);
   setFormula(ndsRow, COL.costTotal, `${N}${itogoRowNum}/122*22`);
+
+  // Группировка: локация (0) → работа (1) → материал (2), итог группы — сверху (summaryBelow=0).
+  ws.properties.outlineLevelRow = 2;
+  ws.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
 
   // Листы-справочники БСМ (материалы) и БСР (работы) — уникальные наименования с ед.изм.
   const bsm = wb.getWorksheet(BSM_SHEET);
