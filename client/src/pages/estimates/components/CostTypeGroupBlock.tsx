@@ -19,7 +19,6 @@ import {
   AutoComplete,
   Input,
   InputNumber,
-  Select,
   Tooltip,
   App,
 } from 'antd';
@@ -31,7 +30,6 @@ import {
   CheckOutlined,
   CloseOutlined,
   EditOutlined,
-  UserOutlined,
   CaretRightOutlined,
   CaretDownOutlined,
   SwapOutlined,
@@ -1051,9 +1049,6 @@ function CostTypeGroupBlockImpl({
     onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
   ]);
 
-  const contractorOptions = orgs
-    ?.filter((o) => o.type === 'subcontractor' || o.type === 'general_contractor')
-    .map((o) => ({ value: o.id, label: o.name }));
 
   // Стабильный объект components: без useMemo AntD пересоздаёт обёртку строки при каждом рендере.
   const tableComponents = useMemo(
@@ -1190,29 +1185,6 @@ function CostTypeGroupBlockImpl({
           </span>
         )}
         <strong style={{ fontSize: 13 }}>{index + 1}. {title}</strong>
-
-        {editable && group.costTypeId ? (
-          <Select
-            size="small"
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            placeholder="Подрядчик по виду работ (общий)"
-            title="Общий подрядчик на весь вид работ. Построчное распределение — в разделе «Подрядчики»."
-            style={{ minWidth: 240 }}
-            value={group.contractor?.contractor_id}
-            options={contractorOptions}
-            onChange={(val) => {
-              if (val) onSetContractor(group.costTypeId!, val);
-              else onClearContractor(group.costTypeId!);
-            }}
-            suffixIcon={<UserOutlined />}
-          />
-        ) : (
-          group.contractor?.contractor_name && (
-            <Tag icon={<UserOutlined />} color="purple">{group.contractor.contractor_name}</Tag>
-          )
-        )}
 
         {headerExtra}
         <span style={{ flex: 1 }} />

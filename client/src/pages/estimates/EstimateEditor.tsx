@@ -331,9 +331,6 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
             },
           ],
     );
-    if (payload.contractorId) {
-      setContractorMutation.mutate({ costTypeId: payload.costTypeId, contractorId: payload.contractorId });
-    }
     setCostTypeModalOpen(false);
   };
 
@@ -516,7 +513,6 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
         initialCategoryId={estimate.cost_category_id}
         onCancel={() => setCostTypeModalOpen(false)}
         onSubmit={handleAddCostType}
-        loading={setContractorMutation.isPending}
       />
     </div>
   );

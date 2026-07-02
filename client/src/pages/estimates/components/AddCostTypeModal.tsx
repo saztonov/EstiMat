@@ -14,18 +14,11 @@ interface CostType {
   category_id: string;
 }
 
-interface Organization {
-  id: string;
-  name: string;
-  type?: string;
-}
-
 export interface CostTypeFormPayload {
   costCategoryId: string;
   costCategoryName: string;
   costTypeId: string;
   costTypeName: string;
-  contractorId?: string | null;
 }
 
 interface Props {
@@ -37,7 +30,7 @@ interface Props {
 }
 
 export function AddCostTypeModal({ open, initialCategoryId, onCancel, onSubmit, loading }: Props) {
-  const [form] = Form.useForm<{ costCategoryId: string; costTypeId: string; contractorId?: string }>();
+  const [form] = Form.useForm<{ costCategoryId: string; costTypeId: string }>();
   const categoryId = Form.useWatch('costCategoryId', form);
 
   const { data: categories } = useQuery({
@@ -53,12 +46,6 @@ export function AddCostTypeModal({ open, initialCategoryId, onCancel, onSubmit, 
         categoryId ? `/rates/types?categoryId=${categoryId}` : '/rates/types',
       ),
     enabled: open && !!categoryId,
-  });
-
-  const { data: orgs } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => api.get<{ data: Organization[] }>('/organizations'),
-    enabled: open,
   });
 
   useEffect(() => {
@@ -90,7 +77,6 @@ export function AddCostTypeModal({ open, initialCategoryId, onCancel, onSubmit, 
             costCategoryName: cat?.name ?? '',
             costTypeId: v.costTypeId,
             costTypeName: type?.name ?? '',
-            contractorId: v.contractorId ?? null,
           });
         }}
       >
@@ -119,22 +105,6 @@ export function AddCostTypeModal({ open, initialCategoryId, onCancel, onSubmit, 
             placeholder="Выберите вид работ"
             disabled={!categoryId}
             options={types?.data.map((t) => ({ value: t.id, label: t.name }))}
-          />
-        </Form.Item>
-
-        <Form.Item
-          name="contractorId"
-          label="Подрядчик (исполнитель вида работ)"
-          extra="Опционально — кто выполняет работы этого вида"
-        >
-          <Select
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            placeholder="Без подрядчика"
-            options={orgs?.data
-              .filter((o) => o.type === 'subcontractor' || o.type === 'general_contractor')
-              .map((o) => ({ value: o.id, label: o.name }))}
           />
         </Form.Item>
       </Form>
