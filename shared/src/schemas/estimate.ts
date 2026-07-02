@@ -193,7 +193,7 @@ export const estimateSchema = z.object({
   costCategoryId: z.string().uuid().nullable(),
   workType: z.string().nullable(),
   totalAmount: z.string(),
-  createdBy: z.string().uuid(),
+  createdBy: z.string().uuid().nullable(),
   notes: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),

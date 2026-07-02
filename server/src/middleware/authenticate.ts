@@ -7,6 +7,12 @@ const userCache = new LRUCache<string, RequestUser>({
   ttl: 15_000, // 15 seconds
 });
 
+// Сброс кеша для пользователя — вызывать после hard-delete / деактивации / смены роли,
+// чтобы изменение вступило в силу сразу, а не через TTL (иначе до 15с окно доступа).
+export function invalidateUserCache(userId: string) {
+  userCache.delete(userId);
+}
+
 export async function authenticate(request: FastifyRequest, reply: FastifyReply) {
   const token = request.cookies['access_token'];
   if (!token) {

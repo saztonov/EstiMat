@@ -3,6 +3,7 @@ import { Table, Button, Modal, Form, Input, Select, Tag, Switch, Space, Popconfi
 import { PlusOutlined, EditOutlined, DeleteOutlined, LockOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { useAuthStore } from '../../store/authStore';
 import { ROLES, ROLE_LABELS } from '@estimat/shared';
 import type { Role } from '@estimat/shared';
 import type { ColumnsType } from 'antd/es/table';
@@ -35,6 +36,7 @@ export function UsersPanel() {
   const [passwordForm] = Form.useForm();
   const queryClient = useQueryClient();
   const { message } = App.useApp();
+  const currentUserId = useAuthStore((s) => s.user?.id);
 
   const { data: usersData, isLoading } = useQuery({
     queryKey: ['users'],
@@ -70,7 +72,7 @@ export function UsersPanel() {
     mutationFn: (id: string) => api.delete(`/users/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      message.success('Пользователь деактивирован');
+      message.success('Пользователь удалён');
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -162,8 +164,15 @@ export function UsersPanel() {
         <Space>
           <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(record)} />
           <Button type="text" icon={<LockOutlined />} onClick={() => setPasswordModal(record)} />
-          <Popconfirm title="Деактивировать пользователя?" onConfirm={() => deleteMutation.mutate(record.id)}>
-            <Button type="text" danger icon={<DeleteOutlined />} />
+          <Popconfirm
+            title="Удалить пользователя навсегда?"
+            description={`«${record.full_name}» (${record.email}) будет удалён безвозвратно.`}
+            okText="Удалить навсегда"
+            okButtonProps={{ danger: true }}
+            cancelText="Отмена"
+            onConfirm={() => deleteMutation.mutate(record.id)}
+          >
+            <Button type="text" danger icon={<DeleteOutlined />} disabled={record.id === currentUserId} />
           </Popconfirm>
         </Space>
       ),
