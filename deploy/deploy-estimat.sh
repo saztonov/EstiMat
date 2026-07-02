@@ -39,10 +39,18 @@ echo "==> up"
 "${COMPOSE[@]}" up -d estimat-api estimat-web
 
 echo "==> health"
-# Некритично: при первом запуске nginx/TLS ещё не настроены — это нормально.
-if curl -fsS "${VITE_API_URL%/}/health/ready" >/dev/null 2>&1; then
+# up -d возвращается до готовности приложения (в compose healthcheck start_period 20s):
+# опрашиваем readiness с ретраями, прежде чем судить о nginx/TLS. Первый запуск без
+# nginx/TLS — это ок (некритично).
+HEALTH_URL="${VITE_API_URL%/}/health/ready"
+health_ok=""
+for _ in $(seq 1 30); do
+  if curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; then health_ok=1; break; fi
+  sleep 2
+done
+if [ -n "$health_ok" ]; then
   echo "health: ok"
 else
-  echo "health: недоступен по ${VITE_API_URL%/}/health/ready — проверьте nginx/TLS (см. README, шаг ingress)"
+  echo "health: недоступен по $HEALTH_URL — проверьте nginx/TLS (см. README, шаг ingress)"
 fi
 echo "Готово."
