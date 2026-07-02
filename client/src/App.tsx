@@ -16,10 +16,10 @@ import { AdministrationPage } from './pages/administration/AdministrationPage';
 import { ContractorsPage } from './pages/contractors/ContractorsPage';
 import { ExecutionPage } from './pages/execution/ExecutionPage';
 
-// Стартовая страница зависит от роли: подрядчик — в свой раздел, остальные — в справочники.
+// Стартовая страница: Сметы для тех, кому доступны (все, кроме подрядчика), иначе — Подрядчики.
 function HomeRedirect() {
   const role = useAuthStore((s) => s.user?.role);
-  return <Navigate to={role === 'contractor' ? '/contractors' : '/references'} replace />;
+  return <Navigate to={role === 'contractor' ? '/contractors' : '/estimates'} replace />;
 }
 
 export default function App() {
