@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Card, Row, Col, Input, Select, Empty, Spin, Space, Button, Modal, App } from 'antd';
-import { SearchOutlined } from '@ant-design/icons';
+import { SearchOutlined, BarChartOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api, assetUrl } from '../../services/api';
 import { BuildingsIcon } from '../../components/shared/BuildingsIcon';
 import { placeholderCover } from '../../components/shared/placeholderCover';
 import { LocationBuilder } from '../projects/LocationBuilder';
+import { ProjectStats } from './components/ProjectStats';
 
 interface ProjectWithStats {
   id: string;
@@ -19,6 +20,7 @@ interface ProjectWithStats {
   image_src: string | null;
   estimates_count: number;
   estimates_total: string;
+  works_count: number;
 }
 
 const formatMoney = (v: string | number) =>
@@ -31,6 +33,7 @@ export function EstimatesPage() {
   const [sort, setSort] = useState<'code' | 'name' | 'total'>('code');
   const [builderProjectId, setBuilderProjectId] = useState<string | null>(null);
   const [builderDirty, setBuilderDirty] = useState(false);
+  const [statsProjectId, setStatsProjectId] = useState<string | null>(null);
 
   const openBuilder = (id: string) => { setBuilderDirty(false); setBuilderProjectId(id); };
   const closeBuilder = () => {
@@ -126,16 +129,27 @@ export function EstimatesPage() {
                 <div style={{ color: '#8c8c8c', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
                   {p.address || '—'}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<BuildingsIcon />}
-                    style={{ paddingInline: 4, color: '#595959' }}
-                    onClick={(e) => { e.stopPropagation(); openBuilder(p.id); }}
-                  >
-                    Местоположение
-                  </Button>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                  <Space size={0} wrap>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<BuildingsIcon />}
+                      style={{ paddingInline: 4, color: '#595959' }}
+                      onClick={(e) => { e.stopPropagation(); openBuilder(p.id); }}
+                    >
+                      Местоположение
+                    </Button>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<BarChartOutlined />}
+                      style={{ paddingInline: 4, color: '#595959' }}
+                      onClick={(e) => { e.stopPropagation(); setStatsProjectId(p.id); }}
+                    >
+                      Статистика · {p.works_count}
+                    </Button>
+                  </Space>
                   <strong style={{ color: '#1677ff' }}>{formatMoney(p.estimates_total)}</strong>
                 </div>
               </Card>
@@ -157,6 +171,17 @@ export function EstimatesPage() {
         {builderProjectId && (
           <LocationBuilder projectId={builderProjectId} onDirtyChange={setBuilderDirty} />
         )}
+      </Modal>
+
+      <Modal
+        title="Статистика"
+        open={!!statsProjectId}
+        onCancel={() => setStatsProjectId(null)}
+        footer={null}
+        width={720}
+        style={{ top: 40 }}
+      >
+        {statsProjectId && <ProjectStats projectId={statsProjectId} />}
       </Modal>
     </>
   );

@@ -134,7 +134,8 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     const { rows } = await fastify.pool.query(
       `SELECT p.*,
               COALESCE(COUNT(e.id), 0)::int AS estimates_count,
-              COALESCE(SUM(e.total_amount), 0)::numeric AS estimates_total
+              COALESCE(SUM(e.total_amount), 0)::numeric AS estimates_total,
+              (SELECT COUNT(*) FROM estimate_items ei WHERE ei.project_id = p.id)::int AS works_count
          FROM projects p
          LEFT JOIN estimates e ON e.project_id = p.id
          GROUP BY p.id
@@ -306,6 +307,108 @@ export default async function projectRoutes(fastify: FastifyInstance) {
       },
     };
   });
+
+  // GET /api/projects/:id/stats — статистика по смете объекта:
+  // всего категорий/видов/наименований работ и материалов, а также та же
+  // разбивка по авторам (кто добавлял строки). Агрегируем по всем сметам объекта
+  // через денормализованный estimate_items.project_id.
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/stats',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const projectId = request.params.id;
+      const { rows: projectRows } = await fastify.pool.query(
+        'SELECT id FROM projects WHERE id = $1',
+        [projectId],
+      );
+      if (projectRows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
+
+      const [worksTotal, materialsTotal, worksByAuthor, materialsByAuthor] = await Promise.all([
+        fastify.pool.query(
+          `SELECT COUNT(DISTINCT ei.cost_category_id)::int AS categories,
+                  COUNT(DISTINCT ei.cost_type_id)::int     AS types,
+                  COUNT(*)::int                            AS works
+             FROM estimate_items ei
+            WHERE ei.project_id = $1`,
+          [projectId],
+        ),
+        fastify.pool.query(
+          `SELECT COUNT(*)::int AS materials
+             FROM estimate_materials em
+             JOIN estimates e ON e.id = em.estimate_id
+            WHERE e.project_id = $1`,
+          [projectId],
+        ),
+        fastify.pool.query(
+          `SELECT ei.created_by AS user_id, u.full_name,
+                  COUNT(DISTINCT ei.cost_category_id)::int AS categories,
+                  COUNT(DISTINCT ei.cost_type_id)::int     AS types,
+                  COUNT(*)::int                            AS works
+             FROM estimate_items ei
+             LEFT JOIN users u ON u.id = ei.created_by
+            WHERE ei.project_id = $1
+            GROUP BY ei.created_by, u.full_name`,
+          [projectId],
+        ),
+        fastify.pool.query(
+          `SELECT em.created_by AS user_id, u.full_name,
+                  COUNT(*)::int AS materials
+             FROM estimate_materials em
+             JOIN estimates e ON e.id = em.estimate_id
+             LEFT JOIN users u ON u.id = em.created_by
+            WHERE e.project_id = $1
+            GROUP BY em.created_by, u.full_name`,
+          [projectId],
+        ),
+      ]);
+
+      // Сливаем работы и материалы по автору. Ключ для legacy-строк без автора — 'none'.
+      type AuthorRow = {
+        userId: string | null;
+        name: string;
+        categories: number;
+        types: number;
+        works: number;
+        materials: number;
+      };
+      const byAuthor = new Map<string, AuthorRow>();
+      const ensure = (userId: string | null, fullName: string | null): AuthorRow => {
+        const key = userId ?? 'none';
+        let row = byAuthor.get(key);
+        if (!row) {
+          row = { userId, name: fullName ?? 'Не указан', categories: 0, types: 0, works: 0, materials: 0 };
+          byAuthor.set(key, row);
+        }
+        return row;
+      };
+      for (const r of worksByAuthor.rows) {
+        const row = ensure(r.user_id, r.full_name);
+        row.categories = r.categories;
+        row.types = r.types;
+        row.works = r.works;
+      }
+      for (const r of materialsByAuthor.rows) {
+        ensure(r.user_id, r.full_name).materials = r.materials;
+      }
+
+      const authors = [...byAuthor.values()].sort(
+        (a, b) => b.works - a.works || b.materials - a.materials,
+      );
+
+      const t = worksTotal.rows[0];
+      return {
+        data: {
+          totals: {
+            categories: t.categories,
+            types: t.types,
+            works: t.works,
+            materials: materialsTotal.rows[0].materials,
+          },
+          byAuthor: authors,
+        },
+      };
+    },
+  );
 
   // GET /api/projects/:id/estimate — единая смета на объект.
   // get-or-create: если смет нет — создаём одну; если несколько — сливаем
