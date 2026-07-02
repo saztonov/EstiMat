@@ -125,6 +125,8 @@ export const setProjectRoomTypesSchema = z.object({
 // ---------- Размножение наборов (тиражирование) ----------
 // Целевые контуры = декартово произведение zoneIds × roomTypeIds (пустая ось = значение
 // источника), диапазон этажей применяется ко всем целям (override) либо берётся у источника.
+// locationTypeName — дополнительная координата-override (не ось размножения): непустой тип
+// upsert'ится в project_location_types и проставляется всем копиям; пусто = тип источника.
 export const replicateItemsSchema = z
   .object({
     sourceItemIds: z
@@ -144,6 +146,7 @@ export const replicateItemsSchema = z
       .transform((ids) => [...new Set(ids)]),
     floorFrom: z.number().int().nullable().optional(),
     floorTo: z.number().int().nullable().optional(),
+    locationTypeName: z.string().trim().max(100).nullable().optional(),
     includeMaterials: z.boolean().default(true),
     skipExisting: z.boolean().default(true),
   })
@@ -151,7 +154,8 @@ export const replicateItemsSchema = z
     (d) =>
       d.zoneIds.length + d.roomTypeIds.length > 0 ||
       d.floorFrom != null ||
-      d.floorTo != null,
+      d.floorTo != null ||
+      (d.locationTypeName != null && d.locationTypeName !== ''),
     { message: 'Не выбрана ни одна целевая локация' },
   )
   .refine(

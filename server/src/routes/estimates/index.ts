@@ -23,6 +23,7 @@ import {
   setEstimateItemsVolumeTypeSchema,
   replicateItemsSchema,
   type EstimateChangeReason,
+  type LocationEntry,
 } from '@estimat/shared';
 
 export default async function estimateRoutes(fastify: FastifyInstance) {
@@ -1051,9 +1052,9 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       const dupKey = (r: {
         cost_type_id: unknown; rate_id: unknown; description: unknown;
         zone_id: unknown; floor_from: unknown; floor_to: unknown; room_type_id: unknown;
-        volume_type: unknown;
+        location_type_id: unknown; volume_type: unknown;
       }) =>
-        [r.cost_type_id, r.rate_id ?? r.description, r.zone_id, r.floor_from, r.floor_to, r.room_type_id, r.volume_type].join('|');
+        [r.cost_type_id, r.rate_id ?? r.description, r.zone_id, r.floor_from, r.floor_to, r.room_type_id, r.location_type_id, r.volume_type].join('|');
 
       const client = await fastify.pool.connect();
       try {
@@ -1072,13 +1073,17 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         const existing = new Set<string>();
         if (body.skipExisting) {
           const { rows: all } = await client.query(
-            'SELECT cost_type_id, rate_id, description, zone_id, floor_from, floor_to, room_type_id, volume_type FROM estimate_items WHERE estimate_id = $1',
+            'SELECT cost_type_id, rate_id, description, zone_id, floor_from, floor_to, room_type_id, location_type_id, volume_type FROM estimate_items WHERE estimate_id = $1',
             [eid],
           );
           for (const r of all) existing.add(dupKey(r));
         }
 
         const projectId = await loadProjectId(client, eid);
+        // Целевой «тип» — одна координата-override: upsert один раз (undefined = брать из источника).
+        const overrideTypeId = body.locationTypeName?.trim()
+          ? await upsertLocationType(client, projectId, body.locationTypeName)
+          : undefined;
         const audits: AuditInput[] = [];
         let createdWorks = 0;
         let createdMaterials = 0;
@@ -1091,15 +1096,26 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
               const targetRoom = room === undefined ? src.room_type_id : room;
               const targetFloorFrom = hasFloorOverride ? (body.floorFrom ?? null) : src.floor_from;
               const targetFloorTo = hasFloorOverride ? (body.floorTo ?? null) : src.floor_to;
+              const targetLocationTypeId = overrideTypeId ?? src.location_type_id;
+
+              // locations без потери мультизоны/точных этажей: без override зоны и этажей —
+              // сохраняем источник как есть; иначе строим одну зону/диапазон из legacy-полей.
+              const targetLocations =
+                zone === undefined && !hasFloorOverride && Array.isArray(src.locations) && src.locations.length > 0
+                  ? (src.locations as LocationEntry[])
+                  : legacyToLocations(targetZone, targetFloorFrom, targetFloorTo);
+              // Legacy-зеркало (участвует в ключе дублей) выводим из итоговых locations — единообразно с create/update.
+              const primary = deriveLegacyLocation(targetLocations);
 
               const key = dupKey({
                 cost_type_id: src.cost_type_id,
                 rate_id: src.rate_id,
                 description: src.description,
-                zone_id: targetZone,
-                floor_from: targetFloorFrom,
-                floor_to: targetFloorTo,
+                zone_id: primary.zoneId,
+                floor_from: primary.floorFrom,
+                floor_to: primary.floorTo,
                 room_type_id: targetRoom,
+                location_type_id: targetLocationTypeId,
                 volume_type: src.volume_type,
               });
               if (body.skipExisting && existing.has(key)) {
@@ -1111,15 +1127,15 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
               const { rows: ins } = await client.query(
                 `INSERT INTO estimate_items
                    (estimate_id, cost_type_id, rate_id, description, quantity, unit, unit_price, sort_order,
-                    zone_id, floor_from, floor_to, room_type_id, locations, volume_type, source, needs_review,
+                    zone_id, floor_from, floor_to, room_type_id, location_type_id, locations, volume_type, source, needs_review,
                     copy_batch_id, copy_source_item_id, created_by, updated_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $17, 'manual', false, $14, $15, $16, $16)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $18, $13::jsonb, $17, 'manual', false, $14, $15, $16, $16)
                  RETURNING *`,
                 [
                   eid, src.cost_type_id, src.rate_id, src.description, src.quantity, src.unit,
-                  src.unit_price, src.sort_order, targetZone, targetFloorFrom, targetFloorTo, targetRoom,
-                  JSON.stringify(legacyToLocations(targetZone, targetFloorFrom, targetFloorTo)),
-                  copyBatchId, src.id, request.currentUser.id, src.volume_type,
+                  src.unit_price, src.sort_order, primary.zoneId, primary.floorFrom, primary.floorTo, targetRoom,
+                  JSON.stringify(targetLocations),
+                  copyBatchId, src.id, request.currentUser.id, src.volume_type, targetLocationTypeId,
                 ],
               );
               const copy = ins[0];

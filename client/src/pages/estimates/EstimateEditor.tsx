@@ -94,6 +94,8 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       ),
     onSuccess: (res) => {
       invalidate();
+      // Новый тип мог создаться при копировании — обновим подсказки/фильтры типов объекта.
+      queryClient.invalidateQueries({ queryKey: ['project-location-types', projectId] });
       message.success(`Создано строк: ${res.created.works}${res.skipped ? ` (пропущено дублей: ${res.skipped})` : ''}`);
     },
     onError: (e: Error) => message.error(e.message),

@@ -795,7 +795,7 @@ export function SmetaPanel({
                   disabled={selectedWorkIds.size === 0}
                   onClick={() => setReplicateOpen(true)}
                 >
-                  Повторить набор
+                  Копировать работы
                 </Button>
                 <Button size="small" onClick={cancelSelection}>Отмена</Button>
               </Space>
@@ -889,7 +889,7 @@ export function SmetaPanel({
                         style={{ width: '100%', justifyContent: 'flex-start' }}
                         onClick={() => { setActionsOpen(false); setMode('replicate'); }}
                       >
-                        Повторить набор
+                        Копировать работы
                       </Button>
                     )}
                     {canBulkDelete && (
@@ -1062,6 +1062,7 @@ export function SmetaPanel({
         open={replicateOpen}
         sourceWorks={selectedSourceWorks}
         zones={zonesData?.data.roots ?? []}
+        projectId={projectId}
         loading={replicating}
         onCancel={() => setReplicateOpen(false)}
         onConfirm={handleReplicate}
