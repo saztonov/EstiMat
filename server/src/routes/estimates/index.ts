@@ -230,6 +230,8 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     items: z
       .array(z.object({ id: z.string().uuid(), locationLabel: z.string() }))
       .min(1),
+    // Пропустить конфликт единиц измерения (БСМ/БСР) и всё равно собрать файл.
+    ignoreUnitConflicts: z.boolean().optional(),
   });
   fastify.post<{ Params: { id: string } }>(
     '/:id/export-kp',
@@ -245,7 +247,9 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       if (!parsed.success) return reply.status(400).send({ error: 'Некорректный запрос экспорта' });
 
       try {
-        const buffer = await exportEstimateKp(fastify.pool, request.params.id, parsed.data.items);
+        const buffer = await exportEstimateKp(fastify.pool, request.params.id, parsed.data.items, {
+          ignoreUnitConflicts: parsed.data.ignoreUnitConflicts,
+        });
         const { rows } = await fastify.pool.query(
           `SELECT p.code AS project_code FROM estimates e
              JOIN projects p ON e.project_id = p.id WHERE e.id = $1`,
@@ -261,7 +265,10 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         reply.header('X-Content-Type-Options', 'nosniff');
         return reply.send(buffer);
       } catch (err) {
-        if (err instanceof ExportError) return reply.status(err.status).send({ error: err.message });
+        if (err instanceof ExportError)
+          return reply
+            .status(err.status)
+            .send({ error: err.message, code: err.code, data: err.data });
         throw err;
       }
     },

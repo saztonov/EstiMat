@@ -47,6 +47,14 @@ export const CODE_MATERIAL = 'Мат';
 export const ITOGO_LABEL = 'ИТОГО с НДС 22%';
 export const NDS_LABEL = 'в т.ч. НДС 22%';
 
+// Листы-справочники: БСМ (базовая стоимость материалов) и БСР (базовая стоимость работ).
+// Раскладка одинакова: строка 1 — заголовок, 2 — шапка, 3 — индексы колонок, данные с строки 4.
+// Колонки: A=№ п/п, B=Наименование, C=Ед. изм., D=Цена (заполняет подрядчик).
+export const BSM_SHEET = 'БСМ';
+export const BSR_SHEET = 'БСР';
+export const REF_DATA_START_ROW = 4;
+export const REF_COL = { num: 1, name: 2, unit: 3, price: 4 } as const;
+
 // Номер колонки → буква (1→A, 27→AA).
 export function colLetter(col: number): string {
   let s = '';

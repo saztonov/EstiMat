@@ -7,13 +7,31 @@
 // как в GET /:id) и нумерует.
 
 import type { Pool } from 'pg';
+import type { ExportConflict } from './references.js';
 
 export class ExportError extends Error {
   status: number;
-  constructor(message: string, status = 400) {
+  code?: string;
+  data?: unknown;
+  constructor(message: string, status = 400, opts?: { code?: string; data?: unknown }) {
     super(message);
     this.name = 'ExportError';
     this.status = status;
+    this.code = opts?.code;
+    this.data = opts?.data;
+  }
+}
+
+/** Конфликт единиц измерения у одинаковых наименований (БСМ/БСР). Клиент показывает модалку. */
+export class ExportUnitConflictError extends ExportError {
+  conflicts: ExportConflict[];
+  constructor(conflicts: ExportConflict[]) {
+    super('Разные единицы измерения у одинаковых наименований', 409, {
+      code: 'EXPORT_UNIT_CONFLICTS',
+      data: { conflicts },
+    });
+    this.name = 'ExportUnitConflictError';
+    this.conflicts = conflicts;
   }
 }
 

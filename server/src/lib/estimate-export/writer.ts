@@ -26,8 +26,13 @@ import {
   ITOGO_LABEL,
   NDS_LABEL,
   colLetter,
+  BSM_SHEET,
+  BSR_SHEET,
+  REF_DATA_START_ROW,
+  REF_COL,
 } from './layout.js';
 import type { ExportBlock } from './data.js';
+import type { ExportRefRow } from './references.js';
 import { sanitizeXlsx } from './sanitize.js';
 
 const TEMPLATE_FILE = 'kp-export-template.xlsx';
@@ -46,19 +51,53 @@ function resolveTemplatePath(): string {
 }
 
 type CellStyle = Partial<ExcelJS.Style>;
-// Снимок стилей строки-образца по колонкам (1..COL.note).
-function captureRowStyle(ws: ExcelJS.Worksheet, rowNumber: number): CellStyle[] {
+// Снимок стилей строки-образца по колонкам (1..maxCol).
+function captureRowStyle(ws: ExcelJS.Worksheet, rowNumber: number, maxCol: number = COL.note): CellStyle[] {
   const row = ws.getRow(rowNumber);
   const styles: CellStyle[] = [];
-  for (let c = 1; c <= COL.note; c++) {
+  for (let c = 1; c <= maxCol; c++) {
     styles[c] = JSON.parse(JSON.stringify(row.getCell(c).style ?? {}));
   }
   return styles;
 }
 
-function applyRowStyle(row: ExcelJS.Row, styles: CellStyle[]): void {
-  for (let c = 1; c <= COL.note; c++) {
+function applyRowStyle(row: ExcelJS.Row, styles: CellStyle[], maxCol: number = COL.note): void {
+  for (let c = 1; c <= maxCol; c++) {
     if (styles[c]) row.getCell(c).style = styles[c] as ExcelJS.Style;
+  }
+}
+
+// Заполнить лист-справочник (БСМ/БСР) уникальными строками: A=№, B=наименование, C=ед.изм.,
+// D — очистить (цену заполняет подрядчик; заодно убирается старый XLOOKUP из образца).
+// Не используем spliceRows (в шаблоне БСМ раздут rowCount, а splice ведёт себя ненадёжно):
+// стиль снимаем со строки-образца, пишем строки поверх, лишние старые строки-образцы чистим
+// по значению. Число образцовых строк определяем сканом сплошного блока наименований.
+function fillReferenceSheet(ws: ExcelJS.Worksheet, dataStartRow: number, rows: ExportRefRow[]): void {
+  const maxCol = REF_COL.price;
+  const styleRow = captureRowStyle(ws, dataStartRow, maxCol);
+
+  // Последняя существующая строка данных — сплошной блок наименований от dataStartRow.
+  let lastExisting = dataStartRow - 1;
+  for (let r = dataStartRow; r < dataStartRow + 5000; r++) {
+    const v = ws.getRow(r).getCell(REF_COL.name).value;
+    if (v == null || String(v).trim() === '') break;
+    lastExisting = r;
+  }
+
+  rows.forEach((item, i) => {
+    const row = ws.getRow(dataStartRow + i);
+    applyRowStyle(row, styleRow, maxCol);
+    row.getCell(REF_COL.num).value = i + 1;
+    row.getCell(REF_COL.name).value = item.name;
+    row.getCell(REF_COL.unit).value = item.unit ?? null;
+    row.getCell(REF_COL.price).value = null;
+  });
+
+  // Очистить оставшиеся строки-образцы (значения) ниже записанных.
+  const lastWritten = dataStartRow + rows.length - 1;
+  for (let r = Math.max(dataStartRow, lastWritten + 1); r <= lastExisting; r++) {
+    const row = ws.getRow(r);
+    for (let c = 1; c <= maxCol; c++) row.getCell(c).value = null;
   }
 }
 
@@ -68,8 +107,11 @@ const N = colLetter(COL.costTotal); // N
 const I = colLetter(COL.priceMat); //  I
 const J = colLetter(COL.priceSmr); //  J
 
-/** Собрать .xlsx (Buffer) из блоков строк, заполнив шаблон «КП». */
-export async function exportKpWorkbook(blocks: ExportBlock[]): Promise<Buffer> {
+/** Собрать .xlsx (Buffer): заполнить лист «КП» блоками и листы-справочники БСМ/БСР. */
+export async function exportKpWorkbook(
+  blocks: ExportBlock[],
+  refs: { materials: ExportRefRow[]; works: ExportRefRow[] },
+): Promise<Buffer> {
   const templateBuf = await readFile(resolveTemplatePath());
   const wb = new ExcelJS.Workbook();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -155,6 +197,12 @@ export async function exportKpWorkbook(blocks: ExportBlock[]): Promise<Buffer> {
   setFormula(ndsRow, COL.costMat, `${L}${itogoRowNum}/122*22`);
   setFormula(ndsRow, COL.costSmr, `${M}${itogoRowNum}/122*22`);
   setFormula(ndsRow, COL.costTotal, `${N}${itogoRowNum}/122*22`);
+
+  // Листы-справочники БСМ (материалы) и БСР (работы) — уникальные наименования с ед.изм.
+  const bsm = wb.getWorksheet(BSM_SHEET);
+  if (bsm) fillReferenceSheet(bsm, REF_DATA_START_ROW, refs.materials);
+  const bsr = wb.getWorksheet(BSR_SHEET);
+  if (bsr) fillReferenceSheet(bsr, REF_DATA_START_ROW, refs.works);
 
   const out = await wb.xlsx.writeBuffer();
   return sanitizeXlsx(Buffer.from(out as ArrayBuffer));
