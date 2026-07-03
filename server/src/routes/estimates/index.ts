@@ -9,7 +9,7 @@ import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import { mirrorMaterialsToCatalog } from '../../lib/catalog.js';
 import { legacyToLocations, deriveLegacyLocation, upsertLocationType } from '../../lib/location.js';
-import { loadProjectId } from '../../lib/estimate-detail.js';
+import { loadProjectId, buildEstimateDetail } from '../../lib/estimate-detail.js';
 import { exportEstimateKp, ExportError } from '../../lib/estimate-export/index.js';
 import {
   createEstimateSchema,
@@ -56,129 +56,13 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
-    const { rows } = await fastify.pool.query(
-      `SELECT e.*,
-              p.code AS project_code,
-              p.name AS project_name,
-              cc.name AS cost_category_name
-       FROM estimates e
-       JOIN projects p ON e.project_id = p.id
-       LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
-       WHERE e.id = $1`,
-      [request.params.id],
-    );
-    if (rows.length === 0) return reply.status(404).send({ error: 'Смета не найдена' });
-
-    const items = await fastify.pool.query(
-      `SELECT ei.*,
-              r.name  AS rate_name,
-              r.code  AS rate_code,
-              ct.name AS cost_type_name,
-              ct.sort_order AS cost_type_sort_order,
-              cc.name AS cost_category_name,
-              cc.sort_order AS cost_category_sort_order,
-              z.name  AS zone_name,
-              z.kind  AS zone_kind,
-              rt.name AS room_type_name,
-              lt.name AS location_type_name,
-              uc.full_name AS created_by_name,
-              uu.full_name AS updated_by_name
-       FROM estimate_items ei
-       LEFT JOIN rates r            ON ei.rate_id = r.id
-       LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
-       LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
-       LEFT JOIN project_zones z    ON ei.zone_id = z.id
-       LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
-       LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
-       LEFT JOIN users uc           ON ei.created_by = uc.id
-       LEFT JOIN users uu           ON ei.updated_by = uu.id
-       WHERE ei.estimate_id = $1
-       ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
-                cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
-      [request.params.id],
-    );
-
-    const materials = await fastify.pool.query(
-      `SELECT em.*, mc.name AS material_name,
-              uc.full_name AS created_by_name,
-              uu.full_name AS updated_by_name
-       FROM estimate_materials em
-       LEFT JOIN material_catalog mc ON em.material_id = mc.id
-       LEFT JOIN users uc            ON em.created_by = uc.id
-       LEFT JOIN users uu            ON em.updated_by = uu.id
-       WHERE em.estimate_id = $1
-       ORDER BY em.sort_order, em.created_at`,
-      [request.params.id],
-    );
-
-    const contractors = await fastify.pool.query(
-      `SELECT ec.cost_type_id, ec.contractor_id,
-              o.name  AS contractor_name,
-              ct.name AS cost_type_name,
-              ct.sort_order AS cost_type_sort_order,
-              cc.id   AS cost_category_id,
-              cc.name AS cost_category_name,
-              cc.sort_order AS cost_category_sort_order
-       FROM estimate_contractors ec
-       LEFT JOIN organizations o    ON ec.contractor_id = o.id
-       LEFT JOIN cost_types ct      ON ec.cost_type_id = ct.id
-       LEFT JOIN cost_categories cc ON ct.category_id = cc.id
-       WHERE ec.estimate_id = $1`,
-      [request.params.id],
-    );
-
-    // Построчные назначения подрядчиков (раздел «Подрядчики»): подрядчики строки,
-    // распределённый объём, остаток без подрядчика и признак over-assigned.
-    const itemContractors = await fastify.pool.query(
-      `SELECT eic.item_id, eic.contractor_id, eic.assigned_qty, eic.assigned_percent,
-              COALESCE(eic.assigned_qty, ei.quantity * eic.assigned_percent / 100.0, ei.quantity) AS effective_qty,
-              o.name AS contractor_name
-         FROM estimate_item_contractors eic
-         JOIN estimate_items ei      ON ei.id = eic.item_id
-         LEFT JOIN organizations o   ON o.id = eic.contractor_id
-        WHERE eic.estimate_id = $1
-        ORDER BY eic.assigned_at`,
-      [request.params.id],
-    );
-
-    // Бакетизация по item_id за один проход вместо вложенных .filter() внутри .map()
-    // (было O(items × строк)). Порядок сохраняется: SQL уже отсортировал строки (ORDER BY),
-    // а вставка в Map идёт в том же порядке.
-    const materialsByItem = new Map<string, typeof materials.rows>();
-    for (const m of materials.rows) {
-      const arr = materialsByItem.get(m.item_id);
-      if (arr) arr.push(m);
-      else materialsByItem.set(m.item_id, [m]);
-    }
-    const contractorsByItem = new Map<string, typeof itemContractors.rows>();
-    for (const c of itemContractors.rows) {
-      const arr = contractorsByItem.get(c.item_id);
-      if (arr) arr.push(c);
-      else contractorsByItem.set(c.item_id, [c]);
-    }
-
-    const itemsWithMaterials = items.rows.map((it) => {
-      const its = contractorsByItem.get(it.id) ?? [];
-      const assignedTotal = its.reduce((s, c) => s + Number(c.effective_qty), 0);
-      const qty = Number(it.quantity);
-      return {
-        ...it,
-        materials: materialsByItem.get(it.id) ?? [],
-        item_contractors: its,
-        assigned_total: assignedTotal,
-        remaining_qty: Math.max(qty - assignedTotal, 0),
-        over_assigned: assignedTotal > qty + 1e-6,
-      };
-    });
-
-    return {
-      data: {
-        ...rows[0],
-        items: itemsWithMaterials,
-        contractors: contractors.rows,
-      },
-    };
-  });
+      const data = await buildEstimateDetail(fastify.pool, request.params.id, {
+        includeItemContractors: true,
+      });
+      if (data === null) return reply.status(404).send({ error: 'Смета не найдена' });
+      return { data };
+    },
+  );
 
   // GET /api/estimates/:id/history — лента изменений сметы (или истории конкретной строки
   // при ?entityId=). Доступ проверяется единым assertEstimateAccess (как WS-подписка).

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { withImageSrc, isLegacyLocalImage } from '../../lib/projectImage.js';
+import { buildEstimateDetail } from '../../lib/estimate-detail.js';
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -53,80 +54,6 @@ async function removeUpload(fastify: FastifyInstance, value: string | null | und
     return;
   }
   if (fastify.storage) await fastify.storage.deleteObject(value);
-}
-
-// Полная детализация сметы (как в GET /estimates/:id): работы с измерениями,
-// материалы (вложенно), подрядчики по видам работ. Возвращает null, если нет.
-async function buildEstimateDetail(fastify: FastifyInstance, estimateId: string) {
-  const { rows } = await fastify.pool.query(
-    `SELECT e.*, p.code AS project_code, p.name AS project_name, cc.name AS cost_category_name
-       FROM estimates e
-       JOIN projects p ON e.project_id = p.id
-       LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
-      WHERE e.id = $1`,
-    [estimateId],
-  );
-  if (rows.length === 0) return null;
-
-  const items = await fastify.pool.query(
-    `SELECT ei.*, r.name AS rate_name, r.code AS rate_code,
-            ct.name AS cost_type_name, cc.name AS cost_category_name,
-            ct.sort_order AS cost_type_sort_order,
-            cc.sort_order AS cost_category_sort_order,
-            z.name AS zone_name, z.kind AS zone_kind, rt.name AS room_type_name,
-            lt.name AS location_type_name,
-            uc.full_name AS created_by_name,
-            uu.full_name AS updated_by_name
-       FROM estimate_items ei
-       LEFT JOIN rates r            ON ei.rate_id = r.id
-       LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
-       LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
-       LEFT JOIN project_zones z    ON ei.zone_id = z.id
-       LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
-       LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
-       LEFT JOIN users uc           ON ei.created_by = uc.id
-       LEFT JOIN users uu           ON ei.updated_by = uu.id
-      WHERE ei.estimate_id = $1
-      ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
-               cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
-    [estimateId],
-  );
-
-  const materials = await fastify.pool.query(
-    `SELECT em.*, mc.name AS material_name,
-            uc.full_name AS created_by_name,
-            uu.full_name AS updated_by_name
-       FROM estimate_materials em
-       LEFT JOIN material_catalog mc ON em.material_id = mc.id
-       LEFT JOIN users uc            ON em.created_by = uc.id
-       LEFT JOIN users uu            ON em.updated_by = uu.id
-      WHERE em.estimate_id = $1
-      ORDER BY em.sort_order, em.created_at`,
-    [estimateId],
-  );
-
-  const contractors = await fastify.pool.query(
-    `SELECT ec.cost_type_id, ec.contractor_id,
-            o.name AS contractor_name, ct.name AS cost_type_name,
-            ct.sort_order AS cost_type_sort_order,
-            cc.id AS cost_category_id, cc.name AS cost_category_name,
-            cc.sort_order AS cost_category_sort_order
-       FROM estimate_contractors ec
-       LEFT JOIN organizations o    ON ec.contractor_id = o.id
-       LEFT JOIN cost_types ct      ON ec.cost_type_id = ct.id
-       LEFT JOIN cost_categories cc ON ct.category_id = cc.id
-      WHERE ec.estimate_id = $1`,
-    [estimateId],
-  );
-
-  return {
-    ...rows[0],
-    items: items.rows.map((it) => ({
-      ...it,
-      materials: materials.rows.filter((m) => m.item_id === it.id),
-    })),
-    contractors: contractors.rows,
-  };
 }
 
 export default async function projectRoutes(fastify: FastifyInstance) {
@@ -471,7 +398,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         client.release();
       }
 
-      const data = await buildEstimateDetail(fastify, primaryId);
+      const data = await buildEstimateDetail(fastify.pool, primaryId);
       return { data };
     },
   );
