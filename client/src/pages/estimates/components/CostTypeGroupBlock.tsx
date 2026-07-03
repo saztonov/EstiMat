@@ -7,41 +7,21 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import {
-  Table,
-  Button,
-  Popconfirm,
-  Space,
-  Tag,
-  AutoComplete,
-  InputNumber,
-  Tooltip,
-  App,
-} from 'antd';
+import { Table, Button, App } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { ExpandableConfig } from 'antd/es/table/interface';
-import {
-  PlusOutlined,
-  DeleteOutlined,
-  CheckOutlined,
-  CloseOutlined,
-  EditOutlined,
-  CaretRightOutlined,
-  CaretDownOutlined,
-} from '@ant-design/icons';
+import { PlusOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../../../services/api';
-import { DragHandle, SortableTableRow, SortableVerticalContext } from '../../../components/dndSortable';
-import { UnitSelect } from '../../../components/UnitSelect';
+import { SortableTableRow, SortableVerticalContext } from '../../../components/dndSortable';
 import type { WorkOption } from './WorkTreeSelect';
 import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/estimateSelectionStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
-import { LocationCell } from './LocationCell';
-import { RowInfoPopover } from './RowInfoPopover';
 import { MaterialsSubTable, LazyMaterialsSubTable } from './MaterialsSubTable';
+import { buildWorksColumns } from './worksColumns';
 import type { ZoneNode } from './location';
 import type { CostTypeGroup, EstimateItem, Organization, SaveWorkPayload, SaveMaterialPayload, WorkEdit } from './types';
 import { formatMoney, DRAFT_ID } from './types';
@@ -401,180 +381,27 @@ function CostTypeGroupBlockImpl({
   // работы»: ширина лидирующих колонок + колонка раскрытия (56) + «№» (36). На «Смете» — 0.
   const materialsIndent = leadingWidth ? leadingWidth + 56 + 36 : 0;
 
-  const columns = useMemo<ColumnsType<EstimateItem>>(() => [
-    // Грип-колонка слева (только в режиме DnD). Грип скрыт у черновика и когда работа одна.
-    ...(dndEnabled
-      ? [{
-          title: '', width: 32, align: 'center' as const,
-          render: (_: unknown, r: EstimateItem) =>
-            r.id === DRAFT_ID || group.works.length <= 1 ? null : <DragHandle disabled={!!editing} />,
-        }]
-      : []),
-    ...leadingColumns,
-    // Колонку раскрытия материалов ставим явно (иначе AntD вставит её самой левой, перед грипом).
-    Table.EXPAND_COLUMN,
-    { title: '№', width: 36, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
-    {
-      title: 'Наименование работы', dataIndex: 'description',
-      // Клик по названию работы разворачивает/сворачивает её материалы — как кнопка «+».
-      // onCell применяется и в editable, и в read-only режиме (у подрядчиков onRow не задан).
-      onCell: (r) => ({
-        onClick: (e) => {
-          if (r.id === DRAFT_ID || isRowInEdit(r)) return;
-          // не реагируем на клики по интерактиву внутри ячейки (теги «ИИ»/«не согласовано»,
-          // поле автодополнения в режиме редактирования)
-          if ((e.target as HTMLElement).closest('button, input, a, .ant-select, .ant-tag')) return;
-          // гасим всплытие, чтобы НЕ сработал row-onClick (selectWork): клик по названию —
-          // только сворачивание/разворачивание, без выделения работы
-          e.stopPropagation();
-          setWorkExpanded(r.id, !isWorkExpanded(r.id));
-        },
-        style: r.id === DRAFT_ID ? undefined : { cursor: 'pointer' },
+  // Ctx-объект строится ВНУТРИ колбэка useMemo (не снаружи) — свежие замыкания
+  // commit/selectRate/setWorkExpanded/isWorkExpanded захватываются в тот же момент, что и раньше.
+  // editing/saving/expandedWorkIds в deps гарантируют свежесть замыкаемых функций;
+  // ESLint-deps выверены вручную — deps-массив БЕЗ ИЗМЕНЕНИЙ.
+  const columns = useMemo<ColumnsType<EstimateItem>>(
+    () =>
+      buildWorksColumns({
+        group, editing, setEditing, saving, nameOptions, dndEnabled, leadingColumns,
+        editable, deleteMode, selectionMode, showPrices, showLocationColumn, zones, projectId,
+        isRowInEdit, isWorkExpanded, setWorkExpanded, commit, selectRate, startEditWork,
+        onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
       }),
-      render: (v: string, r) => {
-        if (isRowInEdit(r) && editing) {
-          return (
-            <AutoComplete
-              style={{ width: '100%' }}
-              value={editing.description}
-              options={nameOptions}
-              onChange={(t) => setEditing({ ...editing, description: t ?? '' })}
-              onSelect={(_v, option) => {
-                const id = (option as { key?: string }).key;
-                if (id) selectRate(id);
-              }}
-              filterOption={(input, option) =>
-                String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-              placeholder="Наименование работы или выбор из справочника"
-              autoFocus
-            />
-          );
-        }
-        // У черновика бейджей нет.
-        if (r.id === DRAFT_ID) return v;
-        // Бейдж типа объёма (осн/доп) — всегда; теги «ИИ»/«не согласовано» — пока работа не согласована.
-        // Клик по «не согласовано» снимает needs_review; клик по бейджу объёма переключает осн/доп.
-        const vt: 'main' | 'additional' = r.volume_type ?? 'main';
-        const volumeClickable = editable && !deleteMode && !selectionMode && !editing;
-        return (
-          <div className="estimat-review-cell">
-            <span className="estimat-review-name">{v}</span>
-            <span className="estimat-review-tags">
-              {r.needs_review && r.source === 'ai' && <Tag color="blue">ИИ</Tag>}
-              {r.needs_review &&
-                (editable ? (
-                  <Tooltip title="Согласовать — снять «не согласовано»">
-                    <Tag color="orange" style={{ cursor: 'pointer' }} onClick={() => onConfirmWork(r.id)}>
-                      не согласовано
-                    </Tag>
-                  </Tooltip>
-                ) : (
-                  <Tag color="orange">не согласовано</Tag>
-                ))}
-              {volumeClickable ? (
-                <Tooltip title="Переключить тип объёма (осн/доп)">
-                  <Tag
-                    color={vt === 'main' ? 'green' : 'gold'}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => onToggleVolumeType(r.id, vt)}
-                  >
-                    {vt === 'main' ? 'осн' : 'доп'}
-                  </Tag>
-                </Tooltip>
-              ) : (
-                <Tag color={vt === 'main' ? 'green' : 'gold'}>{vt === 'main' ? 'осн' : 'доп'}</Tag>
-              )}
-            </span>
-          </div>
-        );
-      },
-    },
-    { title: 'Ед.', dataIndex: 'unit', width: 64, align: 'center', render: (v: string, r) =>
-        isRowInEdit(r) && editing ? (
-          <UnitSelect size="small" style={{ width: '100%' }} value={editing.unit || undefined} onChange={(val) => setEditing({ ...editing, unit: val ?? '' })} />
-        ) : v,
-    },
-    { title: 'Кол-во', dataIndex: 'quantity', width: 76, align: 'center', render: (v: string, r) =>
-        isRowInEdit(r) && editing ? (
-          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
-        ) : <span className="estimat-qty-chip">{Number(v).toLocaleString('ru-RU')}</span>,
-    },
-    ...(showPrices
-      ? [
-          { title: 'Цена', dataIndex: 'unit_price', width: 95, align: 'right' as const, render: (v: string, r: EstimateItem) =>
-              isRowInEdit(r) && editing ? (
-                <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
-              ) : formatMoney(v),
-          },
-          { title: 'Сумма', dataIndex: 'total', width: 105, align: 'right' as const, render: (v: string, r: EstimateItem) =>
-              isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
-          },
-        ]
-      : []),
-    ...(showLocationColumn
-      ? [{
-          title: 'Местоположение', width: 237,
-          render: (_: unknown, r: EstimateItem) => {
-            if (r.id === DRAFT_ID) return null; // у черновика локация подставится из контекста добавления
-            return (
-              <LocationCell
-                work={r}
-                editable={editable && !deleteMode && !editing}
-                zones={zones}
-                projectId={projectId}
-                onChange={({ locations, locationTypeName }) =>
-                  onUpdateWork(r.id, {
-                    costTypeId: r.cost_type_id,
-                    rateId: r.rate_id,
-                    description: r.description,
-                    unit: r.unit,
-                    quantity: Number(r.quantity),
-                    unitPrice: Number(r.unit_price),
-                    locations,
-                    locationTypeName,
-                    expectedVersion: r.version,
-                  })
-                }
-              />
-            );
-          },
-        }]
-      : []),
-    ...(editable && !deleteMode
-      ? [{
-          title: '', width: 96,
-          render: (_: unknown, r: EstimateItem) => {
-            if (isRowInEdit(r)) {
-              return (
-                <Space size={4}>
-                  <Button type="primary" size="small" icon={<CheckOutlined />} loading={saving} onClick={commit} />
-                  <Button size="small" icon={<CloseOutlined />} disabled={saving} onClick={() => setEditing(null)} />
-                </Space>
-              );
-            }
-            return (
-              <Space size={4}>
-                <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
-                  onClick={() => startEditWork(r)} />
-                <Popconfirm title="Удалить работу со всеми материалами?" onConfirm={() => onDeleteWork(r.id)}>
-                  <Button type="text" size="small" danger disabled={!!editing} icon={<DeleteOutlined />} />
-                </Popconfirm>
-                {r.id !== DRAFT_ID && <RowInfoPopover item={r} onOpenHistory={onOpenHistory} />}
-              </Space>
-            );
-          },
-        }]
-      : []),
-    // editing/saving/expandedWorkIds в deps гарантируют свежесть замыкаемых функций
-    // (commit/selectRate/setWorkExpanded/isWorkExpanded); ESLint-deps выверены вручную.
-  ], [
-    dndEnabled, group.works.length, group.costTypeId, leadingColumns,
-    editing, saving, nameOptions, ratesData,
-    editable, deleteMode, selectionMode, showPrices, showLocationColumn, zones, projectId,
-    materialsControlled, expandedWorkIds, expandedKeys, onWorkExpandChange,
-    onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      dndEnabled, group.works.length, group.costTypeId, leadingColumns,
+      editing, saving, nameOptions, ratesData,
+      editable, deleteMode, selectionMode, showPrices, showLocationColumn, zones, projectId,
+      materialsControlled, expandedWorkIds, expandedKeys, onWorkExpandChange,
+      onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
+    ],
+  );
 
 
   // Стабильный объект components: без useMemo AntD пересоздаёт обёртку строки при каждом рендере.
