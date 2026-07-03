@@ -1,24 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Empty, Popconfirm, Popover, Select, Space, Tooltip } from 'antd';
-import {
-  PlusOutlined,
-  TableOutlined,
-  CaretRightOutlined,
-  CaretDownOutlined,
-  DownOutlined,
-  UpOutlined,
-  SwapOutlined,
-  DeleteOutlined,
-  CheckCircleOutlined,
-  CopyOutlined,
-  EnvironmentOutlined,
-  MoreOutlined,
-  SnippetsOutlined,
-  FileExcelOutlined,
-} from '@ant-design/icons';
+import { Button, Empty, Select, Space } from 'antd';
+import { PlusOutlined, TableOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
 import type { SaveWorkPayload, SaveMaterialPayload } from '../components/types';
 import { SmetaGroupBlock } from './SmetaGroupBlock';
-import { WorkTreeSelect } from '../components/WorkTreeSelect';
 import { ReviewUnconfirmedModal } from '../components/ReviewUnconfirmedModal';
 import { ReplicateWorksModal, type ReplicateTargets } from '../components/ReplicateWorksModal';
 import { LocationFilterPopover } from './LocationFilterPopover';
@@ -26,11 +10,11 @@ import { EstimateFilterSettingsPopover } from './EstimateFilterSettingsPopover';
 import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney } from '../components/types';
-import { formatLocationsLabel } from '../components/location';
 import { useSmetaFilters, NO_CATEGORY } from './useSmetaFilters';
 import { useSmetaSelection, type AssignLocation } from './useSmetaSelection';
 import { useExpandSteps } from './useExpandSteps';
 import { useEstimateReveal } from './useEstimateReveal';
+import { SmetaSelectionToolbar } from './SmetaSelectionToolbar';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useEstimateExpandStore } from '../../../store/estimateExpandStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
@@ -166,8 +150,6 @@ export function SmetaPanel({
     onReplicate,
     onBulkConfirm,
   });
-  const [actionsOpen, setActionsOpen] = useState(false); // поповер «Действия» в шапке
-
   // Справочник зон объекта (для фильтров, тиражирования и колонки «Местоположение»).
   const { data: zonesData } = useProjectZones(projectId);
 
@@ -281,209 +263,35 @@ export function SmetaPanel({
       }
       extra={
         groups.length > 0 ? (
-          <Space size={2} style={{ marginLeft: 'auto' }}>
-            {editable && mode === 'reassign' && (
-              <Space size={6} style={{ marginRight: 4 }}>
-                <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {selectedIds.size}</span>
-                <Popover
-                  trigger="click"
-                  title="Перенести материалы к работе"
-                  content={
-                    <WorkTreeSelect works={allWorks} disabled={reassigning} onPick={handleBulkReassign} />
-                  }
-                >
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<SwapOutlined />}
-                    disabled={selectedIds.size === 0 || reassigning}
-                    loading={reassigning}
-                  >
-                    Перенести
-                  </Button>
-                </Popover>
-                <Button size="small" disabled={reassigning} onClick={cancelSelection}>
-                  Отмена
-                </Button>
-              </Space>
-            )}
-            {editable && mode === 'copy' && (
-              <Space size={6} style={{ marginRight: 4 }}>
-                <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {selectedIds.size}</span>
-                <Popover
-                  trigger="click"
-                  title="Копировать материалы в работу"
-                  content={
-                    <WorkTreeSelect works={allWorks} disabled={copying} onPick={handleBulkCopy} />
-                  }
-                >
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<SnippetsOutlined />}
-                    disabled={selectedIds.size === 0 || copying}
-                    loading={copying}
-                  >
-                    Копировать
-                  </Button>
-                </Popover>
-                <Button size="small" disabled={copying} onClick={cancelSelection}>
-                  Отмена
-                </Button>
-              </Space>
-            )}
-            {editable && mode === 'delete' && (
-              <Space size={6} style={{ marginRight: 4 }}>
-                <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {deleteCount}</span>
-                <Button
-                  danger
-                  size="small"
-                  icon={<DeleteOutlined />}
-                  disabled={deleteCount === 0 || deleting}
-                  loading={deleting}
-                  onClick={handleBulkDelete}
-                >
-                  Подтвердить удаление
-                </Button>
-                <Button size="small" disabled={deleting} onClick={cancelSelection}>
-                  Отмена
-                </Button>
-              </Space>
-            )}
-            {editable && mode === 'replicate' && (
-              <Space size={6} style={{ marginRight: 4 }}>
-                <span style={{ fontSize: 12.5, color: '#595959' }}>Шаблон: {selectedWorkIds.size}</span>
-                <Button
-                  type="primary"
-                  size="small"
-                  icon={<CopyOutlined />}
-                  disabled={selectedWorkIds.size === 0}
-                  onClick={() => setReplicateOpen(true)}
-                >
-                  Копировать работы
-                </Button>
-                <Button size="small" onClick={cancelSelection}>Отмена</Button>
-              </Space>
-            )}
-            {editable && mode === 'assignloc' && (
-              <Space size={6} style={{ marginRight: 4 }}>
-                <span style={{ fontSize: 12.5, color: '#595959' }}>
-                  Локация: {formatLocationsLabel([{ zoneId: assignLoc?.zoneId ?? null, floors: assignLoc?.floors ?? [] }], zonesData?.data.roots ?? []) || '—'}
-                  {' · '}Выбрано: {selectedWorkIds.size}
-                </span>
-                <Popconfirm
-                  title="Назначить местоположение"
-                  description="Перезаписать местоположение у выбранных работ?"
-                  okText="Назначить"
-                  cancelText="Отмена"
-                  disabled={selectedWorkIds.size === 0 || assigning}
-                  onConfirm={handleBulkAssign}
-                >
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<EnvironmentOutlined />}
-                    disabled={selectedWorkIds.size === 0 || assigning}
-                    loading={assigning}
-                  >
-                    Назначить {selectedWorkIds.size} работам
-                  </Button>
-                </Popconfirm>
-                <Button size="small" disabled={assigning} onClick={cancelSelection}>Отмена</Button>
-              </Space>
-            )}
-            {mode === 'none' && (
-              <Tooltip title="Выгрузить отобранные фильтрами строки в Excel-шаблон ВОР (КП)">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<FileExcelOutlined />}
-                  loading={exporting}
-                  onClick={handleExportKp}
-                >
-                  Экспорт в Excel
-                </Button>
-              </Tooltip>
-            )}
-            {editable && mode === 'none' && (canBulkMutateMaterials || canBulkDelete) && (
-              <Popover
-                trigger="click"
-                placement="bottomRight"
-                open={actionsOpen}
-                onOpenChange={setActionsOpen}
-                content={
-                  <Space direction="vertical" size={2} style={{ minWidth: 210 }}>
-                    {canBulkDelete && rejectableCount > 0 && (
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<CheckCircleOutlined />}
-                        style={{ width: '100%', justifyContent: 'flex-start' }}
-                        onClick={() => { setActionsOpen(false); setReviewOpen(true); }}
-                      >
-                        Несогласованные ({rejectableCount})
-                      </Button>
-                    )}
-                    {canBulkMutateMaterials && (
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<SwapOutlined />}
-                        style={{ width: '100%', justifyContent: 'flex-start' }}
-                        onClick={() => { setActionsOpen(false); setMode('reassign'); }}
-                      >
-                        Перенос материалов
-                      </Button>
-                    )}
-                    {canBulkMutateMaterials && (
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<SnippetsOutlined />}
-                        style={{ width: '100%', justifyContent: 'flex-start' }}
-                        onClick={() => { setActionsOpen(false); setMode('copy'); }}
-                      >
-                        Копирование материалов
-                      </Button>
-                    )}
-                    {canBulkDelete && (
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<CopyOutlined />}
-                        style={{ width: '100%', justifyContent: 'flex-start' }}
-                        onClick={() => { setActionsOpen(false); setMode('replicate'); }}
-                      >
-                        Копировать работы
-                      </Button>
-                    )}
-                    {canBulkDelete && (
-                      <Button
-                        type="text"
-                        size="small"
-                        danger
-                        icon={<DeleteOutlined />}
-                        style={{ width: '100%', justifyContent: 'flex-start' }}
-                        onClick={() => { setActionsOpen(false); setMode('delete'); }}
-                      >
-                        Удалить несколько
-                      </Button>
-                    )}
-                  </Space>
-                }
-              >
-                <Button type="text" size="small" icon={<MoreOutlined />}>
-                  Действия
-                </Button>
-              </Popover>
-            )}
-            <Tooltip title="Развернуть на уровень глубже (категории → виды → работы → материалы)">
-              <Button type="text" size="small" icon={<DownOutlined />} onClick={expandStep} />
-            </Tooltip>
-            <Tooltip title="Свернуть на уровень (материалы → работы → виды → категории)">
-              <Button type="text" size="small" icon={<UpOutlined />} onClick={collapseStep} />
-            </Tooltip>
-          </Space>
+          <SmetaSelectionToolbar
+            editable={editable}
+            mode={mode}
+            allWorks={allWorks}
+            zoneRoots={zoneRoots}
+            canBulkDelete={canBulkDelete}
+            canBulkMutateMaterials={canBulkMutateMaterials}
+            selectedMaterialCount={selectedIds.size}
+            selectedWorkCount={selectedWorkIds.size}
+            deleteCount={deleteCount}
+            assignLoc={assignLoc}
+            reassigning={reassigning}
+            copying={copying}
+            deleting={deleting}
+            assigning={assigning}
+            rejectableCount={rejectableCount}
+            exporting={exporting}
+            onSetMode={setMode}
+            onCancelSelection={cancelSelection}
+            onBulkReassign={handleBulkReassign}
+            onBulkCopy={handleBulkCopy}
+            onBulkDelete={handleBulkDelete}
+            onBulkAssign={handleBulkAssign}
+            onOpenReplicate={() => setReplicateOpen(true)}
+            onOpenReview={() => setReviewOpen(true)}
+            onExportKp={handleExportKp}
+            onExpandStep={expandStep}
+            onCollapseStep={collapseStep}
+          />
         ) : undefined
       }
       toolbar={
