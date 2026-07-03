@@ -1,5 +1,5 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { App, Button, Empty, Popconfirm, Popover, Select, Space, Tooltip } from 'antd';
+import { Button, Empty, Popconfirm, Popover, Select, Space, Tooltip } from 'antd';
 import {
   PlusOutlined,
   TableOutlined,
@@ -28,6 +28,7 @@ import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney } from '../components/types';
 import { formatLocationsLabel } from '../components/location';
 import { useSmetaFilters, NO_CATEGORY } from './useSmetaFilters';
+import { useSmetaSelection, type AssignLocation } from './useSmetaSelection';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useEstimateExpandStore, typeKeyOf } from '../../../store/estimateExpandStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
@@ -75,13 +76,6 @@ interface Props {
   onClearContractor: (costTypeId: string) => void;
 }
 
-// Режим выбора в шапке: перенос материалов, массовое удаление, тиражирование набора
-// или назначение местоположения выбранным работам.
-type SelectionMode = 'none' | 'reassign' | 'copy' | 'delete' | 'replicate' | 'assignloc';
-
-// Снапшот местоположения для массового назначения (фиксируется на старте режима assignloc).
-type AssignLocation = { zoneId: string | null; floors: number[] };
-
 // Сумма по набору видов работ (работы + их материалы).
 const groupsTotal = (gs: CostTypeGroup[]) =>
   gs.reduce(
@@ -121,7 +115,6 @@ export function SmetaPanel({
   onSetContractor,
   onClearContractor,
 }: Props) {
-  const { message } = App.useApp();
   // Фильтры (категория/вид/несогласованные + локационный срез) и производные: опции, видимые группы, секции.
   const {
     categoryFilter, setCategoryFilter,
@@ -149,29 +142,33 @@ export function SmetaPanel({
     resetExpand();
     return resetExpand;
   }, [estimateId, resetExpand]);
-  // Единый режим выбора с чекбоксами: перенос ('reassign'), удаление ('delete'),
-  // тиражирование ('replicate') или назначение местоположения ('assignloc').
-  const [mode, setMode] = useState<SelectionMode>('none');
-  // Чекбоксы материалов видны в reassign/copy/delete; в assignloc выбираем только работы.
-  const selectionMode = mode !== 'none' && mode !== 'assignloc';
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // выбранные материалы (общий набор)
-  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set()); // выбранные работы (delete/replicate/assignloc)
-  const [reassigning, setReassigning] = useState(false);
-  const [copying, setCopying] = useState(false);
+  // Режимы выбора и все массовые операции (перенос/копирование/удаление/тиражирование/
+  // назначение локации/ревью несогласованных) — в useSmetaSelection.
+  const {
+    mode, setMode,
+    selectionMode, deleteModeFlag,
+    selectedIds, selectedWorkIds,
+    toggleMaterial, toggleWork, clearSelections, cancelSelection,
+    startAssignLocation, assignLoc,
+    reassigning, copying, deleting, replicating, assigning,
+    replicateOpen, setReplicateOpen,
+    reviewOpen, setReviewOpen, reviewConfirming, reviewDeleting,
+    rejectableCount, deleteCount, selectedSourceWorks,
+    handleBulkAssign, handleBulkReassign, handleBulkCopy, handleBulkDelete,
+    handleReplicate, handleReviewConfirm, handleReviewDelete,
+  } = useSmetaSelection({
+    groups,
+    onReassignMaterials,
+    onCopyMaterials,
+    onBulkDelete,
+    onBulkAssignLocation,
+    onReplicate,
+    onBulkConfirm,
+  });
   const [actionsOpen, setActionsOpen] = useState(false); // поповер «Действия» в шапке
-  const [deleting, setDeleting] = useState(false);
-  const [replicateOpen, setReplicateOpen] = useState(false);
-  const [replicating, setReplicating] = useState(false);
-  // Назначение местоположения выбранным работам: снапшот локации + флаг выполнения.
-  const [assignLoc, setAssignLoc] = useState<AssignLocation | null>(null);
-  const [assigning, setAssigning] = useState(false);
 
   // Справочник зон объекта (для фильтров, тиражирования и колонки «Местоположение»).
   const { data: zonesData } = useProjectZones(projectId);
-  // Модалка ревью несогласованных позиций (согласовать/удалить выделенное).
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [reviewConfirming, setReviewConfirming] = useState(false);
-  const [reviewDeleting, setReviewDeleting] = useState(false);
 
   // Массовые операции разрешены сервером только admin/engineer — кнопки остальным не показываем.
   const role = useAuthStore((s) => s.user?.role);
@@ -179,82 +176,6 @@ export function SmetaPanel({
   // Перенос/копирование материалов (reassign-bulk / copy-bulk) — те же права, отдельное имя по смыслу.
   const canBulkMutateMaterials = canBulkDelete;
 
-  const toggleMaterial = useCallback((id: string, selected: boolean) =>
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (selected) next.add(id);
-      else next.delete(id);
-      return next;
-    }), []);
-
-  const toggleWork = useCallback((id: string, selected: boolean) =>
-    setSelectedWorkIds((prev) => {
-      const next = new Set(prev);
-      if (selected) next.add(id);
-      else next.delete(id);
-      return next;
-    }), []);
-
-  const cancelSelection = () => {
-    setSelectedIds(new Set());
-    setSelectedWorkIds(new Set());
-    setAssignLoc(null);
-    setMode('none');
-  };
-
-  // Старт режима назначения местоположения: снапшот локации из поповера, чистый выбор работ.
-  const startAssignLocation = (loc: AssignLocation) => {
-    setAssignLoc(loc);
-    setSelectedIds(new Set());
-    setSelectedWorkIds(new Set());
-    setMode('assignloc');
-  };
-
-  // Назначение снапшота локации выбранным работам. Выделение сбрасываем только после успеха.
-  const handleBulkAssign = async () => {
-    if (!assignLoc || selectedWorkIds.size === 0 || assigning) return;
-    setAssigning(true);
-    try {
-      await onBulkAssignLocation([...selectedWorkIds], [assignLoc]);
-      setSelectedWorkIds(new Set());
-      setAssignLoc(null);
-      setMode('none');
-    } catch {
-      /* ошибку покажет мутация; выделение сохраняется */
-    } finally {
-      setAssigning(false);
-    }
-  };
-
-  // Перенос выбранных материалов к работе. Выделение сбрасываем только после успеха.
-  const handleBulkReassign = async (targetItemId: string) => {
-    if (selectedIds.size === 0 || reassigning) return;
-    setReassigning(true);
-    try {
-      await onReassignMaterials([...selectedIds], targetItemId);
-      setSelectedIds(new Set());
-      setMode('none');
-    } catch {
-      /* ошибку покажет мутация; выделение сохраняется */
-    } finally {
-      setReassigning(false);
-    }
-  };
-
-  // Копирование выбранных материалов в работу (источники остаются). Сброс выбора — после успеха.
-  const handleBulkCopy = async (targetItemId: string) => {
-    if (selectedIds.size === 0 || copying) return;
-    setCopying(true);
-    try {
-      await onCopyMaterials([...selectedIds], targetItemId);
-      setSelectedIds(new Set());
-      setMode('none');
-    } catch {
-      /* ошибку покажет мутация; выделение сохраняется */
-    } finally {
-      setCopying(false);
-    }
-  };
   const selectCategory = useEstimateSelectionStore((s) => s.selectCategory);
   const selectWork = useEstimateSelectionStore((s) => s.selectWork);
   const activeCostCategoryId = useEstimateSelectionStore((s) => s.activeCostCategoryId);
@@ -325,110 +246,10 @@ export function SmetaPanel({
     [groups],
   );
 
-  // Число строк-листьев в модалке ревью: несогласованная работа = 1 (её материалы уйдут каскадом),
-  // иначе считаем несогласованные материалы под согласованной работой.
-  const rejectableCount = useMemo(() => {
-    let n = 0;
-    for (const g of groups)
-      for (const w of g.works) {
-        if (w.needs_review) n++;
-        else for (const m of w.materials) if (m.needs_review) n++;
-      }
-    return n;
-  }, [groups]);
-
-  // Согласовать выделенное в модалке ревью. Выделение/закрытие — после успеха.
-  const handleReviewConfirm = async (workIds: string[], materialIds: string[]) => {
-    if (reviewConfirming || reviewDeleting) return;
-    setReviewConfirming(true);
-    try {
-      await onBulkConfirm(workIds, materialIds);
-      setReviewOpen(false);
-    } catch {
-      /* ошибку покажет мутация */
-    } finally {
-      setReviewConfirming(false);
-    }
-  };
-
-  // Удалить выделенное в модалке ревью.
-  const handleReviewDelete = async (workIds: string[], materialIds: string[]) => {
-    if (reviewConfirming || reviewDeleting) return;
-    setReviewDeleting(true);
-    try {
-      await onBulkDelete(workIds, materialIds);
-      message.success(`Удалено позиций: ${workIds.length + materialIds.length}`);
-      setReviewOpen(false);
-    } catch {
-      /* ошибку покажет мутация */
-    } finally {
-      setReviewDeleting(false);
-    }
-  };
-
-  // Сопоставление материал → работа: для удаления исключаем материалы выбранных работ (уйдут каскадом).
-  const materialOwner = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const g of groups) for (const w of g.works) for (const mat of w.materials) m.set(mat.id, w.id);
-    return m;
-  }, [groups]);
-
-  const effectiveMaterialIds = useMemo(
-    () =>
-      [...selectedIds].filter((mid) => {
-        const owner = materialOwner.get(mid);
-        return !(owner && selectedWorkIds.has(owner));
-      }),
-    [selectedIds, selectedWorkIds, materialOwner],
-  );
-  const deleteCount = selectedWorkIds.size + effectiveMaterialIds.length;
-
-  // Удаление выбранных работ (с каскадом материалов) и отдельных материалов. Сброс — только после успеха.
-  const handleBulkDelete = async () => {
-    if (deleteCount === 0 || deleting) return;
-    setDeleting(true);
-    try {
-      await onBulkDelete([...selectedWorkIds], effectiveMaterialIds);
-      message.success(`Удалено: работ ${selectedWorkIds.size}, материалов ${effectiveMaterialIds.length}`);
-      setSelectedIds(new Set());
-      setSelectedWorkIds(new Set());
-      setMode('none');
-    } catch {
-      /* ошибку покажет мутация; выделение сохраняется */
-    } finally {
-      setDeleting(false);
-    }
-  };
-
   // Смена фильтра не должна оставлять выбранными скрытые строки — иначе можно удалить/перенести невидимое.
   useEffect(() => {
-    setSelectedIds(new Set());
-    setSelectedWorkIds(new Set());
-  }, [categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorsText, filterLocationTypeIds, filterVolumeType]);
-
-  // Выбранные работы-шаблоны для тиражирования (по id из всех групп).
-  const selectedSourceWorks = useMemo(() => {
-    if (selectedWorkIds.size === 0) return [];
-    const out: EstimateItem[] = [];
-    for (const g of groups) for (const w of g.works) if (selectedWorkIds.has(w.id)) out.push(w);
-    return out;
-  }, [groups, selectedWorkIds]);
-
-  // Тиражирование выбранного набора на целевые локации. Сброс — только после успеха.
-  const handleReplicate = async (targets: ReplicateTargets) => {
-    if (selectedWorkIds.size === 0 || replicating) return;
-    setReplicating(true);
-    try {
-      await onReplicate([...selectedWorkIds], targets);
-      setReplicateOpen(false);
-      setSelectedWorkIds(new Set());
-      setMode('none');
-    } catch {
-      /* ошибку покажет мутация; выделение сохраняется */
-    } finally {
-      setReplicating(false);
-    }
-  };
+    clearSelections();
+  }, [categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorsText, filterLocationTypeIds, filterVolumeType, clearSelections]);
 
   // Навигация к работе из ИИ-чата: раскрыть категорию/вид, снять фильтры, выделить и прокрутить.
   useEffect(() => {
@@ -468,8 +289,6 @@ export function SmetaPanel({
 
   // Стабильный объект зон — общий root-список для блоков и фильтров (вместо []-литерала каждый рендер).
   const zoneRoots = useMemo(() => zonesData?.data.roots ?? [], [zonesData]);
-  // Чекбоксы работ активны в delete и replicate (выбор шаблона для тиражирования).
-  const deleteModeFlag = mode === 'delete' || mode === 'replicate' || mode === 'assignloc';
 
   // Стабильный (useMemo) набор общих пропсов блоков: пока не меняется выбор/режим, blockProps не
   // пересоздаётся, поэтому memo-обёртки SmetaGroupBlock не ререндерятся при не связанных изменениях.
