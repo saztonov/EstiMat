@@ -14,7 +14,6 @@ export const registerSchema = z.object({
   email: emailSchema,
   password: z.string().min(6, 'Минимум 6 символов'),
   fullName: z.string().min(2, 'Минимум 2 символа'),
-  phone: z.string().optional(),
 });
 
 export const userSchema = z.object({
@@ -23,7 +22,6 @@ export const userSchema = z.object({
   fullName: z.string(),
   orgId: z.string().uuid().nullable(),
   role: z.enum(ROLES),
-  phone: z.string().nullable(),
   isActive: z.boolean(),
 });
 

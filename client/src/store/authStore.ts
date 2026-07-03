@@ -10,7 +10,7 @@ interface AuthState {
   accessTokenExpiresAt: number | null;
 
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, fullName: string, phone?: string) => Promise<void>;
+  register: (email: string, password: string, fullName: string) => Promise<void>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
   setExpiresAt: (expiresAt: number) => void;
@@ -45,11 +45,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  register: async (email, password, fullName, phone) => {
+  register: async (email, password, fullName) => {
     set({ isLoading: true, error: null });
     try {
       // Регистрация не авторизует: аккаунт создаётся неактивным и ждёт активации админом.
-      await api.post('/auth/register', { email, password, fullName, phone }, { skipAuthRefresh: true });
+      await api.post('/auth/register', { email, password, fullName }, { skipAuthRefresh: true });
       set({ isLoading: false });
     } catch (err) {
       set({ isLoading: false, error: (err as Error).message });

@@ -12,10 +12,10 @@ export function RegisterPage() {
   const register = useAuthStore((s) => s.register);
   const { message } = App.useApp();
 
-  async function onFinish(values: { email: string; password: string; fullName: string; phone?: string }) {
+  async function onFinish(values: { email: string; password: string; fullName: string }) {
     setLoading(true);
     try {
-      await register(values.email, values.password, values.fullName, values.phone);
+      await register(values.email, values.password, values.fullName);
       message.success('Регистрация отправлена. Вход станет возможен после активации администратором.');
       navigate('/login', { replace: true });
     } catch (err) {
@@ -37,9 +37,6 @@ export function RegisterPage() {
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, min: 6, message: 'Минимум 6 символов' }]}>
             <Input.Password prefix={<LockOutlined />} placeholder="Пароль" />
-          </Form.Item>
-          <Form.Item name="phone">
-            <Input placeholder="Телефон (необязательно)" />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={loading} block>

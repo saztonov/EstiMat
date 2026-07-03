@@ -16,7 +16,6 @@ interface User {
   org_id: string | null;
   org_name: string | null;
   role: Role;
-  phone: string | null;
   is_active: boolean;
   created_at: string;
 }
@@ -111,7 +110,6 @@ export function UsersPanel() {
       fullName: record.full_name,
       role: record.role,
       orgId: record.org_id,
-      phone: record.phone,
     });
     setModalOpen(true);
   }
@@ -135,7 +133,6 @@ export function UsersPanel() {
       render: (role: Role) => <Tag color={roleColors[role]}>{ROLE_LABELS[role]}</Tag>,
     },
     { title: 'Организация', dataIndex: 'org_name', width: 200, sorter: (a, b) => (a.org_name || '').localeCompare(b.org_name || '') },
-    { title: 'Телефон', dataIndex: 'phone', width: 150, sorter: (a, b) => (a.phone || '').localeCompare(b.phone || '') },
     {
       title: 'Активен',
       dataIndex: 'is_active',
@@ -215,9 +212,6 @@ export function UsersPanel() {
               placeholder="Выберите организацию"
               options={orgsData?.data.map((o) => ({ value: o.id as string, label: o.name as string }))}
             />
-          </Form.Item>
-          <Form.Item name="phone" label="Телефон">
-            <Input />
           </Form.Item>
         </Form>
       </Modal>

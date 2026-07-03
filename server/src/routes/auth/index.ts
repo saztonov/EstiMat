@@ -47,9 +47,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
     // Самостоятельная регистрация создаёт неактивного пользователя — вход возможен
     // только после того, как администратор включит ему флаг is_active.
     await fastify.pool.query(
-      `INSERT INTO users (email, password_hash, full_name, phone, role, is_active)
-       VALUES ($1, $2, $3, $4, 'engineer', false)`,
-      [body.email, passwordHash, body.fullName, body.phone || null],
+      `INSERT INTO users (email, password_hash, full_name, role, is_active)
+       VALUES ($1, $2, $3, 'engineer', false)`,
+      [body.email, passwordHash, body.fullName],
     );
 
     // Токены не выдаём — пользователь не авторизуется до активации администратором.

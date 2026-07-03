@@ -8,7 +8,6 @@ export const createUserSchema = z.object({
   fullName: z.string().min(2, 'Минимум 2 символа'),
   role: z.enum(ROLES),
   orgId: z.string().uuid().nullable().optional(),
-  phone: z.string().optional(),
 });
 
 export const updateUserSchema = z.object({
@@ -16,7 +15,6 @@ export const updateUserSchema = z.object({
   fullName: z.string().min(2).optional(),
   role: z.enum(ROLES).optional(),
   orgId: z.string().uuid().nullable().optional(),
-  phone: z.string().nullable().optional(),
   isActive: z.boolean().optional(),
 });
 
