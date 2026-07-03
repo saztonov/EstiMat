@@ -321,8 +321,9 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   });
 
   // GET /api/projects/:id/stats — статистика по смете объекта:
-  // всего категорий/видов/наименований работ и материалов, а также та же
-  // разбивка по авторам (кто добавлял строки). Агрегируем по всем сметам объекта
+  // всего категорий/видов/наименований работ и материалов, а также разбивка
+  // по авторам — сколько строк работ/материалов добавил каждый по периодам
+  // (Сегодня/Вчера/Неделя/Месяц/Всего). Агрегируем по всем сметам объекта
   // через денормализованный estimate_items.project_id.
   fastify.get<{ Params: { id: string } }>(
     '/:id/stats',
@@ -335,7 +336,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
       );
       if (projectRows.length === 0) return reply.status(404).send({ error: 'Проект не найден' });
 
-      const [worksTotal, materialsTotal, worksByAuthor, materialsByAuthor] = await Promise.all([
+      const [worksTotal, materialsTotal, byAuthorRows] = await Promise.all([
         fastify.pool.query(
           `SELECT COUNT(DISTINCT ei.cost_category_id)::int AS categories,
                   COUNT(DISTINCT ei.cost_type_id)::int     AS types,
@@ -351,61 +352,58 @@ export default async function projectRoutes(fastify: FastifyInstance) {
             WHERE e.project_id = $1`,
           [projectId],
         ),
+        // Разбивка по авторам: сколько строк работ/материалов добавил каждый автор
+        // по периодам — скользящие накопительные окна (больший включает меньшие).
+        // Границы дней считаем в московском локальном времени: created_at (UTC/tz)
+        // → naive-local через AT TIME ZONE, сравнение с naive-границами консистентно.
         fastify.pool.query(
-          `SELECT ei.created_by AS user_id, u.full_name,
-                  COUNT(DISTINCT ei.cost_category_id)::int AS categories,
-                  COUNT(DISTINCT ei.cost_type_id)::int     AS types,
-                  COUNT(*)::int                            AS works
-             FROM estimate_items ei
-             LEFT JOIN users u ON u.id = ei.created_by
-            WHERE ei.project_id = $1
-            GROUP BY ei.created_by, u.full_name`,
-          [projectId],
-        ),
-        fastify.pool.query(
-          `SELECT em.created_by AS user_id, u.full_name,
-                  COUNT(*)::int AS materials
-             FROM estimate_materials em
-             JOIN estimates e ON e.id = em.estimate_id
-             LEFT JOIN users u ON u.id = em.created_by
-            WHERE e.project_id = $1
-            GROUP BY em.created_by, u.full_name`,
+          `WITH b AS (
+             SELECT date_trunc('day', now() AT TIME ZONE 'Europe/Moscow')                     AS today_start,
+                    date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') - interval '1 day'   AS yest_start,
+                    date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') - interval '6 days'  AS week_start,
+                    date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') - interval '29 days' AS month_start
+           ),
+           events AS (
+             SELECT ei.created_by AS user_id, (ei.created_at AT TIME ZONE 'Europe/Moscow') AS cl, false AS is_material
+               FROM estimate_items ei
+              WHERE ei.project_id = $1
+             UNION ALL
+             SELECT em.created_by AS user_id, (em.created_at AT TIME ZONE 'Europe/Moscow') AS cl, true AS is_material
+               FROM estimate_materials em
+               JOIN estimates e ON e.id = em.estimate_id
+              WHERE e.project_id = $1
+           )
+           SELECT ev.user_id, u.full_name,
+             COUNT(*) FILTER (WHERE NOT ev.is_material AND ev.cl >= b.today_start)::int                          AS works_today,
+             COUNT(*) FILTER (WHERE     ev.is_material AND ev.cl >= b.today_start)::int                          AS materials_today,
+             COUNT(*) FILTER (WHERE NOT ev.is_material AND ev.cl >= b.yest_start AND ev.cl < b.today_start)::int AS works_yesterday,
+             COUNT(*) FILTER (WHERE     ev.is_material AND ev.cl >= b.yest_start AND ev.cl < b.today_start)::int AS materials_yesterday,
+             COUNT(*) FILTER (WHERE NOT ev.is_material AND ev.cl >= b.week_start)::int                           AS works_week,
+             COUNT(*) FILTER (WHERE     ev.is_material AND ev.cl >= b.week_start)::int                           AS materials_week,
+             COUNT(*) FILTER (WHERE NOT ev.is_material AND ev.cl >= b.month_start)::int                          AS works_month,
+             COUNT(*) FILTER (WHERE     ev.is_material AND ev.cl >= b.month_start)::int                          AS materials_month,
+             COUNT(*) FILTER (WHERE NOT ev.is_material)::int                                                     AS works_total,
+             COUNT(*) FILTER (WHERE     ev.is_material)::int                                                     AS materials_total
+             FROM events ev
+             CROSS JOIN b
+             LEFT JOIN users u ON u.id = ev.user_id
+            GROUP BY ev.user_id, u.full_name
+            ORDER BY works_total DESC, materials_total DESC`,
           [projectId],
         ),
       ]);
 
-      // Сливаем работы и материалы по автору. Ключ для legacy-строк без автора — 'none'.
-      type AuthorRow = {
-        userId: string | null;
-        name: string;
-        categories: number;
-        types: number;
-        works: number;
-        materials: number;
-      };
-      const byAuthor = new Map<string, AuthorRow>();
-      const ensure = (userId: string | null, fullName: string | null): AuthorRow => {
-        const key = userId ?? 'none';
-        let row = byAuthor.get(key);
-        if (!row) {
-          row = { userId, name: fullName ?? 'Не указан', categories: 0, types: 0, works: 0, materials: 0 };
-          byAuthor.set(key, row);
-        }
-        return row;
-      };
-      for (const r of worksByAuthor.rows) {
-        const row = ensure(r.user_id, r.full_name);
-        row.categories = r.categories;
-        row.types = r.types;
-        row.works = r.works;
-      }
-      for (const r of materialsByAuthor.rows) {
-        ensure(r.user_id, r.full_name).materials = r.materials;
-      }
-
-      const authors = [...byAuthor.values()].sort(
-        (a, b) => b.works - a.works || b.materials - a.materials,
-      );
+      // Каждая ячейка периода — пара «работы (материалы)». Legacy-строки без автора
+      // (created_by = NULL) сливаются в одну группу с именем «Не указан».
+      const byAuthor = byAuthorRows.rows.map((r) => ({
+        userId: r.user_id,
+        name: r.full_name ?? 'Не указан',
+        today: { works: r.works_today, materials: r.materials_today },
+        yesterday: { works: r.works_yesterday, materials: r.materials_yesterday },
+        week: { works: r.works_week, materials: r.materials_week },
+        month: { works: r.works_month, materials: r.materials_month },
+        total: { works: r.works_total, materials: r.materials_total },
+      }));
 
       const t = worksTotal.rows[0];
       return {
@@ -416,7 +414,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
             works: t.works,
             materials: materialsTotal.rows[0].materials,
           },
-          byAuthor: authors,
+          byAuthor,
         },
       };
     },

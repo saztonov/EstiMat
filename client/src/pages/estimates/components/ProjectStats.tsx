@@ -1,15 +1,21 @@
-import { Row, Col, Statistic, Table, Divider, Spin, Empty } from 'antd';
+import { Row, Col, Statistic, Table, Divider, Spin, Empty, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 
+interface Bucket {
+  works: number;
+  materials: number;
+}
+
 interface AuthorStat {
   userId: string | null;
   name: string;
-  categories: number;
-  types: number;
-  works: number;
-  materials: number;
+  today: Bucket;
+  yesterday: Bucket;
+  week: Bucket;
+  month: Bucket;
+  total: Bucket;
 }
 
 interface StatsResponse {
@@ -21,7 +27,11 @@ interface Props {
   projectId: string;
 }
 
-// Тело модалки «Статистика»: итоги по смете объекта + разбивка по авторам.
+// Ячейка периода: «работы (материалы)», напр. «4 (2)».
+const fmt = (b: Bucket) => `${b.works} (${b.materials})`;
+
+// Тело модалки «Статистика»: итоги по смете объекта + разбивка по авторам
+// (сколько строк работ/материалов добавил каждый по периодам).
 // Данные подгружаются лениво (запрос включается только при заданном projectId).
 export function ProjectStats({ projectId }: Props) {
   const { data, isLoading } = useQuery({
@@ -43,10 +53,11 @@ export function ProjectStats({ projectId }: Props) {
 
   const columns: ColumnsType<AuthorStat> = [
     { title: 'Автор', dataIndex: 'name', key: 'name' },
-    { title: 'Категорий', dataIndex: 'categories', key: 'categories', align: 'right', width: 110 },
-    { title: 'Видов', dataIndex: 'types', key: 'types', align: 'right', width: 90 },
-    { title: 'Наименований', dataIndex: 'works', key: 'works', align: 'right', width: 130 },
-    { title: 'Материалов', dataIndex: 'materials', key: 'materials', align: 'right', width: 120 },
+    { title: 'Сегодня', key: 'today', align: 'right', width: 100, render: (_, r) => fmt(r.today) },
+    { title: 'Вчера', key: 'yesterday', align: 'right', width: 100, render: (_, r) => fmt(r.yesterday) },
+    { title: 'Неделя', key: 'week', align: 'right', width: 100, render: (_, r) => fmt(r.week) },
+    { title: 'Месяц', key: 'month', align: 'right', width: 100, render: (_, r) => fmt(r.month) },
+    { title: 'Всего', key: 'total', align: 'right', width: 100, render: (_, r) => fmt(r.total) },
   ];
 
   return (
@@ -58,7 +69,10 @@ export function ProjectStats({ projectId }: Props) {
         <Col span={6}><Statistic title="Материалов" value={totals.materials} /></Col>
       </Row>
 
-      <Divider style={{ margin: '16px 0 12px' }} orientation="left">По авторам</Divider>
+      <Divider style={{ margin: '16px 0 4px' }} orientation="left">По авторам</Divider>
+      <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+        Формат ячейки: работ (материалов)
+      </Typography.Text>
 
       {authors.length === 0 ? (
         <Empty description="Работы не добавлены" />
