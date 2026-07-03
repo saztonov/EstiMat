@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Empty, Popconfirm, Popover, Select, Space, Tooltip } from 'antd';
 import {
   PlusOutlined,
@@ -29,10 +29,11 @@ import { formatMoney } from '../components/types';
 import { formatLocationsLabel } from '../components/location';
 import { useSmetaFilters, NO_CATEGORY } from './useSmetaFilters';
 import { useSmetaSelection, type AssignLocation } from './useSmetaSelection';
+import { useExpandSteps } from './useExpandSteps';
+import { useEstimateReveal } from './useEstimateReveal';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
-import { useEstimateExpandStore, typeKeyOf } from '../../../store/estimateExpandStore';
+import { useEstimateExpandStore } from '../../../store/estimateExpandStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
-import { useLocationContextStore } from '../../../store/locationContextStore';
 import { useProjectZones } from '../../../hooks/useProjectLocations';
 import { useAuthStore } from '../../../store/authStore';
 import { PanelShell } from './PanelShell';
@@ -177,10 +178,8 @@ export function SmetaPanel({
   const canBulkMutateMaterials = canBulkDelete;
 
   const selectCategory = useEstimateSelectionStore((s) => s.selectCategory);
-  const selectWork = useEstimateSelectionStore((s) => s.selectWork);
   const activeCostCategoryId = useEstimateSelectionStore((s) => s.activeCostCategoryId);
   const revealInRatesTree = useEstimateSelectionStore((s) => s.revealInRatesTree);
-  const estimateReveal = useEstimateSelectionStore((s) => s.estimateRevealRequest);
   const showArea = useWorkspaceLayoutStore((s) => s.showArea);
   const openSection = useWorkspaceLayoutStore((s) => s.openSection);
 
@@ -192,41 +191,8 @@ export function SmetaPanel({
       return next;
     });
 
-  // Поэтапное сворачивание/разворачивание дерева сметы. Уровни (снаружи внутрь):
-  // категории → виды работ → работы → материалы. Каждое нажатие двигает на один уровень,
-  // ориентируясь на текущее состояние (без счётчика — устойчиво к ручным кликам по строкам).
-  const allCatKeys = useMemo(() => groups.map((g) => g.costCategoryId ?? NO_CATEGORY), [groups]);
-  const allTypeKeys = useMemo(() => groups.map((g) => typeKeyOf(g.costTypeId)), [groups]);
-  const workIdsWithMaterials = useMemo(
-    () => groups.flatMap((g) => g.works.filter((w) => (w.materials?.length ?? 0) > 0).map((w) => w.id)),
-    [groups],
-  );
-
-  // Состояние раскрытия/свёрнутости видов читаем императивно из store (getState), а не подпиской —
-  // иначе одиночный разворот работы снова ререндерил бы весь SmetaPanel. Массовую установку
-  // раскрытых работ деферим через startTransition: клик отзывается мгновенно, а монтаж/демонтаж
-  // материалов идёт прерываемой работой (плюс ленивый рендер не монтирует невидимые таблицы).
-  const collapseStep = useCallback(() => {
-    const st = useEstimateExpandStore.getState();
-    if (workIdsWithMaterials.some((id) => st.expandedWorkIds.has(id))) {
-      startTransition(() => st.setExpandedWorkIds(new Set()));
-    } else if (allTypeKeys.some((k) => !st.collapsedTypes.has(k))) {
-      st.setCollapsedTypes(new Set(allTypeKeys));
-    } else if (allCatKeys.some((k) => !collapsedCats.has(k))) {
-      setCollapsedCats(new Set(allCatKeys));
-    }
-  }, [workIdsWithMaterials, allTypeKeys, allCatKeys, collapsedCats]);
-
-  const expandStep = useCallback(() => {
-    const st = useEstimateExpandStore.getState();
-    if (allCatKeys.some((k) => collapsedCats.has(k))) {
-      setCollapsedCats(new Set());
-    } else if (allTypeKeys.some((k) => st.collapsedTypes.has(k))) {
-      st.setCollapsedTypes(new Set());
-    } else if (workIdsWithMaterials.some((id) => !st.expandedWorkIds.has(id))) {
-      startTransition(() => st.setExpandedWorkIds(new Set(workIdsWithMaterials)));
-    }
-  }, [allCatKeys, allTypeKeys, workIdsWithMaterials, collapsedCats]);
+  // Поэтапное сворачивание/разворачивание дерева сметы (категории → виды → работы → материалы).
+  const { expandStep, collapseStep } = useExpandSteps({ groups, collapsedCats, setCollapsedCats });
 
   // Список работ сметы — для выбора цели при переносе материала (дерево Категория → Вид работ → Работа).
   const allWorks = useMemo(
@@ -252,40 +218,7 @@ export function SmetaPanel({
   }, [categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloorsText, filterLocationTypeIds, filterVolumeType, clearSelections]);
 
   // Навигация к работе из ИИ-чата: раскрыть категорию/вид, снять фильтры, выделить и прокрутить.
-  useEffect(() => {
-    if (!estimateReveal) return;
-    const id = estimateReveal.itemId;
-    let target: { g: CostTypeGroup; description: string } | null = null;
-    for (const g of groups) {
-      const w = g.works.find((x) => x.id === id);
-      if (w) { target = { g, description: w.description }; break; }
-    }
-    if (!target) return;
-    const catKey = target.g.costCategoryId ?? NO_CATEGORY;
-    const tKey = target.g.costTypeId ?? NO_CATEGORY;
-    setCategoryFilter(undefined);
-    setTypeFilter(undefined);
-    setOnlyUnreconciled(false);
-    // Снимаем и локационный фильтр — иначе скрытая им строка не отрисуется и scrollIntoView не сработает.
-    useLocationContextStore.getState().clearFilter();
-    setCollapsedCats((prev) => { if (!prev.has(catKey)) return prev; const n = new Set(prev); n.delete(catKey); return n; });
-    useEstimateExpandStore.getState().expandType(tKey);
-    selectWork(id, target.description, {
-      costTypeId: target.g.costTypeId,
-      costTypeName: target.g.costTypeName,
-      costCategoryId: target.g.costCategoryId,
-      costCategoryName: target.g.costCategoryName,
-    });
-    const scrollToRow = () =>
-      document.querySelector('.estimat-row-selected')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    const t = setTimeout(() => {
-      scrollToRow();
-      // Повторный проход после кадра: высоты ленивых placeholder’ов материалов могли сместить позицию.
-      requestAnimationFrame(scrollToRow);
-    }, 200);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [estimateReveal?.nonce]);
+  useEstimateReveal({ groups, setCategoryFilter, setTypeFilter, setOnlyUnreconciled, setCollapsedCats });
 
   // Стабильный объект зон — общий root-список для блоков и фильтров (вместо []-литерала каждый рендер).
   const zoneRoots = useMemo(() => zonesData?.data.roots ?? [], [zonesData]);
