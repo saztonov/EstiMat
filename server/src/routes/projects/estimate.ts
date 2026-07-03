@@ -213,6 +213,129 @@ export function registerEstimateRoutes(fastify: FastifyInstance): void {
     },
   );
 
+  // GET /api/projects/stats — сводная статистика по всем объектам сразу:
+  // глобальные итоги + разбивка по авторам с суммами по всем объектам и
+  // вложенной детализацией byProject (те же периоды, что и в /:id/stats).
+  fastify.get(
+    '/stats',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async () => {
+      const [worksTotal, materialsTotal, rowsByAuthorProject] = await Promise.all([
+        fastify.pool.query(
+          `SELECT COUNT(DISTINCT ei.cost_category_id)::int AS categories,
+                  COUNT(DISTINCT ei.cost_type_id)::int     AS types,
+                  COUNT(*)::int                            AS works
+             FROM estimate_items ei`,
+        ),
+        fastify.pool.query(
+          `SELECT COUNT(*)::int AS materials
+             FROM estimate_materials em
+             JOIN estimates e ON e.id = em.estimate_id`,
+        ),
+        // Разбивка по авторам и объектам: тот же CTE, что и в /:id/stats, но без
+        // фильтра по проекту и с group by по паре (автор, объект) — суммы по
+        // автору сворачиваются уже в JS.
+        fastify.pool.query(
+          `WITH b AS (
+             SELECT date_trunc('day', now() AT TIME ZONE 'Europe/Moscow')                     AS today_start,
+                    date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') - interval '1 day'   AS yest_start,
+                    date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') - interval '6 days'  AS week_start,
+                    date_trunc('day', now() AT TIME ZONE 'Europe/Moscow') - interval '29 days' AS month_start
+           ),
+           events AS (
+             SELECT ei.created_by AS user_id, ei.project_id, (ei.created_at AT TIME ZONE 'Europe/Moscow') AS cl, false AS is_material
+               FROM estimate_items ei
+             UNION ALL
+             SELECT em.created_by AS user_id, e.project_id, (em.created_at AT TIME ZONE 'Europe/Moscow') AS cl, true AS is_material
+               FROM estimate_materials em
+               JOIN estimates e ON e.id = em.estimate_id
+           )
+           SELECT ev.user_id, u.full_name, ev.project_id, p.code AS project_code, p.name AS project_name,
+             COUNT(*) FILTER (WHERE NOT ev.is_material AND ev.cl >= b.today_start)::int                          AS works_today,
+             COUNT(*) FILTER (WHERE     ev.is_material AND ev.cl >= b.today_start)::int                          AS materials_today,
+             COUNT(*) FILTER (WHERE NOT ev.is_material AND ev.cl >= b.yest_start AND ev.cl < b.today_start)::int AS works_yesterday,
+             COUNT(*) FILTER (WHERE     ev.is_material AND ev.cl >= b.yest_start AND ev.cl < b.today_start)::int AS materials_yesterday,
+             COUNT(*) FILTER (WHERE NOT ev.is_material AND ev.cl >= b.week_start)::int                           AS works_week,
+             COUNT(*) FILTER (WHERE     ev.is_material AND ev.cl >= b.week_start)::int                           AS materials_week,
+             COUNT(*) FILTER (WHERE NOT ev.is_material AND ev.cl >= b.month_start)::int                          AS works_month,
+             COUNT(*) FILTER (WHERE     ev.is_material AND ev.cl >= b.month_start)::int                          AS materials_month,
+             COUNT(*) FILTER (WHERE NOT ev.is_material)::int                                                     AS works_total,
+             COUNT(*) FILTER (WHERE     ev.is_material)::int                                                     AS materials_total
+             FROM events ev
+             CROSS JOIN b
+             LEFT JOIN users u ON u.id = ev.user_id
+             JOIN projects p ON p.id = ev.project_id
+            GROUP BY ev.user_id, u.full_name, ev.project_id, p.code, p.name`,
+        ),
+      ]);
+
+      type Bucket = { works: number; materials: number };
+      type PeriodKey = 'today' | 'yesterday' | 'week' | 'month' | 'total';
+      const PERIODS: PeriodKey[] = ['today', 'yesterday', 'week', 'month', 'total'];
+      const emptyBuckets = (): Record<PeriodKey, Bucket> => ({
+        today: { works: 0, materials: 0 },
+        yesterday: { works: 0, materials: 0 },
+        week: { works: 0, materials: 0 },
+        month: { works: 0, materials: 0 },
+        total: { works: 0, materials: 0 },
+      });
+
+      // Свёртка (автор, объект) → автор: суммируем бакеты по всем объектам.
+      // Legacy-строки без автора (created_by = NULL) — одна группа «Не указан».
+      const byUser = new Map<
+        string,
+        {
+          userId: string | null;
+          name: string;
+          byProject: Array<Record<PeriodKey, Bucket> & { projectId: string; code: string; name: string }>;
+        } & Record<PeriodKey, Bucket>
+      >();
+      for (const r of rowsByAuthorProject.rows) {
+        const key = r.user_id ?? 'none';
+        let author = byUser.get(key);
+        if (!author) {
+          author = { userId: r.user_id, name: r.full_name ?? 'Не указан', byProject: [], ...emptyBuckets() };
+          byUser.set(key, author);
+        }
+        const project = {
+          projectId: r.project_id,
+          code: r.project_code,
+          name: r.project_name,
+          today: { works: r.works_today, materials: r.materials_today },
+          yesterday: { works: r.works_yesterday, materials: r.materials_yesterday },
+          week: { works: r.works_week, materials: r.materials_week },
+          month: { works: r.works_month, materials: r.materials_month },
+          total: { works: r.works_total, materials: r.materials_total },
+        };
+        author.byProject.push(project);
+        for (const p of PERIODS) {
+          author[p].works += project[p].works;
+          author[p].materials += project[p].materials;
+        }
+      }
+
+      const byAuthor = [...byUser.values()].sort(
+        (a, b) => b.total.works - a.total.works || b.total.materials - a.total.materials,
+      );
+      for (const a of byAuthor) {
+        a.byProject.sort((x, y) => y.total.works - x.total.works || y.total.materials - x.total.materials);
+      }
+
+      const t = worksTotal.rows[0];
+      return {
+        data: {
+          totals: {
+            categories: t.categories,
+            types: t.types,
+            works: t.works,
+            materials: materialsTotal.rows[0].materials,
+          },
+          byAuthor,
+        },
+      };
+    },
+  );
+
   // GET /api/projects/:id/estimate — единая смета на объект.
   // get-or-create: если смет нет — создаём одну; если несколько — сливаем
   // позиции/материалы/подрядчиков в самую раннюю (primary), пустые удаляем.

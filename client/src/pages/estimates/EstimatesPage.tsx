@@ -8,6 +8,7 @@ import { BuildingsIcon } from '../../components/shared/BuildingsIcon';
 import { placeholderCover } from '../../components/shared/placeholderCover';
 import { LocationBuilder } from '../projects/LocationBuilder';
 import { ProjectStats } from './components/ProjectStats';
+import { AllProjectsStats } from './components/AllProjectsStats';
 
 interface ProjectWithStats {
   id: string;
@@ -34,6 +35,7 @@ export function EstimatesPage() {
   const [builderProjectId, setBuilderProjectId] = useState<string | null>(null);
   const [builderDirty, setBuilderDirty] = useState(false);
   const [statsProjectId, setStatsProjectId] = useState<string | null>(null);
+  const [allStatsOpen, setAllStatsOpen] = useState(false);
 
   const openBuilder = (id: string) => { setBuilderDirty(false); setBuilderProjectId(id); };
   const closeBuilder = () => {
@@ -103,6 +105,9 @@ export function EstimatesPage() {
             { value: 'total', label: 'Сортировка: по сумме' },
           ]}
         />
+        <Button icon={<BarChartOutlined />} onClick={() => setAllStatsOpen(true)}>
+          Статистика
+        </Button>
       </Space>
 
       {isLoading ? (
@@ -182,6 +187,17 @@ export function EstimatesPage() {
         style={{ top: 40 }}
       >
         {statsProjectId && <ProjectStats projectId={statsProjectId} />}
+      </Modal>
+
+      <Modal
+        title="Статистика по всем объектам"
+        open={allStatsOpen}
+        onCancel={() => setAllStatsOpen(false)}
+        footer={null}
+        width={860}
+        style={{ top: 40 }}
+      >
+        <AllProjectsStats enabled={allStatsOpen} />
       </Modal>
     </>
   );
