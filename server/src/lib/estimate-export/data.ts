@@ -7,6 +7,7 @@
 // как в GET /:id) и нумерует.
 
 import type { Pool } from 'pg';
+import { bucketBy, ITEMS_CANONICAL_ORDER_BY } from '../estimate-detail.js';
 import type { ExportConflict } from './references.js';
 
 export class ExportError extends Error {
@@ -85,8 +86,7 @@ export async function gatherExportData(
        LEFT JOIN room_types rt   ON ei.room_type_id = rt.id
        LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
       WHERE ei.estimate_id = $1 AND ei.id = ANY($2::uuid[])
-      ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
-               cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
+      ORDER BY ${ITEMS_CANONICAL_ORDER_BY}`,
     [estimateId, ids],
   );
 
@@ -109,12 +109,7 @@ export async function gatherExportData(
       ORDER BY em.sort_order, em.created_at`,
     [ids],
   );
-  const matsByItem = new Map<string, typeof mats.rows>();
-  for (const m of mats.rows) {
-    const arr = matsByItem.get(m.item_id as string);
-    if (arr) arr.push(m);
-    else matsByItem.set(m.item_id as string, [m]);
-  }
+  const matsByItem = bucketBy(mats.rows, (m) => m.item_id as string);
 
   // Группировка по метке локации; порядок блоков — по первому появлению в каноне.
   const blockByLabel = new Map<string, ExportBlock>();

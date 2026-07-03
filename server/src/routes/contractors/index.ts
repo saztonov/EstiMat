@@ -4,7 +4,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { recordAudit, recordAuditBatch } from '../../lib/audit.js';
 import { withImageSrc } from '../../lib/projectImage.js';
 import { emitEstimateChanged } from '../../lib/realtime/emit.js';
-import { loadProjectId } from '../../lib/estimate-detail.js';
+import { loadProjectId, bucketBy, ITEMS_CANONICAL_ORDER_BY } from '../../lib/estimate-detail.js';
 import { assertEstimateAccess, ChatAccessError, isContractor } from '../../lib/chat/access.js';
 import {
   assignItemContractorsSchema,
@@ -171,8 +171,7 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
            LEFT JOIN project_zones z    ON ei.zone_id = z.id
            LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
           WHERE ${where}
-          ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
-                   cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
+          ORDER BY ${ITEMS_CANONICAL_ORDER_BY}`,
         values,
       );
 
@@ -190,9 +189,11 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
           ).rows
         : [];
 
+      // Бакетизация за один проход вместо .filter() внутри .map() (порядок задан ORDER BY).
+      const materialsByItem = bucketBy(materials, (m) => m.item_id as string);
       const itemsWithMaterials = items.rows.map((it) => ({
         ...it,
-        materials: materials.filter((m) => m.item_id === it.id),
+        materials: materialsByItem.get(it.id as string) ?? [],
       }));
 
       return { data: { items: itemsWithMaterials } };

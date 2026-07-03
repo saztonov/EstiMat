@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { withImageSrc, isLegacyLocalImage } from '../../lib/projectImage.js';
-import { buildEstimateDetail } from '../../lib/estimate-detail.js';
+import { buildEstimateDetail, bucketBy, ITEMS_CANONICAL_ORDER_BY } from '../../lib/estimate-detail.js';
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -187,8 +187,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
                LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
                LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
                WHERE ei.estimate_id = ANY($1)
-               ORDER BY z.sort_order NULLS LAST, ei.floor_from NULLS LAST, rt.sort_order NULLS LAST,
-                        cc.sort_order, ct.sort_order, ei.sort_order, ei.created_at`,
+               ORDER BY ${ITEMS_CANONICAL_ORDER_BY}`,
             [estimateIds],
           )
         ).rows
@@ -225,15 +224,20 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         ).rows
       : [];
 
+    // Бакетизация за один проход вместо .filter() внутри .map() (O(n×m) → O(n+m));
+    // порядок внутри бакетов задан ORDER BY соответствующих SELECT.
+    const materialsByItem = bucketBy(materialsRows, (m) => m.item_id as string);
     const itemsWithMaterials = itemsRows.map((it) => ({
       ...it,
-      materials: materialsRows.filter((m) => m.item_id === it.id),
+      materials: materialsByItem.get(it.id as string) ?? [],
     }));
 
+    const itemsByEstimate = bucketBy(itemsWithMaterials, (it) => it.estimate_id as string);
+    const contractorsByEstimate = bucketBy(contractorsRows, (c) => c.estimate_id as string);
     const estimatesWithItems = estimates.map((e) => ({
       ...e,
-      items: itemsWithMaterials.filter((it) => it.estimate_id === e.id),
-      contractors: contractorsRows.filter((c) => c.estimate_id === e.id),
+      items: itemsByEstimate.get(e.id as string) ?? [],
+      contractors: contractorsByEstimate.get(e.id as string) ?? [],
     }));
 
     const grandTotal = estimates.reduce((acc, e) => acc + Number(e.total_amount || 0), 0);
