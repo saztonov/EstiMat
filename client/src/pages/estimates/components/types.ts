@@ -1,5 +1,76 @@
 import type { LocationEntry } from './location';
 
+// id-заглушка черновой строки (работа/материал в режиме добавления, ещё не сохранена).
+export const DRAFT_ID = '__draft__';
+
+export interface Organization {
+  id: string;
+  name: string;
+  type?: string;
+}
+
+export interface SaveWorkPayload {
+  costTypeId: string | null;
+  rateId: string | null;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  // Локация (опционально): задаётся контекстом добавления или поповером строки.
+  // locations — мультизона из поповера; zoneId/floorFrom/floorTo — legacy-контекст добавления.
+  locations?: LocationEntry[];
+  zoneId?: string | null;
+  floorFrom?: number | null;
+  floorTo?: number | null;
+  roomTypeId?: string | null;
+  // Произвольный «тип» строки (на всю работу). Пустая строка/null очищает тип.
+  locationTypeName?: string | null;
+  // OCC: версия строки на момент открытия формы — сервер сверит и при расхождении вернёт 409.
+  expectedVersion?: number | null;
+  // Сигнал «поставить строку наверх вида затрат» (добавление из справочника). Сервер вычислит sort_order.
+  placeOnTop?: boolean;
+}
+
+export interface SaveMaterialPayload {
+  materialId: string | null;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  // Коэффициент расхода: число — кол-во считает сервер (коэф × объём работы); null — ручное кол-во.
+  qtyRatio: number | null;
+  // OCC: версия материала на момент открытия формы.
+  expectedVersion?: number | null;
+}
+
+export interface WorkEdit {
+  workId: string | null;
+  rateId: string | null;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  // Исходные значения — чтобы поймать изменение названия существующей работы
+  originalDescription: string;
+  originalRateId: string | null;
+  // OCC: версия строки на момент открытия формы (обновляется при 409 для повторного сохранения).
+  expectedVersion?: number | null;
+}
+
+export interface MaterialEdit {
+  materialId: string | null;
+  refMaterialId: string | null;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  // Коэффициент расхода: число — кол-во вычисляется (коэф × объём работы), поле кол-ва заблокировано;
+  // null — ручной ввод количества.
+  qtyRatio: number | null;
+  // OCC: версия материала на момент открытия формы.
+  expectedVersion?: number | null;
+}
+
 export interface EstimateMaterial {
   id: string;
   item_id: string;

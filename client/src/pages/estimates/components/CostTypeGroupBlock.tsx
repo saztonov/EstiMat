@@ -46,11 +46,12 @@ import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
 import { LocationCell } from './LocationCell';
 import { RowInfoPopover } from './RowInfoPopover';
-import type { ZoneNode, LocationEntry } from './location';
-import type { CostTypeGroup, EstimateItem, EstimateMaterial } from './types';
-import { formatMoney } from './types';
+import type { ZoneNode } from './location';
+import type { CostTypeGroup, EstimateItem, EstimateMaterial, Organization, SaveWorkPayload, SaveMaterialPayload, WorkEdit, MaterialEdit } from './types';
+import { formatMoney, DRAFT_ID } from './types';
 
-const DRAFT_ID = '__draft__';
+// Обратная совместимость: payload-типы исторически экспортировались отсюда.
+export type { SaveWorkPayload, SaveMaterialPayload } from './types';
 
 interface Rate {
   id: string;
@@ -65,74 +66,6 @@ interface Material {
   name: string;
   unit: string;
   unit_price: string;
-}
-
-interface Organization {
-  id: string;
-  name: string;
-  type?: string;
-}
-
-export interface SaveWorkPayload {
-  costTypeId: string | null;
-  rateId: string | null;
-  description: string;
-  unit: string;
-  quantity: number;
-  unitPrice: number;
-  // Локация (опционально): задаётся контекстом добавления или поповером строки.
-  // locations — мультизона из поповера; zoneId/floorFrom/floorTo — legacy-контекст добавления.
-  locations?: LocationEntry[];
-  zoneId?: string | null;
-  floorFrom?: number | null;
-  floorTo?: number | null;
-  roomTypeId?: string | null;
-  // Произвольный «тип» строки (на всю работу). Пустая строка/null очищает тип.
-  locationTypeName?: string | null;
-  // OCC: версия строки на момент открытия формы — сервер сверит и при расхождении вернёт 409.
-  expectedVersion?: number | null;
-  // Сигнал «поставить строку наверх вида затрат» (добавление из справочника). Сервер вычислит sort_order.
-  placeOnTop?: boolean;
-}
-
-export interface SaveMaterialPayload {
-  materialId: string | null;
-  description: string;
-  unit: string;
-  quantity: number;
-  unitPrice: number;
-  // Коэффициент расхода: число — кол-во считает сервер (коэф × объём работы); null — ручное кол-во.
-  qtyRatio: number | null;
-  // OCC: версия материала на момент открытия формы.
-  expectedVersion?: number | null;
-}
-
-interface WorkEdit {
-  workId: string | null;
-  rateId: string | null;
-  description: string;
-  unit: string;
-  quantity: number;
-  unitPrice: number;
-  // Исходные значения — чтобы поймать изменение названия существующей работы
-  originalDescription: string;
-  originalRateId: string | null;
-  // OCC: версия строки на момент открытия формы (обновляется при 409 для повторного сохранения).
-  expectedVersion?: number | null;
-}
-
-interface MaterialEdit {
-  materialId: string | null;
-  refMaterialId: string | null;
-  description: string;
-  unit: string;
-  quantity: number;
-  unitPrice: number;
-  // Коэффициент расхода: число — кол-во вычисляется (коэф × объём работы), поле кол-ва заблокировано;
-  // null — ручной ввод количества.
-  qtyRatio: number | null;
-  // OCC: версия материала на момент открытия формы.
-  expectedVersion?: number | null;
 }
 
 // ============================================================
