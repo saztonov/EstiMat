@@ -17,7 +17,7 @@ import {
   FileExcelOutlined,
   ExclamationCircleOutlined,
 } from '@ant-design/icons';
-import { type SaveWorkPayload, type SaveMaterialPayload } from '../components/CostTypeGroupBlock';
+import type { SaveWorkPayload, SaveMaterialPayload } from '../components/types';
 import { SmetaGroupBlock } from './SmetaGroupBlock';
 import { WorkTreeSelect } from '../components/WorkTreeSelect';
 import { ReviewUnconfirmedModal } from '../components/ReviewUnconfirmedModal';

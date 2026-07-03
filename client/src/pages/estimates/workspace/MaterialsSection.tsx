@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { SectionShell } from './SectionShell';
-import type { SaveMaterialPayload } from '../components/CostTypeGroupBlock';
+import type { SaveMaterialPayload } from '../components/types';
 import type { MaterialRef, MaterialsTree, MaterialGroupNode } from './types';
 
 const UNGROUPED = '__ungrouped__';

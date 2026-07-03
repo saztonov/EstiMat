@@ -7,7 +7,7 @@ import { WorksTreeSection } from './WorksTreeSection';
 import { MaterialsSection } from './MaterialsSection';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { useAppSettings } from '../../../hooks/useAppSettings';
-import type { SaveMaterialPayload } from '../components/CostTypeGroupBlock';
+import type { SaveMaterialPayload } from '../components/types';
 import type { RateLeafPayload } from './types';
 
 interface Props {

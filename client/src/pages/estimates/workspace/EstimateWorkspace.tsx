@@ -7,7 +7,7 @@ import { ReferencesPanel } from './ReferencesPanel';
 import { AiChatPanel } from './AiChatPanel';
 import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import { useWorkspaceLayoutStore, type PanelId } from '../../../store/workspaceLayoutStore';
-import type { SaveWorkPayload, SaveMaterialPayload } from '../components/CostTypeGroupBlock';
+import type { SaveWorkPayload, SaveMaterialPayload } from '../components/types';
 import type { ReplicateTargets } from '../components/ReplicateWorksModal';
 import type { CostTypeGroup, EstimateDetail } from '../components/types';
 import type { RateLeafPayload } from './types';

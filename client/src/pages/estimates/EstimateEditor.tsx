@@ -8,7 +8,7 @@ import { getEffectiveAddContext } from '../../store/locationContextStore';
 import { useEstimateSelectionStore } from '../../store/estimateSelectionStore';
 import { parseFloors } from './components/location';
 import type { ReplicateTargets } from './components/ReplicateWorksModal';
-import type { SaveWorkPayload, SaveMaterialPayload } from './components/CostTypeGroupBlock';
+import type { SaveWorkPayload, SaveMaterialPayload } from './components/types';
 import { AddCostTypeModal, type CostTypeFormPayload } from './components/AddCostTypeModal';
 import { buildCostTypeGroups, type CostTypeGroup, type EstimateDetail } from './components/types';
 import { useVolumeTypeQueue } from './hooks/useVolumeTypeQueue';

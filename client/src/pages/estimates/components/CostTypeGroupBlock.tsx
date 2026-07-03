@@ -26,9 +26,6 @@ import type { ZoneNode } from './location';
 import type { CostTypeGroup, EstimateItem, Organization, SaveWorkPayload, SaveMaterialPayload, WorkEdit } from './types';
 import { formatMoney, DRAFT_ID } from './types';
 
-// Обратная совместимость: payload-типы исторически экспортировались отсюда.
-export type { SaveWorkPayload, SaveMaterialPayload } from './types';
-
 interface Rate {
   id: string;
   name: string;
