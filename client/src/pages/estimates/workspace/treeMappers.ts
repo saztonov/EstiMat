@@ -71,9 +71,29 @@ export function filterRateNodesByScope(
     .filter((c) => (c.children?.length ?? 0) > 0);
 }
 
-// Фильтрация дерева по подстроке: сохраняем категории/виды, если есть
-// подходящие потомки, и листья, совпадающие напрямую. Возвращаем также
-// ключи, которые надо раскрыть, чтобы показать совпадения.
+// Собрать ключи всех раскрываемых узлов (у которых есть дети) — рекурсивно.
+// Используется для «развернуть всё» и для раскрытия поддерева совпавшего контейнера.
+export function collectExpandableKeys(nodes: RateTreeNode[]): string[] {
+  const out: string[] = [];
+  const walk = (list: RateTreeNode[]) => {
+    for (const n of list) {
+      if (n.children?.length) {
+        out.push(String(n.key));
+        walk(n.children);
+      }
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+// Фильтрация дерева по подстроке. Правило (не зависит от вида узла):
+// - контейнер (узел с детьми), чьё собственное имя совпало, показываем ЦЕЛИКОМ
+//   со всеми детьми и раскрываем всё его поддерево;
+// - контейнер без совпадения имени сохраняем, только если внутри есть совпавшие
+//   потомки (и тогда оставляем лишь их);
+// - лист включаем при прямом совпадении.
+// Возвращаем также уникальные ключи, которые надо раскрыть, чтобы показать совпадения.
 export function filterRateNodes(
   nodes: RateTreeNode[],
   query: string,
@@ -86,12 +106,16 @@ export function filterRateNodes(
     const out: RateTreeNode[] = [];
     for (const n of list) {
       if (n.children?.length) {
-        const kids = walk(n.children);
-        if (kids.length) {
-          expanded.push(String(n.key));
-          out.push({ ...n, children: kids });
-        } else if (n.searchText.includes(q)) {
+        if (n.searchText.includes(q)) {
+          // Совпал сам контейнер — показываем его целиком и раскрываем поддерево.
+          expanded.push(String(n.key), ...collectExpandableKeys(n.children));
           out.push(n);
+        } else {
+          const kids = walk(n.children);
+          if (kids.length) {
+            expanded.push(String(n.key));
+            out.push({ ...n, children: kids });
+          }
         }
       } else if (n.searchText.includes(q)) {
         out.push(n);
@@ -100,5 +124,5 @@ export function filterRateNodes(
     return out;
   };
 
-  return { nodes: walk(nodes), expandedKeys: expanded };
+  return { nodes: walk(nodes), expandedKeys: [...new Set(expanded)] };
 }

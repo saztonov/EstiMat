@@ -7,23 +7,14 @@ import { api } from '../../../services/api';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkScopeStore } from '../../../store/workScopeStore';
 import { SectionShell } from './SectionShell';
-import { mapRatesTreeToNodes, filterRateNodes, filterRateNodesByScope, type RateTreeNode } from './treeMappers';
+import {
+  mapRatesTreeToNodes,
+  filterRateNodes,
+  filterRateNodesByScope,
+  collectExpandableKeys,
+  type RateTreeNode,
+} from './treeMappers';
 import type { RateTreeCategory, RateLeafPayload } from './types';
-
-// Собрать ключи всех раскрываемых узлов (категории + виды работ) — для «развернуть всё».
-function collectExpandableKeys(nodes: RateTreeNode[]): Key[] {
-  const out: Key[] = [];
-  const walk = (list: RateTreeNode[]) => {
-    for (const n of list) {
-      if (n.children?.length) {
-        out.push(n.key as Key);
-        walk(n.children);
-      }
-    }
-  };
-  walk(nodes);
-  return out;
-}
 
 interface Props {
   onAddRate: (payload: RateLeafPayload) => void;
@@ -134,24 +125,26 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
       title="Наименования работ"
       collapsed={collapsed}
       onToggle={onToggle}
+      toolbar={
+        <div style={{ display: 'flex', gap: 4 }}>
+          <Input
+            allowClear
+            size="small"
+            prefix={<SearchOutlined />}
+            placeholder="Поиск работы…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <Tooltip title="Развернуть всё">
+            <Button size="small" icon={<DownOutlined />} onClick={() => setUserExpanded(allExpandableKeys)} />
+          </Tooltip>
+          <Tooltip title="Свернуть всё">
+            <Button size="small" icon={<UpOutlined />} onClick={() => setUserExpanded([])} />
+          </Tooltip>
+        </div>
+      }
     >
-      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-        <Input
-          allowClear
-          size="small"
-          prefix={<SearchOutlined />}
-          placeholder="Поиск работы…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ flex: 1 }}
-        />
-        <Tooltip title="Развернуть всё">
-          <Button size="small" icon={<DownOutlined />} onClick={() => setUserExpanded(allExpandableKeys)} />
-        </Tooltip>
-        <Tooltip title="Свернуть всё">
-          <Button size="small" icon={<UpOutlined />} onClick={() => setUserExpanded([])} />
-        </Tooltip>
-      </div>
       {scopeActive && (
         <div style={{ fontSize: 12, color: '#8c8c8c', marginBottom: 6 }}>
           Сужено по выбранным разделам (область подбора в панели ИИ).
