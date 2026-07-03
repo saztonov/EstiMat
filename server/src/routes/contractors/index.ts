@@ -1,16 +1,15 @@
 import type { FastifyInstance } from 'fastify';
-import type { PoolClient } from 'pg';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { recordAudit, recordAuditBatch } from '../../lib/audit.js';
 import { withImageSrc } from '../../lib/projectImage.js';
-import { makeEstimateEvent } from '../../lib/realtime/bus.js';
+import { emitEstimateChanged } from '../../lib/realtime/emit.js';
+import { loadProjectId } from '../../lib/estimate-detail.js';
 import { assertEstimateAccess, ChatAccessError, isContractor } from '../../lib/chat/access.js';
 import {
   assignItemContractorsSchema,
   clearItemContractorsSchema,
   type AssignItemContractorsInput,
-  type EstimateChangeReason,
 } from '@estimat/shared';
 
 // Эффективный объём подрядчика по строке: qty, либо доля от объёма, либо весь объём (оба NULL).
@@ -23,23 +22,6 @@ type PlanItem = { itemId: string; percent?: number; qty?: number; remainder?: bo
 
 export default async function contractorRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
-
-  async function emit(
-    reason: EstimateChangeReason,
-    estimateId: string,
-    projectId: string | null,
-    actorUserId: string,
-    extra?: { auditLogId?: string | null },
-  ): Promise<void> {
-    await fastify.publishEstimateChanged(
-      makeEstimateEvent({ estimateId, projectId, reason, actorUserId, ...extra }),
-    );
-  }
-
-  async function loadProjectId(db: Pick<PoolClient, 'query'>, estimateId: string): Promise<string | null> {
-    const { rows } = await db.query('SELECT project_id FROM estimates WHERE id = $1', [estimateId]);
-    return rows[0]?.project_id ?? null;
-  }
 
   // ============================================================
   // GET /api/contractors/estimates — объекты/сметы для раздела + счётчики
@@ -360,7 +342,7 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
         const estimateIds = [...new Set(toUpsert.map((u) => u.estimateId))];
         for (const eid of estimateIds) {
           const projectId = await loadProjectId(fastify.pool, eid);
-          await emit('contractor_set', eid, projectId, userId);
+          await emitEstimateChanged(fastify, 'contractor_set', eid, projectId, userId);
         }
 
         return { data: { assigned: toUpsert.length } };
@@ -407,7 +389,7 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
       const estimateIds = [...new Set(rows.map((r) => r.estimate_id as string))];
       for (const eid of estimateIds) {
         const projectId = await loadProjectId(fastify.pool, eid);
-        await emit('contractor_cleared', eid, projectId, userId);
+        await emitEstimateChanged(fastify, 'contractor_cleared', eid, projectId, userId);
       }
       return { data: { cleared: rows.length } };
     },

@@ -63,3 +63,18 @@ export async function recordAuditBatch(db: Queryable, inputs: AuditInput[]): Pro
   });
   await db.query(`INSERT INTO audit_log (${COLS}) VALUES ${tuples.join(', ')}`, values);
 }
+
+// Снимок изменённых полей для журнала: before/after по затронутым колонкам.
+export function diffChanges(
+  oldRow: Record<string, unknown>,
+  newRow: Record<string, unknown>,
+  fields: string[],
+): { before: Record<string, unknown>; after: Record<string, unknown>; changedFields: string[] } {
+  const before: Record<string, unknown> = {};
+  const after: Record<string, unknown> = {};
+  for (const f of fields) {
+    before[f] = oldRow[f];
+    after[f] = newRow[f];
+  }
+  return { before, after, changedFields: fields };
+}

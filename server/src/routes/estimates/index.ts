@@ -1,14 +1,15 @@
 import type { FastifyInstance } from 'fastify';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { recordAudit, recordAuditBatch, type AuditInput } from '../../lib/audit.js';
-import { makeEstimateEvent } from '../../lib/realtime/bus.js';
+import { recordAudit, recordAuditBatch, diffChanges, type AuditInput } from '../../lib/audit.js';
+import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import { mirrorMaterialsToCatalog } from '../../lib/catalog.js';
-import { legacyToLocations, deriveLegacyLocation } from '../../lib/location.js';
+import { legacyToLocations, deriveLegacyLocation, upsertLocationType } from '../../lib/location.js';
+import { loadProjectId } from '../../lib/estimate-detail.js';
 import { exportEstimateKp, ExportError } from '../../lib/estimate-export/index.js';
 import {
   createEstimateSchema,
@@ -22,31 +23,11 @@ import {
   reorderEstimateItemsSchema,
   setEstimateItemsVolumeTypeSchema,
   replicateItemsSchema,
-  type EstimateChangeReason,
   type LocationEntry,
 } from '@estimat/shared';
 
 export default async function estimateRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
-
-  // projectId сметы (для payload события и денормализации в журнал).
-  async function loadProjectId(db: Pick<PoolClient, 'query'>, estimateId: string): Promise<string | null> {
-    const { rows } = await db.query('SELECT project_id FROM estimates WHERE id = $1', [estimateId]);
-    return rows[0]?.project_id ?? null;
-  }
-
-  // Эмит realtime-события после COMMIT (fire-and-forget внутри плагина).
-  async function emit(
-    reason: EstimateChangeReason,
-    estimateId: string,
-    projectId: string | null,
-    actorUserId: string,
-    extra?: { auditLogId?: string | null; correlationId?: string | null },
-  ): Promise<void> {
-    await fastify.publishEstimateChanged(
-      makeEstimateEvent({ estimateId, projectId, reason, actorUserId, ...extra }),
-    );
-  }
 
   // GET /api/estimates?projectId=
   // Закрыто для contractor: подрядчик получает свои строки только через /api/contractors/*.
@@ -352,7 +333,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         changes: diffChanges(oldRows[0], rows[0], fields),
       });
       await client.query('COMMIT');
-      await emit('estimate_updated', request.params.id, rows[0].project_id, request.currentUser.id, { auditLogId: auditId });
+      await emitEstimateChanged(fastify,'estimate_updated', request.params.id, rows[0].project_id, request.currentUser.id, { auditLogId: auditId });
       return { data: rows[0] };
     } catch (err) {
       await client.query('ROLLBACK');
@@ -423,7 +404,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         userId: request.currentUser.id,
         changes: { after: rows[0] },
       });
-      await emit('contractor_set', request.params.id, projectId, request.currentUser.id, { auditLogId: auditId });
+      await emitEstimateChanged(fastify,'contractor_set', request.params.id, projectId, request.currentUser.id, { auditLogId: auditId });
       return { data: rows[0] };
     },
   );
@@ -450,7 +431,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         userId: request.currentUser.id,
         changes: { before: rows[0] },
       });
-      await emit('contractor_cleared', request.params.id, projectId, request.currentUser.id, { auditLogId: auditId });
+      await emitEstimateChanged(fastify,'contractor_cleared', request.params.id, projectId, request.currentUser.id, { auditLogId: auditId });
       return { success: true };
     },
   );
@@ -554,7 +535,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
           );
         }
         await client.query('COMMIT');
-        await emit('item_created', request.params.id, item.project_id, request.currentUser.id, { auditLogId: auditId });
+        await emitEstimateChanged(fastify,'item_created', request.params.id, item.project_id, request.currentUser.id, { auditLogId: auditId });
         return reply.status(201).send({ data: { ...item, materials } });
       } catch (err) {
         await client.query('ROLLBACK');
@@ -674,7 +655,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         }
       }
       await client.query('COMMIT');
-      await emit('item_updated', rows[0].estimate_id, rows[0].project_id, request.currentUser.id, { auditLogId: auditId });
+      await emitEstimateChanged(fastify,'item_updated', rows[0].estimate_id, rows[0].project_id, request.currentUser.id, { auditLogId: auditId });
       return { data: rows[0] };
     } catch (err) {
       await client.query('ROLLBACK');
@@ -699,7 +680,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       );
       const projectId = await loadProjectId(client, request.params.id);
       await client.query('COMMIT');
-      if (rowCount) await emit('item_updated', request.params.id, projectId, request.currentUser.id);
+      if (rowCount) await emitEstimateChanged(fastify,'item_updated', request.params.id, projectId, request.currentUser.id);
       return reply.send({ success: true, updated: rowCount ?? 0 });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -766,7 +747,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         }));
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');
-        if (rows.length) await emit('item_updated', eid, projectId, request.currentUser.id);
+        if (rows.length) await emitEstimateChanged(fastify,'item_updated', eid, projectId, request.currentUser.id);
         return reply.send({
           data: rows.map((r) => ({ id: r.id as string, volume_type: r.after_volume_type as string })),
         });
@@ -816,7 +797,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       ];
       await recordAuditBatch(client, audits);
       await client.query('COMMIT');
-      if (audits.length) await emit('confirmed_all', request.params.id, projectId, request.currentUser.id);
+      if (audits.length) await emitEstimateChanged(fastify,'confirmed_all', request.params.id, projectId, request.currentUser.id);
       return reply.send({ works: works.rowCount ?? 0, materials: materials.rowCount ?? 0 });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -877,7 +858,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         ];
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');
-        if (audits.length) await emit('confirmed_all', eid, projectId, request.currentUser.id);
+        if (audits.length) await emitEstimateChanged(fastify,'confirmed_all', eid, projectId, request.currentUser.id);
         return reply.send({ works: works.rowCount ?? 0, materials: materials.rowCount ?? 0 });
       } catch (err) {
         await client.query('ROLLBACK');
@@ -928,7 +909,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         }));
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');
-        if (rows.length) await emit('item_updated', eid.data, projectId, request.currentUser.id);
+        if (rows.length) await emitEstimateChanged(fastify,'item_updated', eid.data, projectId, request.currentUser.id);
         return reply.send({ updated: rows.length });
       } catch (err) {
         await client.query('ROLLBACK');
@@ -965,7 +946,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       ];
       await recordAuditBatch(client, audits);
       await client.query('COMMIT');
-      await emit('item_deleted', estimateId, projectId, request.currentUser.id);
+      await emitEstimateChanged(fastify,'item_deleted', estimateId, projectId, request.currentUser.id);
       return { success: true };
     } catch (err) {
       await client.query('ROLLBACK');
@@ -1031,7 +1012,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         }
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');
-        await emit('bulk_deleted', eid, projectId, request.currentUser.id);
+        await emitEstimateChanged(fastify,'bulk_deleted', eid, projectId, request.currentUser.id);
         return { success: true, deletedWorks, deletedMaterials };
       } catch (err) {
         await client.query('ROLLBACK');
@@ -1194,7 +1175,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
         });
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');
-        await emit('items_replicated', eid, projectId, request.currentUser.id, { correlationId: copyBatchId });
+        await emitEstimateChanged(fastify,'items_replicated', eid, projectId, request.currentUser.id, { correlationId: copyBatchId });
         return reply.send({
           created: { works: createdWorks, materials: createdMaterials },
           skipped,
@@ -1238,7 +1219,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
           })),
         );
         await client.query('COMMIT');
-        await emit('bulk_deleted', request.params.id, projectId, request.currentUser.id, {
+        await emitEstimateChanged(fastify,'bulk_deleted', request.params.id, projectId, request.currentUser.id, {
           correlationId: request.params.batchId,
         });
         return { success: true, deletedWorks: works.length };
@@ -1250,36 +1231,6 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
       }
     },
   );
-}
-
-// Get-or-create произвольного «типа» строки в рамках объекта (уникально по name_norm).
-// Пустое имя/нет проекта → null (тип очищается). Имя триммится (в т.ч. в Zod-схеме).
-async function upsertLocationType(
-  db: Pick<PoolClient, 'query'>,
-  projectId: string | null,
-  rawName: string | null,
-): Promise<string | null> {
-  const name = (rawName ?? '').trim();
-  if (!projectId || !name) return null;
-  const { rows } = await db.query(
-    `INSERT INTO project_location_types (project_id, name, name_norm)
-     VALUES ($1, $2, lower(btrim($2)))
-     ON CONFLICT (project_id, name_norm) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
-     RETURNING id`,
-    [projectId, name],
-  );
-  return (rows[0]?.id as string | undefined) ?? null;
-}
-
-// Снимок изменённых полей для журнала: before/after по затронутым колонкам.
-function diffChanges(oldRow: Record<string, unknown>, newRow: Record<string, unknown>, fields: string[]) {
-  const before: Record<string, unknown> = {};
-  const after: Record<string, unknown> = {};
-  for (const f of fields) {
-    before[f] = oldRow[f];
-    after[f] = newRow[f];
-  }
-  return { before, after, changedFields: fields };
 }
 
 type HistoryChangeView = { key: string; label: string; before: string | null; after: string | null };

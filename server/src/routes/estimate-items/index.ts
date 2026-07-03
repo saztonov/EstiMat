@@ -1,34 +1,18 @@
 import type { FastifyInstance } from 'fastify';
-import type { Pool, PoolClient } from 'pg';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { recordAudit, recordAuditBatch, type AuditInput } from '../../lib/audit.js';
-import { makeEstimateEvent } from '../../lib/realtime/bus.js';
+import { recordAudit, recordAuditBatch, diffChanges, type AuditInput } from '../../lib/audit.js';
+import { emitEstimateChanged } from '../../lib/realtime/emit.js';
+import { loadProjectId } from '../../lib/estimate-detail.js';
 import { mirrorMaterialsToCatalog } from '../../lib/catalog.js';
 import {
   createEstimateMaterialSchema,
   updateEstimateMaterialSchema,
   reassignMaterialsSchema,
-  type EstimateChangeReason,
 } from '@estimat/shared';
 
 export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
-
-  async function loadProjectId(db: Pick<Pool | PoolClient, 'query'>, estimateId: string): Promise<string | null> {
-    const { rows } = await db.query('SELECT project_id FROM estimates WHERE id = $1', [estimateId]);
-    return rows[0]?.project_id ?? null;
-  }
-
-  async function emit(
-    reason: EstimateChangeReason,
-    estimateId: string,
-    projectId: string | null,
-    actorUserId: string,
-    auditLogId?: string | null,
-  ): Promise<void> {
-    await fastify.publishEstimateChanged(makeEstimateEvent({ estimateId, projectId, reason, actorUserId, auditLogId }));
-  }
 
   // === Материалы (под работой) ===
 
@@ -75,7 +59,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
           action: 'create', userId: request.currentUser.id, changes: { after: rows[0] },
         });
         await client.query('COMMIT');
-        await emit('material_created', estimateId, projectId, request.currentUser.id, auditId);
+        await emitEstimateChanged(fastify, 'material_created', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
         return reply.status(201).send({ data: rows[0] });
       } catch (err) {
         await client.query('ROLLBACK');
@@ -162,7 +146,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
           changes: diffChanges(oldRows[0], rows[0], fields),
         });
         await client.query('COMMIT');
-        await emit('material_updated', estimateId, projectId, request.currentUser.id, auditId);
+        await emitEstimateChanged(fastify, 'material_updated', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
         return { data: rows[0] };
       } catch (err) {
         await client.query('ROLLBACK');
@@ -215,7 +199,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
           changes: { oldItemId: cur[0].item_id, newItemId: itemId },
         });
         await client.query('COMMIT');
-        await emit('materials_reassigned', estimateId, projectId, request.currentUser.id, auditId);
+        await emitEstimateChanged(fastify, 'materials_reassigned', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
         return { data: rows[0] };
       } catch (err) {
         await client.query('ROLLBACK');
@@ -275,7 +259,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         }));
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');
-        await emit('materials_reassigned', targetEstimateId, projectId, request.currentUser.id);
+        await emitEstimateChanged(fastify, 'materials_reassigned', targetEstimateId, projectId, request.currentUser.id);
         return { data: rows, count: rows.length };
       } catch (err) {
         await client.query('ROLLBACK');
@@ -354,7 +338,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
 
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');
-        await emit('materials_reassigned', targetEstimateId, projectId, request.currentUser.id);
+        await emitEstimateChanged(fastify, 'materials_reassigned', targetEstimateId, projectId, request.currentUser.id);
         return { data: created, count: created.length };
       } catch (err) {
         await client.query('ROLLBACK');
@@ -386,7 +370,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
           action: 'delete', userId: request.currentUser.id, changes: { before: cur[0] },
         });
         await client.query('COMMIT');
-        await emit('material_deleted', estimateId, projectId, request.currentUser.id, auditId);
+        await emitEstimateChanged(fastify, 'material_deleted', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
         return { success: true };
       } catch (err) {
         await client.query('ROLLBACK');
@@ -401,15 +385,4 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
 // Округление количества материала до 4 знаков — как ROUND(…, 4) при автодобавлении по расценке.
 function roundQty(n: number): number {
   return Math.round(n * 10000) / 10000;
-}
-
-// Снимок изменённых полей для журнала: before/after по затронутым колонкам.
-function diffChanges(oldRow: Record<string, unknown>, newRow: Record<string, unknown>, fields: string[]) {
-  const before: Record<string, unknown> = {};
-  const after: Record<string, unknown> = {};
-  for (const f of fields) {
-    before[f] = oldRow[f];
-    after[f] = newRow[f];
-  }
-  return { before, after, changedFields: fields };
 }

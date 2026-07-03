@@ -1,3 +1,4 @@
+import type { Pool, PoolClient } from 'pg';
 import type { LocationEntry } from '@estimat/shared';
 
 // ---------- Мультилокация: производное «первичное» зеркало legacy-колонок ----------
@@ -35,4 +36,23 @@ export function deriveLegacyLocation(locations: LocationEntry[]): {
   const floors = locations.flatMap((l) => l.floors ?? []);
   if (floors.length === 0) return { zoneId, floorFrom: null, floorTo: null };
   return { zoneId, floorFrom: Math.min(...floors), floorTo: Math.max(...floors) };
+}
+
+// Get-or-create произвольного «типа» строки в рамках объекта (уникально по name_norm).
+// Пустое имя/нет проекта → null (тип очищается). Имя триммится (в т.ч. в Zod-схеме).
+export async function upsertLocationType(
+  db: Pick<Pool | PoolClient, 'query'>,
+  projectId: string | null,
+  rawName: string | null,
+): Promise<string | null> {
+  const name = (rawName ?? '').trim();
+  if (!projectId || !name) return null;
+  const { rows } = await db.query(
+    `INSERT INTO project_location_types (project_id, name, name_norm)
+     VALUES ($1, $2, lower(btrim($2)))
+     ON CONFLICT (project_id, name_norm) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+     RETURNING id`,
+    [projectId, name],
+  );
+  return (rows[0]?.id as string | undefined) ?? null;
 }
