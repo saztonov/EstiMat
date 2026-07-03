@@ -26,7 +26,8 @@ import { EstimateFilterSettingsPopover } from './EstimateFilterSettingsPopover';
 import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney } from '../components/types';
-import { formatLocationsLabel, parseFloors } from '../components/location';
+import { formatLocationsLabel } from '../components/location';
+import { useSmetaFilters, NO_CATEGORY } from './useSmetaFilters';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useEstimateExpandStore, typeKeyOf } from '../../../store/estimateExpandStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
@@ -81,8 +82,6 @@ type SelectionMode = 'none' | 'reassign' | 'copy' | 'delete' | 'replicate' | 'as
 // Снапшот местоположения для массового назначения (фиксируется на старте режима assignloc).
 type AssignLocation = { zoneId: string | null; floors: number[] };
 
-const NO_CATEGORY = '__none__';
-
 // Сумма по набору видов работ (работы + их материалы).
 const groupsTotal = (gs: CostTypeGroup[]) =>
   gs.reduce(
@@ -123,9 +122,17 @@ export function SmetaPanel({
   onClearContractor,
 }: Props) {
   const { message } = App.useApp();
-  const [categoryFilter, setCategoryFilter] = useState<string | undefined>();
-  const [typeFilter, setTypeFilter] = useState<string | undefined>();
-  const [onlyUnreconciled, setOnlyUnreconciled] = useState(false);
+  // Фильтры (категория/вид/несогласованные + локационный срез) и производные: опции, видимые группы, секции.
+  const {
+    categoryFilter, setCategoryFilter,
+    typeFilter, setTypeFilter,
+    onlyUnreconciled, setOnlyUnreconciled,
+    categoryOptions, typeOptions, locationTypeOptions,
+    filterZoneIds, filterFloorsText, filterLocationTypeIds, filterVolumeType,
+    visibleGroups, sections,
+  } = useSmetaFilters(groups);
+  // collapsedCats оставлен в локальном state: категорий мало, и их свёртка реально
+  // меняет видимую структуру (рендер секций здесь). Это свёртка, не фильтр.
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   // Полная история выбранной строки — один Drawer на всю панель (а не на каждую строку).
   const [historyItem, setHistoryItem] = useState<EstimateItem | null>(null);
@@ -159,11 +166,7 @@ export function SmetaPanel({
   const [assignLoc, setAssignLoc] = useState<AssignLocation | null>(null);
   const [assigning, setAssigning] = useState(false);
 
-  // Местоположение: фильтр-срезы + справочник зон для размножения.
-  const filterZoneIds = useLocationContextStore((s) => s.filterZoneIds);
-  const filterFloorsText = useLocationContextStore((s) => s.filterFloorsText);
-  const filterLocationTypeIds = useLocationContextStore((s) => s.filterLocationTypeIds);
-  const filterVolumeType = useLocationContextStore((s) => s.filterVolumeType);
+  // Справочник зон объекта (для фильтров, тиражирования и колонки «Местоположение»).
   const { data: zonesData } = useProjectZones(projectId);
   // Модалка ревью несогласованных позиций (согласовать/удалить выделенное).
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -259,111 +262,6 @@ export function SmetaPanel({
   const estimateReveal = useEstimateSelectionStore((s) => s.estimateRevealRequest);
   const showArea = useWorkspaceLayoutStore((s) => s.showArea);
   const openSection = useWorkspaceLayoutStore((s) => s.openSection);
-
-  // Опции отборов — из самих групп (показываем только то, что есть).
-  const categoryOptions = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const g of groups) if (g.costCategoryId) m.set(g.costCategoryId, g.costCategoryName ?? '—');
-    return [...m.entries()]
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
-  }, [groups]);
-
-  const typeOptions = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const g of groups) {
-      if (categoryFilter && g.costCategoryId !== categoryFilter) continue;
-      if (g.costTypeId) m.set(g.costTypeId, g.costTypeName ?? '—');
-    }
-    return [...m.entries()]
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
-  }, [groups, categoryFilter]);
-
-  // Опции отбора по произвольному «типу» строки — из самих работ (показываем только присутствующие).
-  const locationTypeOptions = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const g of groups)
-      for (const w of g.works)
-        if (w.location_type_id) m.set(w.location_type_id, w.location_type_name ?? '—');
-    return [...m.entries()]
-      .map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
-  }, [groups]);
-
-  // Набор этажей фильтра из сырого текста («2-4, 6, 11-18»).
-  const filterFloors = useMemo(() => parseFloors(filterFloorsText), [filterFloorsText]);
-
-  const locationActive =
-    filterZoneIds.length > 0 ||
-    filterFloors.length > 0 ||
-    filterLocationTypeIds.length > 0 ||
-    filterVolumeType !== 'all';
-
-  // Проходит ли работа фильтр локации (срезы по зоне/набору этажей/типу/объёму). Мультизона:
-  // достаточно совпадения хотя бы одной зоны и пересечения хотя бы одного этажа.
-  const matchesLocation = (w: EstimateItem): boolean => {
-    const locs = w.locations ?? [];
-    const zoneIds = locs.length
-      ? locs.map((l) => l.zoneId).filter((z): z is string => !!z)
-      : w.zone_id ? [w.zone_id] : [];
-    if (filterZoneIds.length && !zoneIds.some((z) => filterZoneIds.includes(z))) return false;
-    if (filterFloors.length) {
-      let floors: number[];
-      if (locs.length) {
-        floors = locs.flatMap((l) => l.floors ?? []);
-      } else {
-        floors = [];
-        const f = w.floor_from ?? null;
-        const t = w.floor_to ?? null;
-        if (f != null && t != null) { for (let x = f; x <= t; x++) floors.push(x); }
-        else if (f != null) floors.push(f);
-        else if (t != null) floors.push(t);
-      }
-      if (floors.length === 0) return false; // нет этажей — не проходит этажный срез
-      const sel = new Set(filterFloors);
-      if (!floors.some((x) => sel.has(x))) return false; // нет пересечения
-    }
-    if (filterLocationTypeIds.length && !(w.location_type_id && filterLocationTypeIds.includes(w.location_type_id)))
-      return false;
-    if (filterVolumeType !== 'all' && (w.volume_type ?? 'main') !== filterVolumeType) return false;
-    return true;
-  };
-
-  const visibleGroups = useMemo(() => {
-    const byFilter = groups.filter(
-      (g) =>
-        (!categoryFilter || g.costCategoryId === categoryFilter) &&
-        (!typeFilter || g.costTypeId === typeFilter),
-    );
-    if (!onlyUnreconciled && !locationActive) return byFilter;
-    // Фильтр на уровне работ: несогласованные и/или срез по локации.
-    return byFilter
-      .map((g) => ({
-        ...g,
-        works: g.works.filter(
-          (w) => (!onlyUnreconciled || !!w.needs_review) && (!locationActive || matchesLocation(w)),
-        ),
-      }))
-      .filter((g) => g.works.length > 0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, categoryFilter, typeFilter, onlyUnreconciled, filterZoneIds, filterFloors, filterLocationTypeIds, filterVolumeType]);
-
-  // Группировка видимых видов работ по категориям (порядок — как пришли,
-  // groups уже отсортированы по категории→виду).
-  const sections = useMemo(() => {
-    const order: string[] = [];
-    const map = new Map<string, { id: string; name: string; groups: CostTypeGroup[] }>();
-    for (const g of visibleGroups) {
-      const key = g.costCategoryId ?? NO_CATEGORY;
-      if (!map.has(key)) {
-        map.set(key, { id: key, name: g.costCategoryName ?? 'Без категории', groups: [] });
-        order.push(key);
-      }
-      map.get(key)!.groups.push(g);
-    }
-    return order.map((k) => map.get(k)!);
-  }, [visibleGroups]);
 
   const toggleCat = (id: string) =>
     setCollapsedCats((prev) => {
