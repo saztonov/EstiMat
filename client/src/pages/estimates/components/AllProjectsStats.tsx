@@ -102,7 +102,7 @@ export function AllProjectsStats({ enabled }: { enabled: boolean }) {
   });
 
   const columns: ColumnsType<StatRow> = [
-    { title: 'Автор', dataIndex: 'author', key: 'author', width: 180 },
+    { title: 'Автор', dataIndex: 'author', key: 'author', width: 270 },
     {
       title: 'Объект',
       dataIndex: 'project',

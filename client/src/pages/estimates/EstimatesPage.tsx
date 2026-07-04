@@ -194,7 +194,7 @@ export function EstimatesPage() {
         open={allStatsOpen}
         onCancel={() => setAllStatsOpen(false)}
         footer={null}
-        width={860}
+        width={1082}
         style={{ top: 40 }}
       >
         <AllProjectsStats enabled={allStatsOpen} />
