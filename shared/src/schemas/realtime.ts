@@ -19,6 +19,9 @@ export const estimateChangeReasonSchema = z.enum([
   'ai_applied',
   'estimate_updated',
   'items_replicated',
+  'comment_created',
+  'comment_updated',
+  'comment_deleted',
 ]);
 export type EstimateChangeReason = z.infer<typeof estimateChangeReasonSchema>;
 

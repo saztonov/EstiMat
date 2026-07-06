@@ -74,7 +74,8 @@ export async function buildEstimateDetail(
             rt.name AS room_type_name,
             lt.name AS location_type_name,
             uc.full_name AS created_by_name,
-            uu.full_name AS updated_by_name
+            uu.full_name AS updated_by_name,
+            (SELECT count(*) FROM estimate_comments ec WHERE ec.item_id = ei.id)::int AS comment_count
      FROM estimate_items ei
      LEFT JOIN rates r            ON ei.rate_id = r.id
      LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
@@ -117,6 +118,17 @@ export async function buildEstimateDetail(
      WHERE ec.estimate_id = $1`,
     [estimateId],
   );
+
+  // Счётчики комментариев по видам работ (в контексте этой сметы) → { [costTypeId]: number }.
+  const costTypeCommentRows = await pool.query(
+    `SELECT cost_type_id, count(*)::int AS count
+       FROM estimate_comments
+      WHERE estimate_id = $1 AND cost_type_id IS NOT NULL
+      GROUP BY cost_type_id`,
+    [estimateId],
+  );
+  const costTypeCommentCounts: Record<string, number> = {};
+  for (const r of costTypeCommentRows.rows) costTypeCommentCounts[r.cost_type_id as string] = r.count as number;
 
   // Бакетизация по item_id за один проход вместо вложенных .filter() внутри .map()
   // (было O(items × строк)). Порядок сохраняется: SQL уже отсортировал строки (ORDER BY),
@@ -164,5 +176,6 @@ export async function buildEstimateDetail(
     ...rows[0],
     items: itemsOut,
     contractors: contractors.rows,
+    cost_type_comment_counts: costTypeCommentCounts,
   };
 }

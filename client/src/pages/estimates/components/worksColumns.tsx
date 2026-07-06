@@ -13,6 +13,7 @@ import { DragHandle } from '../../../components/dndSortable';
 import { UnitSelect } from '../../../components/UnitSelect';
 import { LocationCell } from './LocationCell';
 import { RowInfoPopover } from './RowInfoPopover';
+import { CommentsPopover } from './CommentsPopover';
 import type { ZoneNode } from './location';
 import type { CostTypeGroup, EstimateItem, SaveWorkPayload, WorkEdit } from './types';
 import { formatMoney, DRAFT_ID } from './types';
@@ -191,6 +192,21 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
               />
             );
           },
+        }]
+      : []),
+    // Столбец «Прим.» — комментарии к работе (узкий, слева от действий).
+    ...(editable && !deleteMode
+      ? [{
+          title: 'Прим.', width: 44, align: 'center' as const,
+          render: (_: unknown, r: EstimateItem) =>
+            r.id === DRAFT_ID ? null : (
+              <CommentsPopover
+                estimateId={r.estimate_id}
+                targetType="work"
+                targetId={r.id}
+                count={r.comment_count}
+              />
+            ),
         }]
       : []),
     ...(editable && !deleteMode

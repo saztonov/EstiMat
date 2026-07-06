@@ -22,6 +22,7 @@ import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
 import { MaterialsSubTable, LazyMaterialsSubTable } from './MaterialsSubTable';
 import { buildWorksColumns } from './worksColumns';
+import { CommentsPopover } from './CommentsPopover';
 import type { ZoneNode } from './location';
 import type { CostTypeGroup, EstimateItem, Organization, SaveWorkPayload, SaveMaterialPayload, WorkEdit } from './types';
 import { formatMoney, DRAFT_ID } from './types';
@@ -87,6 +88,8 @@ interface Props {
   zones?: ZoneNode[];
   /** Объект строки — для автодополнения произвольных «типов» в поповере локации. */
   projectId?: string;
+  /** Смета — для комментариев к виду работ (иконка-конверт в заголовке блока). */
+  estimateId?: string;
   /** Дополнительные колонки слева (перед «№»). Напр. «Исполнитель» в разделе «Подрядчики». */
   leadingColumns?: ColumnsType<EstimateItem>;
   /** Показывать колонки «Цена»/«Сумма» и сумму группы (false — скрываем деньги). */
@@ -144,6 +147,7 @@ function CostTypeGroupBlockImpl({
   headerExtra,
   scrollRootRef,
   onOpenHistory,
+  estimateId,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -538,6 +542,14 @@ function CostTypeGroupBlockImpl({
         <strong style={{ fontSize: 13 }}>{index + 1}. {title}</strong>
 
         {headerExtra}
+        {editable && !deleteMode && estimateId && group.costTypeId && group.works.length > 0 && (
+          <CommentsPopover
+            estimateId={estimateId}
+            targetType="cost_type"
+            targetId={group.costTypeId}
+            count={group.commentCount}
+          />
+        )}
         <span style={{ flex: 1 }} />
         {showPrices && <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>}
         {editable && !deleteMode && (

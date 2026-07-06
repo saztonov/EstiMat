@@ -15,3 +15,4 @@ export * from './ai.js';
 export * from './aiChat.js';
 export * from './realtime.js';
 export * from './audit.js';
+export * from './comment.js';

@@ -156,6 +156,8 @@ export interface EstimateItem {
   updated_at?: string;
   created_by_name?: string | null;
   updated_by_name?: string | null;
+  // Кол-во комментариев (примечаний) к работе — для бейджа на иконке-конверте.
+  comment_count?: number;
 }
 
 // Назначение подрядчика (организации) на строку сметы с распределённым объёмом.
@@ -193,6 +195,8 @@ export interface EstimateDetail {
   notes: string | null;
   items: EstimateItem[];
   contractors: EstimateContractor[];
+  // Счётчики комментариев по видам работ: { [costTypeId]: number } (с сервера).
+  cost_type_comment_counts?: Record<string, number>;
 }
 
 // Группа строк по виду затрат (строится на клиенте из items/contractors)
@@ -205,6 +209,8 @@ export interface CostTypeGroup {
   costCategorySortOrder: number | null;
   works: EstimateItem[];
   contractor: EstimateContractor | null;
+  // Кол-во комментариев к виду работ (в контексте сметы) — для бейджа на иконке-конверте.
+  commentCount?: number;
 }
 
 export const formatMoney = (v: string | number | null | undefined) =>
@@ -218,6 +224,7 @@ export function buildCostTypeGroups(
   items: EstimateItem[],
   contractors: EstimateContractor[],
   pending: CostTypeGroup[] = [],
+  costTypeCommentCounts?: Record<string, number>,
 ): CostTypeGroup[] {
   const map = new Map<string, CostTypeGroup>();
   const keyOf = (id: string | null) => id ?? GROUP_NONE;
@@ -273,6 +280,13 @@ export function buildCostTypeGroups(
   // Порядок групп — как в справочнике: сначала по sort_order категории, затем по sort_order
   // вида работ. Имя — вторичный ключ (после импорта Excel все sort_order = 0). Группы без
   // sort_order (отложенные, ещё без работ) падают в конец.
+  // Счётчик комментариев вида работ (для бейджа на конверте в заголовке блока).
+  if (costTypeCommentCounts) {
+    for (const g of map.values()) {
+      g.commentCount = g.costTypeId ? costTypeCommentCounts[g.costTypeId] ?? 0 : 0;
+    }
+  }
+
   const catRank = (g: CostTypeGroup) => g.costCategorySortOrder ?? Number.MAX_SAFE_INTEGER;
   const typeRank = (g: CostTypeGroup) => g.costTypeSortOrder ?? Number.MAX_SAFE_INTEGER;
   return [...map.values()].sort((a, b) => {

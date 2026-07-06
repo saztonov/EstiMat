@@ -238,13 +238,14 @@ export function SmetaPanel({
       showLocationColumn: true,
       zones: zoneRoots,
       projectId,
+      estimateId,
       onOpenHistory: openRowHistory,
     }),
     [
       editable, orgs, onCreateWork, onUpdateWork, onDeleteWork, onReorderWorks,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onConfirmWork,
       onToggleVolumeType, onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
-      toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId, openRowHistory,
+      toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId, estimateId, openRowHistory,
     ],
   );
 

@@ -307,7 +307,7 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   // Группы строим поверх overlay очереди: ещё не подтверждённые переключения осн/доп не «мигают»
   // старым значением при realtime-рефетче (который перезаписывает кэш серверными данными).
   const groups = useMemo(
-    () => buildCostTypeGroups(applyPendingOverlay(estimate.items), estimate.contractors, pendingGroups),
+    () => buildCostTypeGroups(applyPendingOverlay(estimate.items), estimate.contractors, pendingGroups, estimate.cost_type_comment_counts),
     [estimate, pendingGroups, applyPendingOverlay],
   );
 
