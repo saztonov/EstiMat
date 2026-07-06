@@ -21,6 +21,8 @@ export function UnitSelect(props: SelectProps<string>) {
       showSearch
       placeholder="Ед. изм."
       optionFilterProp="label"
+      popupMatchSelectWidth={false}
+      dropdownStyle={{ minWidth: 120 }}
       options={data?.data.map((u) => ({ value: u.name, label: u.name }))}
       {...props}
     />
