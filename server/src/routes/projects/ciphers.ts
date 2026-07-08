@@ -8,13 +8,19 @@ const CIPHER_SELECT = 'id, project_id, code, created_at, updated_at';
 // Все запросы фильтруют WHERE project_id = $1 — чужой объект не затронуть.
 export function registerCipherRoutes(fastify: FastifyInstance): void {
   // GET /api/projects/:id/ciphers — список шифров объекта (алфавитно по code).
-  fastify.get<{ Params: { id: string } }>('/:id/ciphers', async (request) => {
-    const { rows } = await fastify.pool.query(
-      `SELECT ${CIPHER_SELECT} FROM project_rd_ciphers WHERE project_id = $1 ORDER BY code`,
-      [request.params.id],
-    );
-    return { data: rows };
-  });
+  // Роли как у прочих данных объекта (см. projects/estimate.ts): подрядчик не имеет
+  // доступа к смете объекта, поэтому и к её шифрам тоже.
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/ciphers',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request) => {
+      const { rows } = await fastify.pool.query(
+        `SELECT ${CIPHER_SELECT} FROM project_rd_ciphers WHERE project_id = $1 ORDER BY code`,
+        [request.params.id],
+      );
+      return { data: rows };
+    },
+  );
 
   // POST /api/projects/:id/ciphers — создать шифр (unique_violation → 409 в глобальном обработчике).
   fastify.post<{ Params: { id: string } }>(
