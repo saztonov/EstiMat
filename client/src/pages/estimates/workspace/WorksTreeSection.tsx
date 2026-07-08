@@ -75,8 +75,10 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
   // Защита от двойного добавления одной расценки подряд (клик + дабл-клик).
   function handleAdd(p: RateLeafPayload) {
     const now = Date.now();
-    if (lastAdd.current.id === p.rateId && now - lastAdd.current.ts < 600) return;
-    lastAdd.current = { id: p.rateId, ts: now };
+    // Дедуп по паре вид+работа: одну работу можно добавить из двух веток подряд.
+    const addKey = `${p.costTypeId}:${p.rateId}`;
+    if (lastAdd.current.id === addKey && now - lastAdd.current.ts < 600) return;
+    lastAdd.current = { id: addKey, ts: now };
     onAddRate(p);
   }
 
@@ -92,6 +94,9 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
         >
           <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
             {p.name} · {p.unit}
+            {p.typeCount > 1 && (
+              <span style={{ color: '#8c8c8c' }}> ({p.typeCount})</span>
+            )}
           </span>
           <span style={{ color: '#8c8c8c', fontSize: 12, whiteSpace: 'nowrap' }}>
             {p.price.toLocaleString('ru-RU')} ₽

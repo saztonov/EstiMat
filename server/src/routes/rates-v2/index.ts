@@ -11,9 +11,9 @@ export default async function ratesV2Routes(fastify: FastifyInstance) {
   // (только категории/виды, в которых есть работы нового справочника)
   fastify.get('/tree', async () => {
     const categories = await fastify.pool.query(
-      'SELECT * FROM cost_categories ORDER BY sort_order, name',
+      'SELECT * FROM cost_categories WHERE is_active ORDER BY sort_order, name',
     );
-    const types = await fastify.pool.query('SELECT * FROM cost_types ORDER BY sort_order, name');
+    const types = await fastify.pool.query('SELECT * FROM cost_types WHERE is_active ORDER BY sort_order, name');
     const rates = await fastify.pool.query(
       `SELECT rv.*, lr.name AS legacy_rate_name,
               (SELECT COUNT(*) FROM rate_materials_v2 rm WHERE rm.rate_v2_id = rv.id)::int AS materials_count

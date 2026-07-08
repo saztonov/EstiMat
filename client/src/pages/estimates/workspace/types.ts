@@ -8,6 +8,7 @@ export interface RateTreeRate {
   price: string;
   description?: string | null;
   is_active?: boolean;
+  type_count?: number; // число видов, к которым привязана работа (для «(N)» в дереве)
 }
 export interface RateTreeType {
   id: string;
@@ -36,6 +37,7 @@ export interface RateLeafPayload {
   code: string | null;
   unit: string;
   price: number;
+  typeCount: number; // число видов работы (для отображения «(N)» в дереве)
 }
 
 // ---- Справочник материалов ----

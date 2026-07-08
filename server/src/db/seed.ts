@@ -99,13 +99,26 @@ async function seed() {
     const meTypeId = typeResult.rows.find((r: Record<string, unknown>) => r.code === 'МЭ')?.id;
     const krTypeId = typeResult.rows.find((r: Record<string, unknown>) => r.code === 'КР')?.id;
 
+    const rateResult = await client.query(
+      `INSERT INTO rates (name, code, unit, price) VALUES
+       ('Прокладка кабеля в гофротрубе', 'ПК-01', 'м', 150.00),
+       ('Прокладка кабеля в лотке', 'ПК-02', 'м', 120.00),
+       ('Монтаж автоматического выключателя', 'МЭ-01', 'шт', 350.00),
+       ('Кладка кирпичная в 1 кирпич', 'КР-01', 'м3', 4500.00)
+       RETURNING id, code`,
+    );
+    const rateByCode = new Map(
+      rateResult.rows.map((r: Record<string, unknown>) => [r.code as string, r.id as string]),
+    );
+    // Связь работа ↔ вид (основной). Прокладка кабеля — оба варианта в вид «ПК».
     await client.query(
-      `INSERT INTO rates (cost_type_id, name, code, unit, price) VALUES
-       ($1, 'Прокладка кабеля в гофротрубе', 'ПК-01', 'м', 150.00),
-       ($1, 'Прокладка кабеля в лотке', 'ПК-02', 'м', 120.00),
-       ($2, 'Монтаж автоматического выключателя', 'МЭ-01', 'шт', 350.00),
-       ($3, 'Кладка кирпичная в 1 кирпич', 'КР-01', 'м3', 4500.00)`,
-      [pkTypeId, meTypeId, krTypeId],
+      `INSERT INTO rate_cost_types (rate_id, cost_type_id, is_primary) VALUES
+       ($1, $5, true), ($2, $5, true), ($3, $6, true), ($4, $7, true)`,
+      [
+        rateByCode.get('ПК-01'), rateByCode.get('ПК-02'),
+        rateByCode.get('МЭ-01'), rateByCode.get('КР-01'),
+        pkTypeId, meTypeId, krTypeId,
+      ],
     );
 
     // Estimate

@@ -61,6 +61,7 @@ export async function listCostCategories(db: Queryable): Promise<CostCategoryNod
             ct.id AS cost_type_id, ct.name AS cost_type_name
      FROM cost_categories cc
      JOIN cost_types ct ON ct.category_id = cc.id
+     WHERE cc.is_active AND ct.is_active
      ORDER BY cc.sort_order, cc.name, ct.sort_order, ct.name`,
   );
   const map = new Map<string, CostCategoryNode>();

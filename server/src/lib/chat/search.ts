@@ -197,15 +197,24 @@ async function searchWorksLegacy(
   costTypeId: string | null,
   limit: number,
 ): Promise<WorkRow[]> {
+  // Основной вид работы (после нормализации связь M2M): берём primary через LATERAL.
+  // Поведение прежнее — до миграции у работы был ровно один вид, теперь это основной.
   const select = `r.id AS catalog_id, r.id AS apply_rate_id, r.name, r.unit,
-    r.cost_type_id, ct.name AS cost_type_name, cc.name AS category_name, r.price`;
+    pt.cost_type_id, pt.cost_type_name, pt.category_name, r.price`;
   const from = `FROM rates r
-    LEFT JOIN cost_types ct ON ct.id = r.cost_type_id
-    LEFT JOIN cost_categories cc ON cc.id = ct.category_id`;
-  const where = `r.is_active = true AND ($2::uuid IS NULL OR r.cost_type_id = $2)`;
+    LEFT JOIN LATERAL (
+      SELECT rct.cost_type_id, ct.name AS cost_type_name, cc.name AS category_name
+      FROM rate_cost_types rct
+      JOIN cost_types ct ON ct.id = rct.cost_type_id AND ct.is_active
+      LEFT JOIN cost_categories cc ON cc.id = ct.category_id AND cc.is_active
+      WHERE rct.rate_id = r.id
+      ORDER BY rct.is_primary DESC, cc.sort_order, ct.sort_order
+      LIMIT 1
+    ) pt ON true`;
+  const where = `r.is_active = true AND ($2::uuid IS NULL OR pt.cost_type_id = $2)`;
 
   if (ctx.hasTrgm) {
-    const sc = directScopeClause(ctx.sectionScope, 'r.cost_type_id', 5);
+    const sc = directScopeClause(ctx.sectionScope, 'pt.cost_type_id', 5);
     const { rows } = await ctx.db.query(
       `SELECT * FROM (
          SELECT ${select}, similarity(${simExpr('r.name')}, ${simExpr('$1')}) AS sim
@@ -216,7 +225,7 @@ async function searchWorksLegacy(
     return rows.map(mapWorkRow('legacy'));
   }
 
-  const sc = directScopeClause(ctx.sectionScope, 'r.cost_type_id', 3);
+  const sc = directScopeClause(ctx.sectionScope, 'pt.cost_type_id', 3);
   const { rows } = await ctx.db.query(`SELECT ${select} ${from} WHERE ${where}${sc.sql}`, [query, costTypeId, ...sc.values]);
   return rescoreWorks(rows, query, 'legacy', limit);
 }

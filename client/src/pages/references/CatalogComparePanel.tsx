@@ -87,7 +87,8 @@ function findLegacyPath(
   for (const cat of tree ?? []) {
     for (const t of cat.types) {
       if (t.rates.some((r) => r.id === rateId)) {
-        return { catKey: `cat:${cat.id}`, typeKey: `type:${t.id}`, rateKey: `rate:${rateId}` };
+        // Ключ листа составной (вид+работа) — работа может висеть под несколькими видами.
+        return { catKey: `cat:${cat.id}`, typeKey: `type:${t.id}`, rateKey: `rate:${t.id}:${rateId}` };
       }
     }
   }

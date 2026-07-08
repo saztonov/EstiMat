@@ -26,6 +26,9 @@ export function mapRatesTreeToNodes(tree: RateTreeCategory[]): RateTreeNode[] {
       searchText: t.name.toLowerCase(),
       children: t.rates.map((r): RateTreeNode => {
         const name = r.code ? `[${r.code}] ${r.name}` : r.name;
+        // Работа с несколькими видами показывается под каждым — в заголовке «(N)».
+        const typeCount = r.type_count ?? 1;
+        const title = typeCount > 1 ? `${name} (${typeCount})` : name;
         const payload: RateLeafPayload = {
           rateId: r.id,
           costTypeId: t.id,
@@ -36,14 +39,16 @@ export function mapRatesTreeToNodes(tree: RateTreeCategory[]): RateTreeNode[] {
           code: r.code,
           unit: r.unit,
           price: Number(r.price ?? 0),
+          typeCount,
         };
         return {
-          key: `rate:${r.id}`,
+          // Ключ составной (вид+работа): одна работа может висеть под несколькими видами.
+          key: `rate:${t.id}:${r.id}`,
           nodeKind: 'rate',
           isLeaf: true,
           selectable: false,
           payload,
-          title: name,
+          title,
           searchText: `${r.name} ${r.code ?? ''}`.toLowerCase(),
         };
       }),

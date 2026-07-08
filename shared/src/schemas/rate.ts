@@ -13,16 +13,56 @@ export const createCostTypeSchema = z.object({
   sortOrder: z.number().int().default(0),
 });
 
-export const createRateSchema = z.object({
-  costTypeId: z.string().uuid(),
+// Базовые поля расценки. Виды работ — many-to-many (массив costTypeIds), один из них
+// помечается основным (primaryCostTypeId). Цена необязательна: пустое/None → 0
+// (AntD InputNumber при очистке отдаёт null, поэтому нормализуем через preprocess).
+const rateBaseSchema = z.object({
+  costTypeIds: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один вид работ'),
+  primaryCostTypeId: z.string().uuid().optional(),
   name: z.string().min(1, 'Название обязательно'),
   code: z.string().optional(),
   unit: z.string().min(1, 'Единица измерения обязательна'),
-  price: z.number().min(0, 'Цена не может быть отрицательной'),
+  price: z.preprocess(
+    (v) => (v == null || v === '' ? 0 : v),
+    z.number().min(0, 'Цена не может быть отрицательной'),
+  ),
   description: z.string().optional(),
 });
 
-export const updateRateSchema = createRateSchema.partial().omit({ costTypeId: true });
+// Переходная совместимость: принимаем одиночный costTypeId и нормализуем в массив.
+const withCostTypeCompat = (val: unknown): unknown => {
+  if (val && typeof val === 'object' && !Array.isArray(val)) {
+    const v = val as Record<string, unknown>;
+    if (v.costTypeIds == null && typeof v.costTypeId === 'string') {
+      const { costTypeId, ...rest } = v;
+      return { ...rest, costTypeIds: [costTypeId] };
+    }
+  }
+  return val;
+};
+
+const hasUniqueTypes = (d: { costTypeIds?: string[] }): boolean =>
+  !d.costTypeIds || new Set(d.costTypeIds).size === d.costTypeIds.length;
+const primaryInSet = (d: { costTypeIds?: string[]; primaryCostTypeId?: string }): boolean =>
+  !d.primaryCostTypeId || !!d.costTypeIds?.includes(d.primaryCostTypeId);
+
+export const createRateSchema = z
+  .preprocess(withCostTypeCompat, rateBaseSchema)
+  .refine(hasUniqueTypes, { message: 'Виды работ не должны повторяться', path: ['costTypeIds'] })
+  .refine(primaryInSet, {
+    message: 'Основной вид должен входить в выбранные виды',
+    path: ['primaryCostTypeId'],
+  });
+
+// Обновление: все поля опциональны. Если пришёл costTypeIds — связка пересобирается;
+// если только primaryCostTypeId — меняется основной среди текущих связок (проверяет роут).
+export const updateRateSchema = z
+  .preprocess(withCostTypeCompat, rateBaseSchema.partial())
+  .refine(hasUniqueTypes, { message: 'Виды работ не должны повторяться', path: ['costTypeIds'] })
+  .refine(primaryInSet, {
+    message: 'Основной вид должен входить в выбранные виды',
+    path: ['primaryCostTypeId'],
+  });
 
 // Обновление категории/вида (переименование, код, порядок) — все поля опциональны.
 export const updateCostCategorySchema = createCostCategorySchema.partial();

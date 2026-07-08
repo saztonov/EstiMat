@@ -80,7 +80,12 @@ async function resolveWork(db: Queryable, source: string, catalogId: string): Pr
     return { name: r.name, unit: r.unit, price: num(r.price), costTypeId: r.cost_type_id ?? null, applyRateId: r.legacy_rate_id ?? null };
   }
   const { rows } = await db.query(
-    `SELECT name, unit, price, cost_type_id, id FROM rates WHERE id = $1 AND is_active = true`,
+    `SELECT r.name, r.unit, r.price, r.id,
+            (SELECT rct.cost_type_id FROM rate_cost_types rct
+               JOIN cost_types ct ON ct.id = rct.cost_type_id AND ct.is_active
+              WHERE rct.rate_id = r.id
+              ORDER BY rct.is_primary DESC LIMIT 1) AS cost_type_id
+     FROM rates r WHERE r.id = $1 AND r.is_active = true`,
     [catalogId],
   );
   if (!rows.length) return null;

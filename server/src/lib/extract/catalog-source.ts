@@ -99,18 +99,26 @@ async function loadV2Materials(db: Queryable): Promise<CatalogEntry[]> {
 }
 
 async function loadLegacyRates(db: Queryable, scope?: SectionScope): Promise<CatalogEntry[]> {
-  const f = rateScopeFilter(scope, 'r.cost_type_id');
-  // JOIN cost_types/cost_categories — для заголовков чанков и стабильного порядка
-  // обхода «фундамент → отделка» (cat.sort → type.sort → имя расценки).
+  const f = rateScopeFilter(scope, 'pt.cost_type_id');
+  // Основной вид работы (связь M2M) через LATERAL — для заголовков чанков и стабильного
+  // порядка обхода «фундамент → отделка» (cat.sort → type.sort → имя расценки).
   const { rows } = await db.query(
-    `SELECT r.id, r.name, r.unit, r.price, r.cost_type_id,
-            ct.name AS cost_type_name, ct.sort_order AS type_sort,
-            cc.name AS category_name, cc.sort_order AS cat_sort
-     FROM rates r${f.join}
-     JOIN cost_types ct ON ct.id = r.cost_type_id
-     LEFT JOIN cost_categories cc ON cc.id = ct.category_id
+    `SELECT r.id, r.name, r.unit, r.price, pt.cost_type_id,
+            pt.cost_type_name, pt.type_sort,
+            pt.category_name, pt.cat_sort
+     FROM rates r
+     JOIN LATERAL (
+       SELECT ct.id AS cost_type_id, ct.name AS cost_type_name, ct.sort_order AS type_sort,
+              cc.name AS category_name, cc.sort_order AS cat_sort
+       FROM rate_cost_types rct
+       JOIN cost_types ct ON ct.id = rct.cost_type_id AND ct.is_active
+       LEFT JOIN cost_categories cc ON cc.id = ct.category_id AND cc.is_active
+       WHERE rct.rate_id = r.id
+       ORDER BY rct.is_primary DESC, cc.sort_order, ct.sort_order
+       LIMIT 1
+     ) pt ON true${f.join}
      WHERE r.is_active = true${f.where}
-     ORDER BY cc.sort_order, cc.name, ct.sort_order, ct.name, r.name, r.id`,
+     ORDER BY pt.cat_sort, pt.category_name, pt.type_sort, pt.cost_type_name, r.name, r.id`,
     f.values,
   );
   return rows.map((r) => ({

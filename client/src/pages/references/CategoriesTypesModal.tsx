@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Modal, Row, Col, Button, Input, Space, Empty, App } from 'antd';
+import { Modal, Row, Col, Button, Input, Space, Empty, Popconfirm, App } from 'antd';
 import {
   EditOutlined,
   CheckOutlined,
   CloseOutlined,
   PlusOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { DragHandle, SortableItem, SortableVerticalContext } from '../../components/dndSortable';
+import { useAuthStore } from '../../store/authStore';
 
 interface Category { id: string; name: string }
 interface CostType { id: string; name: string; category_id: string }
@@ -27,6 +29,7 @@ type Editing = { kind: 'cat' | 'type'; id: string; value: string } | null;
 export function CategoriesTypesModal({ open, onClose }: Props) {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
+  const isAdmin = useAuthStore((s) => s.user?.role) === 'admin';
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | undefined>();
   const [editing, setEditing] = useState<Editing>(null);
   const [newCatName, setNewCatName] = useState('');
@@ -59,6 +62,7 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
     queryClient.invalidateQueries({ queryKey: ['rate-categories'] });
     queryClient.invalidateQueries({ queryKey: ['rate-types'] });
     queryClient.invalidateQueries({ queryKey: ['rate-types-all'] });
+    queryClient.invalidateQueries({ queryKey: ['rates'] });
     queryClient.invalidateQueries({ queryKey: ['rates-tree'] });
     // Порядок категорий/видов в смете берётся из sort_order справочника (живой JOIN),
     // поэтому после их пересортировки/переименования сбрасываем и кэши открытых смет.
@@ -108,6 +112,17 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
   const renameType = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => api.put(`/rates/types/${id}`, { name }),
     onSuccess: () => { invalidate(); setEditing(null); },
+    onError: onErr,
+  });
+  // Мягкое удаление (is_active=false на сервере). Admin-only.
+  const deleteCategory = useMutation({
+    mutationFn: (id: string) => api.delete(`/rates/categories/${id}`),
+    onSuccess: () => { invalidate(); message.success('Категория удалена'); },
+    onError: onErr,
+  });
+  const deleteType = useMutation({
+    mutationFn: (id: string) => api.delete(`/rates/types/${id}`),
+    onSuccess: () => { invalidate(); message.success('Вид работ удалён'); },
     onError: onErr,
   });
   const reorderTypes = useMutation({
@@ -205,6 +220,20 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
             <span style={{ flex: 1, minWidth: 0, fontWeight: kind === 'cat' ? 600 : 400 }}>{row.name}</span>
             <Button type="text" size="small" title="Переименовать" icon={<EditOutlined />}
               onClick={(e) => { e.stopPropagation(); setEditing({ kind, id: row.id, value: row.name }); }} />
+            {isAdmin && (
+              <Popconfirm
+                title={kind === 'cat' ? 'Удалить категорию?' : 'Удалить вид работ?'}
+                description={kind === 'cat'
+                  ? 'Категория и её виды скроются из справочника.'
+                  : 'Вид скроется; работы без других видов пропадут из дерева.'}
+                okText="Удалить"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => (kind === 'cat' ? deleteCategory : deleteType).mutate(row.id)}
+              >
+                <Button type="text" size="small" danger title="Удалить" icon={<DeleteOutlined />}
+                  onClick={(e) => e.stopPropagation()} />
+              </Popconfirm>
+            )}
           </>
         )}
       </SortableItem>

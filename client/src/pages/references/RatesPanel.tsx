@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, App } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, Tag, App } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined, SearchOutlined, ApartmentOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -9,6 +9,15 @@ import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile } from 'antd/es/upload';
 
+// Вид работ, к которому привязана работа (связь M2M). Один из видов — основной.
+interface RateCostType {
+  costTypeId: string;
+  costTypeName: string;
+  categoryId: string;
+  categoryName: string;
+  isPrimary: boolean;
+}
+
 interface Rate {
   id: string;
   name: string;
@@ -16,9 +25,11 @@ interface Rate {
   unit: string;
   price: string;
   description: string | null;
-  cost_type_id: string;
-  cost_type_name: string;
-  category_name: string;
+  cost_types: RateCostType[];
+  // derived-поля основного вида (для совместимости/сортировки)
+  cost_type_id: string | null;
+  cost_type_name: string | null;
+  category_name: string | null;
 }
 
 interface Category { id: string; name: string }
@@ -30,8 +41,10 @@ export function RatesPanel() {
   const [editRecord, setEditRecord] = useState<Rate | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | undefined>();
   const [selectedCostTypeId, setSelectedCostTypeId] = useState<string | undefined>();
+  const [modalCategoryId, setModalCategoryId] = useState<string | undefined>();
   const [search, setSearch] = useState('');
   const [form] = Form.useForm();
+  const watchedTypeIds = (Form.useWatch('costTypeIds', form) as string[] | undefined) ?? [];
   const queryClient = useQueryClient();
   const { message } = App.useApp();
 
@@ -64,11 +77,11 @@ export function RatesPanel() {
       return ratesData.data.filter((r) => r.name.toLowerCase().includes(searchTrimmed));
     }
     if (selectedCostTypeId) {
-      return ratesData.data.filter((r) => r.cost_type_id === selectedCostTypeId);
+      return ratesData.data.filter((r) => r.cost_types.some((ct) => ct.costTypeId === selectedCostTypeId));
     }
     if (selectedCategoryId && typesData?.data) {
       const typeIds = new Set(typesData.data.map((t) => t.id));
-      return ratesData.data.filter((r) => typeIds.has(r.cost_type_id));
+      return ratesData.data.filter((r) => r.cost_types.some((ct) => typeIds.has(ct.costTypeId)));
     }
     return ratesData.data;
   })();
@@ -78,6 +91,20 @@ export function RatesPanel() {
     queryKey: ['rate-types-all'],
     queryFn: () => api.get<{ data: CostType[] }>('/rates/types'),
   });
+  const allTypes = allTypesData?.data ?? [];
+  const typeName = (id: string) => allTypes.find((t) => t.id === id)?.name ?? id;
+
+  // Опции мультиселекта видов: виды выбранной в модалке категории + уже выбранные
+  // (даже из других категорий — чтобы их теги сохраняли подписи). Это и даёт M2M.
+  const modalTypeOptions = (() => {
+    const base = modalCategoryId ? allTypes.filter((t) => t.category_id === modalCategoryId) : allTypes;
+    const map = new Map(base.map((t) => [t.id, { value: t.id, label: t.name }]));
+    for (const id of watchedTypeIds) {
+      if (!map.has(id)) map.set(id, { value: id, label: typeName(id) });
+    }
+    return Array.from(map.values());
+  })();
+  const primaryOptions = watchedTypeIds.map((id) => ({ value: id, label: typeName(id) }));
 
   const createMutation = useMutation({
     mutationFn: (values: Record<string, unknown>) => api.post('/rates', values),
@@ -132,13 +159,24 @@ export function RatesPanel() {
   function closeModal() {
     setModalOpen(false);
     setEditRecord(null);
+    setModalCategoryId(undefined);
     form.resetFields();
+  }
+
+  function openCreate() {
+    setEditRecord(null);
+    setModalCategoryId(undefined);
+    form.resetFields();
+    setModalOpen(true);
   }
 
   function openEdit(record: Rate) {
     setEditRecord(record);
+    const primary = record.cost_types.find((c) => c.isPrimary) ?? record.cost_types[0];
+    setModalCategoryId(primary?.categoryId);
     form.setFieldsValue({
-      costTypeId: record.cost_type_id,
+      costTypeIds: record.cost_types.map((c) => c.costTypeId),
+      primaryCostTypeId: primary?.costTypeId,
       name: record.name,
       code: record.code,
       unit: record.unit,
@@ -156,19 +194,43 @@ export function RatesPanel() {
     }
   }
 
+  // Держим основной вид согласованным с набором: если основной выпал — берём первый.
+  function onTypesChange(ids: string[]) {
+    const primary = form.getFieldValue('primaryCostTypeId') as string | undefined;
+    if (!ids.length) form.setFieldValue('primaryCostTypeId', undefined);
+    else if (!primary || !ids.includes(primary)) form.setFieldValue('primaryCostTypeId', ids[0]);
+  }
+
   const columns: ColumnsType<Rate> = [
     { title: 'Код', dataIndex: 'code', width: 100, sorter: (a, b) => (a.code || '').localeCompare(b.code || '') },
-    { title: 'Название', dataIndex: 'name', width: 400, sorter: (a, b) => a.name.localeCompare(b.name) },
+    {
+      title: 'Наименование',
+      key: 'name',
+      width: 460,
+      sorter: (a, b) => a.name.localeCompare(b.name),
+      render: (_: unknown, r: Rate) => (
+        <div>
+          <div>{r.name}</div>
+          {r.cost_types.length > 0 && (
+            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {r.cost_types.map((ct) => (
+                <Tag key={ct.costTypeId} color={ct.isPrimary ? 'blue' : undefined} style={{ marginInlineEnd: 0 }}>
+                  {ct.costTypeName}
+                </Tag>
+              ))}
+            </div>
+          )}
+        </div>
+      ),
+    },
     { title: 'Ед. изм.', dataIndex: 'unit', width: 80, sorter: (a, b) => a.unit.localeCompare(b.unit) },
     {
-      title: 'Цена, \u20BD',
+      title: 'Цена, ₽',
       dataIndex: 'price',
       width: 120,
       sorter: (a, b) => Number(a.price) - Number(b.price),
       render: (price: string) => Number(price).toLocaleString('ru-RU'),
     },
-    { title: 'Вид работ', dataIndex: 'cost_type_name', width: 200, sorter: (a, b) => a.cost_type_name.localeCompare(b.cost_type_name) },
-    { title: 'Категория', dataIndex: 'category_name', width: 200, sorter: (a, b) => a.category_name.localeCompare(b.category_name) },
     {
       title: 'Действия',
       width: 100,
@@ -223,7 +285,7 @@ export function RatesPanel() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Добавить</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Добавить</Button>
         <Button icon={<ApartmentOutlined />} onClick={() => setCatTypesOpen(true)}>Категории и виды</Button>
         <Upload
           accept=".xlsx"
@@ -255,16 +317,44 @@ export function RatesPanel() {
         confirmLoading={createMutation.isPending || updateMutation.isPending}
       >
         <Form form={form} layout="vertical" onFinish={onFinish}>
-          {!editRecord && (
-            <Form.Item name="costTypeId" label="Вид работ" rules={[{ required: true, message: 'Выберите вид работ' }]}>
-              <Select
-                showSearch
-                optionFilterProp="label"
-                placeholder="Выберите вид работ"
-                options={allTypesData?.data.map((t) => ({ value: t.id, label: t.name }))}
-              />
-            </Form.Item>
-          )}
+          <Form.Item
+            label="Категория"
+            tooltip="Фильтрует список видов ниже. Можно выбирать виды из разных категорий."
+          >
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="Все категории"
+              value={modalCategoryId}
+              onChange={setModalCategoryId}
+              options={categoriesData?.data.map((c) => ({ value: c.id, label: c.name }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="costTypeIds"
+            label="Виды работ"
+            rules={[{ required: true, message: 'Выберите хотя бы один вид работ' }]}
+          >
+            <Select
+              mode="multiple"
+              showSearch
+              optionFilterProp="label"
+              placeholder="Выберите виды работ"
+              options={modalTypeOptions}
+              onChange={onTypesChange}
+            />
+          </Form.Item>
+          <Form.Item name="primaryCostTypeId" label="Основной вид" tooltip="По умолчанию — первый выбранный">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="Основной вид"
+              disabled={watchedTypeIds.length === 0}
+              options={primaryOptions}
+            />
+          </Form.Item>
           <Form.Item name="name" label="Название" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -274,8 +364,8 @@ export function RatesPanel() {
           <Form.Item name="unit" label="Единица измерения" rules={[{ required: true }]}>
             <UnitSelect />
           </Form.Item>
-          <Form.Item name="price" label="Цена" rules={[{ required: true, type: 'number', min: 0 }]}>
-            <InputNumber style={{ width: '100%' }} />
+          <Form.Item name="price" label="Цена">
+            <InputNumber style={{ width: '100%' }} min={0} />
           </Form.Item>
           <Form.Item name="description" label="Описание">
             <Input.TextArea />
