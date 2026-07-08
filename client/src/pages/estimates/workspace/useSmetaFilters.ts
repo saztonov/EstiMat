@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { parseFloors } from '../components/location';
 import { useLocationContextStore } from '../../../store/locationContextStore';
@@ -50,9 +50,28 @@ export function workMatchesLocation(w: EstimateItem, f: LocationFilter): boolean
 // Возвращает СЫРЫЕ store-значения (filterZoneIds и т.п.), не обёрточный объект — они
 // референсно стабильны и используются панелью в deps эффекта сброса выделения.
 export function useSmetaFilters(groups: CostTypeGroup[]) {
-  const [categoryFilter, setCategoryFilter] = useState<string | undefined>();
-  const [typeFilter, setTypeFilter] = useState<string | undefined>();
+  // Мультивыбор: пустой массив = «все».
+  const [categoryFilter, setCategoryFilterRaw] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [onlyUnreconciled, setOnlyUnreconciled] = useState(false);
+
+  // Смена набора категорий вычищает из фильтра видов те, что больше не входят в выбранные
+  // категории (не сбрасывая весь фильтр видов). Без изменений возвращаем prev — identity
+  // сохраняется, эффект сброса выделения в панели не дёргается лишний раз.
+  const setCategoryFilter = useCallback(
+    (cats: string[]) => {
+      setCategoryFilterRaw(cats);
+      setTypeFilter((prev) => {
+        if (prev.length === 0 || cats.length === 0) return prev; // пусто = все категории — всё валидно
+        const valid = new Set<string>();
+        for (const g of groups)
+          if (g.costTypeId && g.costCategoryId && cats.includes(g.costCategoryId)) valid.add(g.costTypeId);
+        const next = prev.filter((t) => valid.has(t));
+        return next.length === prev.length ? prev : next;
+      });
+    },
+    [groups],
+  );
 
   // Местоположение: фильтр-срезы из store.
   const filterZoneIds = useLocationContextStore((s) => s.filterZoneIds);
@@ -72,7 +91,7 @@ export function useSmetaFilters(groups: CostTypeGroup[]) {
   const typeOptions = useMemo(() => {
     const m = new Map<string, string>();
     for (const g of groups) {
-      if (categoryFilter && g.costCategoryId !== categoryFilter) continue;
+      if (categoryFilter.length && (!g.costCategoryId || !categoryFilter.includes(g.costCategoryId))) continue;
       if (g.costTypeId) m.set(g.costTypeId, g.costTypeName ?? '—');
     }
     return [...m.entries()]
@@ -103,8 +122,8 @@ export function useSmetaFilters(groups: CostTypeGroup[]) {
   const visibleGroups = useMemo(() => {
     const byFilter = groups.filter(
       (g) =>
-        (!categoryFilter || g.costCategoryId === categoryFilter) &&
-        (!typeFilter || g.costTypeId === typeFilter),
+        (!categoryFilter.length || (!!g.costCategoryId && categoryFilter.includes(g.costCategoryId))) &&
+        (!typeFilter.length || (!!g.costTypeId && typeFilter.includes(g.costTypeId))),
     );
     if (!onlyUnreconciled && !locationActive) return byFilter;
     // Фильтр на уровне работ: несогласованные и/или срез по локации. Снимок фильтра

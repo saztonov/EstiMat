@@ -14,8 +14,8 @@ export function useEstimateReveal({
   setCollapsedCats,
 }: {
   groups: CostTypeGroup[];
-  setCategoryFilter: (v?: string) => void;
-  setTypeFilter: (v?: string) => void;
+  setCategoryFilter: (v: string[]) => void;
+  setTypeFilter: (v: string[]) => void;
   setOnlyUnreconciled: (v: boolean) => void;
   setCollapsedCats: Dispatch<SetStateAction<Set<string>>>;
 }): void {
@@ -33,8 +33,8 @@ export function useEstimateReveal({
     if (!target) return;
     const catKey = target.g.costCategoryId ?? NO_CATEGORY;
     const tKey = target.g.costTypeId ?? NO_CATEGORY;
-    setCategoryFilter(undefined);
-    setTypeFilter(undefined);
+    setCategoryFilter([]);
+    setTypeFilter([]);
     setOnlyUnreconciled(false);
     // Снимаем и локационный фильтр — иначе скрытая им строка не отрисуется и scrollIntoView не сработает.
     useLocationContextStore.getState().clearFilter();

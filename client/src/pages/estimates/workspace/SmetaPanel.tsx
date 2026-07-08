@@ -311,27 +311,28 @@ export function SmetaPanel({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', width: '100%' }}>
           <Space wrap>
             <Select
+              mode="multiple"
               allowClear
               showSearch
               optionFilterProp="label"
+              maxTagCount="responsive"
               placeholder="Категория"
               value={categoryFilter}
-              onChange={(v) => {
-                setCategoryFilter(v);
-                setTypeFilter(undefined);
-              }}
+              onChange={setCategoryFilter}
               options={categoryOptions}
-              style={{ width: 240 }}
+              style={{ width: 260 }}
             />
             <Select
+              mode="multiple"
               allowClear
               showSearch
               optionFilterProp="label"
+              maxTagCount="responsive"
               placeholder="Вид работ"
               value={typeFilter}
               onChange={setTypeFilter}
               options={typeOptions}
-              style={{ width: 240 }}
+              style={{ width: 260 }}
             />
             <LocationFilterPopover
               zones={zonesData?.data.roots ?? []}
