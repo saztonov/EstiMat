@@ -21,8 +21,10 @@ import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/esti
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
 import { MaterialsSubTable, LazyMaterialsSubTable } from './MaterialsSubTable';
-import { buildWorksColumns } from './worksColumns';
+import { buildWorksColumns, applyColumnPrefs } from './worksColumns';
 import { CommentsPopover } from './CommentsPopover';
+import { CostTypeCipherSelect } from './CostTypeCipherSelect';
+import type { ColumnPrefs } from '../../../store/smetaColumnsStore';
 import type { ZoneNode } from './location';
 import type { CostTypeGroup, EstimateItem, Organization, SaveWorkPayload, SaveMaterialPayload, WorkEdit } from './types';
 import { formatMoney, DRAFT_ID } from './types';
@@ -101,6 +103,10 @@ interface Props {
   scrollRootRef?: RefObject<HTMLDivElement | null>;
   /** Открыть полную историю строки (единый Drawer живёт в SmetaPanel). */
   onOpenHistory?: (item: EstimateItem) => void;
+  /** Настройки столбцов (порядок/видимость) — применяются только на «Смете». */
+  columnPrefs?: ColumnPrefs;
+  /** Право редактировать шифры РД у вида работ (роль admin/engineer). */
+  canEditCiphers?: boolean;
 }
 
 const noopAsync = async () => {};
@@ -148,6 +154,8 @@ function CostTypeGroupBlockImpl({
   scrollRootRef,
   onOpenHistory,
   estimateId,
+  columnPrefs,
+  canEditCiphers = false,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -387,13 +395,16 @@ function CostTypeGroupBlockImpl({
   // editing/saving/expandedWorkIds в deps гарантируют свежесть замыкаемых функций;
   // ESLint-deps выверены вручную — deps-массив БЕЗ ИЗМЕНЕНИЙ.
   const columns = useMemo<ColumnsType<EstimateItem>>(
-    () =>
-      buildWorksColumns({
+    () => {
+      const built = buildWorksColumns({
         group, editing, setEditing, saving, nameOptions, dndEnabled, leadingColumns,
         editable, deleteMode, selectionMode, showPrices, showLocationColumn, zones, projectId,
         isRowInEdit, isWorkExpanded, setWorkExpanded, commit, selectRate, startEditWork,
         onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
-      }),
+      });
+      // Пользовательские порядок/видимость столбцов — только на «Смете» (передан columnPrefs).
+      return columnPrefs ? applyColumnPrefs(built, columnPrefs) : built;
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       dndEnabled, group.works.length, group.costTypeId, leadingColumns,
@@ -401,6 +412,7 @@ function CostTypeGroupBlockImpl({
       editable, deleteMode, selectionMode, showPrices, showLocationColumn, zones, projectId,
       materialsControlled, expandedWorkIds, expandedKeys, onWorkExpandChange,
       onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
+      columnPrefs,
     ],
   );
 
@@ -548,6 +560,15 @@ function CostTypeGroupBlockImpl({
             targetType="cost_type"
             targetId={group.costTypeId}
             count={group.commentCount}
+          />
+        )}
+        {estimateId && projectId && group.costTypeId && (
+          <CostTypeCipherSelect
+            estimateId={estimateId}
+            projectId={projectId}
+            costTypeId={group.costTypeId}
+            value={group.ciphers ?? []}
+            canEdit={canEditCiphers && !deleteMode}
           />
         )}
         <span style={{ flex: 1 }} />

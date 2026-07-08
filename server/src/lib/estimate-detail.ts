@@ -130,6 +130,21 @@ export async function buildEstimateDetail(
   const costTypeCommentCounts: Record<string, number> = {};
   for (const r of costTypeCommentRows.rows) costTypeCommentCounts[r.cost_type_id as string] = r.count as number;
 
+  // Шифры РД по видам работ (в контексте этой сметы) → { [costTypeId]: [{id, code}] }.
+  const costTypeCipherRows = await pool.query(
+    `SELECT ectc.cost_type_id, c.id, c.code
+       FROM estimate_cost_type_ciphers ectc
+       JOIN project_rd_ciphers c ON c.id = ectc.cipher_id
+      WHERE ectc.estimate_id = $1
+      ORDER BY c.code`,
+    [estimateId],
+  );
+  const costTypeCiphers: Record<string, { id: string; code: string }[]> = {};
+  for (const r of costTypeCipherRows.rows) {
+    const k = r.cost_type_id as string;
+    (costTypeCiphers[k] ??= []).push({ id: r.id as string, code: r.code as string });
+  }
+
   // Бакетизация по item_id за один проход вместо вложенных .filter() внутри .map()
   // (было O(items × строк)). Порядок сохраняется: SQL уже отсортировал строки (ORDER BY),
   // а вставка в Map идёт в том же порядке.
@@ -177,5 +192,6 @@ export async function buildEstimateDetail(
     items: itemsOut,
     contractors: contractors.rows,
     cost_type_comment_counts: costTypeCommentCounts,
+    cost_type_ciphers: costTypeCiphers,
   };
 }

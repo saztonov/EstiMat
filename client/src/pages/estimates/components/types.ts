@@ -197,6 +197,8 @@ export interface EstimateDetail {
   contractors: EstimateContractor[];
   // Счётчики комментариев по видам работ: { [costTypeId]: number } (с сервера).
   cost_type_comment_counts?: Record<string, number>;
+  // Шифры РД по видам работ (в контексте сметы): { [costTypeId]: [{id, code}] } (с сервера).
+  cost_type_ciphers?: Record<string, { id: string; code: string }[]>;
 }
 
 // Группа строк по виду затрат (строится на клиенте из items/contractors)
@@ -211,6 +213,8 @@ export interface CostTypeGroup {
   contractor: EstimateContractor | null;
   // Кол-во комментариев к виду работ (в контексте сметы) — для бейджа на иконке-конверте.
   commentCount?: number;
+  // Шифры РД, назначенные виду работ (в контексте сметы).
+  ciphers?: { id: string; code: string }[];
 }
 
 export const formatMoney = (v: string | number | null | undefined) =>
@@ -225,6 +229,7 @@ export function buildCostTypeGroups(
   contractors: EstimateContractor[],
   pending: CostTypeGroup[] = [],
   costTypeCommentCounts?: Record<string, number>,
+  costTypeCiphers?: Record<string, { id: string; code: string }[]>,
 ): CostTypeGroup[] {
   const map = new Map<string, CostTypeGroup>();
   const keyOf = (id: string | null) => id ?? GROUP_NONE;
@@ -284,6 +289,11 @@ export function buildCostTypeGroups(
   if (costTypeCommentCounts) {
     for (const g of map.values()) {
       g.commentCount = g.costTypeId ? costTypeCommentCounts[g.costTypeId] ?? 0 : 0;
+    }
+  }
+  if (costTypeCiphers) {
+    for (const g of map.values()) {
+      g.ciphers = g.costTypeId ? costTypeCiphers[g.costTypeId] ?? [] : [];
     }
   }
 

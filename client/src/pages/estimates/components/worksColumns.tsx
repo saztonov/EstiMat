@@ -17,6 +17,7 @@ import { CommentsPopover } from './CommentsPopover';
 import type { ZoneNode } from './location';
 import type { CostTypeGroup, EstimateItem, SaveWorkPayload, WorkEdit } from './types';
 import { formatMoney, DRAFT_ID } from './types';
+import type { ColumnPrefs } from '../../../store/smetaColumnsStore';
 
 export interface WorksColumnsCtx {
   /** Группа вида затрат: нужны works.length (грип у единственной работы скрыт). */
@@ -58,7 +59,7 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
     // Грип-колонка слева (только в режиме DnD). Грип скрыт у черновика и когда работа одна.
     ...(dndEnabled
       ? [{
-          title: '', width: 32, align: 'center' as const,
+          title: '', key: '__drag__', width: 32, align: 'center' as const,
           render: (_: unknown, r: EstimateItem) =>
             r.id === DRAFT_ID || group.works.length <= 1 ? null : <DragHandle disabled={!!editing} />,
         }]
@@ -66,9 +67,9 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
     ...leadingColumns,
     // Колонку раскрытия материалов ставим явно (иначе AntD вставит её самой левой, перед грипом).
     Table.EXPAND_COLUMN,
-    { title: '№', width: 36, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
+    { title: '№', key: '__num__', width: 36, render: (_v, r, i) => (r.id === DRAFT_ID ? '—' : i + 1) },
     {
-      title: 'Наименование работы', dataIndex: 'description',
+      title: 'Наименование работы', key: 'description', dataIndex: 'description',
       // Клик по названию работы разворачивает/сворачивает её материалы — как кнопка «+».
       // onCell применяется и в editable, и в read-only режиме (у подрядчиков onRow не задан).
       onCell: (r) => ({
@@ -143,31 +144,31 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
         );
       },
     },
-    { title: 'Ед.', dataIndex: 'unit', width: 64, align: 'center', render: (v: string, r) =>
+    { title: 'Ед.', key: 'unit', dataIndex: 'unit', width: 64, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
           <UnitSelect size="small" style={{ width: '100%' }} value={editing.unit || undefined} onChange={(val) => setEditing({ ...editing, unit: val ?? '' })} />
         ) : v,
     },
-    { title: 'Кол-во', dataIndex: 'quantity', width: 76, align: 'center', render: (v: string, r) =>
+    { title: 'Кол-во', key: 'quantity', dataIndex: 'quantity', width: 76, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
           <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
         ) : <span className="estimat-qty-chip">{Number(v).toLocaleString('ru-RU')}</span>,
     },
     ...(showPrices
       ? [
-          { title: 'Цена', dataIndex: 'unit_price', width: 95, align: 'right' as const, render: (v: string, r: EstimateItem) =>
+          { title: 'Цена', key: 'unit_price', dataIndex: 'unit_price', width: 95, align: 'right' as const, render: (v: string, r: EstimateItem) =>
               isRowInEdit(r) && editing ? (
                 <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
               ) : formatMoney(v),
           },
-          { title: 'Сумма', dataIndex: 'total', width: 105, align: 'right' as const, render: (v: string, r: EstimateItem) =>
+          { title: 'Сумма', key: 'total', dataIndex: 'total', width: 105, align: 'right' as const, render: (v: string, r: EstimateItem) =>
               isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
           },
         ]
       : []),
     ...(showLocationColumn
       ? [{
-          title: 'Местоположение', width: 237,
+          title: 'Местоположение', key: 'location', width: 237,
           render: (_: unknown, r: EstimateItem) => {
             if (r.id === DRAFT_ID) return null; // у черновика локация подставится из контекста добавления
             return (
@@ -197,7 +198,7 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
     // Столбец «Прим.» — комментарии к работе (узкий, слева от действий).
     ...(editable && !deleteMode
       ? [{
-          title: 'Прим.', width: 44, align: 'center' as const,
+          title: 'Прим.', key: 'comments', width: 44, align: 'center' as const,
           render: (_: unknown, r: EstimateItem) =>
             r.id === DRAFT_ID ? null : (
               <CommentsPopover
@@ -211,7 +212,7 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
       : []),
     ...(editable && !deleteMode
       ? [{
-          title: '', width: 96,
+          title: '', key: 'actions', width: 96,
           render: (_: unknown, r: EstimateItem) => {
             if (isRowInEdit(r)) {
               return (
@@ -235,4 +236,35 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
         }]
       : []),
   ];
+}
+
+// Служебные лидирующие колонки (грип, «№») — держим в начале в исходном порядке.
+const SERVICE_LEADING_KEYS = new Set(['__drag__', '__num__']);
+
+/**
+ * Применить пользовательские настройки столбцов (видимость + порядок) к готовому массиву
+ * колонок. Работает ТОЛЬКО по фактически присутствующим колонкам (comments/actions есть лишь
+ * в edit-режиме). Служебные (грип/раскрытие/№) — в начале; «действия» — в конце; настраиваемые
+ * переупорядочиваются по order и фильтруются по hidden. Незнакомые контентные колонки
+ * (leadingColumns и т.п.) остаются на своих позициях (в лидирующем блоке).
+ */
+export function applyColumnPrefs(
+  cols: ColumnsType<EstimateItem>,
+  prefs: ColumnPrefs,
+): ColumnsType<EstimateItem> {
+  const leading: ColumnsType<EstimateItem> = [];
+  const byKey = new Map<string, ColumnsType<EstimateItem>[number]>();
+  let actionsCol: ColumnsType<EstimateItem>[number] | undefined;
+  const orderSet = new Set(prefs.order);
+  for (const c of cols) {
+    const key = (c as { key?: string }).key;
+    if (c === Table.EXPAND_COLUMN || (key && SERVICE_LEADING_KEYS.has(key))) { leading.push(c); continue; }
+    if (key === 'actions') { actionsCol = c; continue; }
+    if (key && orderSet.has(key)) { byKey.set(key, c); continue; }
+    leading.push(c); // прочие (leadingColumns и т.п.) — по позиции
+  }
+  const middle = prefs.order
+    .filter((k) => byKey.has(k) && !prefs.hidden[k])
+    .map((k) => byKey.get(k)!);
+  return actionsCol ? [...leading, ...middle, actionsCol] : [...leading, ...middle];
 }

@@ -231,6 +231,15 @@ export async function exportKpWorkbook(
         setFormula(row, COL.costMat, `${I}${r}*${G}${r}`);
         setFormula(row, COL.costSmr, `${J}${r}*${G}${r}`);
         setFormula(row, COL.costTotal, `SUM(${L}${r}:${M}${r})`);
+        // Примечания работы → столбец «Примечание» (O). Несколько — в одной ячейке с переносами.
+        if (item.notes) {
+          const noteCell = row.getCell(COL.note);
+          noteCell.value = item.notes;
+          // Мерджим поверх стиля образца — не затираем рамку/шрифт шаблона.
+          noteCell.alignment = { ...noteCell.alignment, wrapText: true, vertical: 'top' };
+          const lineCount = item.notes.split('\n').length;
+          if (lineCount > 1) row.height = Math.max(row.height ?? 15, 15 * lineCount);
+        }
       } else {
         row.getCell(COL.coef).value = item.coef ?? null;
         // Цена материала (I) — XLOOKUP из БСМ по наименованию; J у материала пусто.

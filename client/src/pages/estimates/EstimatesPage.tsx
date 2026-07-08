@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Card, Row, Col, Input, Select, Empty, Spin, Space, Button, Modal, App } from 'antd';
-import { SearchOutlined, BarChartOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Input, Select, Empty, Spin, Space, Button, Modal, Tooltip, App } from 'antd';
+import { SearchOutlined, BarChartOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api, assetUrl } from '../../services/api';
 import { BuildingsIcon } from '../../components/shared/BuildingsIcon';
@@ -9,6 +9,7 @@ import { placeholderCover } from '../../components/shared/placeholderCover';
 import { LocationBuilder } from '../projects/LocationBuilder';
 import { ProjectStats } from './components/ProjectStats';
 import { AllProjectsStats } from './components/AllProjectsStats';
+import { CiphersModal } from './components/CiphersModal';
 
 interface ProjectWithStats {
   id: string;
@@ -35,6 +36,7 @@ export function EstimatesPage() {
   const [builderProjectId, setBuilderProjectId] = useState<string | null>(null);
   const [builderDirty, setBuilderDirty] = useState(false);
   const [statsProjectId, setStatsProjectId] = useState<string | null>(null);
+  const [ciphersProjectId, setCiphersProjectId] = useState<string | null>(null);
   const [allStatsOpen, setAllStatsOpen] = useState(false);
 
   const openBuilder = (id: string) => { setBuilderDirty(false); setBuilderProjectId(id); };
@@ -136,24 +138,35 @@ export function EstimatesPage() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                   <Space size={0} wrap>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<BuildingsIcon />}
-                      style={{ paddingInline: 4, color: '#595959' }}
-                      onClick={(e) => { e.stopPropagation(); openBuilder(p.id); }}
-                    >
-                      Местоположение
-                    </Button>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<BarChartOutlined />}
-                      style={{ paddingInline: 4, color: '#595959' }}
-                      onClick={(e) => { e.stopPropagation(); setStatsProjectId(p.id); }}
-                    >
-                      Статистика · {p.works_count}
-                    </Button>
+                    <Tooltip title="Местоположение">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<BuildingsIcon />}
+                        style={{ paddingInline: 6, color: '#595959' }}
+                        onClick={(e) => { e.stopPropagation(); openBuilder(p.id); }}
+                      />
+                    </Tooltip>
+                    <Tooltip title="Шифры рабочей документации">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<FileTextOutlined />}
+                        style={{ paddingInline: 6, color: '#595959' }}
+                        onClick={(e) => { e.stopPropagation(); setCiphersProjectId(p.id); }}
+                      />
+                    </Tooltip>
+                    <Tooltip title="Статистика по объекту">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<BarChartOutlined />}
+                        style={{ paddingInline: 6, color: '#595959' }}
+                        onClick={(e) => { e.stopPropagation(); setStatsProjectId(p.id); }}
+                      >
+                        {p.works_count}
+                      </Button>
+                    </Tooltip>
                   </Space>
                   <strong style={{ color: '#1677ff' }}>{formatMoney(p.estimates_total)}</strong>
                 </div>
@@ -187,6 +200,17 @@ export function EstimatesPage() {
         style={{ top: 40 }}
       >
         {statsProjectId && <ProjectStats projectId={statsProjectId} />}
+      </Modal>
+
+      <Modal
+        title="Шифры рабочей документации"
+        open={!!ciphersProjectId}
+        onCancel={() => setCiphersProjectId(null)}
+        footer={null}
+        width={560}
+        style={{ top: 40 }}
+      >
+        {ciphersProjectId && <CiphersModal projectId={ciphersProjectId} />}
       </Modal>
 
       <Modal

@@ -7,6 +7,8 @@ import { ReviewUnconfirmedModal } from '../components/ReviewUnconfirmedModal';
 import { ReplicateWorksModal, type ReplicateTargets } from '../components/ReplicateWorksModal';
 import { LocationFilterPopover } from './LocationFilterPopover';
 import { EstimateFilterSettingsPopover } from './EstimateFilterSettingsPopover';
+import { ColumnSettingsPopover } from './ColumnSettingsPopover';
+import { useSmetaColumnsStore, resolveColumnPrefs } from '../../../store/smetaColumnsStore';
 import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney } from '../components/types';
@@ -159,6 +161,12 @@ export function SmetaPanel({
   // Перенос/копирование материалов (reassign-bulk / copy-bulk) — те же права, отдельное имя по смыслу.
   const canBulkMutateMaterials = canBulkDelete;
 
+  // Настройки столбцов сметы (порядок/видимость) — подписка здесь, в блоки передаём готовый prefs,
+  // чтобы CostTypeGroupBlock (общий с разделом «Подрядчики») не подписывался на store.
+  const columnOrder = useSmetaColumnsStore((s) => s.order);
+  const columnHidden = useSmetaColumnsStore((s) => s.hidden);
+  const columnPrefs = useMemo(() => resolveColumnPrefs(columnOrder, columnHidden), [columnOrder, columnHidden]);
+
   const selectCategory = useEstimateSelectionStore((s) => s.selectCategory);
   const activeCostCategoryId = useEstimateSelectionStore((s) => s.activeCostCategoryId);
   const revealInRatesTree = useEstimateSelectionStore((s) => s.revealInRatesTree);
@@ -240,12 +248,15 @@ export function SmetaPanel({
       projectId,
       estimateId,
       onOpenHistory: openRowHistory,
+      columnPrefs,
+      canEditCiphers: canBulkDelete,
     }),
     [
       editable, orgs, onCreateWork, onUpdateWork, onDeleteWork, onReorderWorks,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onConfirmWork,
       onToggleVolumeType, onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
       toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId, estimateId, openRowHistory,
+      columnPrefs, canBulkDelete,
     ],
   );
 
@@ -297,6 +308,7 @@ export function SmetaPanel({
       }
       toolbar={
         groups.length > 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', width: '100%' }}>
           <Space wrap>
             <Select
               allowClear
@@ -336,6 +348,10 @@ export function SmetaPanel({
               />
             )}
           </Space>
+          <div style={{ marginLeft: 'auto' }}>
+            <ColumnSettingsPopover />
+          </div>
+          </div>
         ) : undefined
       }
     >

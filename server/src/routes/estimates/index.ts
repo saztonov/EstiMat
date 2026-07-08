@@ -13,6 +13,7 @@ import { registerContractorRoutes } from './contractors.js';
 import { registerItemRoutes } from './items.js';
 import { registerBulkRoutes } from './bulk.js';
 import { registerCommentRoutes } from './comments.js';
+import { registerCostTypeCipherRoutes } from './ciphers.js';
 
 export default async function estimateRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -25,4 +26,5 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   registerItemRoutes(fastify);
   registerBulkRoutes(fastify);
   registerCommentRoutes(fastify);
+  registerCostTypeCipherRoutes(fastify);
 }

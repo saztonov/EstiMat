@@ -50,6 +50,7 @@ export interface ExportRow {
   unit: string | null; // F: ед. изм.
   volume: number | null; // G: объём (quantity)
   coef: number | null; //  H: коэффициент расхода (qty_ratio, только материал)
+  notes?: string | null; // O: примечания (комментарии) работы, несколько склеены через \n
 }
 
 export interface ExportBlock {
@@ -111,6 +112,15 @@ export async function gatherExportData(
   );
   const matsByItem = bucketBy(mats.rows, (m) => m.item_id as string);
 
+  // Примечания (комментарии) работ → в столбец «Примечание»; несколько склеиваем через \n
+  // (хронологически: ORDER BY created_at).
+  const notesRes = await pool.query(
+    `SELECT item_id, body FROM estimate_comments
+      WHERE item_id = ANY($1::uuid[]) ORDER BY item_id, created_at`,
+    [ids],
+  );
+  const notesByItem = bucketBy(notesRes.rows, (n) => n.item_id as string);
+
   // Группировка по метке локации; порядок блоков — по первому появлению в каноне.
   const blockByLabel = new Map<string, ExportBlock>();
   const blocks: ExportBlock[] = [];
@@ -133,6 +143,7 @@ export async function gatherExportData(
       unit: (w.unit as string | null) ?? null,
       volume: num(w.quantity),
       coef: null,
+      notes: (notesByItem.get(w.id as string) ?? []).map((n) => n.body as string).join('\n') || null,
     });
     const itemMats = matsByItem.get(w.id as string) ?? [];
     itemMats.forEach((m, i) => {

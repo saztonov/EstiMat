@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Badge, Button, Checkbox, Divider, Popover, Space, Tooltip, Typography } from 'antd';
-import { EnvironmentOutlined, SettingOutlined } from '@ant-design/icons';
+import { EnvironmentOutlined } from '@ant-design/icons';
 import {
   useLocationContextStore,
   useAddContext,
@@ -92,7 +92,7 @@ export function EstimateFilterSettingsPopover({
       onOpenChange={setOpen}
     >
       <Badge count={addLocCount} size="small">
-        <Button icon={<SettingOutlined />} />
+        <Button icon={<EnvironmentOutlined />} title="Назначение местоположения" />
       </Badge>
     </Popover>
   );

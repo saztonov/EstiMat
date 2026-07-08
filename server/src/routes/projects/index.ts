@@ -9,6 +9,7 @@ import { registerCoreRoutes } from './core.js';
 import { registerCoverRoutes } from './covers.js';
 import { registerEstimateRoutes } from './estimate.js';
 import { registerLocationRoutes } from './locations.js';
+import { registerCipherRoutes } from './ciphers.js';
 
 export default async function projectRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -16,4 +17,5 @@ export default async function projectRoutes(fastify: FastifyInstance) {
   registerCoverRoutes(fastify);
   registerEstimateRoutes(fastify);
   registerLocationRoutes(fastify);
+  registerCipherRoutes(fastify);
 }
