@@ -50,9 +50,6 @@ export interface WorkEdit {
   unit: string;
   quantity: number;
   unitPrice: number;
-  // Исходные значения — чтобы поймать изменение названия существующей работы
-  originalDescription: string;
-  originalRateId: string | null;
   // OCC: версия строки на момент открытия формы (обновляется при 409 для повторного сохранения).
   expectedVersion?: number | null;
 }

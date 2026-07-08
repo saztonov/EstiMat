@@ -19,7 +19,6 @@ import { SortableTableRow, SortableVerticalContext } from '../../../components/d
 import type { WorkOption } from './WorkTreeSelect';
 import { useEstimateSelectionStore, type CostTypeCtx } from '../../../store/estimateSelectionStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
-import { SyncRateNameModal, type SyncRateNameResolution } from './SyncRateNameModal';
 import { MaterialsSubTable, LazyMaterialsSubTable } from './MaterialsSubTable';
 import { buildWorksColumns, applyColumnPrefs } from './worksColumns';
 import { CommentsPopover } from './CommentsPopover';
@@ -165,8 +164,6 @@ function CostTypeGroupBlockImpl({
   useEffect(() => {
     if (selectionMode) setEditing(null);
   }, [selectionMode]);
-  // Ожидающее сохранение, пока открыта модалка синхронизации названия со справочником
-  const [pendingSync, setPendingSync] = useState<SaveWorkPayload | null>(null);
   const [internalCollapsed, setInternalCollapsed] = useState(collapsible && defaultCollapsed);
   const collapsed = onToggleCollapsed ? !!controlledCollapsed : internalCollapsed;
   const toggleCollapsed = onToggleCollapsed ?? (() => setInternalCollapsed((c) => !c));
@@ -304,8 +301,6 @@ function CostTypeGroupBlockImpl({
       unit: r.unit,
       quantity: Number(r.quantity),
       unitPrice: Number(r.unit_price),
-      originalDescription: r.description,
-      originalRateId: r.rate_id,
       expectedVersion: r.version,
     });
   }
@@ -359,26 +354,8 @@ function CostTypeGroupBlockImpl({
       expectedVersion: editing.expectedVersion,
     };
 
-    // Название существующей работы изменили вручную (не выбором другой расценки) —
-    // уточняем, как поступить со справочником наименований.
-    if (
-      editing.workId &&
-      description !== editing.originalDescription.trim() &&
-      editing.rateId === editing.originalRateId
-    ) {
-      setPendingSync(payload);
-      return;
-    }
-
+    // Переименование сохраняется как есть: справочник наименований (rates) не трогаем.
     await doSave(payload, editing.workId);
-  }
-
-  // Ответ модалки синхронизации: null — вернуться в редактирование без сохранения.
-  async function resolveSync(resolution: SyncRateNameResolution | null) {
-    const payload = pendingSync;
-    setPendingSync(null);
-    if (!resolution || !payload || !editing) return;
-    await doSave({ ...payload, description: resolution.description, rateId: resolution.rateId }, editing.workId);
   }
 
   // Суммарная ширина лидирующих колонок (напр. «Исполнитель» в разделе «Подрядчики»).
@@ -574,7 +551,7 @@ function CostTypeGroupBlockImpl({
         <span style={{ flex: 1 }} />
         {showPrices && <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>}
         {editable && !deleteMode && (
-          <Button type="primary" size="small" icon={<PlusOutlined />} disabled={!!editing} onClick={() => setEditing({ workId: null, rateId: null, description: '', unit: '', quantity: 1, unitPrice: 0, originalDescription: '', originalRateId: null })}>
+          <Button type="primary" size="small" icon={<PlusOutlined />} disabled={!!editing} onClick={() => setEditing({ workId: null, rateId: null, description: '', unit: '', quantity: 1, unitPrice: 0 })}>
             Работа
           </Button>
         )}
@@ -645,19 +622,6 @@ function CostTypeGroupBlockImpl({
           expandable={expandable}
         />
         </SortableVerticalContext>
-      )}
-
-      {editing && (
-        <SyncRateNameModal
-          open={!!pendingSync}
-          oldName={editing.originalDescription}
-          newName={pendingSync?.description ?? editing.description}
-          rateId={editing.rateId}
-          costTypeId={group.costTypeId}
-          unit={pendingSync?.unit ?? editing.unit}
-          unitPrice={pendingSync?.unitPrice ?? editing.unitPrice}
-          onResolve={resolveSync}
-        />
       )}
     </div>
   );
