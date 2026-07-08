@@ -31,6 +31,9 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
         'UPDATE estimate_materials SET needs_review = false, updated_by = $2 WHERE estimate_id = $1 AND needs_review = true RETURNING id, estimate_id',
         [request.params.id, request.currentUser.id],
       );
+      // Согласованные материалы зеркалируются в legacy-справочник (как в bulk-confirm) —
+      // mirror сам отфильтрует привязанные к каталогу.
+      await mirrorMaterialsToCatalog(client, materials.rows.map((r) => r.id as string), request.currentUser.id);
       const projectId = works.rows[0]?.project_id ?? (await loadProjectId(client, request.params.id));
       const audits: AuditInput[] = [
         ...works.rows.map((r) => ({

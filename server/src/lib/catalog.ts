@@ -28,6 +28,10 @@ export async function mirrorMaterialsToCatalog(
 ): Promise<void> {
   if (!materialIds.length) return;
 
+  // Инвариант: зеркалируем только ПРИНЯТЫЕ материалы без ссылки на каталог
+  // (material_id IS NULL AND needs_review = false). Фильтр по needs_review здесь, а не в
+  // вызывающем коде, делает функцию безопасной by-default: любой вызывающий передаёт затронутые
+  // id, а непринятые (needs_review = true, напр. неотревьюенные ИИ-материалы) отсекаются сами.
   const { rows } = await db.query(
     `SELECT m.id, m.description, m.unit, m.unit_price,
             cc.name AS category_name, ct.name AS type_name
@@ -35,7 +39,7 @@ export async function mirrorMaterialsToCatalog(
        JOIN estimate_items w ON w.id = m.item_id
        LEFT JOIN cost_categories cc ON cc.id = w.cost_category_id
        LEFT JOIN cost_types    ct ON ct.id = w.cost_type_id
-      WHERE m.id = ANY($1::uuid[]) AND m.material_id IS NULL`,
+      WHERE m.id = ANY($1::uuid[]) AND m.material_id IS NULL AND m.needs_review = false`,
     [materialIds],
   );
   if (!rows.length) return;

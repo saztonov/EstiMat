@@ -165,6 +165,9 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       api.post(`/estimate-items/${workId}/materials`, payload),
     onSuccess: () => {
       invalidate();
+      // Ручной материал сразу зеркалируется в legacy-справочник — обновляем его кэш.
+      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['materials'] });
       message.success('Материал добавлен');
     },
     onError: (e: Error) => message.error(e.message),
@@ -263,6 +266,9 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       api.patch(`/estimate-items/materials/${materialId}/reassign`, { itemId }),
     onSuccess: () => {
       invalidate();
+      // Перенос снимает needs_review → материал мог попасть в справочник — обновляем его кэш.
+      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['materials'] });
       message.success('Материал перенесён к работе');
     },
     onError: (e: Error) => message.error(e.message),
@@ -274,6 +280,9 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       api.patch<{ count: number }>('/estimate-items/materials/reassign-bulk', { materialIds, itemId }),
     onSuccess: (res) => {
       invalidate();
+      // Перенос снимает needs_review → материалы могли попасть в справочник — обновляем его кэш.
+      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['materials'] });
       message.success(`Перенесено материалов: ${res.count}`);
     },
     onError: (e: Error) => message.error(e.message),

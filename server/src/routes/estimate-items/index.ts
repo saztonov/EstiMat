@@ -53,14 +53,21 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
             request.currentUser.id,
           ],
         );
+        // Пополнение legacy-справочника: принятый ручной материал без ссылки на каталог
+        // (material_id IS NULL, needs_review = false) заносится в material_catalog сразу при
+        // добавлении. mirrorMaterialsToCatalog сам фильтрует по инварианту и проставляет material_id —
+        // перечитываем строку, чтобы вернуть её клиенту и записать в журнал уже с привязкой.
+        await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
+        const { rows: fresh } = await client.query('SELECT * FROM estimate_materials WHERE id = $1', [rows[0].id]);
+        const material = fresh[0] ?? rows[0];
         const projectId = await loadProjectId(client, estimateId);
         const auditId = await recordAudit(client, {
-          estimateId, projectId, entityType: 'estimate_material', entityId: rows[0].id,
-          action: 'create', userId: request.currentUser.id, changes: { after: rows[0] },
+          estimateId, projectId, entityType: 'estimate_material', entityId: material.id,
+          action: 'create', userId: request.currentUser.id, changes: { after: material },
         });
         await client.query('COMMIT');
         await emitEstimateChanged(fastify, 'material_created', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
-        return reply.status(201).send({ data: rows[0] });
+        return reply.status(201).send({ data: material });
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -192,6 +199,9 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
             WHERE id = $3 RETURNING *`,
           [itemId, request.currentUser.id, request.params.id],
         );
+        // Перенос снимает needs_review → материал стал принятым; зеркалируем в справочник,
+        // если он ещё не привязан к каталогу (mirror сам проверит инвариант).
+        await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
         const projectId = await loadProjectId(client, estimateId);
         const auditId = await recordAudit(client, {
           estimateId, projectId, entityType: 'estimate_material', entityId: rows[0].id,
@@ -249,6 +259,10 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
             .status(400)
             .send({ error: 'Часть материалов не найдена или относится к другой смете' });
         }
+
+        // Перенос снимает needs_review → материалы стали принятыми; зеркалируем в справочник
+        // не привязанные к каталогу (mirror сам проверит инвариант).
+        await mirrorMaterialsToCatalog(client, rows.map((r) => r.id as string), request.currentUser.id);
 
         const projectId = await loadProjectId(client, targetEstimateId);
         const oldItemById = new Map(before.map((b) => [b.id as string, b.item_id as string]));
