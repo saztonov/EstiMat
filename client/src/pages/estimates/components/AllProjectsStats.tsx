@@ -119,11 +119,11 @@ export function AllProjectsStats({ enabled }: { enabled: boolean }) {
 
   return (
     <div>
-      <Row gutter={16}>
-        <Col span={6}><Statistic title="Категорий" value={totals.categories} /></Col>
-        <Col span={6}><Statistic title="Видов" value={totals.types} /></Col>
-        <Col span={6}><Statistic title="Наименований" value={totals.works} /></Col>
-        <Col span={6}><Statistic title="Материалов" value={totals.materials} /></Col>
+      <Row gutter={[16, 12]}>
+        <Col xs={12} sm={6}><Statistic title="Категорий" value={totals.categories} /></Col>
+        <Col xs={12} sm={6}><Statistic title="Видов" value={totals.types} /></Col>
+        <Col xs={12} sm={6}><Statistic title="Наименований" value={totals.works} /></Col>
+        <Col xs={12} sm={6}><Statistic title="Материалов" value={totals.materials} /></Col>
       </Row>
 
       <Divider style={{ margin: '16px 0 4px' }} orientation="left">По авторам</Divider>
@@ -140,6 +140,7 @@ export function AllProjectsStats({ enabled }: { enabled: boolean }) {
           columns={columns}
           dataSource={rows}
           pagination={false}
+          scroll={{ x: 960 }}
         />
       )}
     </div>

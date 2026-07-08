@@ -290,3 +290,79 @@ html, body, #root {
     flex: 1;
   }
 }
+
+/* ===== Адаптив: планшет и телефон. Брейкпоинты синхронны с hooks/useMediaQuery.ts
+   (1199.98px = useIsMobile, 767.98px = useIsPhone); десктоп не затрагивается. ===== */
+
+/* Отступы контента AppLayout (дефолты идентичны прежним inline-значениям) */
+.estimat-content {
+  margin: 48px 24px 24px;
+}
+.estimat-content--compact {
+  margin: 0 6px 6px;
+}
+
+@media (max-width: 1199.98px) {
+  .estimat-content {
+    margin: 48px 12px 12px;
+  }
+
+  /* Плотность/тач компактных таблиц сметы (workspace и раздел «Подрядчики») */
+  .estimat-compact .ant-table-cell {
+    padding: 6px 6px !important;
+  }
+  .estimat-compact .ant-btn-sm {
+    min-width: 28px;
+    min-height: 28px;
+  }
+  .estimat-compact .ant-table-row-expand-icon {
+    transform: scale(1.3);
+  }
+
+  /* Смета подрядчиков: таблицы CostTypeGroupBlock (общий компонент — не меняем)
+     получают горизонтальный скролл через контейнер */
+  .contractors-smeta .ant-table-content {
+    overflow-x: auto;
+  }
+  .contractors-smeta .ant-table-content > table {
+    min-width: 880px;
+  }
+}
+
+@media (max-width: 767.98px) {
+  /* Кламп широких drawer'ов (история версий 460px, РД 72vw); узкое нав-меню (240) не задевает */
+  .ant-drawer-content-wrapper {
+    max-width: 100vw !important;
+  }
+  .ant-popover {
+    max-width: calc(100vw - 16px);
+  }
+  .estimat-tabs-card > .ant-card-body {
+    padding: 0 12px 12px !important;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .estimat-content {
+    margin: 44px 6px 8px;
+  }
+  .estimat-content--compact {
+    margin: 0 2px 4px;
+  }
+
+  /* Адаптивный тулбар: поиск/селекты растягиваются на всю строку */
+  .estimat-toolbar {
+    width: 100%;
+  }
+  .estimat-toolbar .ant-space-item:has(> .ant-input-affix-wrapper),
+  .estimat-toolbar .ant-space-item:has(> .ant-select),
+  .estimat-toolbar .ant-space-item:has(> .ant-input-search) {
+    flex: 1 1 100%;
+  }
+  .estimat-toolbar .ant-input-affix-wrapper,
+  .estimat-toolbar .ant-input-search,
+  .estimat-toolbar .ant-select {
+    width: 100% !important;
+    min-width: 0;
+  }
+}

@@ -247,7 +247,7 @@ export function RatesPanel() {
 
   return (
     <div className="table-page-wrapper">
-      <Space style={{ marginBottom: 16, flexShrink: 0 }} wrap>
+      <Space className="estimat-toolbar" style={{ marginBottom: 16, flexShrink: 0 }} wrap>
         <Select
           allowClear
           showSearch
@@ -305,7 +305,7 @@ export function RatesPanel() {
         columns={columns}
         dataSource={filteredRates}
         loading={isLoading}
-        scroll={{ y: 'flex' }}
+        scroll={{ x: 860, y: 'flex' }}
         pagination={DEFAULT_PAGINATION}
       />
 

@@ -1,11 +1,12 @@
 import { type ReactNode } from 'react';
-import { Splitter } from 'antd';
+import { Drawer, Splitter } from 'antd';
 import { RobotOutlined, LeftOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { WorkspaceToolbar } from './WorkspaceToolbar';
 import { SmetaPanel } from './SmetaPanel';
 import { ReferencesPanel } from './ReferencesPanel';
 import { AiChatPanel } from './AiChatPanel';
 import { useWorkspaceLayoutStore, type PanelId } from '../../../store/workspaceLayoutStore';
+import { useIsMobile, useIsPhone } from '../../../hooks/useMediaQuery';
 import type { SaveWorkPayload, SaveMaterialPayload } from '../components/types';
 import type { ReplicateTargets } from '../components/ReplicateWorksModal';
 import type { CostTypeGroup, EstimateDetail } from '../components/types';
@@ -128,48 +129,86 @@ function RefsRail({ onClick }: { onClick: () => void }) {
 
 export function EstimateWorkspace(props: Props) {
   const { estimate, groups, orgs, totalItems, groupCount } = props;
-  const { visibility, aiExpanded, refsExpanded, colSizes, setColSizes, setAiExpanded, setRefsExpanded } =
-    useWorkspaceLayoutStore();
+  const {
+    visibility, aiExpanded, refsExpanded, colSizes, refsDrawerOpen,
+    setColSizes, setAiExpanded, setRefsExpanded, setRefsDrawerOpen,
+  } = useWorkspaceLayoutStore();
+  const isMobile = useIsMobile();
+  const isPhone = useIsPhone();
+
+  const smetaNode = (
+    <SmetaPanel
+      groups={groups}
+      total={estimate.total_amount}
+      totalItems={totalItems}
+      groupCount={groupCount}
+      editable
+      orgs={orgs}
+      estimateId={estimate.id}
+      projectId={estimate.project_id}
+      onAddCostType={props.onAddCostType}
+      onCreateWork={props.onCreateWork}
+      onUpdateWork={props.onUpdateWork}
+      onDeleteWork={props.onDeleteWork}
+      onReorderWorks={props.onReorderWorks}
+      onCreateMaterial={props.onCreateMaterial}
+      onUpdateMaterial={props.onUpdateMaterial}
+      onDeleteMaterial={props.onDeleteMaterial}
+      onConfirmMaterial={props.onConfirmMaterial}
+      onConfirmWork={props.onConfirmWork}
+      onToggleVolumeType={props.onToggleVolumeType}
+      onBulkConfirm={props.onBulkConfirm}
+      onReassignMaterial={props.onReassignMaterial}
+      onReassignMaterials={props.onReassignMaterials}
+      onCopyMaterials={props.onCopyMaterials}
+      onBulkDelete={props.onBulkDelete}
+      onBulkAssignLocation={props.onBulkAssignLocation}
+      onReplicate={props.onReplicate}
+      onSetContractor={props.onSetContractor}
+      onClearContractor={props.onClearContractor}
+    />
+  );
+
+  // Мобильный/планшетный режим (<1200px): смета на всю ширину, ИИ-панель недоступна,
+  // справочники — Drawer поверх сметы (доступен всегда, независимо от десктопного
+  // тумблера visibility.refs). Splitter не рендерится — сохранённые colSizes не трогаются.
+  if (isMobile) {
+    return (
+      <div style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
+        <WorkspaceToolbar
+          estimate={estimate}
+          totalItems={totalItems}
+          groupCount={groupCount}
+          onBack={props.onBack}
+        />
+
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: '6px 6px', background: '#f5f5f5' }}>
+          {smetaNode}
+        </div>
+
+        {/* Без destroyOnHidden: reveal-механика дерева работ должна переживать закрытие. */}
+        <Drawer
+          placement="right"
+          width={isPhone ? '100%' : 480}
+          open={refsDrawerOpen}
+          onClose={() => setRefsDrawerOpen(false)}
+          closable={false}
+          rootClassName="estimat-refs-drawer"
+          styles={{ body: { padding: 0, height: '100%' } }}
+        >
+          <ReferencesPanel
+            onAddRate={props.onAddRate}
+            onAddMaterial={props.onCreateMaterial}
+            onCollapse={() => setRefsDrawerOpen(false)}
+          />
+        </Drawer>
+      </div>
+    );
+  }
 
   // Состав видимых колонок: смета всегда; справочники и ИИ — по тумблерам.
   const panels: { id: PanelId; node: ReactNode; min: number; fb: string }[] = [
-    {
-      id: 'smeta',
-      min: 340,
-      fb: '56%',
-      node: (
-        <SmetaPanel
-          groups={groups}
-          total={estimate.total_amount}
-          totalItems={totalItems}
-          groupCount={groupCount}
-          editable
-          orgs={orgs}
-          estimateId={estimate.id}
-          projectId={estimate.project_id}
-          onAddCostType={props.onAddCostType}
-          onCreateWork={props.onCreateWork}
-          onUpdateWork={props.onUpdateWork}
-          onDeleteWork={props.onDeleteWork}
-          onReorderWorks={props.onReorderWorks}
-          onCreateMaterial={props.onCreateMaterial}
-          onUpdateMaterial={props.onUpdateMaterial}
-          onDeleteMaterial={props.onDeleteMaterial}
-          onConfirmMaterial={props.onConfirmMaterial}
-          onConfirmWork={props.onConfirmWork}
-          onToggleVolumeType={props.onToggleVolumeType}
-          onBulkConfirm={props.onBulkConfirm}
-          onReassignMaterial={props.onReassignMaterial}
-          onReassignMaterials={props.onReassignMaterials}
-          onCopyMaterials={props.onCopyMaterials}
-          onBulkDelete={props.onBulkDelete}
-          onBulkAssignLocation={props.onBulkAssignLocation}
-          onReplicate={props.onReplicate}
-          onSetContractor={props.onSetContractor}
-          onClearContractor={props.onClearContractor}
-        />
-      ),
-    },
+    { id: 'smeta', min: 340, fb: '56%', node: smetaNode },
   ];
   if (visibility.refs && refsExpanded) {
     panels.push({

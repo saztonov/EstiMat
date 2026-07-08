@@ -107,7 +107,7 @@ export function UnitsPanel() {
       <Space style={{ marginBottom: 16, flexShrink: 0 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Добавить</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={units?.data} loading={isLoading} scroll={{ y: 'flex' }} pagination={DEFAULT_PAGINATION} />
+      <Table rowKey="id" columns={columns} dataSource={units?.data} loading={isLoading} scroll={{ x: 600, y: 'flex' }} pagination={DEFAULT_PAGINATION} />
 
       <Modal
         title={editingId ? 'Редактирование единицы' : 'Новая единица измерения'}

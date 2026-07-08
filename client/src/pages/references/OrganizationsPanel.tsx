@@ -152,7 +152,7 @@ export function OrganizationsPanel() {
 
   return (
     <div className="table-page-wrapper">
-      <Space style={{ marginBottom: 16, flexShrink: 0 }} wrap>
+      <Space className="estimat-toolbar" style={{ marginBottom: 16, flexShrink: 0 }} wrap>
         <Input
           allowClear
           prefix={<SearchOutlined />}
@@ -171,7 +171,7 @@ export function OrganizationsPanel() {
         />
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>Создать</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={filtered} loading={isLoading} scroll={{ y: 'flex' }} pagination={DEFAULT_PAGINATION} />
+      <Table rowKey="id" columns={columns} dataSource={filtered} loading={isLoading} scroll={{ x: 800, y: 'flex' }} pagination={DEFAULT_PAGINATION} />
 
       <Modal
         title={editRecord ? 'Редактирование организации' : 'Новая организация'}

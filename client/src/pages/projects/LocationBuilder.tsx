@@ -8,6 +8,7 @@ import {
 } from '@ant-design/icons';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { modalWidth } from '../../lib/modalWidth';
 import { useAuthStore } from '../../store/authStore';
 import { useProjectZones } from '../../hooks/useProjectLocations';
 import {
@@ -343,18 +344,20 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
       open
       title={`${ZONE_KIND_LABEL[editing.kind]}${editing.kind === 'building' ? '' : ''}`}
       onCancel={() => setEditingId(null)}
-      footer={[
-        editing.kind !== 'street' && canEdit && (
-          <Button key="dup" icon={<CopyOutlined />} onClick={() => duplicate(editing)} style={{ float: 'left' }}>Дублировать</Button>
-        ),
-        editing.kind !== 'street' && canEdit && (
-          <Popconfirm key="del" title="Удалить местоположение?" description="Строки сметы этого местоположения станут «без местоположения»." onConfirm={() => removeZone(editing)}>
-            <Button danger icon={<DeleteOutlined />} style={{ float: 'left', marginLeft: 8 }}>Удалить</Button>
-          </Popconfirm>
-        ),
-        <Button key="ok" type="primary" onClick={() => setEditingId(null)}>Готово</Button>,
-      ]}
-      width={460}
+      footer={
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {editing.kind !== 'street' && canEdit && (
+            <Button key="dup" icon={<CopyOutlined />} onClick={() => duplicate(editing)}>Дублировать</Button>
+          )}
+          {editing.kind !== 'street' && canEdit && (
+            <Popconfirm key="del" title="Удалить местоположение?" description="Строки сметы этого местоположения станут «без местоположения»." onConfirm={() => removeZone(editing)}>
+              <Button danger icon={<DeleteOutlined />}>Удалить</Button>
+            </Popconfirm>
+          )}
+          <Button key="ok" type="primary" onClick={() => setEditingId(null)} style={{ marginLeft: 'auto' }}>Готово</Button>
+        </div>
+      }
+      width={modalWidth(460)}
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <div>

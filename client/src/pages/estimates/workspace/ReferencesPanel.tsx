@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 import { Button, Tooltip } from 'antd';
-import { AppstoreOutlined, DoubleRightOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, CloseOutlined, DoubleRightOutlined } from '@ant-design/icons';
 import { PanelShell } from './PanelShell';
 import { RdSection } from './RdSection';
 import { WorksTreeSection } from './WorksTreeSection';
 import { MaterialsSection } from './MaterialsSection';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
+import { useIsMobile } from '../../../hooks/useMediaQuery';
 import { useAppSettings } from '../../../hooks/useAppSettings';
 import type { SaveMaterialPayload } from '../components/types';
 import type { RateLeafPayload } from './types';
@@ -21,6 +22,8 @@ interface Props {
 // развёрнутые делят высоту поровну.
 export function ReferencesPanel({ onAddRate, onAddMaterial, onCollapse }: Props) {
   const { collapsedSections, toggleSection } = useWorkspaceLayoutStore();
+  // Мобильный режим: панель живёт в Drawer — кнопка «Закрыть» вместо «Свернуть в рельс».
+  const isMobile = useIsMobile();
   // Блок РД можно отключить в Администрирование → Настройки.
   const { data: settings } = useAppSettings();
   const rdEnabled = settings?.data.rdSectionEnabled ?? true;
@@ -48,8 +51,14 @@ export function ReferencesPanel({ onAddRate, onAddMaterial, onCollapse }: Props)
       title="Справочники"
       flush
       extra={
-        <Tooltip title="Свернуть в рельс">
-          <Button type="text" size="small" icon={<DoubleRightOutlined />} onClick={onCollapse} />
+        <Tooltip title={isMobile ? 'Закрыть' : 'Свернуть в рельс'}>
+          <Button
+            type="text"
+            size="small"
+            icon={isMobile ? <CloseOutlined /> : <DoubleRightOutlined />}
+            aria-label={isMobile ? 'Закрыть' : 'Свернуть в рельс'}
+            onClick={onCollapse}
+          />
         </Tooltip>
       }
     >

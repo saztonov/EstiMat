@@ -129,6 +129,7 @@ function MaterialGroupBlock({ group }: { group: MaterialGroup }) {
         columns={materialColumns}
         dataSource={group.materials}
         pagination={false}
+        scroll={{ x: 680 }}
         expandable={{
           expandedRowRender: (r) => (
             <Table<MaterialOccurrence>
@@ -138,6 +139,7 @@ function MaterialGroupBlock({ group }: { group: MaterialGroup }) {
               columns={occurrenceColumns}
               dataSource={r.occurrences}
               pagination={false}
+              scroll={{ x: 600 }}
             />
           ),
           rowExpandable: (r) => r.occurrences.length > 0,
@@ -216,7 +218,9 @@ export function EstimateMaterialsPage() {
           flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
+          flexWrap: 'wrap',
           gap: 12,
+          rowGap: 4,
           padding: '8px 12px',
           background: '#fff',
           borderBottom: '1px solid #f0f0f0',
@@ -228,7 +232,7 @@ export function EstimateMaterialsPage() {
         <Typography.Text strong style={{ fontSize: 15, whiteSpace: 'nowrap' }}>
           Материалы
         </Typography.Text>
-        <Typography.Text type="secondary" ellipsis style={{ fontSize: 12.5, maxWidth: 320 }}>
+        <Typography.Text type="secondary" ellipsis style={{ fontSize: 12.5, maxWidth: 'min(320px, 50vw)' }}>
           {estimate.project_code} · {estimate.project_name}
         </Typography.Text>
         <span style={{ flex: 1 }} />
@@ -242,7 +246,7 @@ export function EstimateMaterialsPage() {
 
       {/* Фильтры */}
       <div style={{ flexShrink: 0, padding: '8px 12px', background: '#fafafa', borderBottom: '1px solid #f0f0f0' }}>
-        <Space wrap>
+        <Space wrap className="estimat-toolbar">
           <Input.Search
             allowClear
             placeholder="Поиск по материалу"

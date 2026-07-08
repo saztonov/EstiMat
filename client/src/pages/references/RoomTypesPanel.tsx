@@ -107,7 +107,7 @@ export function RoomTypesPanel() {
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Добавить</Button>
         </Space>
       )}
-      <Table rowKey="id" columns={columns} dataSource={roomTypes?.data} loading={isLoading} scroll={{ y: 'flex' }} pagination={DEFAULT_PAGINATION} />
+      <Table rowKey="id" columns={columns} dataSource={roomTypes?.data} loading={isLoading} scroll={{ x: 560, y: 'flex' }} pagination={DEFAULT_PAGINATION} />
 
       <Modal
         title={editingId ? 'Редактирование типа помещения' : 'Новый тип помещения'}

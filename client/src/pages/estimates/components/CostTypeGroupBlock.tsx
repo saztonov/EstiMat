@@ -106,6 +106,8 @@ interface Props {
   columnPrefs?: ColumnPrefs;
   /** Право редактировать шифры РД у вида работ (роль admin/engineer). */
   canEditCiphers?: boolean;
+  /** Мобильный режим: min-width таблицы работ в px (горизонтальный скролл). */
+  tableScrollX?: number;
 }
 
 const noopAsync = async () => {};
@@ -155,6 +157,7 @@ function CostTypeGroupBlockImpl({
   estimateId,
   columnPrefs,
   canEditCiphers = false,
+  tableScrollX,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -450,6 +453,7 @@ function CostTypeGroupBlockImpl({
               onToggleMaterial={onToggleMaterial}
               deleteMode={deleteMode}
               workSelected={!!selectedWorkIds?.has(r.id)}
+              scrollX={tableScrollX ? tableScrollX - 40 : undefined}
             />
           ) : (
             <MaterialsSubTable
@@ -467,6 +471,7 @@ function CostTypeGroupBlockImpl({
               onToggleMaterial={onToggleMaterial}
               deleteMode={deleteMode}
               workSelected={!!selectedWorkIds?.has(r.id)}
+              scrollX={tableScrollX ? tableScrollX - 40 : undefined}
             />
           )}
         </div>
@@ -477,6 +482,7 @@ function CostTypeGroupBlockImpl({
       useLazyMaterials, scrollRootRef, editable, showPrices,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onReassignMaterial,
       allWorks, selectionMode, selectedIds, onToggleMaterial, deleteMode, selectedWorkIds,
+      tableScrollX,
     ],
   );
 
@@ -571,6 +577,7 @@ function CostTypeGroupBlockImpl({
           columns={columns}
           dataSource={rows}
           pagination={false}
+          scroll={tableScrollX ? { x: tableScrollX } : undefined}
           locale={{ emptyText: editable ? 'Нет работ. Нажмите «Работа».' : 'Нет работ.' }}
           rowClassName={(r) =>
             [

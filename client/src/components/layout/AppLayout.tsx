@@ -153,11 +153,12 @@ export function AppLayout() {
       </Drawer>
 
       <Content
+        // Workspace и раздел «Подрядчики»: шапка поднята в верхнюю полосу (верх 0; гамбургер
+        // обходится левым отступом шапки — тулбара сметы / шапки Card подрядчиков), компактные
+        // боковые/нижний отступы. Прочие страницы — как было. Отступы — в index.css
+        // (на узких экранах сужаются media query).
+        className={isCompactLayout ? 'estimat-content--compact' : 'estimat-content'}
         style={{
-          // Workspace и раздел «Подрядчики»: шапка поднята в верхнюю полосу (верх 0; гамбургер
-          // обходится левым отступом шапки — тулбара сметы / шапки Card подрядчиков), компактные
-          // боковые/нижний отступы. Прочие страницы — как было.
-          margin: isCompactLayout ? '0 6px 6px' : '48px 24px 24px',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',

@@ -139,7 +139,7 @@ export function AiJobsPanel() {
         dataSource={data?.data}
         loading={isLoading}
         pagination={DEFAULT_PAGINATION}
-        scroll={{ y: 'flex' }}
+        scroll={{ x: 1150, y: 'flex' }}
       />
     </div>
   );

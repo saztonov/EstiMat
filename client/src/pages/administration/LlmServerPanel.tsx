@@ -143,7 +143,7 @@ export function LlmServerPanel() {
       <Typography.Title level={5} style={{ marginTop: 24 }}>
         Каталог моделей
       </Typography.Title>
-      <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
           Список моделей, доступных на сервере. Обновите, чтобы получить актуальные данные и сделать модели выбираемыми
           в разделе «Настройки».
@@ -164,6 +164,7 @@ export function LlmServerPanel() {
         dataSource={modelsQuery.data?.data ?? []}
         loading={modelsQuery.isLoading}
         pagination={false}
+        scroll={{ x: 700 }}
         locale={{ emptyText: 'Каталог пуст — нажмите «Проверить связь / обновить».' }}
       />
 

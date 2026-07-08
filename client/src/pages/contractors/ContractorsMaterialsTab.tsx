@@ -220,7 +220,7 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ flexShrink: 0, marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ flexShrink: 0, marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {!viewerIsContractor && (
           <Select
             mode="multiple"
@@ -269,6 +269,7 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
                 pagination={false}
                 dataSource={g.materials}
                 columns={buildColumns(g.costTypeId)}
+                scroll={{ x: 860 }}
               />
             </div>
           ))}

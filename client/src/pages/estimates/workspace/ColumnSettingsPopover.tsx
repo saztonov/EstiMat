@@ -3,7 +3,8 @@ import { SettingOutlined } from '@ant-design/icons';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { DragHandle, SortableItem, SortableVerticalContext } from '../../../components/dndSortable';
-import { SMETA_COLUMN_DEFS, useSmetaColumnsStore, resolveColumnPrefs } from '../../../store/smetaColumnsStore';
+import { SMETA_COLUMN_DEFS, useSmetaColumnsStore, resolveColumnPrefs, PHONE_HIDDEN_DEFAULTS } from '../../../store/smetaColumnsStore';
+import { useIsPhone } from '../../../hooks/useMediaQuery';
 
 const LABELS = new Map(SMETA_COLUMN_DEFS.map((d) => [d.key, d.label]));
 const REQUIRED = new Map(SMETA_COLUMN_DEFS.map((d) => [d.key, !!d.required]));
@@ -16,9 +17,11 @@ export function ColumnSettingsPopover() {
   const setOrder = useSmetaColumnsStore((s) => s.setOrder);
   const setHidden = useSmetaColumnsStore((s) => s.setHidden);
   const reset = useSmetaColumnsStore((s) => s.reset);
+  const isPhone = useIsPhone();
 
   // Нормализованный порядок (известные ключи + новые в конец) — на нём строим список.
-  const prefs = resolveColumnPrefs(order, hidden);
+  // На телефоне чекбоксы отражают эффективную видимость с учётом телефонных дефолтов.
+  const prefs = resolveColumnPrefs(order, hidden, isPhone ? PHONE_HIDDEN_DEFAULTS : undefined);
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;

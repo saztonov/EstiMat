@@ -33,8 +33,8 @@ export function LoginPage() {
   }
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#f5f5f5' }}>
-      <Card style={{ width: 400 }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#f5f5f5', padding: 16 }}>
+      <Card style={{ width: '100%', maxWidth: 400 }}>
         <Title level={3} style={{ textAlign: 'center', marginBottom: 24 }}>EstiMat</Title>
         <Form onFinish={onFinish} onValuesChange={() => { if (error) setError(null); }} layout="vertical" size="large">
           <Form.Item name="email" rules={[{ required: true, type: 'email', message: 'Введите email' }]}>

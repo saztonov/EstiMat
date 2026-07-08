@@ -8,11 +8,13 @@ import { BuildingsIcon } from '../../../components/shared/BuildingsIcon';
 interface Props {
   estimateId: string;
   projectId: string;
+  /** Телефонный режим: кнопки без текста, только иконки. */
+  compact?: boolean;
 }
 
 // Кнопки «Материалы» и «Местоположение» для шапки панели «Сметная часть».
 // Модалка местоположения с подтверждением закрытия при несохранённых изменениях.
-export function SmetaActions({ estimateId, projectId }: Props) {
+export function SmetaActions({ estimateId, projectId, compact }: Props) {
   const { modal } = App.useApp();
   const navigate = useNavigate();
   const [zonesOpen, setZonesOpen] = useState(false);
@@ -35,13 +37,13 @@ export function SmetaActions({ estimateId, projectId }: Props) {
   return (
     <>
       <Tooltip title="Свод материалов сметы">
-        <Button size="small" icon={<ContainerOutlined />} onClick={() => navigate(`/estimates/${estimateId}/materials`)}>
-          Материалы
+        <Button size="small" icon={<ContainerOutlined />} aria-label="Материалы" onClick={() => navigate(`/estimates/${estimateId}/materials`)}>
+          {compact ? null : 'Материалы'}
         </Button>
       </Tooltip>
       <Tooltip title="Местоположение: корпуса, этажность, типы помещений">
-        <Button size="small" icon={<BuildingsIcon />} onClick={() => { setZonesDirty(false); setZonesOpen(true); }}>
-          Местоположение
+        <Button size="small" icon={<BuildingsIcon />} aria-label="Местоположение" onClick={() => { setZonesDirty(false); setZonesOpen(true); }}>
+          {compact ? null : 'Местоположение'}
         </Button>
       </Tooltip>
 

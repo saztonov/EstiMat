@@ -46,11 +46,15 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
     setSearch('');
     setUserExpanded((prev) => [...new Set<Key>([...prev, ...revealRequest.keys])]);
     const target = revealRequest.targetKey;
-    setTimeout(() => {
+    const scrollToTarget = () => {
       treeWrapRef.current
         ?.querySelector(`[data-tree-key="${CSS.escape(target)}"]`)
         ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }, 120);
+    };
+    setTimeout(scrollToTarget, 120);
+    // Вторая попытка: в мобильном режиме панель живёт в Drawer с анимацией открытия
+    // (~300мс) — к первому таймауту узел может быть ещё не в лейауте.
+    setTimeout(scrollToTarget, 450);
   }, [revealRequest]);
 
   // Область подбора, выбранная в панели ИИ — сужает дерево для ручного добора.

@@ -33,6 +33,8 @@ export interface MaterialsSubTableProps {
   /** Режим массового удаления: скрывает действия материалов; чекбоксы материалов выбранной работы недоступны. */
   deleteMode?: boolean;
   workSelected?: boolean;
+  /** Мобильный режим: min-width таблицы материалов в px (горизонтальный скролл). */
+  scrollX?: number;
 }
 
 // ============================================================
@@ -53,6 +55,7 @@ function MaterialsSubTableImpl({
   onToggleMaterial,
   deleteMode = false,
   workSelected = false,
+  scrollX,
 }: MaterialsSubTableProps) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<MaterialEdit | null>(null);
@@ -209,6 +212,7 @@ function MaterialsSubTableImpl({
         columns={columns}
         dataSource={rows}
         pagination={false}
+        scroll={scrollX ? { x: scrollX } : undefined}
         locale={{ emptyText: editable ? 'Материалов нет. Нажмите «Материал».' : 'Материалов нет.' }}
         rowClassName={(r) => (isRowInEdit(r) ? 'estimat-row-editing' : '')}
         rowSelection={

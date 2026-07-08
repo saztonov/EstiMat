@@ -11,6 +11,7 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { modalWidth } from '../../lib/modalWidth';
 import { DragHandle, SortableItem, SortableVerticalContext } from '../../components/dndSortable';
 import { useAuthStore } from '../../store/authStore';
 
@@ -248,10 +249,10 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
       open={open}
       onCancel={onClose}
       footer={<Button onClick={onClose}>Закрыть</Button>}
-      width={780}
+      width={modalWidth(780)}
     >
-      <Row gutter={16}>
-        <Col span={11}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={11}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>Категории</div>
           <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 4 }}>
             {categories.length === 0 ? (
@@ -285,7 +286,7 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
           </Space.Compact>
         </Col>
 
-        <Col span={13}>
+        <Col xs={24} md={13}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>
             Виды работ{selectedCategory ? ` — ${selectedCategory.name}` : ''}
           </div>

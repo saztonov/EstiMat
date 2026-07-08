@@ -16,10 +16,13 @@ interface WorkspaceLayoutState {
   colSizes: Partial<Record<PanelId, number>>;
   // Свёрнутость секций справочника (аккордеон)
   collapsedSections: Record<RefSectionId, boolean>;
+  // Мобильный режим (<1200px): открыт ли Drawer «Справочники». НЕ персистится.
+  refsDrawerOpen: boolean;
 
   toggleArea: (area: 'ai' | 'refs') => void;
   /** Принудительно показать область (для программного раскрытия справочников). */
   showArea: (area: 'ai' | 'refs') => void;
+  setRefsDrawerOpen: (v: boolean) => void;
   setAiExpanded: (v: boolean) => void;
   setRefsExpanded: (v: boolean) => void;
   setColSizes: (ids: PanelId[], sizesPx: number[]) => void;
@@ -42,12 +45,20 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutState>()(
       refsExpanded: true,
       colSizes: {},
       collapsedSections: { rd: true, works: false, mat: false },
+      refsDrawerOpen: false,
 
       toggleArea: (area) =>
         set((s) => ({ visibility: { ...s.visibility, [area]: !s.visibility[area] } })),
 
       showArea: (area) =>
-        set((s) => ({ visibility: { ...s.visibility, [area]: true } })),
+        set((s) => ({
+          visibility: { ...s.visibility, [area]: true },
+          // Программное раскрытие справочников (reveal из сметы): на мобильном открывает
+          // Drawer, на десктопе разворачивает рельс в колонку.
+          ...(area === 'refs' ? { refsDrawerOpen: true, refsExpanded: true } : {}),
+        })),
+
+      setRefsDrawerOpen: (v) => set({ refsDrawerOpen: v }),
 
       setAiExpanded: (v) => set({ aiExpanded: v }),
 
@@ -73,6 +84,17 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutState>()(
           collapsedSections: { ...s.collapsedSections, [id]: false },
         })),
     }),
-    { name: 'estimat:workspace-layout', version: 1 },
+    {
+      name: 'estimat:workspace-layout',
+      version: 1,
+      // refsDrawerOpen — эфемерное состояние Drawer, в localStorage не пишем.
+      partialize: (s) => ({
+        visibility: s.visibility,
+        aiExpanded: s.aiExpanded,
+        refsExpanded: s.refsExpanded,
+        colSizes: s.colSizes,
+        collapsedSections: s.collapsedSections,
+      }),
+    },
   ),
 );

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Empty, Select, Space } from 'antd';
-import { PlusOutlined, TableOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
+import { Badge, Button, Empty, Popover, Select, Space, Tooltip } from 'antd';
+import { PlusOutlined, TableOutlined, CaretRightOutlined, CaretDownOutlined, FilterOutlined } from '@ant-design/icons';
 import type { SaveWorkPayload, SaveMaterialPayload } from '../components/types';
 import { SmetaGroupBlock } from './SmetaGroupBlock';
 import { ReviewUnconfirmedModal } from '../components/ReviewUnconfirmedModal';
@@ -8,7 +8,8 @@ import { ReplicateWorksModal, type ReplicateTargets } from '../components/Replic
 import { LocationFilterPopover } from './LocationFilterPopover';
 import { EstimateFilterSettingsPopover } from './EstimateFilterSettingsPopover';
 import { ColumnSettingsPopover } from './ColumnSettingsPopover';
-import { useSmetaColumnsStore, resolveColumnPrefs } from '../../../store/smetaColumnsStore';
+import { useSmetaColumnsStore, resolveColumnPrefs, PHONE_HIDDEN_DEFAULTS } from '../../../store/smetaColumnsStore';
+import { useIsMobile, useIsPhone } from '../../../hooks/useMediaQuery';
 import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import type { CostTypeGroup, EstimateItem } from '../components/types';
 import { formatMoney } from '../components/types';
@@ -161,11 +162,18 @@ export function SmetaPanel({
   // Перенос/копирование материалов (reassign-bulk / copy-bulk) — те же права, отдельное имя по смыслу.
   const canBulkMutateMaterials = canBulkDelete;
 
+  // Адаптивные режимы: <1200px — смета на всю ширину, <768px — телефонные упрощения.
+  const isMobile = useIsMobile();
+  const isPhone = useIsPhone();
+
   // Настройки столбцов сметы (порядок/видимость) — подписка здесь, в блоки передаём готовый prefs,
   // чтобы CostTypeGroupBlock (общий с разделом «Подрядчики») не подписывался на store.
   const columnOrder = useSmetaColumnsStore((s) => s.order);
   const columnHidden = useSmetaColumnsStore((s) => s.hidden);
-  const columnPrefs = useMemo(() => resolveColumnPrefs(columnOrder, columnHidden), [columnOrder, columnHidden]);
+  const columnPrefs = useMemo(
+    () => resolveColumnPrefs(columnOrder, columnHidden, isPhone ? PHONE_HIDDEN_DEFAULTS : undefined),
+    [columnOrder, columnHidden, isPhone],
+  );
 
   const selectCategory = useEstimateSelectionStore((s) => s.selectCategory);
   const activeCostCategoryId = useEstimateSelectionStore((s) => s.activeCostCategoryId);
@@ -226,7 +234,8 @@ export function SmetaPanel({
       onUpdateWork,
       onDeleteWork,
       onReorderWorks,
-      canReorderWorks: true,
+      // На телефоне DnD-грип убран: конфликтует с тач-скроллом и съедает ширину.
+      canReorderWorks: !isPhone,
       onCreateMaterial,
       onUpdateMaterial,
       onDeleteMaterial,
@@ -250,18 +259,86 @@ export function SmetaPanel({
       onOpenHistory: openRowHistory,
       columnPrefs,
       canEditCiphers: canBulkDelete,
+      // Мобильный режим: горизонтальный скролл таблицы работ (min-width в px).
+      tableScrollX: isMobile ? (isPhone ? 560 : 880) : undefined,
     }),
     [
       editable, orgs, onCreateWork, onUpdateWork, onDeleteWork, onReorderWorks,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onConfirmWork,
       onToggleVolumeType, onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
       toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId, estimateId, openRowHistory,
-      columnPrefs, canBulkDelete,
+      columnPrefs, canBulkDelete, isMobile, isPhone,
     ],
   );
 
   // Экспорт в Excel-шаблон «КП»: выгружаем ровно те работы, что видны после фильтров.
   const { exporting, handleExportKp } = useEstimateExport({ estimateId, visibleGroups, zoneRoots });
+
+  // На мобильном selection-тулбар переезжает из шапки PanelShell в toolbar-строку — в узкой
+  // шапке он не помещается вместе с заголовком и SmetaActions.
+  const selectionToolbarNode =
+    groups.length > 0 ? (
+      <SmetaSelectionToolbar
+        editable={editable}
+        mode={mode}
+        allWorks={allWorks}
+        zoneRoots={zoneRoots}
+        canBulkDelete={canBulkDelete}
+        canBulkMutateMaterials={canBulkMutateMaterials}
+        selectedMaterialCount={selectedIds.size}
+        selectedWorkCount={selectedWorkIds.size}
+        deleteCount={deleteCount}
+        assignLoc={assignLoc}
+        reassigning={reassigning}
+        copying={copying}
+        deleting={deleting}
+        assigning={assigning}
+        rejectableCount={rejectableCount}
+        exporting={exporting}
+        onSetMode={setMode}
+        onCancelSelection={cancelSelection}
+        onBulkReassign={handleBulkReassign}
+        onBulkCopy={handleBulkCopy}
+        onBulkDelete={handleBulkDelete}
+        onBulkAssign={handleBulkAssign}
+        onOpenReplicate={() => setReplicateOpen(true)}
+        onOpenReview={() => setReviewOpen(true)}
+        onExportKp={handleExportKp}
+        onExpandStep={expandStep}
+        onCollapseStep={collapseStep}
+      />
+    ) : undefined;
+
+  // Телефон: фильтры «Категория»/«Вид работ» уходят в поповер «Отбор» (экономия двух строк).
+  const activeFilterCount = (categoryFilter?.length ?? 0) + (typeFilter?.length ?? 0);
+  const categorySelect = (
+    <Select
+      mode="multiple"
+      allowClear
+      showSearch
+      optionFilterProp="label"
+      maxTagCount="responsive"
+      placeholder="Категория"
+      value={categoryFilter}
+      onChange={setCategoryFilter}
+      options={categoryOptions}
+      style={{ width: isPhone ? '100%' : isMobile ? 200 : 260 }}
+    />
+  );
+  const typeSelect = (
+    <Select
+      mode="multiple"
+      allowClear
+      showSearch
+      optionFilterProp="label"
+      maxTagCount="responsive"
+      placeholder="Вид работ"
+      value={typeFilter}
+      onChange={setTypeFilter}
+      options={typeOptions}
+      style={{ width: isPhone ? '100%' : isMobile ? 200 : 260 }}
+    />
+  );
 
   return (
     <PanelShell
@@ -270,70 +347,41 @@ export function SmetaPanel({
       title={
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           Сметная часть
-          <SmetaActions estimateId={estimateId} projectId={projectId} />
+          <SmetaActions estimateId={estimateId} projectId={projectId} compact={isPhone} />
         </span>
       }
-      extra={
-        groups.length > 0 ? (
-          <SmetaSelectionToolbar
-            editable={editable}
-            mode={mode}
-            allWorks={allWorks}
-            zoneRoots={zoneRoots}
-            canBulkDelete={canBulkDelete}
-            canBulkMutateMaterials={canBulkMutateMaterials}
-            selectedMaterialCount={selectedIds.size}
-            selectedWorkCount={selectedWorkIds.size}
-            deleteCount={deleteCount}
-            assignLoc={assignLoc}
-            reassigning={reassigning}
-            copying={copying}
-            deleting={deleting}
-            assigning={assigning}
-            rejectableCount={rejectableCount}
-            exporting={exporting}
-            onSetMode={setMode}
-            onCancelSelection={cancelSelection}
-            onBulkReassign={handleBulkReassign}
-            onBulkCopy={handleBulkCopy}
-            onBulkDelete={handleBulkDelete}
-            onBulkAssign={handleBulkAssign}
-            onOpenReplicate={() => setReplicateOpen(true)}
-            onOpenReview={() => setReviewOpen(true)}
-            onExportKp={handleExportKp}
-            onExpandStep={expandStep}
-            onCollapseStep={collapseStep}
-          />
-        ) : undefined
-      }
+      extra={!isMobile ? selectionToolbarNode : undefined}
       toolbar={
         groups.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+          {isMobile && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>{selectionToolbarNode}</div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', width: '100%' }}>
           <Space wrap>
-            <Select
-              mode="multiple"
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              maxTagCount="responsive"
-              placeholder="Категория"
-              value={categoryFilter}
-              onChange={setCategoryFilter}
-              options={categoryOptions}
-              style={{ width: 260 }}
-            />
-            <Select
-              mode="multiple"
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              maxTagCount="responsive"
-              placeholder="Вид работ"
-              value={typeFilter}
-              onChange={setTypeFilter}
-              options={typeOptions}
-              style={{ width: 260 }}
-            />
+            {isPhone ? (
+              <Popover
+                trigger="click"
+                placement="bottomLeft"
+                content={
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 260 }}>
+                    {categorySelect}
+                    {typeSelect}
+                  </div>
+                }
+              >
+                <Badge count={activeFilterCount} size="small" color="#1677ff" offset={[-2, 2]}>
+                  <Tooltip title="Отбор по категории и виду работ">
+                    <Button icon={<FilterOutlined />} aria-label="Отбор" />
+                  </Tooltip>
+                </Badge>
+              </Popover>
+            ) : (
+              <>
+                {categorySelect}
+                {typeSelect}
+              </>
+            )}
             <LocationFilterPopover
               zones={zonesData?.data.roots ?? []}
               typeOptions={locationTypeOptions}
@@ -352,6 +400,7 @@ export function SmetaPanel({
           </Space>
           <div style={{ marginLeft: 'auto' }}>
             <ColumnSettingsPopover />
+          </div>
           </div>
           </div>
         ) : undefined

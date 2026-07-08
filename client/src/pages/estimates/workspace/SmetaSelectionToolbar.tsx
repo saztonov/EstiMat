@@ -15,6 +15,7 @@ import {
 import { WorkTreeSelect, type WorkOption } from '../components/WorkTreeSelect';
 import { formatLocationsLabel, type ZoneNode } from '../components/location';
 import type { SelectionMode, AssignLocation } from './useSmetaSelection';
+import { useIsPhone } from '../../../hooks/useMediaQuery';
 
 interface SmetaSelectionToolbarProps {
   editable: boolean;
@@ -82,12 +83,14 @@ export function SmetaSelectionToolbar({
   onCollapseStep,
 }: SmetaSelectionToolbarProps) {
   const [actionsOpen, setActionsOpen] = useState(false); // поповер «Действия»
+  // Телефон: кнопки без текста (иконка + Tooltip), короткие счётчики — иначе тулбар распирает экран.
+  const isPhone = useIsPhone();
 
   return (
-    <Space size={2} style={{ marginLeft: 'auto' }}>
+    <Space size={2} wrap={isPhone} style={{ marginLeft: 'auto', justifyContent: 'flex-end' }}>
       {editable && mode === 'reassign' && (
         <Space size={6} style={{ marginRight: 4 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {selectedMaterialCount}</span>
+          <span style={{ fontSize: 12.5, color: '#595959' }}>{isPhone ? selectedMaterialCount : `Выбрано: ${selectedMaterialCount}`}</span>
           <Popover
             trigger="click"
             title="Перенести материалы к работе"
@@ -95,15 +98,17 @@ export function SmetaSelectionToolbar({
               <WorkTreeSelect works={allWorks} disabled={reassigning} onPick={onBulkReassign} />
             }
           >
-            <Button
-              type="primary"
-              size="small"
-              icon={<SwapOutlined />}
-              disabled={selectedMaterialCount === 0 || reassigning}
-              loading={reassigning}
-            >
-              Перенести
-            </Button>
+            <Tooltip title={isPhone ? 'Перенести' : undefined}>
+              <Button
+                type="primary"
+                size="small"
+                icon={<SwapOutlined />}
+                disabled={selectedMaterialCount === 0 || reassigning}
+                loading={reassigning}
+              >
+                {isPhone ? null : 'Перенести'}
+              </Button>
+            </Tooltip>
           </Popover>
           <Button size="small" disabled={reassigning} onClick={onCancelSelection}>
             Отмена
@@ -112,7 +117,7 @@ export function SmetaSelectionToolbar({
       )}
       {editable && mode === 'copy' && (
         <Space size={6} style={{ marginRight: 4 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {selectedMaterialCount}</span>
+          <span style={{ fontSize: 12.5, color: '#595959' }}>{isPhone ? selectedMaterialCount : `Выбрано: ${selectedMaterialCount}`}</span>
           <Popover
             trigger="click"
             title="Копировать материалы в работу"
@@ -120,15 +125,17 @@ export function SmetaSelectionToolbar({
               <WorkTreeSelect works={allWorks} disabled={copying} onPick={onBulkCopy} />
             }
           >
-            <Button
-              type="primary"
-              size="small"
-              icon={<SnippetsOutlined />}
-              disabled={selectedMaterialCount === 0 || copying}
-              loading={copying}
-            >
-              Копировать
-            </Button>
+            <Tooltip title={isPhone ? 'Копировать' : undefined}>
+              <Button
+                type="primary"
+                size="small"
+                icon={<SnippetsOutlined />}
+                disabled={selectedMaterialCount === 0 || copying}
+                loading={copying}
+              >
+                {isPhone ? null : 'Копировать'}
+              </Button>
+            </Tooltip>
           </Popover>
           <Button size="small" disabled={copying} onClick={onCancelSelection}>
             Отмена
@@ -137,17 +144,19 @@ export function SmetaSelectionToolbar({
       )}
       {editable && mode === 'delete' && (
         <Space size={6} style={{ marginRight: 4 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>Выбрано: {deleteCount}</span>
-          <Button
-            danger
-            size="small"
-            icon={<DeleteOutlined />}
-            disabled={deleteCount === 0 || deleting}
-            loading={deleting}
-            onClick={onBulkDelete}
-          >
-            Подтвердить удаление
-          </Button>
+          <span style={{ fontSize: 12.5, color: '#595959' }}>{isPhone ? deleteCount : `Выбрано: ${deleteCount}`}</span>
+          <Tooltip title={isPhone ? 'Подтвердить удаление' : undefined}>
+            <Button
+              danger
+              size="small"
+              icon={<DeleteOutlined />}
+              disabled={deleteCount === 0 || deleting}
+              loading={deleting}
+              onClick={onBulkDelete}
+            >
+              {isPhone ? 'Удалить' : 'Подтвердить удаление'}
+            </Button>
+          </Tooltip>
           <Button size="small" disabled={deleting} onClick={onCancelSelection}>
             Отмена
           </Button>
@@ -155,22 +164,32 @@ export function SmetaSelectionToolbar({
       )}
       {editable && mode === 'replicate' && (
         <Space size={6} style={{ marginRight: 4 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>Шаблон: {selectedWorkCount}</span>
-          <Button
-            type="primary"
-            size="small"
-            icon={<CopyOutlined />}
-            disabled={selectedWorkCount === 0}
-            onClick={onOpenReplicate}
-          >
-            Копировать работы
-          </Button>
+          <span style={{ fontSize: 12.5, color: '#595959' }}>{isPhone ? selectedWorkCount : `Шаблон: ${selectedWorkCount}`}</span>
+          <Tooltip title={isPhone ? 'Копировать работы' : undefined}>
+            <Button
+              type="primary"
+              size="small"
+              icon={<CopyOutlined />}
+              disabled={selectedWorkCount === 0}
+              onClick={onOpenReplicate}
+            >
+              {isPhone ? 'Копировать' : 'Копировать работы'}
+            </Button>
+          </Tooltip>
           <Button size="small" onClick={onCancelSelection}>Отмена</Button>
         </Space>
       )}
       {editable && mode === 'assignloc' && (
         <Space size={6} style={{ marginRight: 4 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>
+          <span
+            style={{
+              fontSize: 12.5,
+              color: '#595959',
+              ...(isPhone
+                ? { maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }
+                : {}),
+            }}
+          >
             {[
               assignLoc?.zoneId || assignLoc?.floors.length
                 ? formatLocationsLabel([{ zoneId: assignLoc?.zoneId ?? null, floors: assignLoc?.floors ?? [] }], zoneRoots)
@@ -179,7 +198,7 @@ export function SmetaSelectionToolbar({
             ]
               .filter(Boolean)
               .join(' · ') || '—'}
-            {' · '}Выбрано: {selectedWorkCount}
+            {' · '}{isPhone ? selectedWorkCount : `Выбрано: ${selectedWorkCount}`}
           </span>
           <Popconfirm
             title="Копировать параметры"
@@ -196,7 +215,7 @@ export function SmetaSelectionToolbar({
               disabled={selectedWorkCount === 0 || assigning}
               loading={assigning}
             >
-              Применить к {selectedWorkCount} работам
+              {isPhone ? `Применить (${selectedWorkCount})` : `Применить к ${selectedWorkCount} работам`}
             </Button>
           </Popconfirm>
           <Button size="small" disabled={assigning} onClick={onCancelSelection}>Отмена</Button>
@@ -208,10 +227,11 @@ export function SmetaSelectionToolbar({
             type="text"
             size="small"
             icon={<FileExcelOutlined />}
+            aria-label="Экспорт в Excel"
             loading={exporting}
             onClick={onExportKp}
           >
-            Экспорт в Excel
+            {isPhone ? null : 'Экспорт в Excel'}
           </Button>
         </Tooltip>
       )}
@@ -282,8 +302,8 @@ export function SmetaSelectionToolbar({
             </Space>
           }
         >
-          <Button type="text" size="small" icon={<MoreOutlined />}>
-            Действия
+          <Button type="text" size="small" icon={<MoreOutlined />} aria-label="Действия">
+            {isPhone ? null : 'Действия'}
           </Button>
         </Popover>
       )}

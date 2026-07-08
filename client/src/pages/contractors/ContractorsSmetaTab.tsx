@@ -373,7 +373,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
                 {g.costTypeName ?? 'Без вида работ'}
               </strong>
             </Space>
-            <Table<EstimateItem> rowKey="id" size="small" pagination={false} dataSource={g.works} columns={myColumns} />
+            <Table<EstimateItem> rowKey="id" size="small" pagination={false} dataSource={g.works} columns={myColumns} scroll={{ x: 640 }} />
           </div>
         ))}
         </Space>
@@ -385,7 +385,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
   return (
     <div className="contractors-smeta" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ flexShrink: 0, marginBottom: 12 }}>
-        <Space wrap>
+        <Space wrap className="estimat-toolbar">
           <Checkbox checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)}>
             Только с нераспределённым объёмом
           </Checkbox>

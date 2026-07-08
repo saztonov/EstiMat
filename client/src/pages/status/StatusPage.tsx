@@ -73,7 +73,7 @@ export function StatusPage() {
         padding: 16,
       }}
     >
-      <Card style={{ width: 440, textAlign: 'center' }}>
+      <Card style={{ width: '100%', maxWidth: 440, textAlign: 'center' }}>
         {status === 'unknown' ? (
           <div style={{ padding: '32px 0' }}>
             <Spin size="large" />

@@ -4,6 +4,7 @@ import { Card, Row, Col, Input, Select, Empty, Spin, Space, Button, Modal, Toolt
 import { SearchOutlined, BarChartOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api, assetUrl } from '../../services/api';
+import { modalWidth } from '../../lib/modalWidth';
 import { BuildingsIcon } from '../../components/shared/BuildingsIcon';
 import { placeholderCover } from '../../components/shared/placeholderCover';
 import { LocationBuilder } from '../projects/LocationBuilder';
@@ -88,7 +89,7 @@ export function EstimatesPage() {
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
       styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto' } }}
     >
-      <Space style={{ marginBottom: 16 }} wrap>
+      <Space className="estimat-toolbar" style={{ marginBottom: 16 }} wrap>
         <Input
           allowClear
           prefix={<SearchOutlined />}
@@ -196,7 +197,7 @@ export function EstimatesPage() {
         open={!!statsProjectId}
         onCancel={() => setStatsProjectId(null)}
         footer={null}
-        width={720}
+        width={modalWidth(720)}
         style={{ top: 40 }}
       >
         {statsProjectId && <ProjectStats projectId={statsProjectId} />}
@@ -207,7 +208,7 @@ export function EstimatesPage() {
         open={!!ciphersProjectId}
         onCancel={() => setCiphersProjectId(null)}
         footer={null}
-        width={560}
+        width={modalWidth(560)}
         style={{ top: 40 }}
       >
         {ciphersProjectId && <CiphersModal projectId={ciphersProjectId} />}
@@ -218,7 +219,7 @@ export function EstimatesPage() {
         open={allStatsOpen}
         onCancel={() => setAllStatsOpen(false)}
         footer={null}
-        width={1082}
+        width={modalWidth(1082)}
         style={{ top: 40 }}
       >
         <AllProjectsStats enabled={allStatsOpen} />

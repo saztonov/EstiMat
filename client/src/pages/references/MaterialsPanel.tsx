@@ -117,7 +117,7 @@ export function MaterialsPanel() {
       <Space style={{ marginBottom: 16, flexShrink: 0 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Добавить</Button>
       </Space>
-      <Table rowKey="id" columns={columns} dataSource={materials?.data} loading={isLoading} scroll={{ y: 'flex' }} pagination={DEFAULT_PAGINATION} />
+      <Table rowKey="id" columns={columns} dataSource={materials?.data} loading={isLoading} scroll={{ x: 900, y: 'flex' }} pagination={DEFAULT_PAGINATION} />
 
       <Modal
         title={editingId ? 'Редактирование материала' : 'Новый материал'}

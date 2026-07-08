@@ -99,7 +99,7 @@ export function ProjectsPanel() {
         columns={columns}
         dataSource={data?.data}
         loading={isLoading}
-        scroll={{ y: 'flex' }}
+        scroll={{ x: 700, y: 'flex' }}
         pagination={DEFAULT_PAGINATION}
         onRow={(record) => ({ onClick: () => navigate(`/projects/${record.id}`) })}
         style={{ cursor: 'pointer' }}
