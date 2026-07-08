@@ -119,6 +119,30 @@ export async function buildApp() {
   // Регистрируется до роутов, которые публикуют события.
   await app.register(import('./plugins/realtime.js'));
 
+  // Глобальный обработчик ошибок. Хендлеры используют schema.parse(request.body)
+  // без try/catch. ВАЖНО: setErrorHandler должен вызываться ДО регистрации роутов —
+  // роут захватывает обработчик своего контекста в момент регистрации, и хендлер,
+  // поставленный после, для него не срабатывает (ZodError уходил бы дефолтом как 500).
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    if (error instanceof ZodError) {
+      const message = error.issues
+        .map((i) => `${i.path.join('.') || 'поле'}: ${i.message}`)
+        .join('; ');
+      return reply.status(400).send({ error: message });
+    }
+    // Нарушение уникальности PostgreSQL (unique_violation) — страховка от гонки
+    // check-then-insert: параллельные запросы проходят прекек, но упираются в UNIQUE-индекс.
+    if ((error as { code?: string }).code === '23505') {
+      return reply.status(409).send({ error: 'Запись с такими данными уже существует' });
+    }
+    // Клиентские ошибки (rate-limit 429, и пр.) — отдаём как есть с тем же статусом.
+    if (error.statusCode && error.statusCode < 500) {
+      return reply.status(error.statusCode).send({ error: error.message });
+    }
+    request.log.error({ err: error }, 'Необработанная ошибка');
+    return reply.status(500).send({ error: 'Внутренняя ошибка сервера' });
+  });
+
   // Routes
   await app.register(import('./routes/auth/index.js'), { prefix: '/api/auth' });
   await app.register(import('./routes/organizations/index.js'), { prefix: '/api/organizations' });
@@ -153,28 +177,6 @@ export async function buildApp() {
   });
   // Совместимость со старым health-check — без rate-limit (его дёргает мониторинг).
   app.get('/api/health', { config: { rateLimit: false } }, async () => ({ status: 'ok' }));
-
-  // Глобальный обработчик ошибок. Хендлеры используют schema.parse(request.body)
-  // без try/catch — без этого хука ZodError уходил бы в дефолт Fastify как 500.
-  app.setErrorHandler((error: FastifyError, request, reply) => {
-    if (error instanceof ZodError) {
-      const message = error.issues
-        .map((i) => `${i.path.join('.') || 'поле'}: ${i.message}`)
-        .join('; ');
-      return reply.status(400).send({ error: message });
-    }
-    // Нарушение уникальности PostgreSQL (unique_violation) — страховка от гонки
-    // check-then-insert: параллельные запросы проходят прекек, но упираются в UNIQUE-индекс.
-    if ((error as { code?: string }).code === '23505') {
-      return reply.status(409).send({ error: 'Запись с такими данными уже существует' });
-    }
-    // Клиентские ошибки (rate-limit 429, и пр.) — отдаём как есть с тем же статусом.
-    if (error.statusCode && error.statusCode < 500) {
-      return reply.status(error.statusCode).send({ error: error.message });
-    }
-    request.log.error({ err: error }, 'Необработанная ошибка');
-    return reply.status(500).send({ error: 'Внутренняя ошибка сервера' });
-  });
 
   return app;
 }

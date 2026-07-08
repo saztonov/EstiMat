@@ -73,10 +73,10 @@ export default async function materialRoutes(fastify: FastifyInstance) {
   // GET /api/materials
   fastify.get('/', async (request) => {
     const { groupId } = request.query as { groupId?: string };
-    let query = 'SELECT mc.*, mg.name as group_name FROM material_catalog mc LEFT JOIN material_groups mg ON mc.group_id = mg.id';
+    let query = 'SELECT mc.*, mg.name as group_name FROM material_catalog mc LEFT JOIN material_groups mg ON mc.group_id = mg.id WHERE mc.is_active';
     const values: string[] = [];
     if (groupId) {
-      query += ' WHERE mc.group_id = $1';
+      query += ' AND mc.group_id = $1';
       values.push(groupId);
     }
     query += ' ORDER BY mc.name';
@@ -128,5 +128,16 @@ export default async function materialRoutes(fastify: FastifyInstance) {
     );
     if (rows.length === 0) return reply.status(404).send({ error: 'Материал не найден' });
     return { data: rows[0] };
+  });
+
+  // DELETE /api/materials/:id (мягкое удаление: is_active=false — жёсткий DELETE
+  // каскадом удалил бы материал из состава работ, rate_materials ON DELETE CASCADE)
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+    const { rowCount } = await fastify.pool.query(
+      'UPDATE material_catalog SET is_active = false WHERE id = $1',
+      [request.params.id],
+    );
+    if (rowCount === 0) return reply.status(404).send({ error: 'Материал не найден' });
+    return { success: true };
   });
 }

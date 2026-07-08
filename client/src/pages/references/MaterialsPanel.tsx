@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, App } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, App, Popconfirm } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { UnitSelect } from '../../components/UnitSelect';
@@ -44,6 +44,16 @@ export function MaterialsPanel() {
     onError: (err: Error) => message.error(err.message),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/materials/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['materials'] });
+      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
+      message.success('Материал удалён');
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
   const openCreate = () => {
     setEditingId(null);
     form.resetFields();
@@ -70,7 +80,9 @@ export function MaterialsPanel() {
   };
 
   const onSubmit = (values: Record<string, unknown>) => {
-    if (editingId) updateMutation.mutate({ id: editingId, values });
+    // Очистка группы через allowClear даёт undefined — поле выпадает из JSON
+    // и группа не снимается; нормализуем в null.
+    if (editingId) updateMutation.mutate({ id: editingId, values: { ...values, groupId: values.groupId ?? null } });
     else createMutation.mutate(values);
   };
 
@@ -88,9 +100,14 @@ export function MaterialsPanel() {
     { title: 'Описание', dataIndex: 'description', ellipsis: true },
     {
       title: '',
-      width: 80,
+      width: 90,
       render: (_: unknown, row: Record<string, unknown>) => (
-        <Button type="link" onClick={() => openEdit(row)}>Изменить</Button>
+        <Space>
+          <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(row)} />
+          <Popconfirm title="Удалить материал?" onConfirm={() => deleteMutation.mutate(row.id as string)}>
+            <Button type="text" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
