@@ -10,6 +10,13 @@ export interface ChangelogEntry {
 /** Новые версии добавляются В НАЧАЛО массива. Текущая версия = CHANGELOG[0]. */
 export const CHANGELOG: readonly [ChangelogEntry, ...ChangelogEntry[]] = [
   {
+    version: '0.27',
+    date: '2026-07-08',
+    changes: [
+      'Столбцы «Цена» и «Сумма» в смете по умолчанию скрыты — включить их можно в настройке столбцов (шестерёнка над таблицей)',
+    ],
+  },
+  {
     version: '0.26',
     date: '2026-07-08',
     changes: [

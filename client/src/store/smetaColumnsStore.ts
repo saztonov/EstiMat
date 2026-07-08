@@ -27,6 +27,14 @@ const DEFAULT_ORDER = SMETA_COLUMN_DEFS.map((d) => d.key);
 const KNOWN = new Set(DEFAULT_ORDER);
 const REQUIRED = new Set(SMETA_COLUMN_DEFS.filter((d) => d.required).map((d) => d.key));
 
+// Денежные колонки по умолчанию скрыты (и на десктопе, и на мобильном) — включаются
+// пользователем в настройке столбцов; явный выбор сохраняется.
+const DEFAULT_HIDDEN: Record<string, boolean> = { unit_price: true, total: true };
+
+/** Дефолты видимости для телефона (<768px): применяются только пока пользователь
+ *  не задал явного значения (см. resolveColumnPrefs). */
+export const PHONE_HIDDEN_DEFAULTS: Record<string, boolean> = { location: true, comments: true };
+
 interface SmetaColumnsState {
   hidden: Record<string, boolean>;
   order: string[];
@@ -38,13 +46,23 @@ interface SmetaColumnsState {
 export const useSmetaColumnsStore = create<SmetaColumnsState>()(
   persist(
     (set) => ({
-      hidden: {},
+      hidden: { ...DEFAULT_HIDDEN },
       order: DEFAULT_ORDER,
       setHidden: (key, hidden) => set((s) => ({ hidden: { ...s.hidden, [key]: hidden } })),
       setOrder: (order) => set({ order }),
-      reset: () => set({ hidden: {}, order: [...DEFAULT_ORDER] }),
+      reset: () => set({ hidden: { ...DEFAULT_HIDDEN }, order: [...DEFAULT_ORDER] }),
     }),
-    { name: 'estimat:smeta-columns', version: 1 },
+    {
+      name: 'estimat:smeta-columns',
+      version: 2,
+      // v1→v2: денежные колонки скрываются один раз даже у пользователей с сохранённой
+      // настройкой; повторное включение пишет явное false и больше не мигрируется.
+      migrate: (persisted, version) => {
+        const s = (persisted ?? {}) as Partial<Pick<SmetaColumnsState, 'hidden' | 'order'>>;
+        if (version < 2) return { ...s, hidden: { ...s.hidden, ...DEFAULT_HIDDEN } };
+        return s;
+      },
+    },
   ),
 );
 
@@ -57,12 +75,19 @@ export interface ColumnPrefs {
 
 // Нормализация persisted-настроек: выкинуть неизвестные ключи, дописать новые (появившиеся
 // в SMETA_COLUMN_DEFS) в конец, required-колонки считать видимыми даже если помечены hidden.
-export function resolveColumnPrefs(order: string[], hidden: Record<string, boolean>): ColumnPrefs {
+// viewportDefaults — дефолты видимости для текущего устройства (например, телефона):
+// действуют только для колонок без явного пользовательского значения.
+export function resolveColumnPrefs(
+  order: string[],
+  hidden: Record<string, boolean>,
+  viewportDefaults?: Record<string, boolean>,
+): ColumnPrefs {
   const seen = new Set<string>();
   const norm: string[] = [];
   for (const k of order) if (KNOWN.has(k) && !seen.has(k)) { norm.push(k); seen.add(k); }
   for (const k of DEFAULT_ORDER) if (!seen.has(k)) { norm.push(k); seen.add(k); }
   const effHidden: Record<string, boolean> = {};
-  for (const k of norm) effHidden[k] = REQUIRED.has(k) ? false : !!hidden[k];
+  for (const k of norm)
+    effHidden[k] = REQUIRED.has(k) ? false : (hidden[k] ?? viewportDefaults?.[k] ?? false);
   return { order: norm, hidden: effHidden };
 }
