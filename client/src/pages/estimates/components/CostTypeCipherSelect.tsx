@@ -58,8 +58,8 @@ export function CostTypeCipherSelect({ estimateId, projectId, costTypeId, value,
       mode="multiple"
       size="small"
       placeholder="Шифры РД"
-      style={{ minWidth: 160, maxWidth: 320 }}
-      maxTagCount="responsive"
+      style={{ minWidth: 160, maxWidth: 480 }}
+      maxTagCount={3}
       value={value.map((c) => c.id)}
       options={options}
       onChange={(ids) => mutation.mutate(ids)}
