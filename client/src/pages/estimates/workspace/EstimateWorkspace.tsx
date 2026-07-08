@@ -1,11 +1,10 @@
-import { useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { Splitter } from 'antd';
 import { RobotOutlined, LeftOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { WorkspaceToolbar } from './WorkspaceToolbar';
 import { SmetaPanel } from './SmetaPanel';
 import { ReferencesPanel } from './ReferencesPanel';
 import { AiChatPanel } from './AiChatPanel';
-import { EstimateHistoryDrawer } from './EstimateHistoryDrawer';
 import { useWorkspaceLayoutStore, type PanelId } from '../../../store/workspaceLayoutStore';
 import type { SaveWorkPayload, SaveMaterialPayload } from '../components/types';
 import type { ReplicateTargets } from '../components/ReplicateWorksModal';
@@ -130,7 +129,6 @@ export function EstimateWorkspace(props: Props) {
   const { estimate, groups, orgs, totalItems, groupCount } = props;
   const { visibility, aiExpanded, refsExpanded, colSizes, setColSizes, setAiExpanded, setRefsExpanded } =
     useWorkspaceLayoutStore();
-  const [historyOpen, setHistoryOpen] = useState(false);
 
   // Состав видимых колонок: смета всегда; справочники и ИИ — по тумблерам.
   const panels: { id: PanelId; node: ReactNode; min: number; fb: string }[] = [
@@ -203,13 +201,6 @@ export function EstimateWorkspace(props: Props) {
         totalItems={totalItems}
         groupCount={groupCount}
         onBack={props.onBack}
-        onHistory={() => setHistoryOpen(true)}
-      />
-
-      <EstimateHistoryDrawer
-        estimateId={estimate.id}
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
       />
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: '6px 6px', background: '#f5f5f5' }}>

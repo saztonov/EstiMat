@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Badge, Button, Popover, Switch, Tooltip, Typography } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -11,13 +11,13 @@ import {
 import type { EstimateDetail } from '../components/types';
 import { formatMoney } from '../components/types';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
+import { VersionHistoryDrawer } from './VersionHistoryDrawer';
 
 interface Props {
   estimate: EstimateDetail;
   totalItems: number;
   groupCount: number;
   onBack: () => void;
-  onHistory: () => void;
 }
 
 // Строка-переключатель области внутри поповера «Панели»
@@ -48,8 +48,8 @@ export function WorkspaceToolbar({
   totalItems,
   groupCount,
   onBack,
-  onHistory,
 }: Props) {
+  const [versionsOpen, setVersionsOpen] = useState(false);
   const { visibility, toggleArea } = useWorkspaceLayoutStore();
   const title = estimate.work_type || 'Смета';
   // Сметная часть всегда включена (+1); ИИ и Справочники — по тумблерам.
@@ -91,9 +91,15 @@ export function WorkspaceToolbar({
 
       <span style={{ flex: 1 }} />
 
-      <Tooltip title="История изменений">
-        <Button type="text" icon={<HistoryOutlined />} onClick={onHistory} />
+      <Tooltip title="История версий">
+        <Button
+          type="text"
+          icon={<HistoryOutlined />}
+          aria-label="История версий"
+          onClick={() => setVersionsOpen(true)}
+        />
       </Tooltip>
+      <VersionHistoryDrawer open={versionsOpen} onClose={() => setVersionsOpen(false)} />
 
       <span style={{ width: 1, height: 22, background: '#f0f0f0', margin: '0 2px' }} />
 
