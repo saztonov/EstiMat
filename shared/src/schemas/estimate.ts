@@ -116,16 +116,24 @@ export const setEstimateItemsVolumeTypeSchema = z.object({
     .max(1000, 'Слишком много строк за одно переключение'),
 });
 
-// Массовое назначение одного местоположения набору выбранных работ (перезаписывает locations + зеркало).
-// locations — источник истины (одна запись {zoneId, floors}); очистка локации этой операцией не предусмотрена.
-export const bulkAssignEstimateItemsLocationSchema = z.object({
-  workIds: z
-    .array(z.string().uuid())
-    .min(1, 'Не выбрано ни одной работы')
-    .max(1000, 'Слишком много работ за одно назначение')
-    .transform((ids) => [...new Set(ids)]),
-  locations: z.array(locationEntrySchema).min(1, 'Не выбрано местоположение').max(100),
-});
+// Массовое копирование параметров на набор выбранных работ: местоположение (locations + зеркало)
+// и/или произвольный «тип» строки. Незаполненный параметр не передаётся и НЕ перезаписывается;
+// очистка локации/типа этой операцией не предусмотрена.
+export const bulkAssignEstimateItemsLocationSchema = z
+  .object({
+    workIds: z
+      .array(z.string().uuid())
+      .min(1, 'Не выбрано ни одной работы')
+      .max(1000, 'Слишком много работ за одно назначение')
+      .transform((ids) => [...new Set(ids)]),
+    // Присутствует → перезаписать координаты (одна запись {zoneId, floors}); отсутствует → не трогаем.
+    locations: z.array(locationEntrySchema).min(1, 'Не выбрано местоположение').max(100).optional(),
+    // Присутствует → upsert в project_location_types и перезапись типа; отсутствует → не трогаем.
+    locationTypeName: z.string().trim().min(1).max(100).optional(),
+  })
+  .refine((d) => d.locations !== undefined || d.locationTypeName !== undefined, {
+    message: 'Не задано ни местоположение, ни тип',
+  });
 
 // === Подрядчик на вид затрат (estimate + cost_type) ===
 export const setEstimateContractorSchema = z.object({

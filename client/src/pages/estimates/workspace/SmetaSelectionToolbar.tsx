@@ -171,13 +171,20 @@ export function SmetaSelectionToolbar({
       {editable && mode === 'assignloc' && (
         <Space size={6} style={{ marginRight: 4 }}>
           <span style={{ fontSize: 12.5, color: '#595959' }}>
-            Локация: {formatLocationsLabel([{ zoneId: assignLoc?.zoneId ?? null, floors: assignLoc?.floors ?? [] }], zoneRoots) || '—'}
+            {[
+              assignLoc?.zoneId || assignLoc?.floors.length
+                ? formatLocationsLabel([{ zoneId: assignLoc?.zoneId ?? null, floors: assignLoc?.floors ?? [] }], zoneRoots)
+                : '',
+              assignLoc?.locationTypeName ? `Тип: ${assignLoc.locationTypeName}` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ') || '—'}
             {' · '}Выбрано: {selectedWorkCount}
           </span>
           <Popconfirm
-            title="Назначить местоположение"
-            description="Перезаписать местоположение у выбранных работ?"
-            okText="Назначить"
+            title="Копировать параметры"
+            description="Перезаписать местоположение и/или тип у выбранных работ?"
+            okText="Применить"
             cancelText="Отмена"
             disabled={selectedWorkCount === 0 || assigning}
             onConfirm={onBulkAssign}
@@ -189,7 +196,7 @@ export function SmetaSelectionToolbar({
               disabled={selectedWorkCount === 0 || assigning}
               loading={assigning}
             >
-              Назначить {selectedWorkCount} работам
+              Применить к {selectedWorkCount} работам
             </Button>
           </Popconfirm>
           <Button size="small" disabled={assigning} onClick={onCancelSelection}>Отмена</Button>

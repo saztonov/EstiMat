@@ -14,6 +14,7 @@ import { buildCostTypeGroups, type CostTypeGroup, type EstimateDetail } from './
 import { useVolumeTypeQueue } from './hooks/useVolumeTypeQueue';
 import { EstimateWorkspace } from './workspace/EstimateWorkspace';
 import type { RateLeafPayload } from './workspace/types';
+import type { AssignLocation } from './workspace/useSmetaSelection';
 
 interface Organization {
   id: string;
@@ -63,14 +64,18 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     messageApi: message,
   });
 
-  // Текущий контекст добавления местоположения (с учётом флага «Добавлять в указанное
-  // местоположение»; читается на момент мутации, не из замыкания рендера).
-  // Точный набор этажей с разрывами → источник истины locations: [{zoneId, floors}].
+  // Текущий контекст добавления (с учётом флага «Добавлять в указанное местоположение»;
+  // читается на момент мутации, не из замыкания рендера). Параметры независимы («и/или»):
+  // местоположение → источник истины locations: [{zoneId, floors}]; тип → locationTypeName
+  // (работает и без зоны/этажей).
   const currentAddLocation = () => {
     const ctx = getEffectiveAddContext(estimateId);
     const floors = parseFloors(ctx.floorsText);
-    if (!ctx.zoneId && floors.length === 0) return {};
-    return { locations: [{ zoneId: ctx.zoneId, floors }] };
+    const locationTypeName = ctx.locationTypeName.trim();
+    const out: { locations?: { zoneId: string | null; floors: number[] }[]; locationTypeName?: string } = {};
+    if (ctx.zoneId || floors.length > 0) out.locations = [{ zoneId: ctx.zoneId, floors }];
+    if (locationTypeName) out.locationTypeName = locationTypeName;
+    return out;
   };
 
   const createWorkMutation = useMutation({
@@ -208,13 +213,25 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     onError: (e: Error) => message.error(e.message),
   });
 
-  // Массовое назначение одного местоположения выбранным работам (перезаписывает locations).
+  // Массовое копирование параметров (местоположение и/или тип) на выбранные работы.
+  // Незаполненный параметр не отправляется — сервер его не перезаписывает.
   const bulkAssignLocationMutation = useMutation({
-    mutationFn: ({ workIds, locations }: { workIds: string[]; locations: { zoneId: string | null; floors: number[] }[] }) =>
-      api.post<{ updated: number }>(`/estimates/${estimateId}/bulk-assign-location`, { workIds, locations }),
+    mutationFn: ({ workIds, assign }: { workIds: string[]; assign: AssignLocation }) => {
+      const body: {
+        workIds: string[];
+        locations?: { zoneId: string | null; floors: number[] }[];
+        locationTypeName?: string;
+      } = { workIds };
+      if (assign.zoneId !== null || assign.floors.length > 0)
+        body.locations = [{ zoneId: assign.zoneId, floors: assign.floors }];
+      if (assign.locationTypeName) body.locationTypeName = assign.locationTypeName;
+      return api.post<{ updated: number }>(`/estimates/${estimateId}/bulk-assign-location`, body);
+    },
     onSuccess: (res) => {
       invalidate();
-      message.success(`Местоположение назначено: работ ${res.updated}`);
+      // Новый тип мог появиться — обновляем подсказки автодополнения.
+      queryClient.invalidateQueries({ queryKey: ['project-location-types', projectId] });
+      message.success(`Параметры скопированы: работ ${res.updated}`);
     },
     onError: (e: Error) => message.error(e.message),
   });
@@ -412,8 +429,8 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
     [bulkDeleteMutation.mutateAsync],
   );
   const bulkAssignLocation = useCallback(
-    (workIds: string[], locations: { zoneId: string | null; floors: number[] }[]) =>
-      bulkAssignLocationMutation.mutateAsync({ workIds, locations }),
+    (workIds: string[], assign: AssignLocation) =>
+      bulkAssignLocationMutation.mutateAsync({ workIds, assign }),
     [bulkAssignLocationMutation.mutateAsync],
   );
   const replicate = useCallback(

@@ -57,7 +57,7 @@ interface Props {
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onCopyMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
-  onBulkAssignLocation: (workIds: string[], locations: AssignLocation[]) => Promise<unknown>;
+  onBulkAssignLocation: (workIds: string[], assign: AssignLocation) => Promise<unknown>;
   onReplicate: (sourceWorkIds: string[], targets: ReplicateTargets) => Promise<void>;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;
@@ -343,6 +343,7 @@ export function SmetaPanel({
             {editable && (
               <EstimateFilterSettingsPopover
                 estimateId={estimateId}
+                projectId={projectId}
                 zones={zonesData?.data.roots ?? []}
                 editable={editable}
                 onAssignLocation={canBulkDelete ? startAssignLocation : undefined}

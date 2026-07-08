@@ -7,8 +7,9 @@ import type { ReplicateTargets } from '../components/ReplicateWorksModal';
 // или назначение местоположения выбранным работам.
 export type SelectionMode = 'none' | 'reassign' | 'copy' | 'delete' | 'replicate' | 'assignloc';
 
-// Снапшот местоположения для массового назначения (фиксируется на старте режима assignloc).
-export type AssignLocation = { zoneId: string | null; floors: number[] };
+// Снапшот параметров (местоположение и/или тип) для массового копирования
+// (фиксируется на старте режима assignloc). locationTypeName: null — тип не задан, не менять.
+export type AssignLocation = { zoneId: string | null; floors: number[]; locationTypeName: string | null };
 
 // Режимы выбора с чекбоксами и все массовые операции сметы (перенос/копирование
 // материалов, удаление, тиражирование, назначение локации, ревью несогласованных).
@@ -26,7 +27,7 @@ export function useSmetaSelection({
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onCopyMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
-  onBulkAssignLocation: (workIds: string[], locations: AssignLocation[]) => Promise<unknown>;
+  onBulkAssignLocation: (workIds: string[], assign: AssignLocation) => Promise<unknown>;
   onReplicate: (sourceWorkIds: string[], targets: ReplicateTargets) => Promise<void>;
   onBulkConfirm: (workIds: string[], materialIds: string[]) => Promise<void>;
 }) {
@@ -82,7 +83,7 @@ export function useSmetaSelection({
     setMode('none');
   };
 
-  // Старт режима назначения местоположения: снапшот локации из поповера, чистый выбор работ.
+  // Старт режима копирования параметров: снапшот локации/типа из поповера, чистый выбор работ.
   const startAssignLocation = (loc: AssignLocation) => {
     setAssignLoc(loc);
     setSelectedIds(new Set());
@@ -90,12 +91,12 @@ export function useSmetaSelection({
     setMode('assignloc');
   };
 
-  // Назначение снапшота локации выбранным работам. Выделение сбрасываем только после успеха.
+  // Копирование снапшота параметров на выбранные работы. Выделение сбрасываем только после успеха.
   const handleBulkAssign = async () => {
     if (!assignLoc || selectedWorkIds.size === 0 || assigning) return;
     setAssigning(true);
     try {
-      await onBulkAssignLocation([...selectedWorkIds], [assignLoc]);
+      await onBulkAssignLocation([...selectedWorkIds], assignLoc);
       setSelectedWorkIds(new Set());
       setAssignLoc(null);
       setMode('none');

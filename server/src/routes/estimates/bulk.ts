@@ -129,35 +129,55 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
     },
   );
 
-  // POST /api/estimates/:id/bulk-assign-location — массово назначить одно местоположение выбранным работам.
-  // Перезаписывает locations (источник истины) + зеркало zone_id/floor_from/floor_to. Аудит — с before/after
-  // по каждой строке (diffChanges), чтобы история показывала старое и новое местоположение.
+  // POST /api/estimates/:id/bulk-assign-location — массово скопировать параметры на выбранные работы:
+  // местоположение (locations — источник истины + зеркало zone_id/floor_from/floor_to) и/или произвольный
+  // «тип» строки. Непереданный параметр не перезаписывается. Аудит — с before/after по каждой строке
+  // (diffChanges) только по реально обновляемым полям.
   fastify.post<{ Params: { id: string } }>(
     '/:id/bulk-assign-location',
     { preHandler: [requireRole('admin', 'engineer')] },
     async (request, reply) => {
       const eid = z.string().uuid().safeParse(request.params.id);
       if (!eid.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
-      const { workIds, locations } = bulkAssignEstimateItemsLocationSchema.parse(request.body);
-      const primary = deriveLegacyLocation(locations);
+      const { workIds, locations, locationTypeName } = bulkAssignEstimateItemsLocationSchema.parse(request.body);
 
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
+        // projectId нужен до UPDATE — для upsert-а «типа» в справочник типов объекта.
+        const projectId = await loadProjectId(client, eid.data);
+        const locationTypeId = locationTypeName !== undefined
+          ? await upsertLocationType(client, projectId, locationTypeName)
+          : undefined;
         const { rows: oldRows } = await client.query(
           'SELECT * FROM estimate_items WHERE estimate_id = $1 AND id = ANY($2::uuid[]) FOR UPDATE',
           [eid.data, workIds],
         );
         const oldById = new Map(oldRows.map((r) => [r.id as string, r]));
+        // Условная сборка SET: обновляем только переданные параметры.
+        const sets: string[] = [];
+        const params: unknown[] = [];
+        const bind = (v: unknown) => { params.push(v); return `$${params.length}`; };
+        if (locations) {
+          const primary = deriveLegacyLocation(locations);
+          sets.push(`locations = ${bind(JSON.stringify(locations))}::jsonb`);
+          sets.push(`zone_id = ${bind(primary.zoneId)}`);
+          sets.push(`floor_from = ${bind(primary.floorFrom)}`);
+          sets.push(`floor_to = ${bind(primary.floorTo)}`);
+        }
+        if (locationTypeName !== undefined) sets.push(`location_type_id = ${bind(locationTypeId)}`);
+        sets.push(`updated_by = ${bind(request.currentUser.id)}`);
         const { rows } = await client.query(
           `UPDATE estimate_items
-              SET locations = $1::jsonb, zone_id = $2, floor_from = $3, floor_to = $4, updated_by = $5
-            WHERE estimate_id = $6 AND id = ANY($7::uuid[])
+              SET ${sets.join(', ')}
+            WHERE estimate_id = ${bind(eid.data)} AND id = ANY(${bind(workIds)}::uuid[])
             RETURNING *`,
-          [JSON.stringify(locations), primary.zoneId, primary.floorFrom, primary.floorTo,
-           request.currentUser.id, eid.data, workIds],
+          params,
         );
-        const projectId = await loadProjectId(client, eid.data);
+        const auditFields = [
+          ...(locations ? ['locations', 'zone_id', 'floor_from', 'floor_to'] : []),
+          ...(locationTypeName !== undefined ? ['location_type_id'] : []),
+        ];
         const audits: AuditInput[] = rows.map((r) => ({
           estimateId: eid.data,
           projectId,
@@ -165,7 +185,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
           entityId: r.id as string,
           action: 'update',
           userId: request.currentUser.id,
-          changes: diffChanges(oldById.get(r.id as string)!, r, ['locations', 'zone_id', 'floor_from', 'floor_to']),
+          changes: diffChanges(oldById.get(r.id as string)!, r, auditFields),
         }));
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');

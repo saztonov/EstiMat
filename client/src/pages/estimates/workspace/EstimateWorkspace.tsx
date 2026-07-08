@@ -10,6 +10,7 @@ import type { SaveWorkPayload, SaveMaterialPayload } from '../components/types';
 import type { ReplicateTargets } from '../components/ReplicateWorksModal';
 import type { CostTypeGroup, EstimateDetail } from '../components/types';
 import type { RateLeafPayload } from './types';
+import type { AssignLocation } from './useSmetaSelection';
 
 interface Organization {
   id: string;
@@ -42,7 +43,7 @@ interface Props {
   onReassignMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onCopyMaterials: (materialIds: string[], itemId: string) => Promise<void>;
   onBulkDelete: (workIds: string[], materialIds: string[]) => Promise<unknown>;
-  onBulkAssignLocation: (workIds: string[], locations: { zoneId: string | null; floors: number[] }[]) => Promise<unknown>;
+  onBulkAssignLocation: (workIds: string[], assign: AssignLocation) => Promise<unknown>;
   onReplicate: (sourceWorkIds: string[], targets: ReplicateTargets) => Promise<void>;
   onSetContractor: (costTypeId: string, contractorId: string) => void;
   onClearContractor: (costTypeId: string) => void;

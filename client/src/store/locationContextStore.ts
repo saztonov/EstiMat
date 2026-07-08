@@ -1,17 +1,20 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-// Контекст добавления — одна зона + точный набор этажей, куда падают новые работы.
-// Этажи хранятся сырым текстом («-1-10, 12, 16-18»); пусто = весь корпус.
-// Тип помещения временно скрыт во всём локационном UX (roomTypeId не задаётся).
+// Контекст добавления — одна зона + точный набор этажей + произвольный «тип» строки,
+// которые падают на новые работы. Этажи хранятся сырым текстом («-1-10, 12, 16-18»);
+// пусто = весь корпус. Тип — сырой текст (upsert в project_location_types на сервере);
+// пусто = не задавать. Тип помещения временно скрыт во всём локационном UX (roomTypeId не задаётся).
 export interface LocationAddContext {
   zoneId: string | null;
   floorsText: string;
+  locationTypeName: string;
 }
 
 export const EMPTY_ADD_CONTEXT: LocationAddContext = {
   zoneId: null,
   floorsText: '',
+  locationTypeName: '',
 };
 
 interface LocationContextState {
@@ -59,14 +62,15 @@ export const useLocationContextStore = create<LocationContextState>()(
     }),
     {
       name: 'estimat:loc-ctx',
-      version: 2,
+      version: 3,
       // Персистим контекст добавления и флаг применения; фильтр — транзиентный.
       partialize: (s) => ({ byEstimate: s.byEstimate, addEnabled: s.addEnabled }),
-      // v1 хранил диапазон {floorFrom, floorTo}; v2 — текст этажей {floorsText}.
+      // v1 хранил диапазон {floorFrom, floorTo}; v2 — текст этажей {floorsText}; v3 добавил
+      // locationTypeName. Цепочка 1→3: дозаполнение типа применяется и к результату миграции v1.
       migrate: (persisted: unknown, fromVersion: number) => {
         const state = (persisted ?? {}) as { byEstimate?: Record<string, unknown>; addEnabled?: Record<string, boolean> };
         if (fromVersion < 2 && state.byEstimate) {
-          const migrated: Record<string, LocationAddContext> = {};
+          const migrated: Record<string, unknown> = {};
           for (const [id, raw] of Object.entries(state.byEstimate)) {
             const v = (raw ?? {}) as { zoneId?: string | null; floorFrom?: number | null; floorTo?: number | null };
             const from = v.floorFrom ?? null;
@@ -74,6 +78,14 @@ export const useLocationContextStore = create<LocationContextState>()(
             const floorsText =
               from == null && to == null ? '' : from === to ? `${from ?? to}` : `${from ?? to}-${to ?? from}`;
             migrated[id] = { zoneId: v.zoneId ?? null, floorsText };
+          }
+          state.byEstimate = migrated;
+        }
+        if (fromVersion < 3 && state.byEstimate) {
+          const migrated: Record<string, LocationAddContext> = {};
+          for (const [id, raw] of Object.entries(state.byEstimate)) {
+            const v = (raw ?? {}) as Partial<LocationAddContext>;
+            migrated[id] = { zoneId: v.zoneId ?? null, floorsText: v.floorsText ?? '', locationTypeName: v.locationTypeName ?? '' };
           }
           state.byEstimate = migrated;
         }
