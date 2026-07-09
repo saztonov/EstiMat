@@ -60,7 +60,7 @@ export function registerCostTypeCipherRoutes(fastify: FastifyInstance): void {
         if (cipherIds.length > 0) {
           await client.query(
             `INSERT INTO estimate_cost_type_ciphers (estimate_id, cost_type_id, cipher_id)
-             SELECT $1, $2, unnest($3::uuid[])`,
+             SELECT $1::uuid, $2::uuid, unnest($3::uuid[])`,
             [estimateId.data, costTypeId.data, cipherIds],
           );
         }

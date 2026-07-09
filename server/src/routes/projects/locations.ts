@@ -36,7 +36,7 @@ export function registerLocationRoutes(fastify: FastifyInstance): void {
     // «Улица» есть всегда: lazy-seed, если её ещё нет у объекта (идемпотентно).
     await fastify.pool.query(
       `INSERT INTO project_zones (project_id, name, kind, sort_order)
-       SELECT $1, 'Улица', 'street', 5
+       SELECT $1::uuid, 'Улица', 'street', 5
         WHERE NOT EXISTS (SELECT 1 FROM project_zones WHERE project_id = $1 AND kind = 'street')`,
       [request.params.id],
     );

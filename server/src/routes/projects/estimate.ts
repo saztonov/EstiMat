@@ -372,7 +372,7 @@ export function registerEstimateRoutes(fastify: FastifyInstance): void {
             await client.query('UPDATE estimate_materials SET estimate_id = $1 WHERE estimate_id = ANY($2)', [primaryId, others]);
             await client.query(
               `INSERT INTO estimate_contractors (estimate_id, cost_type_id, contractor_id)
-               SELECT $1, cost_type_id, contractor_id FROM estimate_contractors WHERE estimate_id = ANY($2)
+               SELECT $1::uuid, cost_type_id, contractor_id FROM estimate_contractors WHERE estimate_id = ANY($2::uuid[])
                ON CONFLICT (estimate_id, cost_type_id) DO NOTHING`,
               [primaryId, others],
             );

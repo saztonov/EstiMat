@@ -135,6 +135,11 @@ export async function buildApp() {
     if ((error as { code?: string }).code === '23505') {
       return reply.status(409).send({ error: 'Запись с такими данными уже существует' });
     }
+    // RAISE EXCEPTION из валидационных триггеров БД (validate_item_contractor и др.) —
+    // сообщения уже написаны для пользователя, отдаём как 400, а не «Внутренняя ошибка сервера».
+    if ((error as { code?: string }).code === 'P0001') {
+      return reply.status(400).send({ error: error.message });
+    }
     // Клиентские ошибки (rate-limit 429, и пр.) — отдаём как есть с тем же статусом.
     if (error.statusCode && error.statusCode < 500) {
       return reply.status(error.statusCode).send({ error: error.message });

@@ -330,9 +330,9 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
         const affectedEstimateIds = [...new Set(toUpsert.map((u) => u.estimateId))];
         await client.query(
           `INSERT INTO project_contractors (project_id, contractor_id, assigned_by)
-           SELECT DISTINCT e.project_id, $2, $3
+           SELECT DISTINCT e.project_id, $2::uuid, $3::uuid
              FROM estimates e
-            WHERE e.id = ANY($1) AND e.project_id IS NOT NULL
+            WHERE e.id = ANY($1::uuid[]) AND e.project_id IS NOT NULL
            ON CONFLICT (project_id, contractor_id) DO NOTHING`,
           [affectedEstimateIds, body.contractorId, userId],
         );
