@@ -12,7 +12,7 @@ interface UnitConflict {
   units: string[];
 }
 
-// Список конфликтов для модалки: две секции — материалы (БСМ) и работы (БСР).
+// Список конфликтов для модалки: две секции — материалы (лист МАТЕРИАЛЫ) и работы (лист РАБОТЫ).
 function UnitConflictList({ conflicts }: { conflicts: UnitConflict[] }) {
   const materials = conflicts.filter((c) => c.kind === 'material');
   const works = conflicts.filter((c) => c.kind === 'work');
@@ -34,8 +34,8 @@ function UnitConflictList({ conflicts }: { conflicts: UnitConflict[] }) {
   return (
     <div style={{ maxHeight: 320, overflowY: 'auto' }}>
       <div style={{ marginBottom: 8 }}>
-        У одинаковых наименований найдены разные единицы измерения. В справочники БСМ/БСР попадёт
-        первая встретившаяся единица.
+        У одинаковых наименований найдены разные единицы измерения. В справочники МАТЕРИАЛЫ/РАБОТЫ
+        попадёт первая встретившаяся единица.
       </div>
       {section('Материалы', materials)}
       {section('Работы', works)}
@@ -46,7 +46,7 @@ function UnitConflictList({ conflicts }: { conflicts: UnitConflict[] }) {
 // Экспорт в Excel-шаблон «КП»: выгружаем ровно те работы, что видны после фильтров.
 // Метку локации формируем тем же formatLocationsLabel, что и остальной UI (единый
 // источник форматирования); порядок и группировку по локации доделывает сервер.
-// Листы БСМ/БСР (уникальные материалы/работы) собирает сервер из того же набора строк;
+// Листы МАТЕРИАЛЫ/РАБОТЫ (уникальные материалы/работы) собирает сервер из того же набора строк;
 // при разных ед.изм. у одинаковых наименований он отвечает 409 с code EXPORT_UNIT_CONFLICTS —
 // показываем модалку с выбором «Пропустить и сохранить» (повтор с ignoreUnitConflicts) / «Отмена».
 export function useEstimateExport({

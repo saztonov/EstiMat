@@ -1,13 +1,14 @@
 // Заполнение шаблона «КП» данными сметы через ExcelJS.
 //
 // Стратегия — template-injection: шаблон (шапка, стили, merge, листы-справочники
-// БСМ/БСР, статичный «хвост» с условиями) берётся как скелет; переписывается ТОЛЬКО
+// МАТЕРИАЛЫ/РАБОТЫ, статичный «хвост» с условиями) берётся как скелет; переписывается ТОЛЬКО
 // динамическая таблица (строки локаций/работ/материалов) и строки ИТОГО/НДС. Формулы
 // строятся по индексу строки — ExcelJS сам ссылки не сдвигает. Число строк подгоняется
 // spliceRows, «хвост» уезжает блоком (merge сдвигаются корректно — проверено).
 //
 // Значения из БД: тип, наименование, ед.изм., объём, коэффициент. Цены (I/J) пустые —
-// их заполняет подрядчик; стоимости (K,L,M,N) и подытоги — живые формулы.
+// их заполняет подрядчик; стоимости (K,L,M,N) и подытоги — живые формулы. Название и адрес
+// объекта из справочника «Проекты» подставляются в шапку (C5/C6).
 
 import ExcelJS from 'exceljs';
 import { readFile } from 'node:fs/promises';
@@ -30,6 +31,7 @@ import {
   BSR_SHEET,
   REF_DATA_START_ROW,
   REF_COL,
+  REF_SUBTOTAL_STYLE_ROW,
 } from './layout.js';
 import type { ExportBlock } from './data.js';
 import type { ExportRefRow } from './references.js';
@@ -67,35 +69,105 @@ function applyRowStyle(row: ExcelJS.Row, styles: CellStyle[], maxCol: number = C
   }
 }
 
-// Заполнить лист-справочник (БСМ/БСР) уникальными строками: A=№, B=наименование, C=ед.изм.,
-// D — очистить (цену заполняет подрядчик; заодно убирается старый XLOOKUP из образца).
-// Не используем spliceRows (в шаблоне БСМ раздут rowCount, а splice ведёт себя ненадёжно):
-// стиль снимаем со строки-образца, пишем строки поверх, лишние старые строки-образцы чистим
-// по значению. Число образцовых строк определяем сканом сплошного блока наименований.
-function fillReferenceSheet(ws: ExcelJS.Worksheet, dataStartRow: number, rows: ExportRefRow[]): void {
-  const maxCol = REF_COL.price;
-  const styleRow = captureRowStyle(ws, dataStartRow, maxCol);
+interface MergeRect {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
 
-  // Последняя существующая строка данных — сплошной блок наименований от dataStartRow.
+// Буквы столбца → номер (A→1, O→15).
+function colToNum(letters: string): number {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n;
+}
+
+// Merge-диапазоны листа, начинающиеся со строки >= fromRow (для «хвоста»). Читаем внутреннюю
+// модель ExcelJS (публичного перечисления merge нет), парсим A1-нотацию «A66:O66».
+function collectMergesFrom(ws: ExcelJS.Worksheet, fromRow: number): MergeRect[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const raw: string[] = ((ws as any).model?.merges ?? []) as string[];
+  const rects: MergeRect[] = [];
+  for (const ref of raw) {
+    const m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(ref);
+    if (!m) continue;
+    const top = Number(m[2]);
+    if (top < fromRow) continue;
+    rects.push({ top, left: colToNum(m[1]!), bottom: Number(m[4]), right: colToNum(m[3]!) });
+  }
+  return rects;
+}
+
+// Заполнить лист-справочник (МАТЕРИАЛЫ/РАБОТЫ) уникальными строками:
+//   A=№, B=наименование, C=ед.изм.,
+//   D=Объём — SUMIFS из «КП» по наименованию с фильтром по коду (Работа/Мат), чтобы работа и
+//     материал с одинаковым именем не смешивались,
+//   E=Цена — пусто (заполняет подрядчик),
+//   F=ИТОГО — =E*D,
+//   G=Примечание — пусто;
+// после данных — строка-итог SUBTOTAL(9, F…) со стилем строки-образца.
+// Не используем spliceRows (в шаблоне rowCount раздут, splice ведёт себя ненадёжно): стили
+// (строки данных и строки-итога) снимаем ДО перезаписи, пишем строки поверх, лишние старые
+// строки-образцы (наименования + старый итог) чистим по значению.
+function fillReferenceSheet(
+  ws: ExcelJS.Worksheet,
+  dataStartRow: number,
+  rows: ExportRefRow[],
+  subtotalStyleRow: number,
+  code: string,
+): void {
+  const maxCol = REF_COL.note;
+  // Стили снимаем ДО записей: строку-итог могут перезаписать данные, если их много.
+  const dataStyle = captureRowStyle(ws, dataStartRow, maxCol);
+  const subtotalStyle = captureRowStyle(ws, subtotalStyleRow, maxCol);
+
+  // Последняя существующая строка данных — сплошной блок наименований от dataStartRow;
+  // старый итог (в нём наименование пусто) добавляем к границе очистки явно.
   let lastExisting = dataStartRow - 1;
   for (let r = dataStartRow; r < dataStartRow + 5000; r++) {
     const v = ws.getRow(r).getCell(REF_COL.name).value;
     if (v == null || String(v).trim() === '') break;
     lastExisting = r;
   }
+  lastExisting = Math.max(lastExisting, subtotalStyleRow);
+
+  const kpVol = colLetter(COL.volume); //  G — объём в «КП»
+  const kpName = colLetter(COL.name); //   D — наименование в «КП»
+  const kpCode = colLetter(COL.code); //   B — код (Работа/Мат) в «КП»
+  const refName = colLetter(REF_COL.name); //   B — наименование в справочнике
+  const refVol = colLetter(REF_COL.volume); //  D — объём
+  const refPrice = colLetter(REF_COL.price); //  E — цена
+  const refTotal = colLetter(REF_COL.total); //  F — итого
 
   rows.forEach((item, i) => {
-    const row = ws.getRow(dataStartRow + i);
-    applyRowStyle(row, styleRow, maxCol);
+    const rowNum = dataStartRow + i;
+    const row = ws.getRow(rowNum);
+    applyRowStyle(row, dataStyle, maxCol);
     row.getCell(REF_COL.num).value = i + 1;
     row.getCell(REF_COL.name).value = item.name;
     row.getCell(REF_COL.unit).value = item.unit ?? null;
-    row.getCell(REF_COL.price).value = null;
+    row.getCell(REF_COL.volume).value = {
+      formula: `SUMIFS(КП!${kpVol}:${kpVol},КП!${kpName}:${kpName},${refName}${rowNum},КП!${kpCode}:${kpCode},"${code}")`,
+    };
+    row.getCell(REF_COL.price).value = null; // цену заполняет подрядчик
+    row.getCell(REF_COL.total).value = { formula: `${refPrice}${rowNum}*${refVol}${rowNum}` };
+    row.getCell(REF_COL.note).value = null;
   });
 
-  // Очистить оставшиеся строки-образцы (значения) ниже записанных.
-  const lastWritten = dataStartRow + rows.length - 1;
-  for (let r = Math.max(dataStartRow, lastWritten + 1); r <= lastExisting; r++) {
+  // Строка-итог сразу за данными: заполнена только колонка F (=SUBTOTAL по стоимости).
+  const subtotalRow = dataStartRow + rows.length;
+  const sub = ws.getRow(subtotalRow);
+  applyRowStyle(sub, subtotalStyle, maxCol);
+  for (let c = 1; c <= maxCol; c++) sub.getCell(c).value = null;
+  if (rows.length) {
+    const first = dataStartRow;
+    const last = dataStartRow + rows.length - 1;
+    sub.getCell(REF_COL.total).value = { formula: `SUBTOTAL(9,${refTotal}${first}:${refTotal}${last})` };
+  }
+
+  // Очистить оставшиеся строки-образцы (значения) ниже строки-итога.
+  for (let r = subtotalRow + 1; r <= lastExisting; r++) {
     const row = ws.getRow(r);
     for (let c = 1; c <= maxCol; c++) row.getCell(c).value = null;
   }
@@ -107,24 +179,24 @@ const N = colLetter(COL.costTotal); // N
 const I = colLetter(COL.priceMat); //  I
 const J = colLetter(COL.priceSmr); //  J
 const G = colLetter(COL.volume); //   G — объём
-const D = colLetter(COL.name); //     D — наименование (ключ поиска в БСМ/БСР)
+const D = colLetter(COL.name); //     D — наименование (ключ поиска в МАТЕРИАЛЫ/РАБОТЫ)
 const REF_NAME_COL = colLetter(REF_COL.name); //  B — наименование в справочнике
-const REF_PRICE_COL = colLetter(REF_COL.price); // D — цена в справочнике
+const REF_PRICE_COL = colLetter(REF_COL.price); // E — цена в справочнике
 
-// XLOOKUP цены по наименованию (ячейка D{row}) в листе-справочнике sheet (БСМ/БСР), диапазон
-// данных REF_DATA_START_ROW..lastRow. 4-й аргумент 0 → «не найдено/не заполнено» = 0.
-// Префикс _xlfn. обязателен в XML для XLOOKUP.
-function refLookup(sheet: string, lastRow: number, row: number): string {
-  const first = REF_DATA_START_ROW;
-  const nameRange = `${sheet}!$${REF_NAME_COL}$${first}:$${REF_NAME_COL}$${lastRow}`;
-  const priceRange = `${sheet}!$${REF_PRICE_COL}$${first}:$${REF_PRICE_COL}$${lastRow}`;
-  return `_xlfn.XLOOKUP(${D}${row},${nameRange},${priceRange},0)`;
+// XLOOKUP цены по наименованию (ячейка D{row}) в листе-справочнике sheet (МАТЕРИАЛЫ/РАБОТЫ):
+// ищем в целом столбце наименований (B:B), возвращаем цену из столбца E:E. Аргументы 0,0,1 —
+// «не найдено» = 0, точное совпадение, поиск сверху вниз. Префикс _xlfn. обязателен в XML.
+function refLookup(sheet: string, row: number): string {
+  const nameRange = `${sheet}!${REF_NAME_COL}:${REF_NAME_COL}`;
+  const priceRange = `${sheet}!${REF_PRICE_COL}:${REF_PRICE_COL}`;
+  return `_xlfn.XLOOKUP(${D}${row},${nameRange},${priceRange},0,0,1)`;
 }
 
-/** Собрать .xlsx (Buffer): заполнить лист «КП» блоками и листы-справочники БСМ/БСР. */
+/** Собрать .xlsx (Buffer): заполнить лист «КП» блоками и листы-справочники МАТЕРИАЛЫ/РАБОТЫ. */
 export async function exportKpWorkbook(
   blocks: ExportBlock[],
   refs: { materials: ExportRefRow[]; works: ExportRefRow[] },
+  project: { name: string | null; address: string | null },
 ): Promise<Buffer> {
   const templateBuf = await readFile(resolveTemplatePath());
   const wb = new ExcelJS.Workbook();
@@ -133,7 +205,13 @@ export async function exportKpWorkbook(
   const ws = wb.getWorksheet(KP_SHEET);
   if (!ws) throw new Error(`В шаблоне нет листа «${KP_SHEET}»`);
 
-  // КП — активный лист по умолчанию (индекс 0). В шаблоне унаследован activeTab=2 (БСР) —
+  // Шапка формы: «Объект» (C5) и «Адрес объекта» (C6) — из справочника «Проекты». Ячейки в
+  // статичной шапке (выше таблицы), splice их не двигает; C5:D5/C6:D6 объединены — пишем в
+  // верхнюю-левую ячейку объединения.
+  ws.getCell('C5').value = project.name ?? null;
+  ws.getCell('C6').value = project.address ?? null;
+
+  // КП — активный лист по умолчанию (индекс 0). В шаблоне унаследован activeTab=2 (РАБОТЫ) —
   // переопределяем. activeTab (workbook) и tabSelected (пер-лист) в ExcelJS не синхронизированы,
   // поэтому вручную снимаем выделение со всех листов, кроме КП.
   wb.views = [{ x: 0, y: 0, width: 20000, height: 20000, firstSheet: 0, activeTab: 0, visibility: 'visible' }];
@@ -162,19 +240,32 @@ export async function exportKpWorkbook(
 
   // Подогнать число строк зоны под totalGen: хвост уедет вниз/вверх блоком.
   const delta = totalGen - DYN_TEMPLATE_ROWS;
+
+  // Merge-диапазоны «хвоста» (условия на всю ширину A:O) снимаем ДО сдвига строк и ставим заново
+  // со сдвигом на delta ПОСЛЕ. Иначе при УДАЛЕНИИ строк (delta<0) ExcelJS теряет эти merge и
+  // размножает текст условий по всем колонкам; сняв их заранее, splice двигает только значения.
+  const tailMerges = collectMergesFrom(ws, TAIL_START_ROW);
+  for (const m of tailMerges) {
+    try {
+      ws.unMergeCells(m.top, m.left, m.bottom, m.right);
+    } catch {
+      /* merge мог отсутствовать — ок */
+    }
+  }
+
   if (delta > 0) {
     ws.spliceRows(TAIL_START_ROW, 0, ...Array.from({ length: delta }, () => []));
   } else if (delta < 0) {
     ws.spliceRows(TABLE_START_ROW + totalGen, -delta);
   }
 
+  for (const m of tailMerges) {
+    ws.mergeCells(m.top + delta, m.left, m.bottom + delta, m.right);
+  }
+
   const setFormula = (row: ExcelJS.Row, col: number, formula: string) => {
     row.getCell(col).value = { formula };
   };
-
-  // Последние строки данных справочников — для диапазонов XLOOKUP.
-  const bsmLast = REF_DATA_START_ROW + refs.materials.length - 1; // БСМ (материалы)
-  const bsrLast = REF_DATA_START_ROW + refs.works.length - 1; //     БСР (работы)
 
   let r = TABLE_START_ROW;
   for (const block of blocks) {
@@ -224,9 +315,9 @@ export async function exportKpWorkbook(
         workRow = r;
         matFirst = 0;
         matLast = 0;
-        // Цена СМР (J) — XLOOKUP из БСР по наименованию; цена материалов (I) — SUMPRODUCT (позже);
-        // цена-итого и стоимости — живые формулы.
-        if (refs.works.length) setFormula(row, COL.priceSmr, refLookup(BSR_SHEET, bsrLast, r));
+        // Цена СМР (J) — XLOOKUP из «РАБОТЫ» по наименованию; цена материалов (I) — SUMPRODUCT
+        // (позже); цена-итого и стоимости — живые формулы.
+        if (refs.works.length) setFormula(row, COL.priceSmr, refLookup(BSR_SHEET, r));
         setFormula(row, COL.priceTotal, `SUM(${I}${r}:${J}${r})`);
         setFormula(row, COL.costMat, `${I}${r}*${G}${r}`);
         setFormula(row, COL.costSmr, `${J}${r}*${G}${r}`);
@@ -242,8 +333,8 @@ export async function exportKpWorkbook(
         }
       } else {
         row.getCell(COL.coef).value = item.coef ?? null;
-        // Цена материала (I) — XLOOKUP из БСМ по наименованию; J у материала пусто.
-        if (refs.materials.length) setFormula(row, COL.priceMat, refLookup(BSM_SHEET, bsmLast, r));
+        // Цена материала (I) — XLOOKUP из «МАТЕРИАЛЫ» по наименованию; J у материала пусто.
+        if (refs.materials.length) setFormula(row, COL.priceMat, refLookup(BSM_SHEET, r));
         if (!matFirst) matFirst = r;
         matLast = r;
       }
@@ -278,11 +369,12 @@ export async function exportKpWorkbook(
   ws.properties.outlineLevelRow = 2;
   ws.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
 
-  // Листы-справочники БСМ (материалы) и БСР (работы) — уникальные наименования с ед.изм.
+  // Листы-справочники МАТЕРИАЛЫ и РАБОТЫ — уникальные наименования с ед.изм., объёмом (SUMIFS
+  // из «КП») и строкой-итогом; код (Мат/Работа) фильтрует SUMIFS, цену вносит подрядчик.
   const bsm = wb.getWorksheet(BSM_SHEET);
-  if (bsm) fillReferenceSheet(bsm, REF_DATA_START_ROW, refs.materials);
+  if (bsm) fillReferenceSheet(bsm, REF_DATA_START_ROW, refs.materials, REF_SUBTOTAL_STYLE_ROW.materials, CODE_MATERIAL);
   const bsr = wb.getWorksheet(BSR_SHEET);
-  if (bsr) fillReferenceSheet(bsr, REF_DATA_START_ROW, refs.works);
+  if (bsr) fillReferenceSheet(bsr, REF_DATA_START_ROW, refs.works, REF_SUBTOTAL_STYLE_ROW.works, CODE_WORK);
 
   const out = await wb.xlsx.writeBuffer();
   return sanitizeXlsx(Buffer.from(out as ArrayBuffer));

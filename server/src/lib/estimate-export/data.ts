@@ -23,7 +23,7 @@ export class ExportError extends Error {
   }
 }
 
-/** Конфликт единиц измерения у одинаковых наименований (БСМ/БСР). Клиент показывает модалку. */
+/** Конфликт единиц измерения у одинаковых наименований (МАТЕРИАЛЫ/РАБОТЫ). Клиент показывает модалку. */
 export class ExportUnitConflictError extends ExportError {
   conflicts: ExportConflict[];
   constructor(conflicts: ExportConflict[]) {

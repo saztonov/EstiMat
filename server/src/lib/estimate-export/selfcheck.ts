@@ -1,5 +1,5 @@
 // Оффлайн-проверка writer'а без БД: заполняем шаблон фикстурой и пишем файл в temp/,
-// плюс проверяем дедуп БСМ/БСР и детект конфликтов единиц.
+// плюс проверяем дедуп МАТЕРИАЛЫ/РАБОТЫ и детект конфликтов единиц.
 // Запуск: npm run test:export -w server (npx tsx server/src/lib/estimate-export/selfcheck.ts)
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
@@ -11,6 +11,7 @@ import {
   BSM_SHEET,
   BSR_SHEET,
   REF_DATA_START_ROW,
+  REF_COL,
   KP_SHEET,
   COL,
   TABLE_START_ROW,
@@ -21,12 +22,15 @@ import {
 } from './layout.js';
 import type { ExportBlock } from './data.js';
 
+// Тестовый объект — проверяем автоподстановку названия/адреса в шапку (C5/C6).
+const PROJECT = { name: 'ЖК Тестовый', address: 'г. Москва, ул. Тестовая, д. 1' };
+
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(`selfcheck FAILED: ${msg}`);
 }
 
 // Фикстура: работа «Устройство стен из камня» (м2) и материал «Камень перегородочный» (м2)
-// повторяются в двух блоках — должны схлопнуться в БСР/БСМ до одной строки.
+// повторяются в двух блоках — должны схлопнуться в РАБОТЫ/МАТЕРИАЛЫ до одной строки.
 const blocks: ExportBlock[] = [
   {
     locationLabel: 'Корпус 2 · эт. 2-11',
@@ -48,8 +52,8 @@ const blocks: ExportBlock[] = [
 
 // 1) Дедуп без конфликтов: по 2 уникальных работы/материала, конфликтов нет.
 const ref = buildReferenceLists(blocks);
-assert(ref.materials.length === 2, `БСМ: ожидалось 2 уникальных материала, получено ${ref.materials.length}`);
-assert(ref.works.length === 2, `БСР: ожидалось 2 уникальных работы, получено ${ref.works.length}`);
+assert(ref.materials.length === 2, `МАТЕРИАЛЫ: ожидалось 2 уникальных материала, получено ${ref.materials.length}`);
+assert(ref.works.length === 2, `РАБОТЫ: ожидалось 2 уникальных работы, получено ${ref.works.length}`);
 assert(ref.conflicts.length === 0, `конфликтов быть не должно, получено ${ref.conflicts.length}`);
 
 // 2) Конфликт единиц: тот же материал с разными ед.изм. → конфликт; в списке берётся первая.
@@ -103,11 +107,16 @@ assert(
 assert(refC.materials.length === 1, `при пропуске конфликта материал схлопывается в 1 строку, получено ${refC.materials.length}`);
 assert(refC.materials[0]!.unit === 'м2', `берётся первая ед.изм. (м2), получено ${refC.materials[0]!.unit}`);
 
-// 3) Записываем файл и перечитываем: строк данных БСМ/БСР ровно столько же, стал. строк не осталось.
-const buf = await exportKpWorkbook(blocks, { materials: ref.materials, works: ref.works });
+// 3) Записываем файл и перечитываем: справочники МАТЕРИАЛЫ/РАБОТЫ переименованы (старых БСМ/БСР
+// нет), строк данных ровно столько же, есть формулы Объём (SUMIFS) / ИТОГО (=E*D) и строка-итог
+// (SUBTOTAL), после итога стал. строк не осталось.
+const buf = await exportKpWorkbook(blocks, { materials: ref.materials, works: ref.works }, PROJECT);
 const wb = new ExcelJS.Workbook();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 await wb.xlsx.load(buf as any);
+assert(BSM_SHEET === 'МАТЕРИАЛЫ' && BSR_SHEET === 'РАБОТЫ', 'листы-справочники должны называться МАТЕРИАЛЫ/РАБОТЫ');
+assert(!wb.getWorksheet('БСМ') && !wb.getWorksheet('БСР'), 'старые листы БСМ/БСР должны отсутствовать');
+const refFormula = (ws: ExcelJS.Worksheet, row: number, col: number): string => ws.getRow(row).getCell(col).formula ?? '';
 for (const [sheet, list] of [
   [BSM_SHEET, ref.materials],
   [BSR_SHEET, ref.works],
@@ -115,16 +124,26 @@ for (const [sheet, list] of [
   const ws = wb.getWorksheet(sheet);
   assert(!!ws, `в шаблоне нет листа «${sheet}»`);
   for (let i = 0; i < list.length; i++) {
-    const nameCell = ws!.getRow(REF_DATA_START_ROW + i).getCell(2).value;
-    assert(String(nameCell ?? '') === list[i]!.name, `${sheet}: строка ${REF_DATA_START_ROW + i} ожидалась «${list[i]!.name}», получено «${String(nameCell ?? '')}»`);
+    const rowNum = REF_DATA_START_ROW + i;
+    const nameCell = ws!.getRow(rowNum).getCell(REF_COL.name).value;
+    assert(String(nameCell ?? '') === list[i]!.name, `${sheet}: строка ${rowNum} ожидалась «${list[i]!.name}», получено «${String(nameCell ?? '')}»`);
+    assert(/SUMIFS/.test(refFormula(ws!, rowNum, REF_COL.volume)), `${sheet}: в Объёме (D${rowNum}) нет SUMIFS`);
+    assert(refFormula(ws!, rowNum, REF_COL.total).length > 0, `${sheet}: в ИТОГО (F${rowNum}) нет формулы =E*D`);
   }
-  const afterCell = ws!.getRow(REF_DATA_START_ROW + list.length).getCell(2).value;
-  assert(afterCell == null || String(afterCell) === '', `${sheet}: после данных остались стал. строки (B${REF_DATA_START_ROW + list.length} = «${String(afterCell)}»)`);
+  // Строка-итог сразу за данными: F = SUBTOTAL; наименование (B) пусто.
+  const subRow = REF_DATA_START_ROW + list.length;
+  assert(/SUBTOTAL/.test(refFormula(ws!, subRow, REF_COL.total)), `${sheet}: в строке-итоге (F${subRow}) нет SUBTOTAL`);
+  const afterCell = ws!.getRow(subRow + 1).getCell(REF_COL.name).value;
+  assert(afterCell == null || String(afterCell) === '', `${sheet}: после строки-итога остались стал. строки (B${subRow + 1} = «${String(afterCell)}»)`);
 }
 
 // 4) Лист КП: активный лист, уровни группировки, рамки J у материалов, формулы цен.
 const kp = wb.getWorksheet(KP_SHEET);
 assert(!!kp, 'нет листа КП');
+
+// 4.0) Автоподстановка шапки: «Объект» (C5) и «Адрес объекта» (C6) из справочника «Проекты».
+assert(String(kp!.getCell('C5').value ?? '') === PROJECT.name, `C5 (Объект): ожидалось «${PROJECT.name}», получено «${String(kp!.getCell('C5').value ?? '')}»`);
+assert(String(kp!.getCell('C6').value ?? '') === PROJECT.address, `C6 (Адрес): ожидалось «${PROJECT.address}», получено «${String(kp!.getCell('C6').value ?? '')}»`);
 
 // 4a) КП — активный лист (индекс 0), выделен только он. Проверяем по XML: ExcelJS при reload
 // НЕ отдаёт tabSelected в worksheet.views, поэтому читаем готовый файл напрямую.
@@ -132,10 +151,10 @@ const zip = await JSZip.loadAsync(buf);
 const wbXml = await zip.file('xl/workbook.xml')!.async('string');
 assert(/activeTab="0"/.test(wbXml), `activeTab не 0: ${wbXml.match(/<workbookView[^>]*>/)?.[0]}`);
 const sheet1 = await zip.file('xl/worksheets/sheet1.xml')!.async('string'); // КП
-const sheet2 = await zip.file('xl/worksheets/sheet2.xml')!.async('string'); // БСМ
-const sheet3 = await zip.file('xl/worksheets/sheet3.xml')!.async('string'); // БСР
+const sheet2 = await zip.file('xl/worksheets/sheet2.xml')!.async('string'); // МАТЕРИАЛЫ
+const sheet3 = await zip.file('xl/worksheets/sheet3.xml')!.async('string'); // РАБОТЫ
 assert(/tabSelected="1"/.test(sheet1), 'у листа КП (sheet1) нет tabSelected="1"');
-assert(!/tabSelected="1"/.test(sheet2) && !/tabSelected="1"/.test(sheet3), 'tabSelected остался у БСМ/БСР');
+assert(!/tabSelected="1"/.test(sheet2) && !/tabSelected="1"/.test(sheet3), 'tabSelected остался у МАТЕРИАЛЫ/РАБОТЫ');
 
 // 4b/c/d) обход строк динамической зоны: тип строки → ожидаемый outlineLevel, рамки, формулы.
 const totalGen = blocks.length + blocks.reduce((s, b) => s + b.rows.length, 0) + 2;
@@ -152,8 +171,8 @@ for (let row = TABLE_START_ROW; row <= lastRow; row++) {
     assert(rr.outlineLevel === 0, `строка ${row} (${name}): outlineLevel ${rr.outlineLevel}, ожидался 0`);
   } else if (code === CODE_WORK) {
     assert(rr.outlineLevel === 1, `работа (строка ${row}): outlineLevel ${rr.outlineLevel}, ожидался 1`);
-    // J (цена СМР) — XLOOKUP из БСР; K/L/M/N — формулы.
-    assert(/XLOOKUP/.test(formulaOf(row, COL.priceSmr)) && formulaOf(row, COL.priceSmr).includes(BSR_SHEET), `работа (строка ${row}): в J нет XLOOKUP на БСР`);
+    // J (цена СМР) — XLOOKUP из «РАБОТЫ»; K/L/M/N — формулы.
+    assert(/XLOOKUP/.test(formulaOf(row, COL.priceSmr)) && formulaOf(row, COL.priceSmr).includes(BSR_SHEET), `работа (строка ${row}): в J нет XLOOKUP на «РАБОТЫ»`);
     for (const c of [COL.priceTotal, COL.costMat, COL.costSmr, COL.costTotal]) {
       assert(formulaOf(row, c).length > 0, `работа (строка ${row}): нет формулы в колонке ${c}`);
     }
@@ -164,8 +183,8 @@ for (let row = TABLE_START_ROW; row <= lastRow; row++) {
     }
   } else if (code === CODE_MATERIAL) {
     assert(rr.outlineLevel === 2, `материал (строка ${row}): outlineLevel ${rr.outlineLevel}, ожидался 2`);
-    // I (цена материала) — XLOOKUP из БСМ.
-    assert(/XLOOKUP/.test(formulaOf(row, COL.priceMat)) && formulaOf(row, COL.priceMat).includes(BSM_SHEET), `материал (строка ${row}): в I нет XLOOKUP на БСМ`);
+    // I (цена материала) — XLOOKUP из «МАТЕРИАЛЫ».
+    assert(/XLOOKUP/.test(formulaOf(row, COL.priceMat)) && formulaOf(row, COL.priceMat).includes(BSM_SHEET), `материал (строка ${row}): в I нет XLOOKUP на «МАТЕРИАЛЫ»`);
     // J у материала — с рамкой (как у соседей).
     const b = rr.getCell(COL.priceSmr).border;
     assert(!!(b && b.top && b.bottom && b.left && b.right), `материал (строка ${row}): у J нет рамки`);

@@ -13,7 +13,7 @@ export function registerExportRoutes(fastify: FastifyInstance): void {
     items: z
       .array(z.object({ id: z.string().uuid(), locationLabel: z.string() }))
       .min(1),
-    // Пропустить конфликт единиц измерения (БСМ/БСР) и всё равно собрать файл.
+    // Пропустить конфликт единиц измерения (МАТЕРИАЛЫ/РАБОТЫ) и всё равно собрать файл.
     ignoreUnitConflicts: z.boolean().optional(),
   });
   fastify.post<{ Params: { id: string } }>(

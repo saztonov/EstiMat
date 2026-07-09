@@ -1,112 +1,98 @@
 # -*- coding: utf-8 -*-
 """
-Сборка шаблона экспорта КП из образца ВОР сметного отдела.
+Сборка шаблона экспорта КП из финальной формы ВОР сметного отдела.
 
 Что делает:
-  1. Берёт образец (temp/…ВОР…xlsx) — листы КП / БСМ / БСР.
-  2. На листе КП вставляет НОВУЮ колонку «Тип» между «КОД» (B) и «Наименование» (C):
-     все столбцы C…N сдвигаются в D…O, merge шапки и хвоста сдвигаются согласованно.
-  3. Очищает ЗНАЧЕНИЯ динамической зоны (строки 18–41: таблица + ИТОГО) — стили сохраняет.
-     Эти строки на экспорте перегенерирует серверный writer (server/src/lib/estimate-export).
-  4. Листы-справочники БСМ/БСР и статичный «хвост» КП (условия, квалиф. блок) сохраняются.
+  1. Берёт финальную форму `temp/Пример выгрузки ВОР.xlsx` — листы КП / МАТЕРИАЛЫ / РАБОТЫ
+     (колонка «Тип» в ней УЖЕ есть — вставлять её больше не нужно).
+  2. Очищает ЗНАЧЕНИЯ динамической зоны листа «КП» (строки 18–45: таблица + ИТОГО + НДС) —
+     стили сохраняет. Эти строки на экспорте перегенерирует серверный writer
+     (server/src/lib/estimate-export).
+  3. Очищает ЗНАЧЕНИЯ строк данных и строки-итога листов «МАТЕРИАЛЫ»/«РАБОТЫ» (с строки 4
+     включительно до строки SUBTOTAL) — заголовок (строки 1–3) и стили строк-образцов
+     сохраняются. Эти строки writer тоже перегенерирует.
+  4. Статичный «хвост» листа «КП» (условия расценок, квалиф. блок) сохраняется.
 
 Почему отдельным скриптом, а не в рантайме:
-  Программная вставка колонки в рантайме через ExcelJS ломает shared-formula и merge
-  (проверено). openpyxl вставляет колонку корректно, но образец пересобирается РЕДКО —
-  только когда сметный отдел меняет форму. Поэтому это офлайн-билдер: прогнать вручную,
-  результат (бинарный .xlsx) закоммитить как ассет.
+  Форма пересобирается РЕДКО — только когда сметный отдел присылает новую версию. Поэтому это
+  офлайн-билдер: прогнать вручную, результат (бинарный .xlsx) закоммитить как ассет. openpyxl
+  сохраняет стили/заливки/условное форматирование, значения динамической зоны — обнуляет.
 
 Запуск (из корня репозитория):
   python scripts/estimate-export/build-kp-template.py
 Результат: server/src/templates/kp-export-template.xlsx
 
-Когда отдел пришлёт финальную форму с уже добавленной колонкой «Тип» — можно просто
-положить её в server/src/templates/kp-export-template.xlsx, минуя этот скрипт, и
-сверить раскладку с конфигом writer'а (LAYOUT в server/src/lib/estimate-export).
+Если отдел пришлёт новую форму — заменить SRC ниже на её путь и сверить раскладку с конфигом
+writer'а (layout.ts в server/src/lib/estimate-export): имена листов, REF_COL, TABLE_START_ROW,
+STYLE_ROW, TAIL_START_ROW, REF_SUBTOTAL_STYLE_ROW.
 """
-import sys, io, os, glob
+import sys, io, os
+
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 import openpyxl
-from openpyxl.utils import range_boundaries
-from copy import copy
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def rel(*p): return os.path.join(REPO, *p)
 
-# Образец: последний ВОР-файл в temp/, содержащий лист «КП»
-candidates = sorted(glob.glob(rel('temp', '*ВОР*.xlsx')) + glob.glob(rel('temp', '*КП*.xlsx')))
-SRC = None
-for c in candidates:
-    try:
-        wb = openpyxl.load_workbook(c, read_only=True)
-        if 'КП' in wb.sheetnames:
-            SRC = c; wb.close(); break
-        wb.close()
-    except Exception:
-        continue
-if not SRC:
-    print('НЕ найден образец ВОР с листом «КП» в temp/. Положите файл-образец в temp/.')
+# Источник задан ЯВНО (не glob): в temp/ лежит несколько *ВОР*.xlsx, и подбор по маске мог бы
+# взять устаревший файл. Финальная форма отдела — «Пример выгрузки ВОР.xlsx».
+SRC = rel('temp', 'Пример выгрузки ВОР.xlsx')
+OUT = rel('server', 'src', 'templates', 'kp-export-template.xlsx')
+
+if not os.path.exists(SRC):
+    print('НЕ найден исходный файл формы:', SRC)
     sys.exit(1)
 
-OUT = rel('server', 'src', 'templates', 'kp-export-template.xlsx')
+wb = openpyxl.load_workbook(SRC)
+assert 'КП' in wb.sheetnames, f'в {os.path.basename(SRC)} нет листа «КП» (это не форма ВОР?)'
+for sh in ('МАТЕРИАЛЫ', 'РАБОТЫ'):
+    assert sh in wb.sheetnames, f'в {os.path.basename(SRC)} нет листа «{sh}»'
 print('источник:', os.path.basename(SRC))
 
-wb = openpyxl.load_workbook(SRC)
+# 1) Лист «КП»: очистить ЗНАЧЕНИЯ динамической зоны, стили сохранить. Зона — от TABLE_START до
+#    строки перед «хвостом»; хвост определяем по первой строке-условию (столбец A содержит «!!!»).
+KP_TABLE_START = 18
 ws = wb['КП']
-
-DYN_START, DYN_END = 18, 41  # динамическая зона: таблица + ИТОГО (перегенерирует writer)
-
-# 1) очистить ЗНАЧЕНИЯ динамической зоны, стили сохранить
-for r in range(DYN_START, DYN_END + 1):
+tail_row = None
+for r in range(KP_TABLE_START, ws.max_row + 1):
+    a = ws.cell(row=r, column=1).value
+    if isinstance(a, str) and a.lstrip().startswith('!!!'):
+        tail_row = r
+        break
+assert tail_row is not None, 'не найдено начало «хвоста» (строка с «!!!») на листе КП'
+# Между последней строкой ИТОГО/НДС и «хвостом» есть пустой спейсер — очищаем зону до него.
+for r in range(KP_TABLE_START, tail_row):
     for c in range(1, ws.max_column + 1):
         ws.cell(row=r, column=c).value = None
+print(f'КП: очищена зона строк {KP_TABLE_START}–{tail_row - 1} (хвост с {tail_row})')
 
-# 2) снять merge, вставить колонку C, вернуть merge со сдвигом (столбец >=3 → +1)
-old_merges = [str(m) for m in ws.merged_cells.ranges]
-for m in list(ws.merged_cells.ranges):
-    ws.unmerge_cells(str(m))
-ws.insert_cols(3, 1)
-for ref in old_merges:
-    c1, r1, c2, r2 = range_boundaries(ref)
-    if c1 >= 3: c1 += 1
-    if c2 >= 3: c2 += 1
-    ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
-
-# 3) шапка новой колонки «Тип» (C15): оформление копируем из D (бывшая «Наименование»)
-for r in (15, 16, 17):
-    ws.cell(row=r, column=3)._style = copy(ws.cell(row=r, column=4)._style)
-ws.cell(row=15, column=3).value = 'Тип'
-ws.merge_cells(start_row=15, start_column=3, end_row=16, end_column=3)  # C15:C16
-ws.column_dimensions['C'].width = 18.0
-
-# 4) перенумеровать служебную строку 17 (порядковые номера колонок 1..N)
-for i, c in enumerate(range(1, ws.max_column + 1), start=1):
-    ws.cell(row=17, column=c).value = i
-
-# 5) заливка колонки «Тип» (C) в динамической зоне: insert_cols вставил её без стиля,
-#    поэтому копируем оформление из D (та же строка) — Тип получает заливку/границы
-#    строки (локация — серый, работа — беж, ИТОГО — жёлтый). Значения пишет writer.
-for r in range(DYN_START, DYN_END + 1):
-    ws.cell(row=r, column=3)._style = copy(ws.cell(row=r, column=4)._style)
-
-# 6) «Наименование затрат» (D): insert_cols не сдвинул ширины — вернуть читаемую ширину.
-ws.column_dimensions['D'].width = 70.0
-
-# 7) шапка формы: инпут-ячейки уехали из C в D, между меткой (B) и инпутом (D) осталась
-#    пустая C. Копируем стиль D→C (у 10–12 это синий инпут) и объединяем C:D — дырки нет.
-for r in (4, 5, 6, 7, 10, 11, 12):
-    ws.cell(row=r, column=3)._style = copy(ws.cell(row=r, column=4)._style)
-    ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+# 2) Листы «МАТЕРИАЛЫ»/«РАБОТЫ»: очистить ЗНАЧЕНИЯ строк данных и строки-итога (с 4 до SUBTOTAL
+#    включительно), заголовок (1–3) и стили сохранить.
+REF_DATA_START = 4
+for sh in ('МАТЕРИАЛЫ', 'РАБОТЫ'):
+    w = wb[sh]
+    sub_row = None
+    for r in range(REF_DATA_START, w.max_row + 1):
+        f = w.cell(row=r, column=6).value  # F — строка-итог содержит SUBTOTAL
+        if isinstance(f, str) and 'SUBTOTAL' in f.upper():
+            sub_row = r
+            break
+    assert sub_row is not None, f'на листе «{sh}» не найдена строка SUBTOTAL'
+    for r in range(REF_DATA_START, sub_row + 1):
+        for c in range(1, w.max_column + 1):
+            w.cell(row=r, column=c).value = None
+    print(f'{sh}: очищены строки данных {REF_DATA_START}–{sub_row} (итог был на {sub_row})')
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 wb.save(OUT)
 print('сохранено:', os.path.relpath(OUT, REPO))
 
-# краткая проверка
+# краткая проверка результата
 v = openpyxl.load_workbook(OUT)
-w = v['КП']
-hdr = [w.cell(row=15, column=c).value for c in range(1, 16)]
-print('шапка(15):', ' | '.join(str(x) for x in hdr if x))
 print('листы:', v.sheetnames)
+kp = v['КП']
+hdr = [kp.cell(row=15, column=c).value for c in range(1, 16)]
+print('шапка(15):', ' | '.join(str(x) for x in hdr if x))
+print('КП!C5:', kp['C5'].value, '| КП!C6:', kp['C6'].value, '(должны быть пусты — заполнит writer)')
