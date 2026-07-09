@@ -209,6 +209,8 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
       const { workIds, materialIds } = bulkDeleteEstimateItemsSchema.parse(request.body);
       const eid = estimateId.data;
 
+      // Единая correlation-группа массового удаления — единица отмены (undo восстанавливает всё).
+      const correlationId = randomUUID();
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
@@ -233,10 +235,10 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
           );
           deletedWorks = r.rowCount ?? 0;
           for (const w of works) {
-            audits.push({ estimateId: eid, projectId, entityType: 'estimate_item', entityId: w.id, action: 'delete', userId: request.currentUser.id, changes: { before: w } });
+            audits.push({ estimateId: eid, projectId, entityType: 'estimate_item', entityId: w.id, action: 'delete', userId: request.currentUser.id, correlationId, changes: { before: w, undoable: true, operationKind: 'bulk_delete' } });
           }
           for (const m of cascade) {
-            audits.push({ estimateId: eid, projectId, entityType: 'estimate_material', entityId: m.id, action: 'delete', userId: request.currentUser.id, changes: { before: m, reason: 'cascade' } });
+            audits.push({ estimateId: eid, projectId, entityType: 'estimate_material', entityId: m.id, action: 'delete', userId: request.currentUser.id, correlationId, changes: { before: m, reason: 'cascade', undoable: true, operationKind: 'bulk_delete' } });
           }
         }
         if (materialIds.length) {
@@ -250,7 +252,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
           );
           deletedMaterials = r.rowCount ?? 0;
           for (const m of mats) {
-            audits.push({ estimateId: eid, projectId, entityType: 'estimate_material', entityId: m.id, action: 'delete', userId: request.currentUser.id, changes: { before: m } });
+            audits.push({ estimateId: eid, projectId, entityType: 'estimate_material', entityId: m.id, action: 'delete', userId: request.currentUser.id, correlationId, changes: { before: m, undoable: true, operationKind: 'bulk_delete' } });
           }
         }
         await recordAuditBatch(client, audits);

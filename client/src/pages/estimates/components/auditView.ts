@@ -8,6 +8,7 @@ export const ACTION_LABEL: Record<string, string> = {
   reassign: 'перенёс(ла)',
   confirm: 'согласовал(а)',
   ai_apply: 'применил(а) ИИ',
+  undo: 'отменил(а)',
 };
 
 export const ENTITY_LABEL: Record<string, string> = {
@@ -24,6 +25,7 @@ export const ACTION_COLOR: Record<string, string> = {
   reassign: 'gold',
   confirm: 'cyan',
   ai_apply: 'purple',
+  undo: 'volcano',
 };
 
 // Подписи полей — только для фолбэка (старые/неизвестные записи без серверного changesView).
@@ -63,6 +65,10 @@ export function describe(e: AuditLogEntry): string {
     const w = Number(e.changes?.works ?? 0);
     const m = Number(e.changes?.materials ?? 0);
     return `${who} применил(а) ИИ: работ ${w}, материалов ${m}`;
+  }
+  if (e.action === 'undo') {
+    const summary = (e.changes as { summary?: string } | null)?.summary;
+    return summary ? `${who} отменил(а): ${summary}` : `${who} отменил(а) действие`;
   }
   const ent = ENTITY_LABEL[e.entityType] ?? e.entityType;
   const name = entityName(e);

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { recordAudit, recordAuditBatch, diffChanges, type AuditInput } from '../../lib/audit.js';
@@ -63,7 +64,8 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         const projectId = await loadProjectId(client, estimateId);
         const auditId = await recordAudit(client, {
           estimateId, projectId, entityType: 'estimate_material', entityId: material.id,
-          action: 'create', userId: request.currentUser.id, changes: { after: material },
+          action: 'create', userId: request.currentUser.id, correlationId: randomUUID(),
+          changes: { after: material, undoable: true, operationKind: 'material_create' },
         });
         await client.query('COMMIT');
         await emitEstimateChanged(fastify, 'material_created', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
@@ -149,8 +151,8 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         const isConfirm = fields.length === 1 && fields[0] === 'needs_review';
         const auditId = await recordAudit(client, {
           estimateId, projectId, entityType: 'estimate_material', entityId: rows[0].id,
-          action: isConfirm ? 'confirm' : 'update', userId: request.currentUser.id,
-          changes: diffChanges(oldRows[0], rows[0], fields),
+          action: isConfirm ? 'confirm' : 'update', userId: request.currentUser.id, correlationId: randomUUID(),
+          changes: { ...diffChanges(oldRows[0], rows[0], fields), afterVersion: rows[0].version, undoable: true, operationKind: 'material_update' },
         });
         await client.query('COMMIT');
         await emitEstimateChanged(fastify, 'material_updated', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
@@ -381,7 +383,8 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         const projectId = await loadProjectId(client, estimateId);
         const auditId = await recordAudit(client, {
           estimateId, projectId, entityType: 'estimate_material', entityId: cur[0].id,
-          action: 'delete', userId: request.currentUser.id, changes: { before: cur[0] },
+          action: 'delete', userId: request.currentUser.id, correlationId: randomUUID(),
+          changes: { before: cur[0], undoable: true, operationKind: 'material_delete' },
         });
         await client.query('COMMIT');
         await emitEstimateChanged(fastify, 'material_deleted', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });

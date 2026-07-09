@@ -12,6 +12,7 @@ import { registerCrudRoutes } from './crud.js';
 import { registerContractorRoutes } from './contractors.js';
 import { registerItemRoutes } from './items.js';
 import { registerBulkRoutes } from './bulk.js';
+import { registerUndoRoutes } from './undo.js';
 import { registerCommentRoutes } from './comments.js';
 import { registerCostTypeCipherRoutes } from './ciphers.js';
 
@@ -25,6 +26,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   registerContractorRoutes(fastify);
   registerItemRoutes(fastify);
   registerBulkRoutes(fastify);
+  registerUndoRoutes(fastify);
   registerCommentRoutes(fastify);
   registerCostTypeCipherRoutes(fastify);
 }

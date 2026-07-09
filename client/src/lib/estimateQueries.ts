@@ -21,4 +21,6 @@ export function invalidateEstimateQueries(
   queryClient.invalidateQueries({ queryKey: ['estimate', estimateId] });
   if (projectId) queryClient.invalidateQueries({ queryKey: ['project-estimate', projectId] });
   queryClient.invalidateQueries({ queryKey: ['projects-with-stats'] });
+  // Доступность кнопки «Отменить» зависит от последнего действия — обновляем после любой мутации.
+  queryClient.invalidateQueries({ queryKey: ['estimate-undo-peek', estimateId] });
 }

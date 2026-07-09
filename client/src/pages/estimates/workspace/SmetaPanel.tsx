@@ -25,6 +25,7 @@ import { useProjectZones } from '../../../hooks/useProjectLocations';
 import { useAuthStore } from '../../../store/authStore';
 import { PanelShell } from './PanelShell';
 import { SmetaActions } from './SmetaActions';
+import { UndoButton } from './UndoButton';
 import { useEstimateExport } from './useEstimateExport';
 
 interface Organization {
@@ -347,6 +348,7 @@ export function SmetaPanel({
       title={
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           Сметная часть
+          <UndoButton estimateId={estimateId} projectId={projectId} editable={editable} compact={isPhone} />
           <SmetaActions estimateId={estimateId} projectId={projectId} compact={isPhone} />
         </span>
       }

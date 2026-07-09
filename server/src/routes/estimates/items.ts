@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireRole } from '../../middleware/requireRole.js';
 import { recordAudit, recordAuditBatch, diffChanges, type AuditInput } from '../../lib/audit.js';
@@ -20,6 +21,8 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
     { preHandler: [requireRole('admin', 'engineer')] },
     async (request, reply) => {
       const body = createEstimateItemSchema.parse(request.body);
+      // Единая correlation-группа жеста (работа + авто-материалы) — единица отмены (undo).
+      const correlationId = randomUUID();
       // Источник истины — locations; если не передан (старый клиент) — собираем из legacy-полей.
       const locations = body.locations ?? legacyToLocations(body.zoneId ?? null, body.floorFrom ?? null, body.floorTo ?? null);
       const primary = deriveLegacyLocation(locations);
@@ -94,7 +97,8 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
           entityId: item.id,
           action: 'create',
           userId: request.currentUser.id,
-          changes: { after: item },
+          correlationId,
+          changes: { after: item, undoable: true, operationKind: 'item_create' },
         });
         if (materials.length) {
           await recordAuditBatch(
@@ -106,7 +110,8 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
               entityId: m.id as string,
               action: 'create',
               userId: request.currentUser.id,
-              changes: { after: m, source: 'suggested' },
+              correlationId,
+              changes: { after: m, source: 'suggested', undoable: true, operationKind: 'item_create' },
             })),
           );
         }
@@ -125,6 +130,8 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
   // PUT /api/estimates/items/:id — обновить работу
   fastify.put<{ Params: { id: string } }>('/items/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
     const body = updateEstimateItemSchema.parse(request.body);
+    // Единая correlation-группа правки (работа + пересчитанные материалы) — единица отмены.
+    const correlationId = randomUUID();
     const fields: string[] = [];
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -191,7 +198,10 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
         entityId: rows[0].id,
         action: isConfirm ? 'confirm' : 'update',
         userId: request.currentUser.id,
-        changes: diffChanges(oldRows[0], rows[0], fields),
+        correlationId,
+        // afterVersion — итоговая версия строки: отмена сверяет её с текущей (OCC), чтобы не
+        // затереть чужую позднюю правку. undoable/operationKind — маркеры единицы отмены.
+        changes: { ...diffChanges(oldRows[0], rows[0], fields), afterVersion: rows[0].version, undoable: true, operationKind: 'item_update' },
       });
 
       // Авто-синхронизация количества материалов: при изменении объёма работы пересчитываем
@@ -207,7 +217,7 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
               SET quantity = ROUND(em.qty_ratio * $2::numeric, 4), updated_by = $3
              FROM before
             WHERE em.id = before.id
-           RETURNING em.id, em.quantity, before.quantity AS old_quantity`,
+           RETURNING em.id, em.quantity, em.version, before.quantity AS old_quantity`,
           [rows[0].id, rows[0].quantity, request.currentUser.id],
         );
         if (recalced.length) {
@@ -220,11 +230,15 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
               entityId: m.id as string,
               action: 'update' as const,
               userId: request.currentUser.id,
+              correlationId,
               changes: {
                 before: { quantity: m.old_quantity },
                 after: { quantity: m.quantity },
                 changedFields: ['quantity'],
                 reason: 'work_quantity_changed',
+                afterVersion: m.version,
+                undoable: true,
+                operationKind: 'item_update',
               },
             })),
           );
@@ -337,6 +351,8 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
   );
   // DELETE /api/estimates/items/:id — удалить работу (материалы каскадом; snapshot обоих в журнал)
   fastify.delete<{ Params: { id: string } }>('/items/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+    // Единая correlation-группа удаления (работа + каскадные материалы) — единица отмены.
+    const correlationId = randomUUID();
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
@@ -352,11 +368,13 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
       const audits: AuditInput[] = [
         {
           estimateId, projectId, entityType: 'estimate_item', entityId: work[0].id,
-          action: 'delete', userId: request.currentUser.id, changes: { before: work[0] },
+          action: 'delete', userId: request.currentUser.id, correlationId,
+          changes: { before: work[0], undoable: true, operationKind: 'item_delete' },
         },
         ...mats.map((m) => ({
           estimateId, projectId, entityType: 'estimate_material', entityId: m.id as string,
-          action: 'delete', userId: request.currentUser.id, changes: { before: m, reason: 'cascade' },
+          action: 'delete', userId: request.currentUser.id, correlationId,
+          changes: { before: m, reason: 'cascade', undoable: true, operationKind: 'item_delete' },
         })),
       ];
       await recordAuditBatch(client, audits);

@@ -8,6 +8,7 @@ export const auditActionSchema = z.enum([
   'reassign',
   'confirm',
   'ai_apply',
+  'undo',
 ]);
 export type AuditAction = z.infer<typeof auditActionSchema>;
 
@@ -69,3 +70,40 @@ export const auditLogEntrySchema = z.object({
   createdAt: z.string(),
 });
 export type AuditLogEntry = z.infer<typeof auditLogEntrySchema>;
+
+// ── Отмена действий (undo) ─────────────────────────────────────────────────
+// Тип обратимой операции (единица отмены = correlation-группа записей журнала).
+export const undoOperationKindSchema = z.enum([
+  'item_create',
+  'item_update',
+  'item_delete',
+  'material_create',
+  'material_update',
+  'material_delete',
+  'bulk_delete',
+]);
+export type UndoOperationKind = z.infer<typeof undoOperationKindSchema>;
+
+// Что отменится следующим нажатием (для активности кнопки и подсказки).
+export const undoTargetSchema = z.object({
+  available: z.boolean(),
+  correlationId: z.string().uuid().nullable(),
+  operationKind: undoOperationKindSchema.nullable(),
+  summary: z.string().nullable(),
+});
+export type UndoTarget = z.infer<typeof undoTargetSchema>;
+
+// Ответ GET /undo/peek.
+export const undoPeekResponseSchema = z.object({
+  undo: undoTargetSchema.nullable(),
+});
+export type UndoPeekResponse = z.infer<typeof undoPeekResponseSchema>;
+
+// Ответ POST /undo (успешная отмена).
+export const undoResultSchema = z.object({
+  undone: z.literal(true),
+  correlationId: z.string().uuid(),
+  operationKind: undoOperationKindSchema,
+  summary: z.string(),
+});
+export type UndoResult = z.infer<typeof undoResultSchema>;
