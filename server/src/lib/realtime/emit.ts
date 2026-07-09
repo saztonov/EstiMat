@@ -18,7 +18,13 @@ export async function emitEstimateChanged(
   actorUserId: string,
   extra?: { auditLogId?: string | null; correlationId?: string | null },
 ): Promise<void> {
-  await fastify.publishEstimateChanged(
-    makeEstimateEvent({ estimateId, projectId, reason, actorUserId, ...extra }),
-  );
+  const event = makeEstimateEvent({ estimateId, projectId, reason, actorUserId, ...extra });
+  // Публикуем в СЛЕДУЮЩЕМ макротике, а не сразу: вызывающий роут к этому моменту освободит
+  // транзакционный client (finally client.release()), поэтому pg_notify возьмёт СВОБОДНОЕ
+  // соединение пула, а не второе поверх ещё удерживаемого (иначе — deadlock при очень малом
+  // пуле). Best-effort: событие информационное (подписчики перечитывают смету), ошибку
+  // публикации глушим — она не должна превращаться в 500 по уже закоммиченной операции.
+  setImmediate(() => {
+    void fastify.publishEstimateChanged(event).catch(() => { /* best-effort: событие потеряно */ });
+  });
 }

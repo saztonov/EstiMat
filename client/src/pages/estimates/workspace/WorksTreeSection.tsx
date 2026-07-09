@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkScopeStore } from '../../../store/workScopeStore';
+import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
 import { SectionShell } from './SectionShell';
 import {
   mapRatesTreeToNodes,
@@ -34,9 +35,14 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
   // Запрос «показать в дереве» (двойной клик по виду/категории в смете)
   const revealRequest = useEstimateSelectionStore((s) => s.revealRequest);
 
+  // Каталог большой и меняется редко: держим в кэше (staleTime/gcTime), чтобы при открытии
+  // следующей сметы дерево бралось из кэша. Не грузим, пока секция свёрнута (enabled).
   const { data, isLoading } = useQuery({
     queryKey: ['rates-tree'],
-    queryFn: () => api.get<{ data: RateTreeCategory[] }>('/rates/tree'),
+    queryFn: ({ signal }) => api.get<{ data: RateTreeCategory[] }>('/rates/tree', { signal }),
+    enabled: !collapsed,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
   });
 
   // Раскрыть категорию/вид и прокрутить к целевому узлу.
@@ -68,11 +74,13 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
   );
   const scopeActive = scopeCategoryIds.length > 0 || scopeCostTypeIds.length > 0;
   const allExpandableKeys = useMemo(() => collectExpandableKeys(nodes), [nodes]);
+  // Фильтруем по debounced-значению: рекурсивный обход дерева не запускается на каждый символ.
+  const debouncedSearch = useDebouncedValue(search, 250);
   const { nodes: treeData, expandedKeys: autoExpand } = useMemo(
-    () => filterRateNodes(nodes, search),
-    [nodes, search],
+    () => filterRateNodes(nodes, debouncedSearch),
+    [nodes, debouncedSearch],
   );
-  const searching = search.trim().length > 0;
+  const searching = debouncedSearch.trim().length > 0;
 
   // Добавить наименование как работу — всегда в его родной вид/категорию из
   // каталога (вид и раздел появятся в смете автоматически, если их там нет).

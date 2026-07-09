@@ -61,7 +61,11 @@ export async function buildEstimateDetail(
   );
   if (rows.length === 0) return null;
 
-  const items = await pool.query(
+  // Независимые запросы детализации параллелим, но ограничиваем fan-out до ~3 одновременных
+  // соединений пула: одна открытая смета не должна занимать 6 коннектов (иначе деградирует
+  // p95/p99 при конкурентных открытиях). Тяжёлые items/materials — по своей ветви, остальные
+  // (лёгкие агрегаты + опциональные построчные подрядчики) — последовательной цепочкой в третьей.
+  const itemsPromise = pool.query(
     `SELECT ei.*,
             r.name  AS rate_name,
             r.code  AS rate_code,
@@ -75,7 +79,7 @@ export async function buildEstimateDetail(
             lt.name AS location_type_name,
             uc.full_name AS created_by_name,
             uu.full_name AS updated_by_name,
-            (SELECT count(*) FROM estimate_comments ec WHERE ec.item_id = ei.id)::int AS comment_count
+            COALESCE(cmt.comment_count, 0) AS comment_count
      FROM estimate_items ei
      LEFT JOIN rates r            ON ei.rate_id = r.id
      LEFT JOIN cost_types ct      ON ei.cost_type_id = ct.id
@@ -85,12 +89,18 @@ export async function buildEstimateDetail(
      LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
      LEFT JOIN users uc           ON ei.created_by = uc.id
      LEFT JOIN users uu           ON ei.updated_by = uu.id
+     LEFT JOIN (
+       SELECT item_id, count(*)::int AS comment_count
+         FROM estimate_comments
+        WHERE estimate_id = $1 AND item_id IS NOT NULL
+        GROUP BY item_id
+     ) cmt ON cmt.item_id = ei.id
      WHERE ei.estimate_id = $1
      ORDER BY ${ITEMS_CANONICAL_ORDER_BY}`,
     [estimateId],
   );
 
-  const materials = await pool.query(
+  const materialsPromise = pool.query(
     `SELECT em.*, mc.name AS material_name,
             uc.full_name AS created_by_name,
             uu.full_name AS updated_by_name
@@ -103,42 +113,62 @@ export async function buildEstimateDetail(
     [estimateId],
   );
 
-  const contractors = await pool.query(
-    `SELECT ec.cost_type_id, ec.contractor_id,
-            o.name  AS contractor_name,
-            ct.name AS cost_type_name,
-            ct.sort_order AS cost_type_sort_order,
-            cc.id   AS cost_category_id,
-            cc.name AS cost_category_name,
-            cc.sort_order AS cost_category_sort_order
-     FROM estimate_contractors ec
-     LEFT JOIN organizations o    ON ec.contractor_id = o.id
-     LEFT JOIN cost_types ct      ON ec.cost_type_id = ct.id
-     LEFT JOIN cost_categories cc ON ct.category_id = cc.id
-     WHERE ec.estimate_id = $1`,
-    [estimateId],
-  );
+  const restPromise = (async () => {
+    const contractors = await pool.query(
+      `SELECT ec.cost_type_id, ec.contractor_id,
+              o.name  AS contractor_name,
+              ct.name AS cost_type_name,
+              ct.sort_order AS cost_type_sort_order,
+              cc.id   AS cost_category_id,
+              cc.name AS cost_category_name,
+              cc.sort_order AS cost_category_sort_order
+       FROM estimate_contractors ec
+       LEFT JOIN organizations o    ON ec.contractor_id = o.id
+       LEFT JOIN cost_types ct      ON ec.cost_type_id = ct.id
+       LEFT JOIN cost_categories cc ON ct.category_id = cc.id
+       WHERE ec.estimate_id = $1`,
+      [estimateId],
+    );
+    // Счётчики комментариев по видам работ → { [costTypeId]: number }.
+    const costTypeCommentRows = await pool.query(
+      `SELECT cost_type_id, count(*)::int AS count
+         FROM estimate_comments
+        WHERE estimate_id = $1 AND cost_type_id IS NOT NULL
+        GROUP BY cost_type_id`,
+      [estimateId],
+    );
+    // Шифры РД по видам работ → { [costTypeId]: [{id, code}] }.
+    const costTypeCipherRows = await pool.query(
+      `SELECT ectc.cost_type_id, c.id, c.code
+         FROM estimate_cost_type_ciphers ectc
+         JOIN project_rd_ciphers c ON c.id = ectc.cipher_id
+        WHERE ectc.estimate_id = $1
+        ORDER BY c.code`,
+      [estimateId],
+    );
+    // Построчные назначения подрядчиков (раздел «Подрядчики») — только когда запрошены.
+    const itemContractors = opts?.includeItemContractors
+      ? await pool.query(
+          `SELECT eic.item_id, eic.contractor_id, eic.assigned_qty, eic.assigned_percent,
+                  COALESCE(eic.assigned_qty, ei.quantity * eic.assigned_percent / 100.0, ei.quantity) AS effective_qty,
+                  o.name AS contractor_name
+             FROM estimate_item_contractors eic
+             JOIN estimate_items ei      ON ei.id = eic.item_id
+             LEFT JOIN organizations o   ON o.id = eic.contractor_id
+            WHERE eic.estimate_id = $1
+            ORDER BY eic.assigned_at`,
+          [estimateId],
+        )
+      : null;
+    return { contractors, costTypeCommentRows, costTypeCipherRows, itemContractors };
+  })();
 
-  // Счётчики комментариев по видам работ (в контексте этой сметы) → { [costTypeId]: number }.
-  const costTypeCommentRows = await pool.query(
-    `SELECT cost_type_id, count(*)::int AS count
-       FROM estimate_comments
-      WHERE estimate_id = $1 AND cost_type_id IS NOT NULL
-      GROUP BY cost_type_id`,
-    [estimateId],
-  );
+  const [items, materials, rest] = await Promise.all([itemsPromise, materialsPromise, restPromise]);
+  const { contractors, costTypeCommentRows, costTypeCipherRows, itemContractors } = rest;
+
   const costTypeCommentCounts: Record<string, number> = {};
   for (const r of costTypeCommentRows.rows) costTypeCommentCounts[r.cost_type_id as string] = r.count as number;
 
-  // Шифры РД по видам работ (в контексте этой сметы) → { [costTypeId]: [{id, code}] }.
-  const costTypeCipherRows = await pool.query(
-    `SELECT ectc.cost_type_id, c.id, c.code
-       FROM estimate_cost_type_ciphers ectc
-       JOIN project_rd_ciphers c ON c.id = ectc.cipher_id
-      WHERE ectc.estimate_id = $1
-      ORDER BY c.code`,
-    [estimateId],
-  );
   const costTypeCiphers: Record<string, { id: string; code: string }[]> = {};
   for (const r of costTypeCipherRows.rows) {
     const k = r.cost_type_id as string;
@@ -151,20 +181,8 @@ export async function buildEstimateDetail(
   const materialsByItem = bucketBy(materials.rows, (m) => m.item_id as string);
 
   let itemsOut: Record<string, unknown>[];
-  if (opts?.includeItemContractors) {
-    // Построчные назначения подрядчиков (раздел «Подрядчики»): подрядчики строки,
-    // распределённый объём, остаток без подрядчика и признак over-assigned.
-    const itemContractors = await pool.query(
-      `SELECT eic.item_id, eic.contractor_id, eic.assigned_qty, eic.assigned_percent,
-              COALESCE(eic.assigned_qty, ei.quantity * eic.assigned_percent / 100.0, ei.quantity) AS effective_qty,
-              o.name AS contractor_name
-         FROM estimate_item_contractors eic
-         JOIN estimate_items ei      ON ei.id = eic.item_id
-         LEFT JOIN organizations o   ON o.id = eic.contractor_id
-        WHERE eic.estimate_id = $1
-        ORDER BY eic.assigned_at`,
-      [estimateId],
-    );
+  if (itemContractors) {
+    // Распределённый объём, остаток без подрядчика и признак over-assigned по каждой работе.
     const contractorsByItem = bucketBy(itemContractors.rows, (c) => c.item_id as string);
 
     itemsOut = items.rows.map((it) => {

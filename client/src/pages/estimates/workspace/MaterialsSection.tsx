@@ -6,6 +6,7 @@ import type { DataNode } from 'antd/es/tree';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
+import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
 import { SectionShell } from './SectionShell';
 import type { SaveMaterialPayload } from '../components/types';
 import type { MaterialRef, MaterialsTree, MaterialGroupNode } from './types';
@@ -53,9 +54,14 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
   const selectedWorkLabel = useEstimateSelectionStore((s) => s.selectedWorkLabel);
   const lastAdd = useRef<{ id: string; ts: number }>({ id: '', ts: 0 });
 
+  // Каталог большой и меняется редко: держим в кэше (staleTime/gcTime), чтобы при открытии
+  // следующей сметы дерево бралось из кэша. Не грузим, пока секция свёрнута (enabled).
   const { data, isLoading } = useQuery({
     queryKey: ['materials-tree'],
-    queryFn: () => api.get<{ data: MaterialsTree }>('/materials/tree'),
+    queryFn: ({ signal }) => api.get<{ data: MaterialsTree }>('/materials/tree', { signal }),
+    enabled: !collapsed,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
   });
 
   const allNodes = useMemo<MatNode[]>(() => {
@@ -89,8 +95,10 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
     return keys;
   }, [allNodes]);
 
+  // Фильтруем по debounced-значению: рекурсивный обход дерева не запускается на каждый символ.
+  const debouncedSearch = useDebouncedValue(search, 250);
   const { treeData, autoExpand } = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     if (!q) return { treeData: allNodes, autoExpand: [] as string[] };
     const exp: string[] = [];
     // Рекурсивный фильтр: оставляем листья по совпадению, группы — если совпали дети
@@ -113,9 +121,9 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
       return out;
     };
     return { treeData: filterNodes(allNodes), autoExpand: exp };
-  }, [allNodes, search]);
+  }, [allNodes, debouncedSearch]);
 
-  const searching = search.trim().length > 0;
+  const searching = debouncedSearch.trim().length > 0;
 
   // Добавить материал из справочника к выделенной работе.
   // Защита от двойного добавления подряд (клик + дабл-клик).

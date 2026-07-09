@@ -443,29 +443,37 @@ export default async function rateRoutes(fastify: FastifyInstance) {
     const categories = await fastify.pool.query('SELECT * FROM cost_categories WHERE is_active ORDER BY sort_order, name');
     const types = await fastify.pool.query('SELECT * FROM cost_types WHERE is_active ORDER BY sort_order, name');
     const rates = await fastify.pool.query(
-      `SELECT rct.cost_type_id, r.*, tc.type_count
+      // type_count — число активных видов (в активных категориях), к которым привязана расценка;
+      // оконный COUNT по r.id вместо коррелированного LATERAL на каждую строку.
+      `SELECT rct.cost_type_id, r.*,
+              (COUNT(*) OVER (PARTITION BY r.id))::int AS type_count
        FROM rates r
        JOIN rate_cost_types rct ON rct.rate_id = r.id
        JOIN cost_types ct ON ct.id = rct.cost_type_id AND ct.is_active
        JOIN cost_categories cc ON cc.id = ct.category_id AND cc.is_active
-       JOIN LATERAL (
-         SELECT COUNT(*)::int AS type_count
-         FROM rate_cost_types x
-         JOIN cost_types xt ON xt.id = x.cost_type_id AND xt.is_active
-         WHERE x.rate_id = r.id
-       ) tc ON true
        WHERE r.is_active = true
        ORDER BY r.name`,
     );
 
-    const tree = categories.rows.map((cat: Record<string, unknown>) => ({
+    // Сборка дерева за один проход через Map (было O(виды × расценки) на вложенных .filter()).
+    const ratesByType = new Map<string, Record<string, unknown>[]>();
+    for (const r of rates.rows as Record<string, unknown>[]) {
+      const k = r.cost_type_id as string;
+      const arr = ratesByType.get(k);
+      if (arr) arr.push(r);
+      else ratesByType.set(k, [r]);
+    }
+    const typesByCategory = new Map<string, Record<string, unknown>[]>();
+    for (const t of types.rows as Record<string, unknown>[]) {
+      const withRates = { ...t, rates: ratesByType.get(t.id as string) ?? [] };
+      const k = t.category_id as string;
+      const arr = typesByCategory.get(k);
+      if (arr) arr.push(withRates);
+      else typesByCategory.set(k, [withRates]);
+    }
+    const tree = (categories.rows as Record<string, unknown>[]).map((cat) => ({
       ...cat,
-      types: types.rows
-        .filter((t: Record<string, unknown>) => t.category_id === cat.id)
-        .map((t: Record<string, unknown>) => ({
-          ...t,
-          rates: rates.rows.filter((r: Record<string, unknown>) => r.cost_type_id === t.id),
-        })),
+      types: typesByCategory.get(cat.id as string) ?? [],
     }));
 
     return { data: tree };

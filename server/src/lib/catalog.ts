@@ -20,13 +20,17 @@ const NO_TYPE = 'Без вида работ';
  * Для каждого переданного материала, ещё не привязанного к каталогу (material_id IS NULL),
  * создаёт/находит группу Категория → Вид работ и запись material_catalog, затем проставляет
  * estimate_materials.material_id.
+ *
+ * Возвращает true, если в СПРАВОЧНИК добавлены новые записи (группа или позиция каталога) —
+ * тогда вызывающему стоит инвалидировать кэш дерева материалов на клиенте. Проставление
+ * material_id у строки сметы справочник не меняет и на возврат не влияет.
  */
 export async function mirrorMaterialsToCatalog(
   db: CatalogDb,
   materialIds: string[],
   userId: string,
-): Promise<void> {
-  if (!materialIds.length) return;
+): Promise<boolean> {
+  if (!materialIds.length) return false;
 
   // Инвариант: зеркалируем только ПРИНЯТЫЕ материалы без ссылки на каталог
   // (material_id IS NULL AND needs_review = false). Фильтр по needs_review здесь, а не в
@@ -42,7 +46,9 @@ export async function mirrorMaterialsToCatalog(
       WHERE m.id = ANY($1::uuid[]) AND m.material_id IS NULL AND m.needs_review = false`,
     [materialIds],
   );
-  if (!rows.length) return;
+  if (!rows.length) return false;
+
+  let catalogChanged = false;
 
   // Кэш групп на вызов: `${parentId}|${lower(name)}` → groupId.
   const groupCache = new Map<string, string>();
@@ -64,6 +70,7 @@ export async function mirrorMaterialsToCatalog(
         [name, parentId],
       );
       id = ins[0]!.id as string;
+      catalogChanged = true;
     }
     groupCache.set(key, id);
     return id;
@@ -95,6 +102,7 @@ export async function mirrorMaterialsToCatalog(
         [desc, typeGroupId, unit, r.unit_price ?? 0],
       );
       catalogId = insMat[0]!.id as string;
+      catalogChanged = true;
     }
 
     await db.query(`UPDATE estimate_materials SET material_id = $1, updated_by = $3 WHERE id = $2`, [
@@ -103,4 +111,6 @@ export async function mirrorMaterialsToCatalog(
       userId,
     ]);
   }
+
+  return catalogChanged;
 }

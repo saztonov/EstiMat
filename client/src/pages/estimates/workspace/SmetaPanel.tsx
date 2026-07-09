@@ -222,6 +222,14 @@ export function SmetaPanel({
   // Стабильный объект зон — общий root-список для блоков и фильтров (вместо []-литерала каждый рендер).
   const zoneRoots = useMemo(() => zonesData?.data.roots ?? [], [zonesData]);
 
+  // Суммы по секциям (категориям) предвычисляем разом, чтобы вложенный reduce не гонялся инлайн
+  // для каждой секции на каждый ре-рендер панели (ввод фильтра, смена выбора и т.п.).
+  const sectionTotals = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const sec of sections) m.set(sec.id, groupsTotal(sec.groups));
+    return m;
+  }, [sections]);
+
   // Стабильный (useMemo) набор общих пропсов блоков: пока не меняется выбор/режим, blockProps не
   // пересоздаётся, поэтому memo-обёртки SmetaGroupBlock не ререндерятся при не связанных изменениях.
   // Раскрытие материалов и свёрнутость вида в blockProps НЕ входят — их адаптер берёт из store.
@@ -459,7 +467,7 @@ export function SmetaPanel({
                     <strong style={{ fontSize: 13 }}>{sec.name}</strong>
                     <span style={{ color: '#8c8c8c', fontSize: 12 }}>Видов работ: {sec.groups.length}</span>
                     <span style={{ flex: 1 }} />
-                    <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupsTotal(sec.groups))}</span>
+                    <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(sectionTotals.get(sec.id) ?? 0)}</span>
                   </div>
 
                   {!collapsed && (

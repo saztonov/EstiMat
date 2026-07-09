@@ -25,6 +25,9 @@ interface FetchOptions {
   // и должен дойти до вызывающего кода как обычная ошибка.
   skipAuthRefresh?: boolean;
   timeoutMs?: number;
+  // Внешний сигнал отмены (обычно TanStack Query queryFn({ signal })): объединяется с внутренним
+  // таймаутом, чтобы отменённый/устаревший запрос реально обрывал сетевой fetch, а не висел до таймаута.
+  signal?: AbortSignal;
 }
 
 // Ошибка API с HTTP-статусом и уже подготовленным понятным текстом для пользователя.
@@ -100,6 +103,10 @@ async function apiFetchRaw(
   const controller = new AbortController();
   const timeoutMs = fetchOpts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  // Объединяем свой таймаут с внешним сигналом (TanStack Query): срабатывает первый из них.
+  const signal = fetchOpts?.signal
+    ? AbortSignal.any([controller.signal, fetchOpts.signal])
+    : controller.signal;
 
   let res: Response;
   try {
@@ -107,7 +114,7 @@ async function apiFetchRaw(
       ...options,
       credentials: 'include',
       headers,
-      signal: controller.signal,
+      signal,
     });
   } catch (err) {
     // Обрыв по таймауту (мы сами вызвали abort) либо сетевая ошибка fetch.

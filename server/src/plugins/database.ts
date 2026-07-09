@@ -65,6 +65,12 @@ export default fp(async (fastify) => {
     password: config.db.password,
     max: config.db.poolMax,
     ssl: config.db.ssl ? { rejectUnauthorized: false } : false,
+    // Client-level: PG прерывает запрос/ожидание блокировки сам, освобождая соединение.
+    statement_timeout: config.db.statementTimeoutMs,
+    lock_timeout: config.db.lockTimeoutMs,
+    // Pool-level: закрывать простаивающие соединения и не ждать выдачу коннекта бесконечно.
+    idleTimeoutMillis: config.db.idleTimeoutMs,
+    connectionTimeoutMillis: config.db.connectionTimeoutMs,
   });
 
   // Автоприменение миграций при старте (идемпотентно) — только в dev.

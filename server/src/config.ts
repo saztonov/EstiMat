@@ -21,6 +21,15 @@ export const config = {
     // Размер пула задаётся явно (§7): при нескольких порталах на одной VPS
     // connection budget Managed PostgreSQL считается до добавления портала.
     poolMax: Number(env('DB_POOL_MAX', '20')),
+    // Таймауты, чтобы одна зависшая тяжёлая выборка не держала соединение бесконечно и не
+    // истощала пул. statement_timeout ограничивает КАЖДЫЙ отдельный statement (не транзакцию),
+    // поэтому не рвёт нормальные пути записи; тяжёлые единичные операции при нужде поднимают
+    // лимит локально через SET LOCAL. Прод накатывает миграции отдельным контейнером `migrate`
+    // (свой клиент без этих лимитов) — CREATE INDEX не попадает под statement_timeout.
+    statementTimeoutMs: Number(env('DB_STATEMENT_TIMEOUT_MS', '15000')),
+    lockTimeoutMs: Number(env('DB_LOCK_TIMEOUT_MS', '3000')),
+    idleTimeoutMs: Number(env('DB_IDLE_TIMEOUT_MS', '30000')),
+    connectionTimeoutMs: Number(env('DB_CONNECTION_TIMEOUT_MS', '5000')),
   },
 
   jwt: {

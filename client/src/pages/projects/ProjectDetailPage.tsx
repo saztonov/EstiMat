@@ -19,9 +19,10 @@ export function ProjectDetailPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['project-estimate', id],
-    queryFn: () => api.get<{ data: EstimateDetail }>(`/projects/${id}/estimate`),
+    queryFn: ({ signal }) => api.get<{ data: EstimateDetail }>(`/projects/${id}/estimate`, { signal }),
     enabled: !!id,
-    refetchOnWindowFocus: true, // fallback к realtime: обновить при возврате на вкладку
+    staleTime: 30_000, // свежую смету не перезапрашиваем при каждом чихе; мутации инвалидируют явно
+    refetchOnWindowFocus: true, // fallback к realtime: при возврате на вкладку, если данные устарели
   });
 
   const { data: orgsData } = useQuery({

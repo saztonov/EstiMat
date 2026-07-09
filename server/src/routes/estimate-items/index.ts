@@ -58,7 +58,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         // (material_id IS NULL, needs_review = false) заносится в material_catalog сразу при
         // добавлении. mirrorMaterialsToCatalog сам фильтрует по инварианту и проставляет material_id —
         // перечитываем строку, чтобы вернуть её клиенту и записать в журнал уже с привязкой.
-        await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
+        const catalogChanged = await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
         const { rows: fresh } = await client.query('SELECT * FROM estimate_materials WHERE id = $1', [rows[0].id]);
         const material = fresh[0] ?? rows[0];
         const projectId = await loadProjectId(client, estimateId);
@@ -69,7 +69,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         });
         await client.query('COMMIT');
         await emitEstimateChanged(fastify, 'material_created', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
-        return reply.status(201).send({ data: material });
+        return reply.status(201).send({ data: material, catalogChanged });
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -145,8 +145,9 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         const estimateId = rows[0].estimate_id as string;
         const projectId = await loadProjectId(client, estimateId);
         // Согласование материала (клик по тегу / подтверждение «предложения») — зеркалируем в legacy-справочник.
+        let catalogChanged = false;
         if ((body.status === 'confirmed' || body.needsReview === false) && rows[0].material_id === null) {
-          await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
+          catalogChanged = await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
         }
         const isConfirm = fields.length === 1 && fields[0] === 'needs_review';
         const auditId = await recordAudit(client, {
@@ -156,7 +157,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         });
         await client.query('COMMIT');
         await emitEstimateChanged(fastify, 'material_updated', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
-        return { data: rows[0] };
+        return { data: rows[0], catalogChanged };
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -203,7 +204,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         );
         // Перенос снимает needs_review → материал стал принятым; зеркалируем в справочник,
         // если он ещё не привязан к каталогу (mirror сам проверит инвариант).
-        await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
+        const catalogChanged = await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
         const projectId = await loadProjectId(client, estimateId);
         const auditId = await recordAudit(client, {
           estimateId, projectId, entityType: 'estimate_material', entityId: rows[0].id,
@@ -212,7 +213,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         });
         await client.query('COMMIT');
         await emitEstimateChanged(fastify, 'materials_reassigned', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
-        return { data: rows[0] };
+        return { data: rows[0], catalogChanged };
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -264,7 +265,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
 
         // Перенос снимает needs_review → материалы стали принятыми; зеркалируем в справочник
         // не привязанные к каталогу (mirror сам проверит инвариант).
-        await mirrorMaterialsToCatalog(client, rows.map((r) => r.id as string), request.currentUser.id);
+        const catalogChanged = await mirrorMaterialsToCatalog(client, rows.map((r) => r.id as string), request.currentUser.id);
 
         const projectId = await loadProjectId(client, targetEstimateId);
         const oldItemById = new Map(before.map((b) => [b.id as string, b.item_id as string]));
@@ -276,7 +277,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');
         await emitEstimateChanged(fastify, 'materials_reassigned', targetEstimateId, projectId, request.currentUser.id);
-        return { data: rows, count: rows.length };
+        return { data: rows, count: rows.length, catalogChanged };
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;

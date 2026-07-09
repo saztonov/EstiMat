@@ -50,8 +50,20 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   const refetchKeyRef = useRef(refetchKey);
   refetchKeyRef.current = refetchKey;
   const invalidate = useCallback(() => {
-    invalidateEstimateQueries(queryClient, { estimateId, projectId, refetchKey: refetchKeyRef.current });
+    invalidateEstimateQueries(queryClient, { estimateId, projectId });
   }, [queryClient, estimateId, projectId]);
+
+  // Инвалидируем кэш справочника материалов ТОЛЬКО когда сервер реально пополнил каталог
+  // (mirrorMaterialsToCatalog вернул catalogChanged) — иначе правка одного материала зря
+  // перезагружала оба списка каталога (дерево + плоский список автодополнения).
+  const invalidateCatalogIfChanged = useCallback(
+    (res: { catalogChanged?: boolean } | null | undefined) => {
+      if (!res?.catalogChanged) return;
+      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['materials'] });
+    },
+    [queryClient],
+  );
 
   // Realtime: изменения коллег (и ИИ) подтягиваются без перезагрузки страницы.
   useEstimateRealtime(estimateId, projectId);
@@ -167,12 +179,11 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
 
   const createMaterialMutation = useMutation({
     mutationFn: ({ workId, payload }: { workId: string; payload: SaveMaterialPayload }) =>
-      api.post(`/estimate-items/${workId}/materials`, payload),
-    onSuccess: () => {
+      api.post<{ data: unknown; catalogChanged?: boolean }>(`/estimate-items/${workId}/materials`, payload),
+    onSuccess: (res) => {
       invalidate();
-      // Ручной материал сразу зеркалируется в legacy-справочник — обновляем его кэш.
-      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
+      // Ручной материал зеркалируется в справочник — обновляем его кэш, только если каталог пополнился.
+      invalidateCatalogIfChanged(res);
       message.success('Материал добавлен');
     },
     onError: (e: Error) => message.error(e.message),
@@ -241,12 +252,11 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   // при согласовании кликом по тегу «не согласовано».
   const confirmMaterialMutation = useMutation({
     mutationFn: (materialId: string) =>
-      api.put(`/estimate-items/materials/${materialId}`, { status: 'confirmed' }),
-    onSuccess: () => {
+      api.put<{ data: unknown; catalogChanged?: boolean }>(`/estimate-items/materials/${materialId}`, { status: 'confirmed' }),
+    onSuccess: (res) => {
       invalidate();
-      // Согласованный материал зеркалируется в legacy-справочник — обновляем его кэш.
-      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
+      // Согласованный материал зеркалируется в справочник — обновляем кэш только при пополнении.
+      invalidateCatalogIfChanged(res);
       message.success('Материал подтверждён');
     },
     onError: (e: Error) => message.error(e.message),
@@ -267,11 +277,10 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   // зеркалируются в legacy-справочник — после успеха инвалидируем и каталог материалов.
   const bulkConfirmMutation = useMutation({
     mutationFn: ({ workIds, materialIds }: { workIds: string[]; materialIds: string[] }) =>
-      api.post<{ works: number; materials: number }>(`/estimates/${estimateId}/bulk-confirm`, { workIds, materialIds }),
+      api.post<{ works: number; materials: number; catalogChanged?: boolean }>(`/estimates/${estimateId}/bulk-confirm`, { workIds, materialIds }),
     onSuccess: (res) => {
       invalidate();
-      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
+      invalidateCatalogIfChanged(res);
       message.success(`Согласовано: работ ${res.works}, материалов ${res.materials}`);
     },
     onError: (e: Error) => message.error(e.message),
@@ -280,12 +289,11 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   // Перенос материала к другой работе (ревью ИИ-извлечения) — снимает needs_review на сервере.
   const reassignMaterialMutation = useMutation({
     mutationFn: ({ materialId, itemId }: { materialId: string; itemId: string }) =>
-      api.patch(`/estimate-items/materials/${materialId}/reassign`, { itemId }),
-    onSuccess: () => {
+      api.patch<{ data: unknown; catalogChanged?: boolean }>(`/estimate-items/materials/${materialId}/reassign`, { itemId }),
+    onSuccess: (res) => {
       invalidate();
-      // Перенос снимает needs_review → материал мог попасть в справочник — обновляем его кэш.
-      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
+      // Перенос снимает needs_review → материал мог попасть в справочник; обновляем кэш при пополнении.
+      invalidateCatalogIfChanged(res);
       message.success('Материал перенесён к работе');
     },
     onError: (e: Error) => message.error(e.message),
@@ -294,12 +302,11 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
   // Массовый перенос материалов к одной работе — снимает needs_review на сервере.
   const reassignMaterialsBulkMutation = useMutation({
     mutationFn: ({ materialIds, itemId }: { materialIds: string[]; itemId: string }) =>
-      api.patch<{ count: number }>('/estimate-items/materials/reassign-bulk', { materialIds, itemId }),
+      api.patch<{ count: number; catalogChanged?: boolean }>('/estimate-items/materials/reassign-bulk', { materialIds, itemId }),
     onSuccess: (res) => {
       invalidate();
-      // Перенос снимает needs_review → материалы могли попасть в справочник — обновляем его кэш.
-      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
+      // Перенос снимает needs_review → материалы могли попасть в справочник; обновляем кэш при пополнении.
+      invalidateCatalogIfChanged(res);
       message.success(`Перенесено материалов: ${res.count}`);
     },
     onError: (e: Error) => message.error(e.message),

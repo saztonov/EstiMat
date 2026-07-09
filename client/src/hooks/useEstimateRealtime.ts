@@ -37,13 +37,18 @@ export function useEstimateRealtime(estimateId: string, projectId?: string | nul
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     let backoff = 1000;
     let pendingForeign = false;
-    // attempts — подряд идущие НЕуспешные попытки подключения (инкремент в onclose, сброс в onopen).
-    // После MAX_ATTEMPTS сдаёмся (gaveUp), чтобы не флудить консоль бесконечно при недоступном
-    // realtime; соединение возобновляется по возврату фокуса/онлайна (resume). Пока realtime лежит,
+    // attempts — подряд идущие НЕуспешные попытки подключения (инкремент в onclose, сброс по
+    // подтверждению подписки `subscribed`, а НЕ в onopen: onopen лишь означает, что сокет открыт,
+    // но сервер ещё может закрыть его 1008 при отсутствии доступа — сброс в onopen давал бы
+    // бесконечный цикл open→1008→open). После MAX_ATTEMPTS сдаёмся (gaveUp), чтобы не флудить
+    // консоль; соединение возобновляется по возврату фокуса/онлайна (resume). Пока realtime лежит,
     // подстраховывает refetchOnWindowFocus на страницах сметы.
     let attempts = 0;
     let gaveUp = false;
     let lastResumeAt = 0;
+    // Первое успешное подключение за жизнь хука: смета только что загружена страницей, поэтому
+    // catch-up-рефетч не нужен. Инвалидируем только при РЕ-подключении (могли пропустить события).
+    let firstConnect = true;
 
     const flush = () => {
       invalidateEstimateQueries(queryClient, { estimateId, projectId });
@@ -59,22 +64,34 @@ export function useEstimateRealtime(estimateId: string, projectId?: string | nul
     const connect = () => {
       ws = new WebSocket(realtimeUrl());
       ws.onopen = () => {
-        backoff = 1000;
-        attempts = 0;
-        gaveUp = false;
+        // Только отправляем запрос подписки. Успех фиксируем по ответу `subscribed` (см. onmessage) —
+        // до него соединение ещё не подтверждено (сервер может закрыть 1008 при отсутствии доступа).
         ws?.send(JSON.stringify({ type: 'subscribe_estimate', estimateId }));
-        // (Ре)подключение — подтянуть смету, чтобы не упустить события за время простоя.
-        invalidateEstimateQueries(queryClient, { estimateId, projectId });
       };
       ws.onmessage = (ev) => {
         let data: unknown;
         try { data = JSON.parse(ev.data as string); } catch { return; }
+        // Подтверждение подписки: соединение реально рабочее — сбрасываем счётчики попыток.
+        if (data && typeof data === 'object' && (data as { type?: string }).type === 'subscribed') {
+          attempts = 0;
+          backoff = 1000;
+          gaveUp = false;
+          // Catch-up только при ПЕРЕподключении: первое подключение застаёт свежесозданную страницей смету.
+          if (!firstConnect) invalidateEstimateQueries(queryClient, { estimateId, projectId });
+          firstConnect = false;
+          return;
+        }
         const parsed = estimateChangedEventSchema.safeParse(data);
         if (!parsed.success || parsed.data.protocolVersion !== REALTIME_PROTOCOL_VERSION) return;
         scheduleFlush(parsed.data.actorUserId);
       };
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (closedByUs) return;
+        // 1008 (policy violation) — нет доступа к смете; повторные попытки бессмысленны.
+        if (ev.code === 1008) {
+          gaveUp = true;
+          return;
+        }
         attempts += 1;
         if (attempts >= MAX_ATTEMPTS) {
           gaveUp = true; // перестаём реконнектить; ждём resume по focus/online/visibility

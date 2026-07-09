@@ -33,7 +33,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
       );
       // Согласованные материалы зеркалируются в legacy-справочник (как в bulk-confirm) —
       // mirror сам отфильтрует привязанные к каталогу.
-      await mirrorMaterialsToCatalog(client, materials.rows.map((r) => r.id as string), request.currentUser.id);
+      const catalogChanged = await mirrorMaterialsToCatalog(client, materials.rows.map((r) => r.id as string), request.currentUser.id);
       const projectId = works.rows[0]?.project_id ?? (await loadProjectId(client, request.params.id));
       const audits: AuditInput[] = [
         ...works.rows.map((r) => ({
@@ -58,7 +58,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
       await recordAuditBatch(client, audits);
       await client.query('COMMIT');
       if (audits.length) await emitEstimateChanged(fastify, 'confirmed_all', request.params.id, projectId, request.currentUser.id);
-      return reply.send({ works: works.rowCount ?? 0, materials: materials.rowCount ?? 0 });
+      return reply.send({ works: works.rowCount ?? 0, materials: materials.rowCount ?? 0, catalogChanged });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -97,7 +97,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
         );
 
         // Пополнение legacy-справочника материалов согласованными позициями.
-        await mirrorMaterialsToCatalog(
+        const catalogChanged = await mirrorMaterialsToCatalog(
           client,
           materials.rows.map((r) => r.id as string),
           request.currentUser.id,
@@ -119,7 +119,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
         await recordAuditBatch(client, audits);
         await client.query('COMMIT');
         if (audits.length) await emitEstimateChanged(fastify, 'confirmed_all', eid, projectId, request.currentUser.id);
-        return reply.send({ works: works.rowCount ?? 0, materials: materials.rowCount ?? 0 });
+        return reply.send({ works: works.rowCount ?? 0, materials: materials.rowCount ?? 0, catalogChanged });
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
