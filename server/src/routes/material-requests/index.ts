@@ -71,16 +71,32 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: 'Нет допустимых строк заявки' });
     }
 
-    const projectRes = await fastify.pool.query('SELECT project_id FROM estimates WHERE id = $1', [body.estimateId]);
+    const projectRes = await fastify.pool.query(
+      `SELECT e.project_id, p.code
+         FROM estimates e
+         LEFT JOIN projects p ON p.id = e.project_id
+        WHERE e.id = $1`,
+      [body.estimateId],
+    );
     const projectId = projectRes.rows[0]?.project_id ?? null;
+    const projectCode = projectRes.rows[0]?.code ?? null;
 
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
+      // Номер заявки в рамках объекта: блокируем строку проекта, чтобы параллельные заявки
+      // одного объекта не получили одинаковый request_no.
+      if (projectId) await client.query('SELECT id FROM projects WHERE id = $1 FOR UPDATE', [projectId]);
+      const { rows: noRows } = await client.query(
+        'SELECT COALESCE(MAX(request_no), 0) + 1 AS next_no FROM material_requests WHERE project_id = $1',
+        [projectId],
+      );
+      const requestNo = Number(noRows[0].next_no);
+
       const { rows: reqRows } = await client.query(
-        `INSERT INTO material_requests (estimate_id, project_id, contractor_id, status, created_by)
-         VALUES ($1, $2, $3, 'confirmed', $4) RETURNING id`,
-        [body.estimateId, projectId, user.orgId, user.id],
+        `INSERT INTO material_requests (estimate_id, project_id, contractor_id, status, request_no, created_by)
+         VALUES ($1, $2, $3, 'sent', $4, $5) RETURNING id`,
+        [body.estimateId, projectId, user.orgId, requestNo, user.id],
       );
       const requestId = reqRows[0].id as string;
       for (const l of lines) {
@@ -92,7 +108,10 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
         );
       }
       await client.query('COMMIT');
-      return reply.status(201).send({ data: { id: requestId, lines: lines.length } });
+      const number = `${projectCode ?? 'ЗМ'}-${String(requestNo).padStart(2, '0')}`;
+      return reply.status(201).send({
+        data: { id: requestId, requestNo, number, status: 'sent', lines: lines.length },
+      });
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -137,6 +156,68 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
         values,
       );
       return { data: rows };
+    },
+  );
+
+  // ============================================================
+  // GET /api/material-requests?estimateId=&contractorIds=
+  //   Список созданных заявок по смете (для модалки «Созданные заявки»).
+  //   Подрядчик — только заявки своей организации; сотрудник — все, опц. фильтр contractorIds.
+  // ============================================================
+  fastify.get<{ Querystring: { estimateId?: string; contractorIds?: string } }>(
+    '/',
+    async (request, reply) => {
+      const user = request.currentUser;
+      const estimateId = request.query.estimateId;
+      if (!estimateId) return reply.status(400).send({ error: 'Не указан estimateId' });
+
+      const values: unknown[] = [estimateId];
+      let where = 'mr.estimate_id = $1';
+
+      if (isContractor(user)) {
+        if (!user.orgId) return { data: [] };
+        values.push(user.orgId);
+        where += ` AND mr.contractor_id = $${values.length}`;
+      } else if (request.query.contractorIds) {
+        const ids = request.query.contractorIds.split(',').map((s) => s.trim()).filter(Boolean);
+        if (ids.length) {
+          values.push(ids);
+          where += ` AND mr.contractor_id = ANY($${values.length})`;
+        }
+      }
+
+      const { rows } = await fastify.pool.query(
+        `SELECT mr.id, mr.request_no, mr.status, mr.created_at,
+                p.code AS project_code, p.name AS project_name,
+                org.name AS contractor_name,
+                COALESCE(
+                  json_agg(
+                    json_build_object(
+                      'name', mri.material_name,
+                      'unit', mri.unit,
+                      'quantity', mri.quantity,
+                      'costTypeName', ct.name
+                    )
+                    ORDER BY ct.name NULLS LAST, mri.material_name
+                  ) FILTER (WHERE mri.id IS NOT NULL),
+                  '[]'
+                ) AS items
+           FROM material_requests mr
+           LEFT JOIN projects p                ON p.id  = mr.project_id
+           LEFT JOIN organizations org         ON org.id = mr.contractor_id
+           LEFT JOIN material_request_items mri ON mri.request_id = mr.id
+           LEFT JOIN cost_types ct             ON ct.id = mri.cost_type_id
+          WHERE ${where}
+          GROUP BY mr.id, p.code, p.name, org.name
+          ORDER BY mr.request_no DESC NULLS LAST, mr.created_at DESC`,
+        values,
+      );
+
+      const data = rows.map((r) => ({
+        ...r,
+        number: `${r.project_code ?? 'ЗМ'}-${String(r.request_no ?? 0).padStart(2, '0')}`,
+      }));
+      return { data };
     },
   );
 }

@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Table, Tag, Space, Empty, Tooltip, Select, Button, InputNumber, App } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { buildMaterialGroups, type AggregatedMaterial } from '../estimates/materials/aggregateMaterials';
 import { formatMoney, type EstimateItem } from '../estimates/components/types';
+import { MaterialRequestsModal } from './MaterialRequestsModal';
 
 interface Props {
   estimateId: string;
@@ -43,6 +44,8 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
   // Режим заявки на материалы (только подрядчик).
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Map<string, number>>(new Map());
+  // Модалка «Созданные заявки».
+  const [requestsOpen, setRequestsOpen] = useState(false);
   const { message } = App.useApp();
   const queryClient = useQueryClient();
 
@@ -89,12 +92,15 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
   }, [orderedQ.data]);
 
   const submitMutation = useMutation({
-    mutationFn: (lines: unknown[]) => api.post('/material-requests', { estimateId, lines }),
-    onSuccess: () => {
-      message.success('Заявка отправлена');
+    mutationFn: (lines: unknown[]) =>
+      api.post<{ data: { number: string } }>('/material-requests', { estimateId, lines }),
+    onSuccess: (res) => {
+      const number = res?.data?.number;
+      message.success(number ? `Заявка ${number} отправлена` : 'Заявка отправлена');
       setEditing(false);
       setDraft(new Map());
       queryClient.invalidateQueries({ queryKey: ['material-ordered', estimateId] });
+      queryClient.invalidateQueries({ queryKey: ['material-requests', estimateId] });
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -248,6 +254,11 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
               Заявка на материалы
             </Button>
           ))}
+        {!editing && (
+          <Button icon={<UnorderedListOutlined />} onClick={() => setRequestsOpen(true)}>
+            Созданные заявки
+          </Button>
+        )}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {groups.length === 0 ? (
@@ -276,6 +287,14 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
           </Space>
         )}
       </div>
+      {requestsOpen && (
+        <MaterialRequestsModal
+          open
+          onClose={() => setRequestsOpen(false)}
+          estimateId={estimateId}
+          viewerIsContractor={viewerIsContractor}
+        />
+      )}
     </div>
   );
 }
