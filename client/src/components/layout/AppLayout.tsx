@@ -13,6 +13,7 @@ import {
   CheckSquareOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../store/authStore';
+import { NotificationsBell } from './NotificationsBell';
 import type { MenuProps } from 'antd';
 
 const { Content } = Layout;
@@ -111,6 +112,11 @@ export function AppLayout() {
         aria-expanded={open}
         style={{ position: 'fixed', top: 8, left: 8, zIndex: 900 }}
       />
+
+      {/* Колокол уведомлений — плавающий в правом верхнем углу. */}
+      <div style={{ position: 'fixed', top: 6, right: 12, zIndex: 900 }}>
+        <NotificationsBell />
+      </div>
 
       <Drawer
         placement="left"

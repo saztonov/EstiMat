@@ -102,4 +102,31 @@ export const config = {
       return Boolean(this.apiKey);
     },
   },
+
+  // Интеграция с BillHub (система заявок на оплату по РП). EstiMat ИНИЦИИРУЕТ создание заявки
+  // на оплату (исходящее направление); токен — СЕКРЕТ, только из env. Пустой baseUrl/token =
+  // «не настроено» (валидное состояние). syncEnabled — отдельный kill-switch: наличие
+  // credentials само по себе НЕ включает отправку (безопасный поэтапный rollout).
+  billhub: {
+    baseUrl: (process.env.BILLHUB_BASE_URL || '').replace(/\/+$/, ''),
+    apiToken: process.env.BILLHUB_API_TOKEN || '',
+    timeoutMs: Number(process.env.BILLHUB_TIMEOUT_MS || '15000'),
+    syncEnabled: process.env.BILLHUB_SYNC_ENABLED === 'true',
+    get configured(): boolean {
+      return Boolean(this.baseUrl && this.apiToken);
+    },
+    // Отправляем команды в BillHub только когда и настроено, и включено рубильником.
+    get outboundEnabled(): boolean {
+      return this.configured && this.syncEnabled;
+    },
+  },
+
+  // Приём ВХОДЯЩИХ событий от BillHub (обновление статусов заявок на оплату). Ключ — СЕКРЕТ,
+  // проверяется в middleware/authenticateService по заголовку Authorization: Api-Key.
+  integration: {
+    apiKey: process.env.INTEGRATION_API_KEY || '',
+    get enabled(): boolean {
+      return Boolean(this.apiKey);
+    },
+  },
 } as const;

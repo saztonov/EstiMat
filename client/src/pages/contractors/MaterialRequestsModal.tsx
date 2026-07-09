@@ -1,13 +1,17 @@
-import { Modal, Table, Tag, Button, Empty } from 'antd';
+import { useState } from 'react';
+import { Modal, Table, Tag, Button, Empty, Space, Tooltip, App } from 'antd';
+import { FileExcelOutlined, DollarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
 import {
   MATERIAL_REQUEST_STATUS_LABELS,
+  MATERIAL_REQUEST_TYPE_LABELS,
   type MaterialRequestStatus,
 } from '@estimat/shared';
 import { api } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
+import { PaymentRequestModal } from './PaymentRequestModal';
 
 interface RequestItem {
   name: string;
@@ -21,6 +25,7 @@ interface MaterialRequestRow {
   request_no: number | null;
   number: string;
   status: string;
+  request_type: string;
   created_at: string;
   project_code: string | null;
   project_name: string | null;
@@ -37,6 +42,7 @@ interface Props {
 }
 
 const STATUS_COLOR: Record<MaterialRequestStatus, string> = {
+  created: 'default',
   sent: 'blue',
   rp_created: 'orange',
   paid: 'green',
@@ -44,7 +50,6 @@ const STATUS_COLOR: Record<MaterialRequestStatus, string> = {
 
 const num = (v: number | string | null | undefined) => Number(v ?? 0);
 
-// Вложенная таблица состава заявки: вид работ / материал / ед. / количество.
 function ItemsTable({ items }: { items: RequestItem[] }) {
   const columns: ColumnsType<RequestItem> = [
     { title: 'Вид работ', dataIndex: 'costTypeName', key: 'costTypeName', render: (v: string | null) => v || '—' },
@@ -72,6 +77,10 @@ function ItemsTable({ items }: { items: RequestItem[] }) {
 }
 
 export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContractor }: Props) {
+  const { message } = App.useApp();
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [payFor, setPayFor] = useState<MaterialRequestRow | null>(null);
+
   const { data, isLoading } = useQuery({
     queryKey: ['material-requests', estimateId],
     queryFn: () =>
@@ -84,14 +93,32 @@ export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContr
   const rows = data?.data ?? [];
   const projectName = rows[0]?.project_name ?? null;
 
+  async function exportExcel(r: MaterialRequestRow) {
+    setDownloadingId(r.id);
+    try {
+      await api.download(`/material-requests/${r.id}/export`, {}, `Заявка_${r.number}.xlsx`);
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
   const columns: ColumnsType<MaterialRequestRow> = [
-    { title: 'Номер', dataIndex: 'number', key: 'number', width: 130, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Номер', dataIndex: 'number', key: 'number', width: 120, render: (v: string) => <strong>{v}</strong> },
     {
       title: 'Дата',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 160,
+      width: 150,
       render: (v: string) => new Date(v).toLocaleString('ru-RU'),
+    },
+    {
+      title: 'Тип',
+      dataIndex: 'request_type',
+      key: 'request_type',
+      width: 150,
+      render: (v: string) => MATERIAL_REQUEST_TYPE_LABELS[v as keyof typeof MATERIAL_REQUEST_TYPE_LABELS] ?? v,
     },
     ...(!viewerIsContractor
       ? ([{
@@ -104,7 +131,7 @@ export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContr
     {
       title: 'Материалов',
       key: 'count',
-      width: 110,
+      width: 100,
       align: 'right',
       render: (_, r) => r.items.length,
     },
@@ -112,37 +139,74 @@ export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContr
       title: 'Статус',
       dataIndex: 'status',
       key: 'status',
-      width: 130,
+      width: 120,
       render: (s: string) => (
         <Tag color={STATUS_COLOR[s as MaterialRequestStatus]}>
           {MATERIAL_REQUEST_STATUS_LABELS[s as MaterialRequestStatus] ?? s}
         </Tag>
       ),
     },
+    {
+      title: 'Действия',
+      key: 'actions',
+      width: 220,
+      render: (_, r) =>
+        r.request_type === 'own_supplier' ? (
+          <Space size={4} wrap>
+            <Tooltip title="Выгрузить заявку в Excel для поставщика">
+              <Button
+                size="small"
+                icon={<FileExcelOutlined />}
+                loading={downloadingId === r.id}
+                onClick={() => exportExcel(r)}
+              >
+                Excel
+              </Button>
+            </Tooltip>
+            {viewerIsContractor && (
+              <Button size="small" type="primary" icon={<DollarOutlined />} onClick={() => setPayFor(r)}>
+                Заявка на оплату
+              </Button>
+            )}
+          </Space>
+        ) : (
+          <span style={{ color: '#bfbfbf' }}>—</span>
+        ),
+    },
   ];
 
   return (
-    <Modal
-      title={`Созданные заявки${projectName ? ` — ${projectName}` : ''}`}
-      open={open}
-      onCancel={onClose}
-      footer={<Button onClick={onClose}>Закрыть</Button>}
-      width={modalWidth(900)}
-    >
-      <Table<MaterialRequestRow>
-        rowKey="id"
-        size="small"
-        loading={isLoading}
-        columns={columns}
-        dataSource={rows}
-        pagination={DEFAULT_PAGINATION}
-        scroll={{ x: 700 }}
-        locale={{ emptyText: <Empty description="Заявок пока нет" /> }}
-        expandable={{
-          expandedRowRender: (r) => <ItemsTable items={r.items} />,
-          rowExpandable: (r) => r.items.length > 0,
-        }}
-      />
-    </Modal>
+    <>
+      <Modal
+        title={`Созданные заявки${projectName ? ` — ${projectName}` : ''}`}
+        open={open}
+        onCancel={onClose}
+        footer={<Button onClick={onClose}>Закрыть</Button>}
+        width={modalWidth(1000)}
+      >
+        <Table<MaterialRequestRow>
+          rowKey="id"
+          size="small"
+          loading={isLoading}
+          columns={columns}
+          dataSource={rows}
+          pagination={DEFAULT_PAGINATION}
+          scroll={{ x: 900 }}
+          locale={{ emptyText: <Empty description="Заявок пока нет" /> }}
+          expandable={{
+            expandedRowRender: (r) => <ItemsTable items={r.items} />,
+            rowExpandable: (r) => r.items.length > 0,
+          }}
+        />
+      </Modal>
+      {payFor && (
+        <PaymentRequestModal
+          open
+          materialRequestId={payFor.id}
+          materialRequestNumber={payFor.number}
+          onClose={() => setPayFor(null)}
+        />
+      )}
+    </>
   );
 }

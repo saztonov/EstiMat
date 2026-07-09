@@ -12,6 +12,7 @@ import { mkdir } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { config } from './config.js';
+import { createOutboxWorker } from './lib/integration/outbox-worker.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UPLOADS_DIR = join(__dirname, '..', 'uploads');
@@ -148,6 +149,13 @@ export async function buildApp() {
     return reply.status(500).send({ error: 'Внутренняя ошибка сервера' });
   });
 
+  // Исходящая очередь команд в BillHub (создаём до роутов — payment-requests дёргает fast-path).
+  const outbox = createOutboxWorker(app);
+  app.decorate('outbox', outbox);
+  app.addHook('onClose', async () => {
+    await outbox.stop();
+  });
+
   // Routes
   await app.register(import('./routes/auth/index.js'), { prefix: '/api/auth' });
   await app.register(import('./routes/organizations/index.js'), { prefix: '/api/organizations' });
@@ -161,6 +169,9 @@ export async function buildApp() {
   await app.register(import('./routes/estimate-items/index.js'), { prefix: '/api/estimate-items' });
   await app.register(import('./routes/contractors/index.js'), { prefix: '/api/contractors' });
   await app.register(import('./routes/material-requests/index.js'), { prefix: '/api/material-requests' });
+  await app.register(import('./routes/payment-requests/index.js'), { prefix: '/api/payment-requests' });
+  await app.register(import('./routes/integration/index.js'), { prefix: '/api/integration' });
+  await app.register(import('./routes/notifications/index.js'), { prefix: '/api/notifications' });
   await app.register(import('./routes/users/index.js'), { prefix: '/api/users' });
   await app.register(import('./routes/uploads/index.js'), { prefix: '/api/uploads' });
   await app.register(import('./routes/rd/index.js'), { prefix: '/api/rd' });
@@ -168,6 +179,9 @@ export async function buildApp() {
   await app.register(import('./routes/llm/index.js'), { prefix: '/api/llm' });
   await app.register(import('./routes/ai/index.js'), { prefix: '/api/ai' });
   await app.register(import('./routes/ai-chat/index.js'), { prefix: '/api/ai-chat' });
+
+  // Запуск фоновой доставки команд в BillHub (самотормозится при выключенном рубильнике).
+  outbox.start();
 
   // Health endpoints (§5) — без auth и без rate-limit, на корне для nginx/uptime.
   app.get('/health/live', { config: { rateLimit: false } }, async () => ({ status: 'ok' }));

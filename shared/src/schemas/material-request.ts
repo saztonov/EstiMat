@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MATERIAL_REQUEST_TYPES } from '../constants/statuses.js';
 
 // Одна строка заявки на материал. Идентификация материала — тем же ключом свёртки,
 // что клиент строит в aggregateMaterials (id:<material_id>|<ед> либо txt:<name>|<ед>),
@@ -14,6 +15,8 @@ export const materialRequestLineSchema = z.object({
 
 export const createMaterialRequestSchema = z.object({
   estimateId: z.string().uuid(),
+  // Тип (маршрут) заявки выбирается подрядчиком осознанно — без значения по умолчанию.
+  requestType: z.enum(MATERIAL_REQUEST_TYPES),
   lines: z.array(materialRequestLineSchema).min(1, 'Пустая заявка'),
 });
 

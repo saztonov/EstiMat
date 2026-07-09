@@ -3,6 +3,10 @@ import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { isContractor } from '../../lib/chat/access.js';
 import { createMaterialRequestSchema, type CreateMaterialRequestInput } from '@estimat/shared';
+import {
+  exportMaterialRequestXlsx,
+  MaterialRequestExportError,
+} from '../../lib/material-request-export/index.js';
 
 // Ключ свёртки материала — ДОЛЖЕН совпадать с клиентским aggKey (aggregateMaterials.ts):
 //   справочный материал → id:<material_id>|<ед>, текстовый → txt:<name>|<ед> (нормализовано).
@@ -94,9 +98,9 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
       const requestNo = Number(noRows[0].next_no);
 
       const { rows: reqRows } = await client.query(
-        `INSERT INTO material_requests (estimate_id, project_id, contractor_id, status, request_no, created_by)
-         VALUES ($1, $2, $3, 'sent', $4, $5) RETURNING id`,
-        [body.estimateId, projectId, user.orgId, requestNo, user.id],
+        `INSERT INTO material_requests (estimate_id, project_id, contractor_id, status, request_type, request_no, created_by)
+         VALUES ($1, $2, $3, 'created', $4, $5, $6) RETURNING id`,
+        [body.estimateId, projectId, user.orgId, body.requestType, requestNo, user.id],
       );
       const requestId = reqRows[0].id as string;
       for (const l of lines) {
@@ -110,13 +114,39 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
       await client.query('COMMIT');
       const number = `${projectCode ?? 'ЗМ'}-${String(requestNo).padStart(2, '0')}`;
       return reply.status(201).send({
-        data: { id: requestId, requestNo, number, status: 'sent', lines: lines.length },
+        data: { id: requestId, requestNo, number, status: 'created', lines: lines.length },
       });
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
     } finally {
       client.release();
+    }
+  });
+
+  // ============================================================
+  // POST /api/material-requests/:id/export — выгрузка заявки в Excel (для поставщика)
+  //   Доступ: владелец-подрядчик (своя организация) или внутренние роли.
+  // ============================================================
+  fastify.post<{ Params: { id: string } }>('/:id/export', async (request, reply) => {
+    const user = request.currentUser;
+    try {
+      const { buffer, fileName, header } = await exportMaterialRequestXlsx(fastify.pool, request.params.id);
+      if (isContractor(user) && header.contractor_id !== user.orgId) {
+        return reply.status(403).send({ error: 'Чужая заявка' });
+      }
+      reply.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      reply.header(
+        'Content-Disposition',
+        `attachment; filename="request.xlsx"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+      );
+      reply.header('X-Content-Type-Options', 'nosniff');
+      return reply.send(buffer);
+    } catch (e) {
+      if (e instanceof MaterialRequestExportError) {
+        return reply.status(e.status).send({ error: e.message });
+      }
+      throw e;
     }
   });
 
@@ -187,7 +217,7 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
       }
 
       const { rows } = await fastify.pool.query(
-        `SELECT mr.id, mr.request_no, mr.status, mr.created_at,
+        `SELECT mr.id, mr.request_no, mr.status, mr.request_type, mr.created_at,
                 p.code AS project_code, p.name AS project_name,
                 org.name AS contractor_name,
                 COALESCE(

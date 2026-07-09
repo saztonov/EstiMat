@@ -51,6 +51,25 @@ export function runStartupChecks(): void {
     errors.push('S3 не сконфигурирован (нужны S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET)');
   }
 
+  // BillHub: конфигурация либо полная (baseUrl + token), либо пустая. Частичная — ошибка.
+  const bhBaseUrl = config.billhub.baseUrl;
+  const bhToken = config.billhub.apiToken;
+  if (Boolean(bhBaseUrl) !== Boolean(bhToken)) {
+    errors.push('BillHub: задайте оба BILLHUB_BASE_URL и BILLHUB_API_TOKEN, либо ни одного');
+  }
+  if (bhBaseUrl && !/^https:\/\//.test(bhBaseUrl)) {
+    errors.push('BILLHUB_BASE_URL должен использовать https в production');
+  }
+  // Рубильник отправки нельзя включить без полной конфигурации.
+  if (config.billhub.syncEnabled && !config.billhub.configured) {
+    errors.push('BILLHUB_SYNC_ENABLED=true требует BILLHUB_BASE_URL и BILLHUB_API_TOKEN');
+  }
+
+  // Ключ приёма событий BillHub: если задан — не короче 32 символов.
+  if (config.integration.apiKey && config.integration.apiKey.length < 32) {
+    errors.push('INTEGRATION_API_KEY: длина меньше 32 символов');
+  }
+
   if (errors.length > 0) {
     const message = ['Production startup checks failed:', ...errors.map((e) => `  - ${e}`)].join('\n');
     throw new Error(message);
