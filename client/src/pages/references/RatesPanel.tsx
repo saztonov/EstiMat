@@ -178,10 +178,10 @@ export function RatesPanel() {
       costTypeIds: record.cost_types.map((c) => c.costTypeId),
       primaryCostTypeId: primary?.costTypeId,
       name: record.name,
-      code: record.code,
+      code: record.code ?? '',
       unit: record.unit,
       price: Number(record.price),
-      description: record.description,
+      description: record.description ?? '',
     });
     setModalOpen(true);
   }

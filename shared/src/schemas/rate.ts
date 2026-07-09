@@ -20,13 +20,13 @@ const rateBaseSchema = z.object({
   costTypeIds: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один вид работ'),
   primaryCostTypeId: z.string().uuid().optional(),
   name: z.string().min(1, 'Название обязательно'),
-  code: z.string().optional(),
+  code: z.string().nullable().optional(),
   unit: z.string().min(1, 'Единица измерения обязательна'),
   price: z.preprocess(
     (v) => (v == null || v === '' ? 0 : v),
     z.number().min(0, 'Цена не может быть отрицательной'),
   ),
-  description: z.string().optional(),
+  description: z.string().nullable().optional(),
 });
 
 // Переходная совместимость: принимаем одиночный costTypeId и нормализуем в массив.

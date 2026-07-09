@@ -269,10 +269,10 @@ export default async function rateRoutes(fastify: FastifyInstance) {
       const values: unknown[] = [];
       let i = 1;
       if (body.name !== undefined) { sets.push(`name = $${i++}`); values.push(body.name); }
-      if (body.code !== undefined) { sets.push(`code = $${i++}`); values.push(body.code); }
+      if (body.code !== undefined) { sets.push(`code = $${i++}`); values.push(body.code || null); }
       if (body.unit !== undefined) { sets.push(`unit = $${i++}`); values.push(body.unit); }
       if (body.price !== undefined) { sets.push(`price = $${i++}`); values.push(body.price); }
-      if (body.description !== undefined) { sets.push(`description = $${i++}`); values.push(body.description); }
+      if (body.description !== undefined) { sets.push(`description = $${i++}`); values.push(body.description || null); }
 
       let rate: Record<string, unknown>;
       if (sets.length > 0) {
