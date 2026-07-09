@@ -44,6 +44,11 @@ const STATUS_COLOR: Record<PaymentRequestStatus, string> = {
 
 const money = (v: string | null) => (v == null ? '—' : Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2 }));
 
+// URL приходит из внешней системы (BillHub) — в href допускаем только http(s),
+// иначе javascript:-URL выполнил бы код по клику (XSS).
+const safeHref = (u: string | null): string | null =>
+  u && /^https?:\/\//i.test(u) ? u : null;
+
 export function PaymentRequestsListModal({ open, onClose }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: ['payment-requests'],
@@ -58,12 +63,14 @@ export function PaymentRequestsListModal({ open, onClose }: Props) {
       title: 'Номер',
       key: 'number',
       width: 140,
-      render: (_, r) =>
-        r.bh_request_url ? (
-          <a href={r.bh_request_url} target="_blank" rel="noreferrer">{r.bh_request_number ?? '—'}</a>
+      render: (_, r) => {
+        const href = safeHref(r.bh_request_url);
+        return href ? (
+          <a href={href} target="_blank" rel="noreferrer">{r.bh_request_number ?? '—'}</a>
         ) : (
           r.bh_request_number ?? <span style={{ color: '#bfbfbf' }}>не отправлена</span>
-        ),
+        );
+      },
     },
     { title: 'Поставщик', dataIndex: 'bh_supplier_name', key: 'supplier', render: (v: string | null) => v || '—' },
     { title: 'Сумма, ₽', key: 'amount', width: 130, align: 'right', render: (_, r) => money(r.invoice_amount) },

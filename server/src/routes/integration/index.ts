@@ -107,6 +107,8 @@ export default async function integrationRoutes(fastify: FastifyInstance) {
         const applied = ev.aggregateVersion > pr.last_bh_version;
         if (applied) {
           const actionRequired = s.statusCode === 'revision' ? true : Boolean(s.actionRequired);
+          // URL заявки уйдёт в href на клиенте — храним только http(s) (защита от javascript:-XSS).
+          const safeUrl = s.requestUrl && /^https?:\/\//i.test(s.requestUrl) ? s.requestUrl : null;
           await client.query(
             `UPDATE payment_requests SET
                status_code       = COALESCE($2, status_code),
@@ -127,7 +129,7 @@ export default async function integrationRoutes(fastify: FastifyInstance) {
               actionRequired,
               s.revisionComment ?? null,
               s.requestNumber ?? null,
-              s.requestUrl ?? null,
+              safeUrl,
               ev.type === 'payment_request.rp_unlinked' ? null : s.rpNumber ?? null,
               s.rpDate ?? null,
               s.paidStatus ?? null,

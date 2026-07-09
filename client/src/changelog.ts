@@ -10,6 +10,13 @@ export interface ChangelogEntry {
 /** Новые версии добавляются В НАЧАЛО массива. Текущая версия = CHANGELOG[0]. */
 export const CHANGELOG: readonly [ChangelogEntry, ...ChangelogEntry[]] = [
   {
+    version: '0.36',
+    date: '2026-07-10',
+    changes: [
+      'В разделе «Подрядчики»: технические улучшения безопасности при отображении заявок на оплату',
+    ],
+  },
+  {
     version: '0.35',
     date: '2026-07-10',
     changes: [
