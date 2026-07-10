@@ -5,6 +5,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { LRUCache } from 'lru-cache';
 import type { Readable } from 'stream';
@@ -20,6 +21,8 @@ const URL_CACHE_MS = 50 * 60_000; // кэш короче подписи, что�
 
 export interface Storage {
   putObject(key: string, body: Buffer, contentType: string): Promise<void>;
+  // Потоковая загрузка (managed multipart) — не буферизует крупные файлы в память.
+  putObjectStream(key: string, body: Readable, contentType: string): Promise<void>;
   deleteObject(key: string): Promise<void>;
   presignGet(key: string, ttlSec?: number): Promise<string>;
   // Чтение объекта стримом — для отдачи через API-прокси (браузер не ходит в S3 напрямую).
@@ -43,6 +46,17 @@ function buildStorage(): Storage {
       await s3.send(
         new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }),
       );
+    },
+
+    async putObjectStream(key, body, contentType) {
+      // Managed multipart: части грузятся по мере поступления, файл целиком в память не берётся.
+      const upload = new Upload({
+        client: s3,
+        params: { Bucket: bucket, Key: key, Body: body, ContentType: contentType },
+        partSize: 5 * 1024 * 1024,
+        queueSize: 3,
+      });
+      await upload.done();
     },
 
     async deleteObject(key) {

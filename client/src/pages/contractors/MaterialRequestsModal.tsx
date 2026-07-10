@@ -1,17 +1,17 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
 import { Modal, Table, Tag, Button, Empty, Space, Tooltip, App } from 'antd';
-import { FileExcelOutlined, DollarOutlined } from '@ant-design/icons';
+import { FileExcelOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
 import {
-  MATERIAL_REQUEST_STATUS_LABELS,
+  REQUEST_STATUS_LABELS,
   MATERIAL_REQUEST_TYPE_LABELS,
-  type MaterialRequestStatus,
+  type RequestStatus,
 } from '@estimat/shared';
 import { api } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
-import { PaymentRequestModal } from './PaymentRequestModal';
 
 interface RequestItem {
   name: string;
@@ -41,11 +41,12 @@ interface Props {
   viewerIsContractor: boolean;
 }
 
-const STATUS_COLOR: Record<MaterialRequestStatus, string> = {
-  created: 'default',
-  sent: 'blue',
-  rp_created: 'orange',
+const STATUS_COLOR: Record<RequestStatus, string> = {
+  in_work: 'processing',
+  revision: 'warning',
+  supplier_selected: 'blue',
   paid: 'green',
+  delivered: 'success',
 };
 
 const num = (v: number | string | null | undefined) => Number(v ?? 0);
@@ -78,8 +79,8 @@ function ItemsTable({ items }: { items: RequestItem[] }) {
 
 export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContractor }: Props) {
   const { message } = App.useApp();
+  const navigate = useNavigate();
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [payFor, setPayFor] = useState<MaterialRequestRow | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['material-requests', estimateId],
@@ -139,10 +140,10 @@ export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContr
       title: 'Статус',
       dataIndex: 'status',
       key: 'status',
-      width: 120,
+      width: 150,
       render: (s: string) => (
-        <Tag color={STATUS_COLOR[s as MaterialRequestStatus]}>
-          {MATERIAL_REQUEST_STATUS_LABELS[s as MaterialRequestStatus] ?? s}
+        <Tag color={STATUS_COLOR[s as RequestStatus]}>
+          {REQUEST_STATUS_LABELS[s as RequestStatus] ?? s}
         </Tag>
       ),
     },
@@ -150,28 +151,23 @@ export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContr
       title: 'Действия',
       key: 'actions',
       width: 220,
-      render: (_, r) =>
-        r.request_type === 'own_supplier' ? (
-          <Space size={4} wrap>
-            <Tooltip title="Выгрузить заявку в Excel для поставщика">
-              <Button
-                size="small"
-                icon={<FileExcelOutlined />}
-                loading={downloadingId === r.id}
-                onClick={() => exportExcel(r)}
-              >
-                Excel
-              </Button>
-            </Tooltip>
-            {viewerIsContractor && (
-              <Button size="small" type="primary" icon={<DollarOutlined />} onClick={() => setPayFor(r)}>
-                Заявка на оплату
-              </Button>
-            )}
-          </Space>
-        ) : (
-          <span style={{ color: '#bfbfbf' }}>—</span>
-        ),
+      render: (_, r) => (
+        <Space size={4} wrap>
+          <Button size="small" type="link" onClick={() => { onClose(); navigate(`/requests/${r.id}`); }}>
+            Открыть
+          </Button>
+          <Tooltip title="Выгрузить заявку в Excel для поставщика">
+            <Button
+              size="small"
+              icon={<FileExcelOutlined />}
+              loading={downloadingId === r.id}
+              onClick={() => exportExcel(r)}
+            >
+              Excel
+            </Button>
+          </Tooltip>
+        </Space>
+      ),
     },
   ];
 
@@ -199,14 +195,6 @@ export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContr
           }}
         />
       </Modal>
-      {payFor && (
-        <PaymentRequestModal
-          open
-          materialRequestId={payFor.id}
-          materialRequestNumber={payFor.number}
-          onClose={() => setPayFor(null)}
-        />
-      )}
     </>
   );
 }

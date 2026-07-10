@@ -229,4 +229,8 @@ export const api = {
       fallbackName,
       opts,
     ),
+
+  // GET → скачивание файла (blob) из ответа (документы через download-proxy).
+  downloadGet: (url: string, fallbackName = 'download', opts?: FetchOptions) =>
+    downloadBlob(url, { method: 'GET' }, fallbackName, opts),
 };

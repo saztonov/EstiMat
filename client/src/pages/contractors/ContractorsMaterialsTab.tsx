@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Table, Tag, Space, Empty, Tooltip, Select, Button, InputNumber, Segmented, App } from 'antd';
-import { PlusOutlined, UnorderedListOutlined, DollarOutlined } from '@ant-design/icons';
+import { PlusOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -12,7 +12,6 @@ import { api } from '../../services/api';
 import { buildMaterialGroups, type AggregatedMaterial } from '../estimates/materials/aggregateMaterials';
 import { formatMoney, type EstimateItem } from '../estimates/components/types';
 import { MaterialRequestsModal } from './MaterialRequestsModal';
-import { PaymentRequestsListModal } from './PaymentRequestsListModal';
 
 interface Props {
   estimateId: string;
@@ -54,8 +53,6 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
   const [draft, setDraft] = useState<Map<string, number>>(new Map());
   // Модалка «Созданные заявки».
   const [requestsOpen, setRequestsOpen] = useState(false);
-  // Модалка «Заявки на оплату» (только подрядчик).
-  const [payListOpen, setPayListOpen] = useState(false);
   const { message } = App.useApp();
   const queryClient = useQueryClient();
 
@@ -106,11 +103,12 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
   }, [orderedQ.data]);
 
   const submitMutation = useMutation({
-    mutationFn: (vars: { requestType: MaterialRequestType; lines: unknown[] }) =>
-      api.post<{ data: { number: string } }>('/material-requests', {
+    mutationFn: (vars: { requestType: MaterialRequestType; lines: unknown[]; createRequestId: string }) =>
+      api.post<{ data: { number: string } }>('/requests', {
         estimateId,
         requestType: vars.requestType,
         lines: vars.lines,
+        createRequestId: vars.createRequestId,
       }),
     onSuccess: (res) => {
       const number = res?.data?.number;
@@ -120,6 +118,7 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
       setDraft(new Map());
       queryClient.invalidateQueries({ queryKey: ['material-ordered', estimateId] });
       queryClient.invalidateQueries({ queryKey: ['material-requests', estimateId] });
+      queryClient.invalidateQueries({ queryKey: ['requests', 'list'] });
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -169,7 +168,7 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
       message.warning('Выберите тип заявки');
       return;
     }
-    submitMutation.mutate({ requestType, lines });
+    submitMutation.mutate({ requestType, lines, createRequestId: crypto.randomUUID() });
   }
 
   // Колонки строятся на группу (нужен costTypeId группы для ключа заказа/заявки).
@@ -291,11 +290,6 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
             Созданные заявки
           </Button>
         )}
-        {!editing && viewerIsContractor && (
-          <Button icon={<DollarOutlined />} onClick={() => setPayListOpen(true)}>
-            Заявки на оплату
-          </Button>
-        )}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {groups.length === 0 ? (
@@ -331,9 +325,6 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
           estimateId={estimateId}
           viewerIsContractor={viewerIsContractor}
         />
-      )}
-      {payListOpen && (
-        <PaymentRequestsListModal open onClose={() => setPayListOpen(false)} />
       )}
     </div>
   );

@@ -15,6 +15,8 @@ import { ReferencesPage } from './pages/references/ReferencesPage';
 import { AdministrationPage } from './pages/administration/AdministrationPage';
 import { ContractorsPage } from './pages/contractors/ContractorsPage';
 import { ExecutionPage } from './pages/execution/ExecutionPage';
+import { RequestsPage } from './pages/requests/RequestsPage';
+import { RequestDetailPage } from './pages/requests/RequestDetailPage';
 import { ProfilePage } from './pages/profile/ProfilePage';
 
 // Стартовая страница: Сметы для тех, кому доступны (все, кроме подрядчика), иначе — Подрядчики.
@@ -49,6 +51,8 @@ export default function App() {
             <Route path="/contractors" element={<ContractorsPage />} />
             <Route path="/contractors/:estimateId" element={<ContractorsPage />} />
             <Route path="/execution" element={<ExecutionPage />} />
+            <Route path="/requests" element={<RequestsPage />} />
+            <Route path="/requests/:id" element={<RequestDetailPage />} />
           </Route>
         </Route>
       </Routes>

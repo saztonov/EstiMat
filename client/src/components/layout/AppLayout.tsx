@@ -11,6 +11,7 @@ import {
   MenuOutlined,
   TeamOutlined,
   CheckSquareOutlined,
+  FileDoneOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../store/authStore';
 import { NotificationsBell } from './NotificationsBell';
@@ -43,12 +44,14 @@ export function AppLayout() {
     if (user?.role === 'contractor') {
       return [
         navItem('/contractors', <TeamOutlined />, 'Сметы'),
+        navItem('/requests', <FileDoneOutlined />, 'Заявки'),
         navItem('/execution', <CheckSquareOutlined />, 'Выполнение'),
       ];
     }
     const items = [
       navItem('/estimates', <FileTextOutlined />, 'Сметы'),
       navItem('/contractors', <TeamOutlined />, 'Подрядчики'),
+      navItem('/requests', <FileDoneOutlined />, 'Заявки'),
       navItem('/execution', <CheckSquareOutlined />, 'Выполнение'),
       navItem('/references', <AppstoreOutlined />, 'Справочники'),
     ];
@@ -63,6 +66,7 @@ export function AppLayout() {
     if (path.startsWith('/references')) return ['/references'];
     if (path.startsWith('/administration')) return ['/administration'];
     if (path.startsWith('/contractors')) return ['/contractors'];
+    if (path.startsWith('/requests')) return ['/requests'];
     if (path.startsWith('/execution')) return ['/execution'];
     if (path.startsWith('/estimates') || path.startsWith('/projects')) return ['/estimates'];
     return [path];

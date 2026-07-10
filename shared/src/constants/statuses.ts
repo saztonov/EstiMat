@@ -21,27 +21,79 @@ export const ORG_TYPE_LABELS: Record<OrgType, string> = {
 // Статусы заявки подрядчика на материалы. Новые заявки создаются в статусе 'created';
 // значения 'sent'/'rp_created'/'paid' — legacy (жизненный цикл оплаты теперь живёт в
 // заявке на оплату payment_requests и приходит из BillHub).
+// Единый статус жизненного цикла заявки (канонический, material_requests.status).
+// Заявка создаётся сразу в 'in_work' (согласование автоматическое, этапов нет).
+// Статусы supplier_selected/paid/delivered ВЫЧИСЛЯЮТСЯ доменным сервисом пересчёта
+// по фактам (выбор поставщика, оплаты, поставки) и не выставляются вручную;
+// in_work/revision — состояние процесса.
+export const REQUEST_STATUSES = [
+  'in_work',
+  'revision',
+  'supplier_selected',
+  'paid',
+  'delivered',
+] as const;
+export type RequestStatus = (typeof REQUEST_STATUSES)[number];
+
+export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
+  in_work: 'В работе',
+  revision: 'На доработке',
+  supplier_selected: 'Выбран поставщик',
+  paid: 'Оплачено',
+  delivered: 'Поставлено',
+};
+
+// Намёк на тон бейджа (клиент маппит на свою палитру).
+export const REQUEST_STATUS_TONE: Record<RequestStatus, 'info' | 'warning' | 'accent' | 'success' | 'done'> = {
+  in_work: 'info',
+  revision: 'warning',
+  supplier_selected: 'accent',
+  paid: 'success',
+  delivered: 'done',
+};
+
+// Статусы, вычисляемые системой по фактам (не выставляются вручную через API).
+export const REQUEST_COMPUTED_STATUSES = ['supplier_selected', 'paid', 'delivered'] as const;
+
+// Legacy-статусы заявки (до единого жизненного цикла) — только для backfill/справки.
 export const MATERIAL_REQUEST_STATUSES = ['created', 'sent', 'rp_created', 'paid'] as const;
 export type MaterialRequestStatus = (typeof MATERIAL_REQUEST_STATUSES)[number];
 
-export const MATERIAL_REQUEST_STATUS_LABELS: Record<MaterialRequestStatus, string> = {
-  created: 'Создана',
-  sent: 'Отправлено',
-  rp_created: 'Создан РП',
-  paid: 'Оплачено',
-};
-
-// Тип (маршрут) заявки на материалы. Подрядчик выбирает при создании:
-//   own_supplier — свой поставщик, оплата через распределительное письмо (РП) в BillHub;
-//   su10         — закупка через СУ-10 (материалы распределяют менеджеры; раздел в разработке);
-//   legacy       — исторические заявки, созданные до появления выбора типа.
-export const MATERIAL_REQUEST_TYPES = ['own_supplier', 'su10'] as const;
+// Вид (маршрут) заявки. Подрядчик выбирает при создании:
+//   own_supplier — оплата через распределительное письмо (РП): свой поставщик;
+//   su10         — закупка через СУ-10 (снабжение выбирает поставщика, ведёт заказ);
+//   own_supply   — собственная закупка подрядчиком;
+//   legacy       — исторические заявки без вида (архив, скрыты по умолчанию).
+export const MATERIAL_REQUEST_TYPES = ['own_supplier', 'su10', 'own_supply'] as const;
 export type MaterialRequestType = (typeof MATERIAL_REQUEST_TYPES)[number];
 
 export const MATERIAL_REQUEST_TYPE_LABELS: Record<MaterialRequestType | 'legacy', string> = {
-  own_supplier: 'Свой поставщик (РП)',
+  own_supplier: 'Оплата по РП',
   su10: 'Закупка через СУ-10',
-  legacy: 'Без типа',
+  own_supply: 'Собственная закупка',
+  legacy: 'Архив',
+};
+
+// Типы прикрепляемых документов (заявка/заказ/оплата/поставка).
+export const REQUEST_DOC_TYPES = [
+  'invoice',
+  'quote',
+  'spec',
+  'contract',
+  'payment',
+  'delivery',
+  'other',
+] as const;
+export type RequestDocType = (typeof REQUEST_DOC_TYPES)[number];
+
+export const REQUEST_DOC_TYPE_LABELS: Record<RequestDocType, string> = {
+  invoice: 'Счёт',
+  quote: 'КП',
+  spec: 'Спецификация',
+  contract: 'Договор',
+  payment: 'Платёжный документ',
+  delivery: 'Документ поставки',
+  other: 'Прочее',
 };
 
 // Статусы согласования заявки на оплату (проекция из BillHub, entity_type='payment_request').
