@@ -109,18 +109,21 @@ export default async function integrationRoutes(fastify: FastifyInstance) {
           const actionRequired = s.statusCode === 'revision' ? true : Boolean(s.actionRequired);
           // URL заявки уйдёт в href на клиенте — храним только http(s) (защита от javascript:-XSS).
           const safeUrl = s.requestUrl && /^https?:\/\//i.test(s.requestUrl) ? s.requestUrl : null;
+          // Событие несёт ПОЛНЫЙ snapshot проекции → изменяемые поля применяем как replace
+          // (null очищает: напр. rp_unlinked обнуляет rpNumber, снятие доработки — revisionComment).
+          // COALESCE оставляем только для идентичности (номер/URL заявки — set-once) и total_paid (NOT NULL).
           await client.query(
             `UPDATE payment_requests SET
-               status_code       = COALESCE($2, status_code),
+               status_code       = $2,
                action_required   = $3,
                revision_comment  = $4,
                bh_request_number = COALESCE($5, bh_request_number),
                bh_request_url    = COALESCE($6, bh_request_url),
-               rp_number         = COALESCE($7, rp_number),
-               rp_date           = COALESCE($8::date, rp_date),
-               paid_status       = COALESCE($9, paid_status),
+               rp_number         = $7,
+               rp_date           = $8::date,
+               paid_status       = $9,
                total_paid        = COALESCE($10, total_paid),
-               last_payment_date = COALESCE($11::date, last_payment_date),
+               last_payment_date = $11::date,
                last_bh_version   = $12
              WHERE id = $1`,
             [
@@ -130,7 +133,7 @@ export default async function integrationRoutes(fastify: FastifyInstance) {
               s.revisionComment ?? null,
               s.requestNumber ?? null,
               safeUrl,
-              ev.type === 'payment_request.rp_unlinked' ? null : s.rpNumber ?? null,
+              s.rpNumber ?? null,
               s.rpDate ?? null,
               s.paidStatus ?? null,
               s.totalPaid ?? null,
