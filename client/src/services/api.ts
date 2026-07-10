@@ -233,4 +233,14 @@ export const api = {
   // GET → скачивание файла (blob) из ответа (документы через download-proxy).
   downloadGet: (url: string, fallbackName = 'download', opts?: FetchOptions) =>
     downloadBlob(url, { method: 'GET' }, fallbackName, opts),
+
+  // GET → открыть файл в новой вкладке (inline-просмотр). Авторизация/refresh — как у apiFetchRaw;
+  // blob-URL отзываем с задержкой, чтобы вкладка успела его подхватить.
+  openGet: async (url: string, opts?: FetchOptions): Promise<void> => {
+    const res = await apiFetchRaw(url, { method: 'GET' }, { timeoutMs: 60_000, ...opts });
+    const blob = await res.blob();
+    const href = URL.createObjectURL(blob);
+    window.open(href, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(href), 60_000);
+  },
 };
