@@ -11,6 +11,7 @@ import {
   MoreOutlined,
   SnippetsOutlined,
   FileExcelOutlined,
+  FolderOpenOutlined,
 } from '@ant-design/icons';
 import { WorkTreeSelect, type WorkOption } from '../components/WorkTreeSelect';
 import { formatLocationsLabel, type ZoneNode } from '../components/location';
@@ -44,7 +45,8 @@ interface SmetaSelectionToolbarProps {
   onBulkAssign: () => void;
   onOpenReplicate: () => void;
   onOpenReview: () => void;
-  onExportKp: () => void;
+  onOpenExport: () => void;
+  onOpenVorList: () => void;
   onExpandStep: () => void;
   onCollapseStep: () => void;
 }
@@ -78,7 +80,8 @@ export function SmetaSelectionToolbar({
   onBulkAssign,
   onOpenReplicate,
   onOpenReview,
-  onExportKp,
+  onOpenExport,
+  onOpenVorList,
   onExpandStep,
   onCollapseStep,
 }: SmetaSelectionToolbarProps) {
@@ -222,18 +225,31 @@ export function SmetaSelectionToolbar({
         </Space>
       )}
       {mode === 'none' && (
-        <Tooltip title="Выгрузить отобранные фильтрами строки в Excel-шаблон ВОР (КП)">
-          <Button
-            type="text"
-            size="small"
-            icon={<FileExcelOutlined />}
-            aria-label="Экспорт в Excel"
-            loading={exporting}
-            onClick={onExportKp}
-          >
-            {isPhone ? null : 'Экспорт в Excel'}
-          </Button>
-        </Tooltip>
+        <>
+          <Tooltip title="Выгрузить отобранные фильтрами строки в Excel-шаблон ВОР и сохранить">
+            <Button
+              type="text"
+              size="small"
+              icon={<FileExcelOutlined />}
+              aria-label="Экспорт в Excel"
+              loading={exporting}
+              onClick={onOpenExport}
+            >
+              {isPhone ? null : 'Экспорт в Excel'}
+            </Button>
+          </Tooltip>
+          <Tooltip title="Созданные ВОР — история выгрузок">
+            <Button
+              type="text"
+              size="small"
+              icon={<FolderOpenOutlined />}
+              aria-label="Созданные ВОР"
+              onClick={onOpenVorList}
+            >
+              {isPhone ? null : 'Созданные ВОР'}
+            </Button>
+          </Tooltip>
+        </>
       )}
       {editable && mode === 'none' && (canBulkMutateMaterials || canBulkDelete) && (
         <Popover

@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { Table, Button, App } from 'antd';
+import { Table, Button, App, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { ExpandableConfig } from 'antd/es/table/interface';
 import { PlusOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
@@ -108,6 +108,10 @@ interface Props {
   canEditCiphers?: boolean;
   /** Мобильный режим: min-width таблицы работ в px (горизонтальный скролл). */
   tableScrollX?: number;
+  /** Отметки строк: в какие ВОР входит работа (метка «В» в ячейке раскрытия). */
+  vorByItem?: Map<string, { id: string; name: string }[]>;
+  /** Клик по метке «В»: открыть список ВОР с подсветкой нужной записи. */
+  onOpenVor?: (itemId: string) => void;
 }
 
 const noopAsync = async () => {};
@@ -158,6 +162,8 @@ function CostTypeGroupBlockImpl({
   columnPrefs,
   canEditCiphers = false,
   tableScrollX,
+  vorByItem,
+  onOpenVor,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -418,6 +424,9 @@ function CostTypeGroupBlockImpl({
       expandIcon: ({ expanded, onExpand, record }) => {
         if (record.id === DRAFT_ID) return <span style={{ display: 'inline-block', width: 17 }} />;
         const count = record.materials?.length ?? 0;
+        // Отметка «В»/«В×N» — строка входит в один/несколько ВОР. Клик гасит всплытие (не
+        // раскрывает материалы и не выделяет работу), открывает список ВОР с подсветкой.
+        const vors = vorByItem?.get(record.id);
         // Фиксированный бокс 17×17 (как заглушка черновика), счётчик — вне потока,
         // чтобы позиция «+» не зависела от наличия материалов.
         return (
@@ -430,6 +439,18 @@ function CostTypeGroupBlockImpl({
             />
             {count > 0 && (
               <span className="estimat-mat-count estimat-mat-count--floating" title={`Материалов: ${count}`}>{count}</span>
+            )}
+            {vors && vors.length > 0 && (
+              <Tooltip title={`В ВОР: ${vors.map((v) => v.name).join(', ')}`}>
+                <span
+                  role="button"
+                  aria-label="Показать ВОР строки"
+                  onClick={(e) => { e.stopPropagation(); onOpenVor?.(record.id); }}
+                  style={{ marginLeft: 4, cursor: 'pointer', color: '#1677ff', fontWeight: 700, fontSize: 12, lineHeight: 1 }}
+                >
+                  В{vors.length > 1 ? `×${vors.length}` : ''}
+                </span>
+              </Tooltip>
             )}
           </span>
         );
@@ -482,7 +503,7 @@ function CostTypeGroupBlockImpl({
       useLazyMaterials, scrollRootRef, editable, showPrices,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onReassignMaterial,
       allWorks, selectionMode, selectedIds, onToggleMaterial, deleteMode, selectedWorkIds,
-      tableScrollX,
+      tableScrollX, vorByItem, onOpenVor,
     ],
   );
 

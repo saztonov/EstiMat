@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/authenticate.js';
 import { registerReadRoutes } from './read.js';
 import { registerHistoryRoutes } from './history.js';
-import { registerExportRoutes } from './export.js';
+import { registerVorRoutes } from './vor.js';
 import { registerCrudRoutes } from './crud.js';
 import { registerContractorRoutes } from './contractors.js';
 import { registerItemRoutes } from './items.js';
@@ -21,7 +21,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   // Порядок вызовов сохраняет исходный порядок объявления роутов.
   registerReadRoutes(fastify);
   registerHistoryRoutes(fastify);
-  registerExportRoutes(fastify);
+  registerVorRoutes(fastify);
   registerCrudRoutes(fastify);
   registerContractorRoutes(fastify);
   registerItemRoutes(fastify);

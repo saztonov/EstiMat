@@ -90,6 +90,16 @@ export function registerCrudRoutes(fastify: FastifyInstance): void {
           await client.query('ROLLBACK');
           return reply.status(404).send({ error: 'Смета не найдена' });
         }
+        // Файлы-снимки ВОР этой сметы: записи снимутся каскадом при DELETE, но объекты в S3
+        // нужно убрать вручную. Ключи собираем ДО удаления; сами объекты чистим после COMMIT.
+        const { rows: vorFiles } = await client.query(
+          'SELECT file_key FROM estimate_vors WHERE estimate_id = $1',
+          [request.params.id],
+        );
+        if (vorFiles.length > 0 && !fastify.storage) {
+          await client.query('ROLLBACK');
+          return reply.status(503).send({ error: 'Хранилище файлов недоступно — удалите ВОР сметы и повторите' });
+        }
         await client.query('DELETE FROM estimates WHERE id = $1', [request.params.id]);
         // estimate_id в журнале станет NULL (ON DELETE SET NULL) — project_id и snapshot переживут удаление.
         await recordAudit(client, {
@@ -102,6 +112,16 @@ export function registerCrudRoutes(fastify: FastifyInstance): void {
           changes: { before: rows[0] },
         });
         await client.query('COMMIT');
+        // Осиротевшие S3-объекты ВОР — best-effort после успешного удаления (в БД их уже нет).
+        if (fastify.storage) {
+          for (const f of vorFiles) {
+            try {
+              await fastify.storage.deleteObject(f.file_key);
+            } catch (delErr) {
+              fastify.log.warn({ err: delErr, fileKey: f.file_key }, 'orphan cleanup after estimate delete');
+            }
+          }
+        }
         return { success: true };
       } catch (err) {
         await client.query('ROLLBACK');

@@ -196,7 +196,7 @@ function refLookup(sheet: string, row: number): string {
 export async function exportKpWorkbook(
   blocks: ExportBlock[],
   refs: { materials: ExportRefRow[]; works: ExportRefRow[] },
-  project: { name: string | null; address: string | null },
+  project: { name: string | null; address: string | null; ciphers?: string | null },
 ): Promise<Buffer> {
   const templateBuf = await readFile(resolveTemplatePath());
   const wb = new ExcelJS.Workbook();
@@ -205,11 +205,13 @@ export async function exportKpWorkbook(
   const ws = wb.getWorksheet(KP_SHEET);
   if (!ws) throw new Error(`В шаблоне нет листа «${KP_SHEET}»`);
 
-  // Шапка формы: «Объект» (C5) и «Адрес объекта» (C6) — из справочника «Проекты». Ячейки в
-  // статичной шапке (выше таблицы), splice их не двигает; C5:D5/C6:D6 объединены — пишем в
+  // Шапка формы: «Объект» (C5) и «Адрес объекта» (C6) — из справочника «Проекты»; «Шифр рабочей
+  // документации» (C7) — список шифров РД видов работ, попавших в выгрузку. Ячейки в статичной
+  // шапке (выше таблицы), splice их не двигает; C5:D5/C6:D6/C7:D7 объединены — пишем в
   // верхнюю-левую ячейку объединения.
   ws.getCell('C5').value = project.name ?? null;
   ws.getCell('C6').value = project.address ?? null;
+  ws.getCell('C7').value = project.ciphers ?? null;
 
   // КП — активный лист по умолчанию (индекс 0). В шаблоне унаследован activeTab=2 (РАБОТЫ) —
   // переопределяем. activeTab (workbook) и tabSelected (пер-лист) в ExcelJS не синхронизированы,

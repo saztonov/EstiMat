@@ -42,9 +42,24 @@ export async function exportEstimateKp(
     `SELECT p.name, p.address FROM estimates e JOIN projects p ON e.project_id = p.id WHERE e.id = $1`,
     [estimateId],
   );
+  // Шифры РД (C7): уникальные коды шифров видов работ, попавших в выгрузку. Обязательное
+  // ei.estimate_id = $1 — защита от чужих item ID; пустой набор оставит C7 пустой.
+  const itemIds = refs.map((r) => r.id);
+  const { rows: cipherRows } = await pool.query(
+    `SELECT DISTINCT c.code
+       FROM estimate_items ei
+       JOIN estimate_cost_type_ciphers ectc
+         ON ectc.estimate_id = ei.estimate_id AND ectc.cost_type_id = ei.cost_type_id
+       JOIN project_rd_ciphers c ON c.id = ectc.cipher_id
+      WHERE ei.estimate_id = $1 AND ei.id = ANY($2::uuid[])
+      ORDER BY c.code`,
+    [estimateId, itemIds],
+  );
+  const ciphers = cipherRows.map((r) => r.code as string).join(', ') || null;
   const project = {
     name: (projectRows[0]?.name as string | null) ?? null,
     address: (projectRows[0]?.address as string | null) ?? null,
+    ciphers,
   };
   return exportKpWorkbook(blocks, { materials: ref.materials, works: ref.works }, project);
 }

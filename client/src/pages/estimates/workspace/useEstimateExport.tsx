@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
 import { App } from 'antd';
+import { useQueryClient } from '@tanstack/react-query';
 import { ExclamationCircleOutlined } from '@ant-design/icons';
 import { api, ApiError } from '../../../services/api';
-import { formatLocationsLabel, type ZoneNode } from '../components/location';
-import type { CostTypeGroup } from '../components/types';
+import type { VorFilterSelection } from '@estimat/shared';
 
 // Конфликт единиц измерения из ответа экспорта (code EXPORT_UNIT_CONFLICTS).
 interface UnitConflict {
@@ -43,42 +43,51 @@ function UnitConflictList({ conflicts }: { conflicts: UnitConflict[] }) {
   );
 }
 
-// Экспорт в Excel-шаблон «КП»: выгружаем ровно те работы, что видны после фильтров.
-// Метку локации формируем тем же formatLocationsLabel, что и остальной UI (единый
-// источник форматирования); порядок и группировку по локации доделывает сервер.
-// Листы МАТЕРИАЛЫ/РАБОТЫ (уникальные материалы/работы) собирает сервер из того же набора строк;
-// при разных ед.изм. у одинаковых наименований он отвечает 409 с code EXPORT_UNIT_CONFLICTS —
-// показываем модалку с выбором «Пропустить и сохранить» (повтор с ignoreUnitConflicts) / «Отмена».
-export function useEstimateExport({
-  estimateId,
-  visibleGroups,
-  zoneRoots,
-}: {
-  estimateId: string;
-  visibleGroups: CostTypeGroup[];
-  zoneRoots: ZoneNode[];
-}): { exporting: boolean; handleExportKp: () => void } {
+// Заморожённый на момент открытия модалки вход экспорта: набор строк + машинные значения
+// фильтров + идемпотентный requestId. Строки/локации уже сформированы (формат — как в остальном UI).
+export interface RunExportArgs {
+  name: string;
+  requestId: string;
+  items: { id: string; locationLabel: string }[];
+  filters: VorFilterSelection;
+  // Вызвать при успешном создании ВОР (напр. закрыть модалку экспорта).
+  onDone?: () => void;
+}
+
+// Создание ВОР = экспорт видимых строк + сохранение файла-снимка. При конфликте единиц измерения
+// сервер отвечает 409 (code EXPORT_UNIT_CONFLICTS) — показываем модалку «Пропустить и сохранить»
+// (повтор с ignoreUnitConflicts и ТЕМ ЖЕ requestId — идемпотентность на сервере). После успеха
+// инвалидируем список ВОР и отметки строк.
+export function useEstimateExport({ estimateId }: { estimateId: string }): {
+  exporting: boolean;
+  runExport: (args: RunExportArgs) => void;
+} {
   const { message, modal } = App.useApp();
+  const queryClient = useQueryClient();
   const [exporting, setExporting] = useState(false);
-  const runExport = useCallback(
-    async (ignoreUnitConflicts?: boolean) => {
-      const items = visibleGroups
-        .flatMap((g) => g.works)
-        .map((w) => ({
-          id: w.id,
-          locationLabel: formatLocationsLabel(w.locations ?? [], zoneRoots) || 'Без локации',
-        }));
-      if (items.length === 0) {
+
+  const run = useCallback(
+    async (args: RunExportArgs, ignoreUnitConflicts?: boolean) => {
+      if (args.items.length === 0) {
         message.info('Нет строк для экспорта — измените фильтры.');
         return;
       }
       setExporting(true);
       try {
         await api.download(
-          `/estimates/${estimateId}/export-kp`,
-          { items, ignoreUnitConflicts },
-          'КП.xlsx',
+          `/estimates/${estimateId}/vors`,
+          {
+            requestId: args.requestId,
+            name: args.name,
+            items: args.items,
+            filters: args.filters,
+            ignoreUnitConflicts,
+          },
+          `${args.name}.xlsx`,
         );
+        queryClient.invalidateQueries({ queryKey: ['estimate-vor', estimateId] });
+        queryClient.invalidateQueries({ queryKey: ['estimate-vor-marks', estimateId] });
+        args.onDone?.();
       } catch (e) {
         if (e instanceof ApiError && e.code === 'EXPORT_UNIT_CONFLICTS') {
           const conflicts = (e.data as { conflicts?: UnitConflict[] } | undefined)?.conflicts ?? [];
@@ -89,7 +98,7 @@ export function useEstimateExport({
             content: <UnitConflictList conflicts={conflicts} />,
             okText: 'Пропустить и сохранить',
             cancelText: 'Отмена',
-            onOk: () => runExport(true),
+            onOk: () => run(args, true),
           });
           return;
         }
@@ -98,8 +107,9 @@ export function useEstimateExport({
         setExporting(false);
       }
     },
-    [visibleGroups, zoneRoots, estimateId, message, modal],
+    [estimateId, message, modal, queryClient],
   );
-  const handleExportKp = useCallback(() => runExport(), [runExport]);
-  return { exporting, handleExportKp };
+
+  const runExport = useCallback((args: RunExportArgs) => void run(args), [run]);
+  return { exporting, runExport };
 }

@@ -27,6 +27,13 @@ import { PanelShell } from './PanelShell';
 import { SmetaActions } from './SmetaActions';
 import { UndoButton } from './UndoButton';
 import { useEstimateExport } from './useEstimateExport';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../../services/api';
+import { VorExportModal } from '../components/VorExportModal';
+import { VorListModal } from '../components/VorListModal';
+import { useLocationContextStore } from '../../../store/locationContextStore';
+import { findZone, formatLocationsLabel } from '../components/location';
+import type { VorFilterSelection, VorFilterSnapshot, VorMark, VorMarksMap } from '@estimat/shared';
 
 interface Organization {
   id: string;
@@ -233,6 +240,27 @@ export function SmetaPanel({
   // Стабильный (useMemo) набор общих пропсов блоков: пока не меняется выбор/режим, blockProps не
   // пересоздаётся, поэтому memo-обёртки SmetaGroupBlock не ререндерятся при не связанных изменениях.
   // Раскрытие материалов и свёрнутость вида в blockProps НЕ входят — их адаптер берёт из store.
+
+  // Отметки строк: в какие ВОР входит каждая работа (для метки «В»). Отдельный лёгкий запрос.
+  // Объявлено до blockProps — vorByItem/onOpenVor уходят в дерево блоков через blockProps.
+  const { data: vorMarks } = useQuery({
+    queryKey: ['estimate-vor-marks', estimateId],
+    queryFn: () => api.get<{ data: VorMarksMap }>(`/estimates/${estimateId}/vors/marks`).then((r) => r.data),
+  });
+  const vorByItem = useMemo(() => new Map<string, VorMark[]>(Object.entries(vorMarks ?? {})), [vorMarks]);
+
+  // Модалка списка ВОР: состояние + открытие с подсветкой конкретного ВОР (клик по метке «В»).
+  const [vorListOpen, setVorListOpen] = useState(false);
+  const [vorFocusId, setVorFocusId] = useState<string | null>(null);
+  const onOpenVor = useCallback(
+    (itemId: string) => {
+      const list = vorByItem.get(itemId);
+      setVorFocusId(list?.[0]?.id ?? null);
+      setVorListOpen(true);
+    },
+    [vorByItem],
+  );
+
   const blockProps = useMemo(
     () => ({
       editable,
@@ -268,6 +296,9 @@ export function SmetaPanel({
       onOpenHistory: openRowHistory,
       columnPrefs,
       canEditCiphers: canBulkDelete,
+      // Отметки «В» на строках (в какие ВОР входит работа) + клик по метке.
+      vorByItem,
+      onOpenVor,
       // Мобильный режим: горизонтальный скролл таблицы работ (min-width в px).
       tableScrollX: isMobile ? (isPhone ? 560 : 880) : undefined,
     }),
@@ -276,12 +307,96 @@ export function SmetaPanel({
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onConfirmWork,
       onToggleVolumeType, onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
       toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId, estimateId, openRowHistory,
-      columnPrefs, canBulkDelete, isMobile, isPhone,
+      columnPrefs, canBulkDelete, vorByItem, onOpenVor, isMobile, isPhone,
     ],
   );
 
-  // Экспорт в Excel-шаблон «КП»: выгружаем ровно те работы, что видны после фильтров.
-  const { exporting, handleExportKp } = useEstimateExport({ estimateId, visibleGroups, zoneRoots });
+  // Экспорт в ВОР (Excel-шаблон «КП»): каждый экспорт создаёт запись ВОР с файлом-снимком.
+  const { exporting, runExport } = useEstimateExport({ estimateId });
+  const setLocationFilter = useLocationContextStore((s) => s.setFilter);
+
+  // Модалка экспорта: заморожённый вход (набор строк + снимок фильтров) на момент открытия.
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportInput, setExportInput] = useState<{
+    requestId: string;
+    items: { id: string; locationLabel: string }[];
+    filters: VorFilterSelection;
+    snapshot: VorFilterSnapshot;
+  } | null>(null);
+
+  // Открыть модалку экспорта: замораживаем текущий набор видимых строк и снимок фильтров.
+  const openExport = useCallback(() => {
+    const items = visibleGroups
+      .flatMap((g) => g.works)
+      .map((w) => ({
+        id: w.id,
+        locationLabel: formatLocationsLabel(w.locations ?? [], zoneRoots) || 'Без локации',
+      }));
+    const filters: VorFilterSelection = {
+      categoryIds: categoryFilter,
+      typeIds: typeFilter,
+      zoneIds: filterZoneIds,
+      floorsText: filterFloorsText,
+      locationTypeIds: filterLocationTypeIds,
+      volumeType: filterVolumeType,
+      onlyUnreconciled,
+    };
+    const labelsOf = (opts: { value: string; label: string }[], ids: string[]) =>
+      ids.map((id) => ({ id, name: opts.find((o) => o.value === id)?.label ?? id }));
+    const snapshot: VorFilterSnapshot = {
+      categories: labelsOf(categoryOptions, categoryFilter),
+      types: labelsOf(typeOptions, typeFilter),
+      zones: filterZoneIds.map((id) => ({ id, name: findZone(zoneRoots, id)?.name ?? id })),
+      locationTypes: labelsOf(locationTypeOptions, filterLocationTypeIds),
+      floorsText: filterFloorsText,
+      volumeType: filterVolumeType,
+      onlyUnreconciled,
+    };
+    setExportInput({ requestId: crypto.randomUUID(), items, filters, snapshot });
+    setExportOpen(true);
+  }, [
+    visibleGroups, zoneRoots, categoryFilter, typeFilter, filterZoneIds, filterFloorsText,
+    filterLocationTypeIds, filterVolumeType, onlyUnreconciled, categoryOptions, typeOptions, locationTypeOptions,
+  ]);
+
+  const handleExportSubmit = useCallback(
+    (name: string) => {
+      if (!exportInput) return;
+      runExport({
+        name,
+        requestId: exportInput.requestId,
+        items: exportInput.items,
+        filters: exportInput.filters,
+        onDone: () => setExportOpen(false),
+      });
+    },
+    [exportInput, runExport],
+  );
+
+  // «Перейти» из списка ВОР: применить сохранённый снимок фильтров к смете (весь набор разом).
+  const applyVorFilters = useCallback(
+    (snap: VorFilterSnapshot) => {
+      setCategoryFilter(snap.categories.map((c) => c.id));
+      setTypeFilter(snap.types.map((t) => t.id));
+      setOnlyUnreconciled(snap.onlyUnreconciled);
+      setLocationFilter({
+        filterZoneIds: snap.zones.map((z) => z.id),
+        filterFloorsText: snap.floorsText,
+        filterLocationTypeIds: snap.locationTypes.map((l) => l.id),
+        filterVolumeType: snap.volumeType,
+      });
+    },
+    [setCategoryFilter, setTypeFilter, setOnlyUnreconciled, setLocationFilter],
+  );
+
+  // Кнопка «Созданные ВОР» в тулбаре: открыть список без подсветки.
+  const openVorList = useCallback(() => {
+    setVorFocusId(null);
+    setVorListOpen(true);
+  }, []);
+
+  // Имя файла по умолчанию (пользователь может переименовать).
+  const defaultVorName = `ВОР ${new Date().toISOString().slice(0, 10)}`;
 
   // На мобильном selection-тулбар переезжает из шапки PanelShell в toolbar-строку — в узкой
   // шапке он не помещается вместе с заголовком и SmetaActions.
@@ -312,7 +427,8 @@ export function SmetaPanel({
         onBulkAssign={handleBulkAssign}
         onOpenReplicate={() => setReplicateOpen(true)}
         onOpenReview={() => setReviewOpen(true)}
-        onExportKp={handleExportKp}
+        onOpenExport={openExport}
+        onOpenVorList={openVorList}
         onExpandStep={expandStep}
         onCollapseStep={collapseStep}
       />
@@ -525,6 +641,26 @@ export function SmetaPanel({
         title={historyItem ? `История: ${historyItem.description}` : undefined}
         open={!!historyItem}
         onClose={() => setHistoryItem(null)}
+      />
+
+      {exportInput && (
+        <VorExportModal
+          open={exportOpen}
+          onClose={() => setExportOpen(false)}
+          defaultName={defaultVorName}
+          itemCount={exportInput.items.length}
+          exporting={exporting}
+          snapshot={exportInput.snapshot}
+          onSubmit={handleExportSubmit}
+        />
+      )}
+
+      <VorListModal
+        open={vorListOpen}
+        onClose={() => setVorListOpen(false)}
+        estimateId={estimateId}
+        focusVorId={vorFocusId}
+        onApplyFilters={applyVorFilters}
       />
     </PanelShell>
   );

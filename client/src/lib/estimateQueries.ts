@@ -21,4 +21,8 @@ export function invalidateEstimateQueries(
   queryClient.invalidateQueries({ queryKey: ['projects-with-stats'] });
   // Доступность кнопки «Отменить» зависит от последнего действия — обновляем после любой мутации.
   queryClient.invalidateQueries({ queryKey: ['estimate-undo-peek', estimateId] });
+  // История ВОР и отметки строк (метка «В») — обновляем при событиях vor_created/vor_deleted
+  // (и любых других изменениях сметы: удаление строки снимает связь vor_items).
+  queryClient.invalidateQueries({ queryKey: ['estimate-vor', estimateId] });
+  queryClient.invalidateQueries({ queryKey: ['estimate-vor-marks', estimateId] });
 }
