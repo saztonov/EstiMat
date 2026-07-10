@@ -5,7 +5,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { recordAudit, recordAuditBatch, diffChanges, type AuditInput } from '../../lib/audit.js';
 import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { loadProjectId } from '../../lib/estimate-detail.js';
-import { mirrorMaterialsToCatalog } from '../../lib/catalog.js';
+import { mirrorMaterialsToCatalog, relinkMaterialRequestsToCatalog } from '../../lib/catalog.js';
 import {
   createEstimateMaterialSchema,
   updateEstimateMaterialSchema,
@@ -147,7 +147,11 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         // Согласование материала (клик по тегу / подтверждение «предложения») — зеркалируем в legacy-справочник.
         let catalogChanged = false;
         if ((body.status === 'confirmed' || body.needsReview === false) && rows[0].material_id === null) {
+          // Сериализуем согласование и создание заявок по одной смете (см. estimates/bulk.ts).
+          await client.query(`SELECT pg_advisory_xact_lock(hashtext('estimat:material_request'), hashtext($1))`, [estimateId]);
           catalogChanged = await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
+          // Привязка к каталогу сменила agg_key материала — переносим строки заявок с txt-ключа на id-ключ.
+          await relinkMaterialRequestsToCatalog(client, estimateId);
         }
         const isConfirm = fields.length === 1 && fields[0] === 'needs_review';
         const auditId = await recordAudit(client, {

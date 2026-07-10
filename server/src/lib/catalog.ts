@@ -114,3 +114,57 @@ export async function mirrorMaterialsToCatalog(
 
   return catalogChanged;
 }
+
+/**
+ * Перепривязка строк заявок на материалы к справочнику после согласования.
+ *
+ * Заявка (`material_request_items`) связана с позицией сметы синтетическим ключом
+ * `agg_key` = `txt:<имя>|<ед>` (текстовый материал) либо `id:<material_id>|<ед>` (справочный).
+ * При согласовании текстовый материал привязывается к каталогу (`mirrorMaterialsToCatalog`
+ * проставляет `material_id`), и его `agg_key` меняется с `txt:` на `id:`. Ранее созданные строки
+ * заявок остаются под старым `txt:`-ключом и перестают матчиться с позицией — «Заказано» пропадает.
+ *
+ * Переносим строки заявок на новый `id:`-ключ, но ТОЛЬКО для полностью и однозначно разрешённого
+ * бакета: все видимые подрядчику вхождения (тот же вид работ + нормализованные имя/ед) уже
+ * привязаны к каталогу и дают ровно один `material_id`. Частичное согласование, неоднозначность
+ * или отсутствие кандидата — не трогаем (объём заказа не теряем и не приписываем неверно).
+ *
+ * Вызывать в транзакции согласования, ПОСЛЕ mirrorMaterialsToCatalog. Вызывать ТОЛЬКО из путей
+ * согласования (confirm-all / bulk-confirm / подтверждение материала) — НЕ из mirror напрямую,
+ * т.к. mirror работает ещё при создании и переносе материала, где перенос заявки был бы ошибочным.
+ * Идемпотентно (после переноса строка уже `id:` и под `LIKE 'txt:%'` не попадает); попутно
+ * самолечит бакеты, ставшие полными в прошлых согласованиях.
+ */
+export async function relinkMaterialRequestsToCatalog(
+  db: CatalogDb,
+  estimateId: string,
+): Promise<void> {
+  await db.query(
+    `WITH tgt AS (
+       SELECT mri.id AS mri_id,
+              (array_agg(DISTINCT em.material_id))[1] AS mat_id,
+              lower(btrim(mri.unit)) AS unit_norm
+         FROM material_request_items mri
+         JOIN material_requests mr ON mr.id = mri.request_id
+         JOIN estimate_items ei
+           ON ei.estimate_id = mr.estimate_id
+          AND ei.cost_type_id IS NOT DISTINCT FROM mri.cost_type_id
+         JOIN estimate_item_contractors eic
+           ON eic.item_id = ei.id AND eic.contractor_id = mr.contractor_id
+         JOIN estimate_materials em ON em.item_id = ei.id
+        WHERE mr.estimate_id = $1
+          AND mri.agg_key LIKE 'txt:%'
+          AND lower(btrim(em.description)) = lower(btrim(mri.material_name))
+          AND lower(btrim(em.unit))        = lower(btrim(mri.unit))
+        GROUP BY mri.id, lower(btrim(mri.unit))
+       HAVING count(*) FILTER (WHERE em.material_id IS NULL) = 0
+          AND count(DISTINCT em.material_id) = 1
+     )
+     UPDATE material_request_items mri
+        SET agg_key = 'id:' || tgt.mat_id::text || '|' || tgt.unit_norm,
+            material_id = tgt.mat_id
+       FROM tgt
+      WHERE mri.id = tgt.mri_id`,
+    [estimateId],
+  );
+}

@@ -6,7 +6,7 @@ import { recordAuditBatch, diffChanges, type AuditInput } from '../../lib/audit.
 import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { loadProjectId } from '../../lib/estimate-detail.js';
 import { legacyToLocations, deriveLegacyLocation, upsertLocationType } from '../../lib/location.js';
-import { mirrorMaterialsToCatalog } from '../../lib/catalog.js';
+import { mirrorMaterialsToCatalog, relinkMaterialRequestsToCatalog } from '../../lib/catalog.js';
 import {
   bulkDeleteEstimateItemsSchema,
   bulkConfirmEstimateItemsSchema,
@@ -23,6 +23,9 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
+      // Сериализуем согласование и создание заявок по одной смете, чтобы новая строка заявки
+      // не появилась между relink и её пропуском (см. relinkMaterialRequestsToCatalog).
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('estimat:material_request'), hashtext($1))`, [request.params.id]);
       const works = await client.query(
         'UPDATE estimate_items SET needs_review = false, updated_by = $2 WHERE estimate_id = $1 AND needs_review = true RETURNING id, estimate_id, project_id',
         [request.params.id, request.currentUser.id],
@@ -34,6 +37,9 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
       // Согласованные материалы зеркалируются в legacy-справочник (как в bulk-confirm) —
       // mirror сам отфильтрует привязанные к каталогу.
       const catalogChanged = await mirrorMaterialsToCatalog(client, materials.rows.map((r) => r.id as string), request.currentUser.id);
+      // Привязка к каталогу сменила agg_key согласованных материалов — переносим строки заявок
+      // с txt-ключа на id-ключ (только полностью разрешённые бакеты).
+      await relinkMaterialRequestsToCatalog(client, request.params.id);
       const projectId = works.rows[0]?.project_id ?? (await loadProjectId(client, request.params.id));
       const audits: AuditInput[] = [
         ...works.rows.map((r) => ({
@@ -82,6 +88,8 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
+        // Сериализуем согласование и создание заявок по одной смете (см. confirm-all).
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext('estimat:material_request'), hashtext($1))`, [eid]);
         const works = await client.query(
           `UPDATE estimate_items SET needs_review = false, updated_by = $3
             WHERE estimate_id = $1 AND id = ANY($2::uuid[]) AND needs_review = true
@@ -102,6 +110,8 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
           materials.rows.map((r) => r.id as string),
           request.currentUser.id,
         );
+        // Перенос строк заявок с txt-ключа на id-ключ после привязки материалов к каталогу.
+        await relinkMaterialRequestsToCatalog(client, eid);
 
         const projectId = await loadProjectId(client, eid);
         const audits: AuditInput[] = [

@@ -93,6 +93,10 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
       );
     },
     enabled: !!estimateId,
+    // Согласуем обновление с материалами подрядчика (contractor-my-items тоже refetchOnWindowFocus):
+    // иначе после согласования материалы перейдут на id-ключи, а карта «Заказано» останется из
+    // старого кэша и колонка опустеет до ручного обновления.
+    refetchOnWindowFocus: true,
   });
 
   const orderedMap = useMemo(() => {

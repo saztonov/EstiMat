@@ -34,8 +34,14 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
 
   // Видимая подрядчику сводка материалов сметы: множество ключей (cost_type_id, agg_key)
   // по его назначенным строкам. Заявка принимается только по этим материалам.
-  async function visibleMaterialKeys(estimateId: string, orgId: string): Promise<Set<string>> {
-    const { rows } = await fastify.pool.query(
+  // Исполнитель (db) передаётся явно — при создании заявки читаем внутри транзакции под
+  // advisory-lock, чтобы сводка была консистентна с моментом вставки строк заявки.
+  async function visibleMaterialKeys(
+    db: { query(text: string, values?: unknown[]): Promise<{ rows: any[] }> },
+    estimateId: string,
+    orgId: string,
+  ): Promise<Set<string>> {
+    const { rows } = await db.query(
       `SELECT ei.cost_type_id, em.material_id, em.unit,
               COALESCE(mc.name, em.description, 'Материал') AS name
          FROM estimate_item_contractors eic
@@ -65,16 +71,6 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
       return reply.status(403).send({ error: 'Объект не назначен вашей организации' });
     }
 
-    // Принять только строки по видимым подрядчику материалам (защита от заказа чужого).
-    // Превышение объёма НЕ блокируем — это отражается статусом «Сверх сметы» на клиенте.
-    const visible = await visibleMaterialKeys(body.estimateId, user.orgId);
-    const lines = body.lines.filter(
-      (l) => l.quantity > 0 && visible.has(lineKey(l.costTypeId, l.aggKey)),
-    );
-    if (lines.length === 0) {
-      return reply.status(400).send({ error: 'Нет допустимых строк заявки' });
-    }
-
     const projectRes = await fastify.pool.query(
       `SELECT e.project_id, p.code
          FROM estimates e
@@ -88,6 +84,22 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
+      // Сериализуем создание заявки с согласованием материалов по одной смете: сводка видимых
+      // ключей и вставка строк должны быть атомарны относительно relink при согласовании
+      // (иначе новая txt-строка заявки может «проскочить» мимо переноса на id-ключ).
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('estimat:material_request'), hashtext($1))`, [body.estimateId]);
+
+      // Принять только строки по видимым подрядчику материалам (защита от заказа чужого).
+      // Превышение объёма НЕ блокируем — это отражается статусом «Сверх сметы» на клиенте.
+      const visible = await visibleMaterialKeys(client, body.estimateId, user.orgId);
+      const lines = body.lines.filter(
+        (l) => l.quantity > 0 && visible.has(lineKey(l.costTypeId, l.aggKey)),
+      );
+      if (lines.length === 0) {
+        await client.query('ROLLBACK');
+        return reply.status(400).send({ error: 'Нет допустимых строк заявки' });
+      }
+
       // Номер заявки в рамках объекта: блокируем строку проекта, чтобы параллельные заявки
       // одного объекта не получили одинаковый request_no.
       if (projectId) await client.query('SELECT id FROM projects WHERE id = $1 FOR UPDATE', [projectId]);
