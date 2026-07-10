@@ -243,4 +243,11 @@ export const api = {
     window.open(href, '_blank', 'noopener');
     setTimeout(() => URL.revokeObjectURL(href), 60_000);
   },
+
+  // GET → бинарный ответ как ArrayBuffer (например .xlsx для предпросмотра в приложении).
+  // Авторизация/refresh — как у apiFetchRaw; отмена внешним signal (закрытие модалки) даёт AbortError.
+  getArrayBuffer: async (url: string, opts?: FetchOptions): Promise<ArrayBuffer> => {
+    const res = await apiFetchRaw(url, { method: 'GET' }, { timeoutMs: 60_000, ...opts });
+    return res.arrayBuffer();
+  },
 };

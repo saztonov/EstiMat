@@ -1,11 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Table, Button, Space, Popconfirm, Popover, Tag, Tooltip, App } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DownloadOutlined, EyeOutlined, DeleteOutlined, LoginOutlined } from '@ant-design/icons';
+import { DownloadOutlined, EyeOutlined, DeleteOutlined, LoginOutlined, FileExcelOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { DEFAULT_PAGINATION } from '../../../lib/tableConfig';
 import type { EstimateVor, VorFilterSnapshot } from '@estimat/shared';
+import { VorPreviewModal } from './VorPreviewModal';
 
 interface Props {
   open: boolean;
@@ -15,6 +16,8 @@ interface Props {
   focusVorId: string | null;
   // «Перейти»: применить сохранённый снимок фильтров к смете и закрыть модалку.
   onApplyFilters: (snapshot: VorFilterSnapshot) => void;
+  // «Экспорт в Excel»: открыть модалку экспорта (список остаётся открытым под ней).
+  onExport: () => void;
 }
 
 const VOLUME_LABEL: Record<VorFilterSnapshot['volumeType'], string> = {
@@ -66,9 +69,11 @@ function filtersShort(f: VorFilterSnapshot): string {
 
 // Модалка «Созданные ВОР»: история выгрузок сметы. Открыть/скачать файл-снимок, перейти
 // (применить сохранённые фильтры к смете), удалить.
-export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFilters }: Props) {
+export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFilters, onExport }: Props) {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
+  // Предпросмотр файла ВОР поверх списка (null — закрыт).
+  const [previewVor, setPreviewVor] = useState<{ id: string; name: string } | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['estimate-vor', estimateId],
@@ -126,11 +131,8 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
               type="text"
               size="small"
               icon={<EyeOutlined />}
-              onClick={() =>
-                api.openGet(`/estimates/${estimateId}/vors/${r.id}/file?disposition=inline`).catch((e: Error) =>
-                  message.error(e.message),
-                )
-              }
+              aria-label="Открыть ВОР"
+              onClick={() => setPreviewVor({ id: r.id, name: r.name })}
             />
           </Tooltip>
           <Tooltip title="Скачать">
@@ -138,6 +140,7 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
               type="text"
               size="small"
               icon={<DownloadOutlined />}
+              aria-label="Скачать ВОР"
               onClick={() =>
                 api
                   .downloadGet(`/estimates/${estimateId}/vors/${r.id}/file?disposition=attachment`, r.fileName)
@@ -187,19 +190,32 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
   ];
 
   return (
-    <Modal title="Созданные ВОР" open={open} onCancel={onClose} footer={null} width="90%" style={{ maxWidth: 1100 }}>
-      <Table<EstimateVor>
-        rowKey="id"
-        size="small"
-        loading={isLoading}
-        columns={columns}
-        dataSource={data ?? []}
-        pagination={DEFAULT_PAGINATION}
-        onRow={(r) => ({
-          style: r.id === focusVorId ? { background: '#fff7e6' } : undefined,
-        })}
-        locale={{ emptyText: 'Пока нет созданных ВОР. Выгрузите смету через «Экспорт в Excel».' }}
+    <>
+      <Modal title="ВОР" open={open} onCancel={onClose} footer={null} width="90%" style={{ maxWidth: 1100 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <Button type="primary" icon={<FileExcelOutlined />} onClick={onExport}>
+            Экспорт в Excel
+          </Button>
+        </div>
+        <Table<EstimateVor>
+          rowKey="id"
+          size="small"
+          loading={isLoading}
+          columns={columns}
+          dataSource={data ?? []}
+          pagination={DEFAULT_PAGINATION}
+          onRow={(r) => ({
+            style: r.id === focusVorId ? { background: '#fff7e6' } : undefined,
+          })}
+          locale={{ emptyText: 'Пока нет ВОР. Создайте первый через «Экспорт в Excel».' }}
+        />
+      </Modal>
+      <VorPreviewModal
+        open={!!previewVor}
+        onClose={() => setPreviewVor(null)}
+        estimateId={estimateId}
+        vor={previewVor}
       />
-    </Modal>
+    </>
   );
 }

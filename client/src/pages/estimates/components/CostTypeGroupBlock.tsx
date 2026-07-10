@@ -418,18 +418,20 @@ function CostTypeGroupBlockImpl({
       expandedRowKeys: effectiveExpandedKeys,
       onExpand: (expanded, record) => setWorkExpanded(record.id, expanded),
       rowExpandable: (r) => r.id !== DRAFT_ID,
-      columnWidth: 56,
+      columnWidth: vorByItem ? 88 : 56,
       // Кастомная иконка раскрытия: штатная кнопка «+/−» + число материалов работы,
       // чтобы по свёрнутой строке было видно, есть ли материалы и сколько их.
       expandIcon: ({ expanded, onExpand, record }) => {
-        if (record.id === DRAFT_ID) return <span style={{ display: 'inline-block', width: 17 }} />;
+        // Слот метки «В» слева от «+» — только на «Смете» (передан vorByItem); в разделе
+        // подрядчиков колонку не расширяем.
+        const hasVorSlot = !!vorByItem;
+        if (record.id === DRAFT_ID) {
+          return <span style={{ display: 'inline-block', width: hasVorSlot ? 47 : 17 }} />;
+        }
         const count = record.materials?.length ?? 0;
-        // Отметка «В»/«В×N» — строка входит в один/несколько ВОР. Клик гасит всплытие (не
-        // раскрывает материалы и не выделяет работу), открывает список ВОР с подсветкой.
-        const vors = vorByItem?.get(record.id);
-        // Фиксированный бокс 17×17 (как заглушка черновика), счётчик — вне потока,
-        // чтобы позиция «+» не зависела от наличия материалов.
-        return (
+        // Фиксированный бокс 17×17, счётчик — вне потока, чтобы позиция «+» не зависела от
+        // наличия материалов.
+        const icon = (
           <span className="estimat-expand-icon-wrap">
             <button
               type="button"
@@ -440,18 +442,30 @@ function CostTypeGroupBlockImpl({
             {count > 0 && (
               <span className="estimat-mat-count estimat-mat-count--floating" title={`Материалов: ${count}`}>{count}</span>
             )}
-            {vors && vors.length > 0 && (
-              <Tooltip title={`В ВОР: ${vors.map((v) => v.name).join(', ')}`}>
-                <span
-                  role="button"
-                  aria-label="Показать ВОР строки"
-                  onClick={(e) => { e.stopPropagation(); onOpenVor?.(record.id); }}
-                  style={{ marginLeft: 4, cursor: 'pointer', color: '#1677ff', fontWeight: 700, fontSize: 12, lineHeight: 1 }}
-                >
-                  В{vors.length > 1 ? `×${vors.length}` : ''}
-                </span>
-              </Tooltip>
-            )}
+          </span>
+        );
+        if (!hasVorSlot) return icon;
+        // Отметка «В»/«В×N» — строка входит в один/несколько ВОР. Стоит в фиксированном слоте
+        // СЛЕВА от «+» (пустой слот, когда ВОР нет, — «+» не «прыгает»). Нативная кнопка:
+        // Enter/Space работают, клик гасит всплытие (не раскрывает материалы и не выделяет работу).
+        const vors = vorByItem?.get(record.id);
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <span className="estimat-vor-slot">
+              {vors && vors.length > 0 && (
+                <Tooltip title={vors.map((v) => v.name).join(', ')}>
+                  <button
+                    type="button"
+                    className="estimat-vor-badge"
+                    aria-label={`Показать ВОР строки: ${vors.map((v) => v.name).join(', ')}`}
+                    onClick={(e) => { e.stopPropagation(); onOpenVor?.(record.id); }}
+                  >
+                    В{vors.length > 1 ? `×${vors.length}` : ''}
+                  </button>
+                </Tooltip>
+              )}
+            </span>
+            {icon}
           </span>
         );
       },

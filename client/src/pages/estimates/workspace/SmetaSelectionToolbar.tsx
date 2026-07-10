@@ -10,7 +10,6 @@ import {
   EnvironmentOutlined,
   MoreOutlined,
   SnippetsOutlined,
-  FileExcelOutlined,
   FolderOpenOutlined,
 } from '@ant-design/icons';
 import { WorkTreeSelect, type WorkOption } from '../components/WorkTreeSelect';
@@ -35,7 +34,6 @@ interface SmetaSelectionToolbarProps {
   deleting: boolean;
   assigning: boolean;
   rejectableCount: number;
-  exporting: boolean;
   // Действия.
   onSetMode: (m: SelectionMode) => void;
   onCancelSelection: () => void;
@@ -45,7 +43,6 @@ interface SmetaSelectionToolbarProps {
   onBulkAssign: () => void;
   onOpenReplicate: () => void;
   onOpenReview: () => void;
-  onOpenExport: () => void;
   onOpenVorList: () => void;
   onExpandStep: () => void;
   onCollapseStep: () => void;
@@ -71,7 +68,6 @@ export function SmetaSelectionToolbar({
   deleting,
   assigning,
   rejectableCount,
-  exporting,
   onSetMode,
   onCancelSelection,
   onBulkReassign,
@@ -80,7 +76,6 @@ export function SmetaSelectionToolbar({
   onBulkAssign,
   onOpenReplicate,
   onOpenReview,
-  onOpenExport,
   onOpenVorList,
   onExpandStep,
   onCollapseStep,
@@ -225,31 +220,17 @@ export function SmetaSelectionToolbar({
         </Space>
       )}
       {mode === 'none' && (
-        <>
-          <Tooltip title="Выгрузить отобранные фильтрами строки в Excel-шаблон ВОР и сохранить">
-            <Button
-              type="text"
-              size="small"
-              icon={<FileExcelOutlined />}
-              aria-label="Экспорт в Excel"
-              loading={exporting}
-              onClick={onOpenExport}
-            >
-              {isPhone ? null : 'Экспорт в Excel'}
-            </Button>
-          </Tooltip>
-          <Tooltip title="Созданные ВОР — история выгрузок">
-            <Button
-              type="text"
-              size="small"
-              icon={<FolderOpenOutlined />}
-              aria-label="Созданные ВОР"
-              onClick={onOpenVorList}
-            >
-              {isPhone ? null : 'Созданные ВОР'}
-            </Button>
-          </Tooltip>
-        </>
+        <Tooltip title="ВОР — список выгрузок и экспорт в Excel">
+          <Button
+            type="text"
+            size="small"
+            icon={<FolderOpenOutlined />}
+            aria-label="ВОР"
+            onClick={onOpenVorList}
+          >
+            {isPhone ? null : 'ВОР'}
+          </Button>
+        </Tooltip>
       )}
       {editable && mode === 'none' && (canBulkMutateMaterials || canBulkDelete) && (
         <Popover

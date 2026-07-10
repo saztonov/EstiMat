@@ -238,6 +238,44 @@ html, body, #root {
   transform: translateY(-50%);
 }
 
+/* Слот метки «В» слева от «+»: фиксированная ширина, чтобы «+» не «прыгал» между строками */
+.estimat-vor-slot {
+  flex: 0 0 auto;
+  width: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Метка «В»/«В×N» — нативная кнопка без рамки/фона */
+.estimat-vor-badge {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: #1677ff;
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+}
+.estimat-vor-badge:focus-visible {
+  outline: 2px solid #1677ff;
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+/* Предпросмотр xlsx (sheet_to_html): компактная таблица с рамками, помещается в скролл-контейнер */
+.estimat-xlsx-preview table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.estimat-xlsx-preview td,
+.estimat-xlsx-preview th {
+  border: 1px solid #eee;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
 /* Навигационное меню-гамбургер: пункты — настоящие ссылки (<a href>),
    средний/Ctrl-клик открывает раздел в новой вкладке. Ссылка растянута
    на всю строку пункта, чтобы клик по любой её части вёл навигацию. */

@@ -110,7 +110,7 @@ export function LocationFilterPopover({ zones, typeOptions, onlyUnreconciled, on
   return (
     <Popover trigger="click" placement="bottomRight" title="Фильтр по местоположению" content={content}>
       <Badge count={activeCount} size="small">
-        <Button icon={<FilterOutlined />}>Фильтр местоположения</Button>
+        <Button icon={<FilterOutlined />}>Местоположение</Button>
       </Badge>
     </Popover>
   );

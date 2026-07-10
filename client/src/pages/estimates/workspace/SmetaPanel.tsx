@@ -418,7 +418,6 @@ export function SmetaPanel({
         deleting={deleting}
         assigning={assigning}
         rejectableCount={rejectableCount}
-        exporting={exporting}
         onSetMode={setMode}
         onCancelSelection={cancelSelection}
         onBulkReassign={handleBulkReassign}
@@ -427,7 +426,6 @@ export function SmetaPanel({
         onBulkAssign={handleBulkAssign}
         onOpenReplicate={() => setReplicateOpen(true)}
         onOpenReview={() => setReviewOpen(true)}
-        onOpenExport={openExport}
         onOpenVorList={openVorList}
         onExpandStep={expandStep}
         onCollapseStep={collapseStep}
@@ -523,6 +521,17 @@ export function SmetaPanel({
                 onAssignLocation={canBulkDelete ? startAssignLocation : undefined}
               />
             )}
+            <Tooltip title="Сбросить отбор по категории и виду работ">
+              <Button
+                disabled={activeFilterCount === 0}
+                onClick={() => {
+                  setCategoryFilter([]);
+                  setTypeFilter([]);
+                }}
+              >
+                Очистить
+              </Button>
+            </Tooltip>
           </Space>
           <div style={{ marginLeft: 'auto' }}>
             <ColumnSettingsPopover />
@@ -661,6 +670,7 @@ export function SmetaPanel({
         estimateId={estimateId}
         focusVorId={vorFocusId}
         onApplyFilters={applyVorFilters}
+        onExport={openExport}
       />
     </PanelShell>
   );
