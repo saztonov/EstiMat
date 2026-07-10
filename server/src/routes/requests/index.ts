@@ -281,8 +281,12 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         );
       }
 
-      // Прямой заказ при создании (own_supplier/own_supply с реквизитами).
-      if (body.supplierName && body.resultAmount) {
+      // Прямой заказ при создании — только для прямых маршрутов (РП / собственная закупка).
+      // По su10 поставщика выбирает снабжение, поэтому реквизиты из тела игнорируются.
+      if (
+        body.supplierName && body.resultAmount &&
+        (body.requestType === 'own_supplier' || body.requestType === 'own_supply')
+      ) {
         await client.query(
           `INSERT INTO supplier_orders (request_id, kind, supplier_name, supplier_inn, amount, created_by)
            VALUES ($1,'direct',$2,$3,$4,$5)`,
@@ -318,6 +322,10 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     if (!res.ok) return reply.status(res.code).send({ error: res.msg });
     const mr = res.row;
     if (mr.status === 'delivered') return reply.status(409).send({ error: 'Заявка закрыта' });
+    // По заявкам СУ-10 поставщика выбирает снабжение, а не подрядчик (прямой маршрут — только own_supplier/own_supply).
+    if (user.role === 'contractor' && mr.request_type !== 'own_supplier' && mr.request_type !== 'own_supply') {
+      return reply.status(403).send({ error: 'Поставщика по этой заявке выбирает снабжение' });
+    }
     const body = directSupplierSchema.parse(request.body);
     if (body.expectedVersion != null && body.expectedVersion !== mr.row_version) {
       return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
