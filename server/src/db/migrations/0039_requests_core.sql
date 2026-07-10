@@ -76,7 +76,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_mr_create_request_id
 -- Снимок имён для существующих строк (финансовая история не зависит от join'ов).
 UPDATE material_requests mr
    SET project_name    = COALESCE(mr.project_name, p.name),
-       estimate_label  = COALESCE(mr.estimate_label, e.name),
+       estimate_label  = COALESCE(mr.estimate_label, e.work_type),
        contractor_name = COALESCE(mr.contractor_name, org.name),
        contractor_inn  = COALESCE(mr.contractor_inn, org.inn)
   FROM material_requests m2

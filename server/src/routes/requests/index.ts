@@ -236,7 +236,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     if (lines.length === 0) return reply.status(400).send({ error: 'Нет допустимых строк заявки' });
 
     const ctx = await fastify.pool.query(
-      `SELECT e.project_id, e.name AS estimate_name, p.code AS project_code, p.name AS project_name,
+      `SELECT e.project_id, e.work_type AS estimate_name, p.code AS project_code, p.name AS project_name,
               org.name AS contractor_name, org.inn AS contractor_inn
          FROM estimates e
          LEFT JOIN projects p ON p.id = e.project_id
