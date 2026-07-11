@@ -9,6 +9,7 @@ import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { loadProjectId } from '../../lib/estimate-detail.js';
 import { exportEstimateKp, ExportError } from '../../lib/estimate-export/index.js';
 import { gatherVorItemSnapshots } from '../../lib/estimate-export/data.js';
+import { renderXlsxPreview } from '../../lib/estimate-export/xlsx-preview.js';
 import {
   contentHash,
   diffItem,
@@ -514,6 +515,33 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
       if (!rows[0]) return reply.status(404).send({ error: 'ВОР не найден' });
       const kind = request.query.disposition === 'inline' ? 'inline' : 'attachment';
       return streamStoredFile(fastify, reply, rows[0].file_key, rows[0].file_name, kind);
+    },
+  );
+
+  // GET /:id/vors/:vorId/preview — styled HTML-предпросмотр листов файла (форматирование как в Excel):
+  // читаем xlsx из S3 тем же ExcelJS, что его генерировал, и отдаём HTML с инлайн-стилями.
+  fastify.get<{ Params: { id: string; vorId: string } }>(
+    '/:id/vors/:vorId/preview',
+    { preHandler: [requireRole(...ROLES)] },
+    async (request, reply) => {
+      const id = z.string().uuid().safeParse(request.params.id);
+      const vorId = z.string().uuid().safeParse(request.params.vorId);
+      if (!id.success || !vorId.success) return reply.status(400).send({ error: 'Некорректный id' });
+      try {
+        await assertEstimateAccess(fastify.pool, id.data, request.currentUser);
+      } catch (err) {
+        if (err instanceof ChatAccessError) return reply.status(err.status).send({ error: err.message });
+        throw err;
+      }
+      if (!fastify.storage) return reply.status(503).send({ error: 'Хранилище файлов не настроено' });
+      const { rows } = await fastify.pool.query(
+        'SELECT file_key FROM estimate_vors WHERE id = $1 AND estimate_id = $2',
+        [vorId.data, id.data],
+      );
+      if (!rows[0]) return reply.status(404).send({ error: 'ВОР не найден' });
+      const buffer = await readObjectBuffer(fastify, rows[0].file_key as string);
+      const sheets = await renderXlsxPreview(buffer);
+      return reply.send({ data: { sheets } });
     },
   );
 

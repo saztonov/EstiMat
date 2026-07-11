@@ -271,26 +271,10 @@ html, body, #root {
   color: #8c8c8c;
 }
 
-/* Предпросмотр xlsx (sheet_to_html): компактная таблица с рамками, помещается в скролл-контейнер.
-   table-layout: fixed + <colgroup> (ширины по содержимому, задаёт VorPreviewModal) — «Наименование»
-   широкое, денежные узкие; перенос длинных строк не даёт таблице расползаться вширь. */
-.estimat-xlsx-preview table {
-  border-collapse: collapse;
-  font-size: 12px;
-  table-layout: fixed;
-  width: 100%;
-}
-.estimat-xlsx-preview td,
-.estimat-xlsx-preview th {
-  border: 1px solid #eee;
+/* Предпросмотр ВОР: разметку и оформление (заливки, шрифты, границы, ширины колонок, объединения)
+   задаёт сервер инлайн из ExcelJS-модели файла; здесь — только отступы ячеек для читаемости. */
+.estimat-xlsx-preview td {
   padding: 2px 6px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  vertical-align: top;
-}
-/* Числа (объёмы/количества) — по правому краю, как в Excel */
-.estimat-xlsx-preview td[data-t='n'] {
-  text-align: right;
 }
 
 /* Навигационное меню-гамбургер: пункты — настоящие ссылки (<a href>),
