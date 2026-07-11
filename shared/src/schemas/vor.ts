@@ -102,6 +102,8 @@ export const vorMarkSchema = z.object({
   vorCount: z.number().int(),
   changedCount: z.number().int(),
   unknownCount: z.number().int(),
+  // Список ВОР строки (created_at DESC) — имя + статус, для подсказки к метке «В».
+  vors: z.array(z.object({ name: z.string(), state: vorItemStateSchema })),
 });
 
 // Статус строки относительно конкретного ВОР (ленивая детализация по клику).

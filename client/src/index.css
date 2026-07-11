@@ -271,7 +271,9 @@ html, body, #root {
   color: #8c8c8c;
 }
 
-/* Предпросмотр xlsx (sheet_to_html): компактная таблица с рамками, помещается в скролл-контейнер */
+/* Предпросмотр xlsx (sheet_to_html): компактная таблица с рамками, помещается в скролл-контейнер.
+   Перенос длинных строк + ограничение ширины ячеек — иначе объединённые на всю ширину абзацы
+   («хвост» условий листа КП) растягивают таблицу на тысячи px и колонки «схлопываются». */
 .estimat-xlsx-preview table {
   border-collapse: collapse;
   font-size: 12px;
@@ -280,7 +282,11 @@ html, body, #root {
 .estimat-xlsx-preview th {
   border: 1px solid #eee;
   padding: 2px 6px;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+  max-width: 360px;
+  min-width: 26px;
 }
 
 /* Навигационное меню-гамбургер: пункты — настоящие ссылки (<a href>),

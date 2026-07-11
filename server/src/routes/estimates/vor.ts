@@ -347,19 +347,30 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
         throw err;
       }
       const states = await loadVorItemStates(fastify, id.data);
-      const agg = new Map<string, { vorCount: number; changed: number; unknown: number }>();
+      // states уже в порядке created_at DESC — список vors наследует его.
+      const agg = new Map<
+        string,
+        { vorCount: number; changed: number; unknown: number; vors: { name: string; state: VorItemState }[] }
+      >();
       for (const s of states) {
         if (s.state === 'deleted') continue;
-        const a = agg.get(s.itemId) ?? { vorCount: 0, changed: 0, unknown: 0 };
+        const a = agg.get(s.itemId) ?? { vorCount: 0, changed: 0, unknown: 0, vors: [] };
         a.vorCount += 1;
         if (s.state === 'changed') a.changed += 1;
         else if (s.state === 'unknown') a.unknown += 1;
+        a.vors.push({ name: s.name, state: s.state });
         agg.set(s.itemId, a);
       }
       const marks: Record<string, VorMark> = {};
       for (const [itemId, a] of agg) {
         const state: VorItemState = a.changed > 0 ? 'changed' : a.unknown > 0 ? 'unknown' : 'unchanged';
-        marks[itemId] = { state, vorCount: a.vorCount, changedCount: a.changed, unknownCount: a.unknown };
+        marks[itemId] = {
+          state,
+          vorCount: a.vorCount,
+          changedCount: a.changed,
+          unknownCount: a.unknown,
+          vors: a.vors,
+        };
       }
       return reply.send({ data: marks });
     },

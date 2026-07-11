@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Modal, Spin, Segmented, Alert, Button } from 'antd';
+import type { WorkSheet, CellObject } from 'xlsx';
 import { api } from '../../../services/api';
 
 interface Props {
@@ -17,6 +18,34 @@ interface SheetHtml {
 
 // Лист «КП» — основной (шапка формы + таблица работ). Показываем его по умолчанию.
 const MAIN_SHEET = 'КП';
+
+// Сузить диапазон листа до фактических данных: пустой хвост строк (лист КП: ~1000 строк) и пустые
+// правые колонки (лист МАТЕРИАЛЫ: до Z) раздувают DOM и добавляют лишние пустые колонки в предпросмотр.
+// Учитываем объединённые ячейки — merge шапки/«хвоста» может простираться правее последней непустой.
+function trimSheetRef(XLSX: typeof import('xlsx'), ws: WorkSheet): void {
+  const ref = ws['!ref'];
+  if (!ref) return;
+  const full = XLSX.utils.decode_range(ref);
+  let maxR = -1;
+  let maxC = -1;
+  for (const key of Object.keys(ws)) {
+    if (key[0] === '!') continue;
+    const cell = ws[key] as CellObject | undefined;
+    if (cell == null || cell.v == null || cell.v === '') continue;
+    const { r, c } = XLSX.utils.decode_cell(key);
+    if (r > maxR) maxR = r;
+    if (c > maxC) maxC = c;
+  }
+  if (maxR < 0 || maxC < 0) return;
+  for (const m of ws['!merges'] ?? []) {
+    if (m.e.r > maxR) maxR = m.e.r;
+    if (m.e.c > maxC) maxC = m.e.c;
+  }
+  ws['!ref'] = XLSX.utils.encode_range({
+    s: { r: full.s.r, c: full.s.c },
+    e: { r: Math.min(full.e.r, maxR), c: Math.min(full.e.c, maxC) },
+  });
+}
 
 // Предпросмотр выгруженного ВОР прямо в приложении: тянем xlsx как ArrayBuffer, парсим SheetJS
 // (ленивый импорт — вне стартового бандла) и рендерим готовый HTML таблицы. Денежные колонки/итоги
@@ -49,10 +78,11 @@ export function VorPreviewModal({ open, onClose, estimateId, vor }: Props) {
         // Ленивая загрузка вне стартового бандла: парсер SheetJS + санитайзер.
         const [XLSX, { default: DOMPurify }] = await Promise.all([import('xlsx'), import('dompurify')]);
         const wb = XLSX.read(new Uint8Array(buf), { type: 'array' });
-        const parsed: SheetHtml[] = wb.SheetNames.map((name) => ({
-          name,
-          html: DOMPurify.sanitize(XLSX.utils.sheet_to_html(wb.Sheets[name]!)),
-        }));
+        const parsed: SheetHtml[] = wb.SheetNames.map((name) => {
+          const ws = wb.Sheets[name]!;
+          trimSheetRef(XLSX, ws);
+          return { name, html: DOMPurify.sanitize(XLSX.utils.sheet_to_html(ws)) };
+        });
         if (ac.signal.aborted) return;
         setSheets(parsed);
         setActiveSheet(parsed.find((s) => s.name === MAIN_SHEET)?.name ?? parsed[0]?.name ?? '');

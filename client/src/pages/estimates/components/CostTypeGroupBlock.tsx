@@ -11,7 +11,7 @@ import { Table, Button, App, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { ExpandableConfig } from 'antd/es/table/interface';
 import { PlusOutlined, CaretRightOutlined, CaretDownOutlined, WarningOutlined } from '@ant-design/icons';
-import type { VorMark } from '@estimat/shared';
+import type { VorMark, VorItemState } from '@estimat/shared';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useQuery } from '@tanstack/react-query';
@@ -121,26 +121,40 @@ const noop = () => {};
 // Метка «В» строки в ячейке раскрытия: три состояния, различимые не только цветом (для дальтонизма).
 // В — в ВОР без изменений (синий); В! — изменилась после выгрузки (оранжевый); В? — старый ВОР
 // без снимка, статус неизвестен (серый). «×N» — строка входит в несколько ВОР.
+const VOR_STATE_TEXT: Record<VorItemState, string> = {
+  unchanged: 'без изменений',
+  changed: 'изменилась',
+  unknown: 'снимок недоступен',
+  deleted: 'удалена',
+};
+
 function VorBadge({ mark, onClick }: { mark: VorMark; onClick: () => void }) {
   const suffix = mark.vorCount > 1 ? `×${mark.vorCount}` : '';
   let symbol = 'В';
   let cls = '';
-  let tip: string;
   let aria: string;
   if (mark.state === 'changed') {
     symbol = 'В!';
     cls = 'estimat-vor-badge--changed';
-    tip = `Строка изменилась после выгрузки${mark.changedCount > 1 ? ` (в ${mark.changedCount} ВОР)` : ''}. Нажмите, чтобы открыть ВОР`;
     aria = 'ВОР строки: есть изменения после выгрузки';
   } else if (mark.state === 'unknown') {
     symbol = 'В?';
     cls = 'estimat-vor-badge--unknown';
-    tip = 'Выгружен до включения отслеживания изменений — неизвестно, менялась ли строка';
     aria = 'ВОР строки: снимок недоступен';
   } else {
-    tip = mark.vorCount > 1 ? `В ${mark.vorCount} ВОР, без изменений` : 'В ВОР, без изменений';
     aria = 'ВОР строки: без изменений';
   }
+  // Подсказка: названия ВОР строки + статус каждого.
+  const tip = (
+    <div style={{ maxWidth: 280 }}>
+      {mark.vors.map((v, i) => (
+        <div key={i}>
+          {v.name} — {VOR_STATE_TEXT[v.state]}
+        </div>
+      ))}
+      {mark.state === 'changed' && <div style={{ marginTop: 4, opacity: 0.85 }}>Нажмите, чтобы открыть ВОР</div>}
+    </div>
+  );
   return (
     <Tooltip title={tip}>
       <button
