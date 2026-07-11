@@ -62,16 +62,14 @@ export type MaterialRequestStatus = (typeof MATERIAL_REQUEST_STATUSES)[number];
 // Вид (маршрут) заявки. Подрядчик выбирает при создании:
 //   own_supplier — оплата через распределительное письмо (РП): свой поставщик;
 //   su10         — закупка через СУ-10 (снабжение выбирает поставщика, ведёт заказ);
-//   own_supply   — собственная закупка подрядчиком;
-//   legacy       — исторические заявки без вида (архив, скрыты по умолчанию).
+//   own_supply   — собственная закупка подрядчиком.
 export const MATERIAL_REQUEST_TYPES = ['own_supplier', 'su10', 'own_supply'] as const;
 export type MaterialRequestType = (typeof MATERIAL_REQUEST_TYPES)[number];
 
-export const MATERIAL_REQUEST_TYPE_LABELS: Record<MaterialRequestType | 'legacy', string> = {
+export const MATERIAL_REQUEST_TYPE_LABELS: Record<MaterialRequestType, string> = {
   own_supplier: 'Оплата по РП',
   su10: 'Закупка через СУ-10',
   own_supply: 'Собственная закупка',
-  legacy: 'Архив',
 };
 
 // Типы прикрепляемых документов (заявка/заказ/оплата/поставка).

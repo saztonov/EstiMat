@@ -74,8 +74,6 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     if (q.type) {
       values.push(q.type);
       where.push(`mr.request_type = $${values.length}`);
-    } else {
-      where.push(`mr.request_type <> 'legacy'`); // архив скрыт по умолчанию
     }
     if (q.status) {
       values.push(q.status);

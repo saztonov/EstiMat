@@ -19,7 +19,6 @@ const TYPE_COLOR: Record<string, string> = {
   own_supplier: 'geekblue',
   su10: 'purple',
   own_supply: 'cyan',
-  legacy: 'default',
 };
 
 export function money(v: number | string | null | undefined): string {
@@ -38,6 +37,6 @@ export function RequestStatusTag({ status, comment }: { status: RequestStatus; c
 }
 
 export function RequestTypeTag({ type }: { type: string }) {
-  const label = MATERIAL_REQUEST_TYPE_LABELS[type as MaterialRequestType | 'legacy'] ?? type;
+  const label = MATERIAL_REQUEST_TYPE_LABELS[type as MaterialRequestType] ?? type;
   return <Tag color={TYPE_COLOR[type] ?? 'default'}>{label}</Tag>;
 }

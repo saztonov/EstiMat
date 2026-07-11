@@ -81,11 +81,12 @@ export async function exportMaterialRequestXlsx(
   });
 
   items.rows.forEach((it, i) => {
+    const qty = Number(it.quantity);
     const row = ws.addRow([
       i + 1,
       it.material_name,
       it.unit,
-      Number(it.quantity),
+      qty,
       it.cost_type_name ?? '',
     ]);
     row.eachCell((cell) => {
@@ -93,7 +94,8 @@ export async function exportMaterialRequestXlsx(
         top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' },
       };
     });
-    row.getCell(4).numFmt = '#,##0.###';
+    // Целые — без дробной части (и без хвостовой запятой); дробные — до 4 знаков.
+    row.getCell(4).numFmt = Number.isInteger(qty) ? '#,##0' : '#,##0.####';
   });
 
   const arrayBuffer = await wb.xlsx.writeBuffer();
