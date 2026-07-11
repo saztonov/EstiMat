@@ -6,9 +6,14 @@
 // смете, подтягивает материалы, группирует строки по локации (в каноническом порядке
 // как в GET /:id) и нумерует.
 
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { bucketBy, ITEMS_CANONICAL_ORDER_BY } from '../estimate-detail.js';
 import type { ExportConflict } from './references.js';
+import {
+  contentHash,
+  normalizeLocations,
+  type VorItemSnapshot,
+} from './vor-content.js';
 
 export class ExportError extends Error {
   status: number;
@@ -64,100 +69,220 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Согласованное чтение снимка сметы: короткая REPEATABLE READ READ ONLY транзакция, чтобы
+// работы/материалы/примечания читались из одного согласованного состояния (иначе три отдельных
+// запроса на pool могут «расстыковаться» при конкурентной правке во время сборки).
+async function withReadSnapshot<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const r = await fn(client);
+    await client.query('COMMIT');
+    return r;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+function toMaterialSnapshot(m: Record<string, unknown>) {
+  return {
+    materialId: m.id as string,
+    name: ((m.description as string | null) ?? (m.material_name as string | null) ?? '') as string,
+    unit: (m.unit as string | null) ?? null,
+    volume: num(m.quantity),
+    coef: num(m.qty_ratio),
+  };
+}
+
+/** Результат сборки: блоки для XLSX + построчный снимок (manifest) + хэши содержимого. */
+export interface VorGatherModel {
+  blocks: ExportBlock[];
+  items: VorItemSnapshot[];
+  hashByItem: Map<string, Buffer>;
+}
+
 /**
- * Собрать блоки строк для экспорта. Порядок работ — канонический (как в GET /:id:
- * зона → этаж → категория/вид → sort_order), группировка — по метке локации от клиента.
- * Бросает ExportError, если какой-то id не принадлежит смете.
+ * Собрать данные экспорта в согласованном снимке: блоки строк (для XLSX, порядок канонический,
+ * группировка по метке локации от клиента), построчный снимок значений (manifest) и SHA-256
+ * содержимого каждой работы. Бросает ExportError, если какой-то id не принадлежит смете.
  */
+export async function gatherExportModel(
+  pool: Pool,
+  estimateId: string,
+  refs: ExportItemRef[],
+): Promise<VorGatherModel> {
+  const ids = refs.map((r) => r.id);
+  const labelById = new Map(refs.map((r) => [r.id, r.locationLabel]));
+
+  return withReadSnapshot(pool, async (client) => {
+    const works = await client.query(
+      `SELECT ei.id, ei.description, ei.quantity, ei.unit, ei.locations,
+              lt.name AS location_type_name
+         FROM estimate_items ei
+         LEFT JOIN cost_types ct   ON ei.cost_type_id = ct.id
+         LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
+         LEFT JOIN project_zones z ON ei.zone_id = z.id
+         LEFT JOIN room_types rt   ON ei.room_type_id = rt.id
+         LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
+        WHERE ei.estimate_id = $1 AND ei.id = ANY($2::uuid[])
+        ORDER BY ${ITEMS_CANONICAL_ORDER_BY}, ei.id`,
+      [estimateId, ids],
+    );
+
+    // Валидация принадлежности: каждый запрошенный id должен найтись в этой смете.
+    if (works.rows.length !== ids.length) {
+      const found = new Set(works.rows.map((r) => r.id as string));
+      const missing = ids.filter((id) => !found.has(id));
+      throw new ExportError(
+        `Часть строк не найдена в смете (${missing.length} из ${ids.length}). Обновите страницу и повторите.`,
+        409,
+      );
+    }
+
+    const mats = await client.query(
+      `SELECT em.id, em.item_id, em.description, em.quantity, em.unit, em.qty_ratio,
+              mc.name AS material_name
+         FROM estimate_materials em
+         LEFT JOIN material_catalog mc ON em.material_id = mc.id
+        WHERE em.item_id = ANY($1::uuid[])
+        ORDER BY em.sort_order, em.created_at, em.id`,
+      [ids],
+    );
+    const matsByItem = bucketBy(mats.rows, (m) => m.item_id as string);
+
+    // Примечания (комментарии) работ → столбец «Примечание»; склейка через \n (по created_at).
+    const notesRes = await client.query(
+      `SELECT item_id, body FROM estimate_comments
+        WHERE item_id = ANY($1::uuid[]) ORDER BY item_id, created_at, id`,
+      [ids],
+    );
+    const notesByItem = bucketBy(notesRes.rows, (n) => n.item_id as string);
+
+    const blockByLabel = new Map<string, ExportBlock>();
+    const blocks: ExportBlock[] = [];
+    const items: VorItemSnapshot[] = [];
+    const hashByItem = new Map<string, Buffer>();
+    let workNo = 0;
+
+    for (const w of works.rows) {
+      const itemId = w.id as string;
+      const label = labelById.get(itemId) ?? '';
+      let block = blockByLabel.get(label);
+      if (!block) {
+        block = { locationLabel: label, rows: [] };
+        blockByLabel.set(label, block);
+        blocks.push(block);
+      }
+      workNo += 1;
+      const notes = (notesByItem.get(itemId) ?? []).map((n) => n.body as string).join('\n') || null;
+      block.rows.push({
+        kind: 'work',
+        number: String(workNo),
+        typeName: (w.location_type_name as string | null) ?? null,
+        name: (w.description as string | null) ?? '',
+        unit: (w.unit as string | null) ?? null,
+        volume: num(w.quantity),
+        coef: null,
+        notes,
+      });
+      const itemMats = matsByItem.get(itemId) ?? [];
+      itemMats.forEach((m, i) => {
+        block!.rows.push({
+          kind: 'material',
+          number: `${workNo}.${i + 1}`,
+          typeName: null,
+          name: (m.description as string | null) ?? (m.material_name as string | null) ?? '',
+          unit: (m.unit as string | null) ?? null,
+          volume: num(m.quantity),
+          coef: num(m.qty_ratio),
+        });
+      });
+
+      const snap: VorItemSnapshot = {
+        itemId,
+        name: (w.description as string | null) ?? '',
+        unit: (w.unit as string | null) ?? null,
+        volume: num(w.quantity),
+        typeName: (w.location_type_name as string | null) ?? null,
+        locations: normalizeLocations(w.locations),
+        locationLabel: label,
+        notes,
+        materials: itemMats.map(toMaterialSnapshot),
+      };
+      items.push(snap);
+      hashByItem.set(itemId, contentHash(snap));
+    }
+
+    return { blocks, items, hashByItem };
+  });
+}
+
+/** Обёртка обратной совместимости: только блоки для XLSX (контракт exportEstimateKp). */
 export async function gatherExportData(
   pool: Pool,
   estimateId: string,
   refs: ExportItemRef[],
 ): Promise<ExportBlock[]> {
-  const ids = refs.map((r) => r.id);
-  const labelById = new Map(refs.map((r) => [r.id, r.locationLabel]));
+  return (await gatherExportModel(pool, estimateId, refs)).blocks;
+}
 
-  const works = await pool.query(
-    `SELECT ei.id, ei.description, ei.quantity, ei.unit,
-            lt.name AS location_type_name
-       FROM estimate_items ei
-       LEFT JOIN cost_types ct   ON ei.cost_type_id = ct.id
-       LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
-       LEFT JOIN project_zones z ON ei.zone_id = z.id
-       LEFT JOIN room_types rt   ON ei.room_type_id = rt.id
-       LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
-      WHERE ei.estimate_id = $1 AND ei.id = ANY($2::uuid[])
-      ORDER BY ${ITEMS_CANONICAL_ORDER_BY}`,
-    [estimateId, ids],
-  );
-
-  // Валидация принадлежности: каждый запрошенный id должен найтись в этой смете.
-  if (works.rows.length !== ids.length) {
-    const found = new Set(works.rows.map((r) => r.id as string));
-    const missing = ids.filter((id) => !found.has(id));
-    throw new ExportError(
-      `Часть строк не найдена в смете (${missing.length} из ${ids.length}). Обновите страницу и повторите.`,
-      409,
+/**
+ * Облегчённый сбор ТЕКУЩЕГО снимка существующих работ (для сравнения с baseline ВОР): без
+ * нумерации/группировки и без ExportError на отсутствующие id (удалённые работы просто не
+ * попадают в результат → трактуются вызывающим как deleted). locationLabel не заполняется
+ * (в хэш не входит; для diff метку рендерит вызывающий из структуры locations).
+ */
+export async function gatherVorItemSnapshots(
+  pool: Pool,
+  estimateId: string,
+  itemIds: string[],
+): Promise<Map<string, VorItemSnapshot>> {
+  if (itemIds.length === 0) return new Map();
+  return withReadSnapshot(pool, async (client) => {
+    const works = await client.query(
+      `SELECT ei.id, ei.description, ei.quantity, ei.unit, ei.locations,
+              lt.name AS location_type_name
+         FROM estimate_items ei
+         LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
+        WHERE ei.estimate_id = $1 AND ei.id = ANY($2::uuid[])`,
+      [estimateId, itemIds],
     );
-  }
+    const mats = await client.query(
+      `SELECT em.id, em.item_id, em.description, em.quantity, em.unit, em.qty_ratio,
+              mc.name AS material_name
+         FROM estimate_materials em
+         LEFT JOIN material_catalog mc ON em.material_id = mc.id
+        WHERE em.item_id = ANY($1::uuid[])
+        ORDER BY em.sort_order, em.created_at, em.id`,
+      [itemIds],
+    );
+    const matsByItem = bucketBy(mats.rows, (m) => m.item_id as string);
+    const notesRes = await client.query(
+      `SELECT item_id, body FROM estimate_comments
+        WHERE item_id = ANY($1::uuid[]) ORDER BY item_id, created_at, id`,
+      [itemIds],
+    );
+    const notesByItem = bucketBy(notesRes.rows, (n) => n.item_id as string);
 
-  const mats = await pool.query(
-    `SELECT em.item_id, em.description, em.quantity, em.unit, em.qty_ratio,
-            mc.name AS material_name
-       FROM estimate_materials em
-       LEFT JOIN material_catalog mc ON em.material_id = mc.id
-      WHERE em.item_id = ANY($1::uuid[])
-      ORDER BY em.sort_order, em.created_at`,
-    [ids],
-  );
-  const matsByItem = bucketBy(mats.rows, (m) => m.item_id as string);
-
-  // Примечания (комментарии) работ → в столбец «Примечание»; несколько склеиваем через \n
-  // (хронологически: ORDER BY created_at).
-  const notesRes = await pool.query(
-    `SELECT item_id, body FROM estimate_comments
-      WHERE item_id = ANY($1::uuid[]) ORDER BY item_id, created_at`,
-    [ids],
-  );
-  const notesByItem = bucketBy(notesRes.rows, (n) => n.item_id as string);
-
-  // Группировка по метке локации; порядок блоков — по первому появлению в каноне.
-  const blockByLabel = new Map<string, ExportBlock>();
-  const blocks: ExportBlock[] = [];
-  let workNo = 0;
-
-  for (const w of works.rows) {
-    const label = labelById.get(w.id as string) ?? '';
-    let block = blockByLabel.get(label);
-    if (!block) {
-      block = { locationLabel: label, rows: [] };
-      blockByLabel.set(label, block);
-      blocks.push(block);
-    }
-    workNo += 1;
-    block.rows.push({
-      kind: 'work',
-      number: String(workNo),
-      typeName: (w.location_type_name as string | null) ?? null,
-      name: (w.description as string | null) ?? '',
-      unit: (w.unit as string | null) ?? null,
-      volume: num(w.quantity),
-      coef: null,
-      notes: (notesByItem.get(w.id as string) ?? []).map((n) => n.body as string).join('\n') || null,
-    });
-    const itemMats = matsByItem.get(w.id as string) ?? [];
-    itemMats.forEach((m, i) => {
-      block!.rows.push({
-        kind: 'material',
-        number: `${workNo}.${i + 1}`,
-        typeName: null,
-        name: (m.description as string | null) ?? (m.material_name as string | null) ?? '',
-        unit: (m.unit as string | null) ?? null,
-        volume: num(m.quantity),
-        coef: num(m.qty_ratio),
+    const map = new Map<string, VorItemSnapshot>();
+    for (const w of works.rows) {
+      const itemId = w.id as string;
+      const itemMats = matsByItem.get(itemId) ?? [];
+      map.set(itemId, {
+        itemId,
+        name: (w.description as string | null) ?? '',
+        unit: (w.unit as string | null) ?? null,
+        volume: num(w.quantity),
+        typeName: (w.location_type_name as string | null) ?? null,
+        locations: normalizeLocations(w.locations),
+        locationLabel: '',
+        notes: (notesByItem.get(itemId) ?? []).map((n) => n.body as string).join('\n') || null,
+        materials: itemMats.map(toMaterialSnapshot),
       });
-    });
-  }
-
-  return blocks;
+    }
+    return map;
+  });
 }

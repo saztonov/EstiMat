@@ -1,12 +1,30 @@
 import { useEffect, useState } from 'react';
-import { Modal, Table, Button, Space, Popconfirm, Popover, Tag, Tooltip, App } from 'antd';
+import { Modal, Table, Button, Space, Popconfirm, Popover, Tag, Tooltip, Badge, App } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DownloadOutlined, EyeOutlined, DeleteOutlined, LoginOutlined, FileExcelOutlined } from '@ant-design/icons';
+import {
+  DownloadOutlined,
+  EyeOutlined,
+  DeleteOutlined,
+  LoginOutlined,
+  FileExcelOutlined,
+  DiffOutlined,
+} from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { DEFAULT_PAGINATION } from '../../../lib/tableConfig';
 import type { EstimateVor, VorFilterSnapshot } from '@estimat/shared';
 import { VorPreviewModal } from './VorPreviewModal';
+import { VorDiffDrawer } from './VorDiffDrawer';
+
+// Ячейка «Актуальность» ВОР: изменено/удалено N, актуально, снимок недоступен (для легаси-ВОР).
+function VorStatusCell({ r }: { r: EstimateVor }) {
+  if (!r.diffAvailable) return <Badge status="default" text="Снимок недоступен" />;
+  const parts: string[] = [];
+  if (r.counts.changed) parts.push(`изменено ${r.counts.changed}`);
+  if (r.counts.deleted) parts.push(`удалено ${r.counts.deleted}`);
+  if (parts.length === 0) return <Badge status="success" text="Актуально" />;
+  return <Badge status="warning" text={parts.join(', ')} />;
+}
 
 interface Props {
   open: boolean;
@@ -74,6 +92,8 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
   const queryClient = useQueryClient();
   // Предпросмотр файла ВОР поверх списка (null — закрыт).
   const [previewVor, setPreviewVor] = useState<{ id: string; name: string } | null>(null);
+  // Drawer «Отличия от ВОР» (null — закрыт).
+  const [diffVor, setDiffVor] = useState<{ id: string; name: string } | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['estimate-vor', estimateId],
@@ -108,6 +128,12 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
       key: 'createdAt',
       width: 140,
       render: (v: string) => new Date(v).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }),
+    },
+    {
+      title: 'Актуальность',
+      key: 'status',
+      width: 150,
+      render: (_v, r) => <VorStatusCell r={r} />,
     },
     { title: 'Автор', dataIndex: 'createdByName', key: 'createdByName', width: 160, ellipsis: true },
     {
@@ -157,6 +183,15 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
       width: 150,
       render: (_v, r) => (
         <Space size={4}>
+          <Tooltip title={r.diffAvailable ? 'Сравнить с текущей сметой' : 'Снимок недоступен (старый ВОР)'}>
+            <Button
+              type="text"
+              size="small"
+              icon={<DiffOutlined />}
+              disabled={!r.diffAvailable}
+              onClick={() => setDiffVor({ id: r.id, name: r.name })}
+            />
+          </Tooltip>
           <Tooltip title="Применить фильтры этого ВОР к смете">
             <Button
               type="text"
@@ -215,6 +250,12 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
         onClose={() => setPreviewVor(null)}
         estimateId={estimateId}
         vor={previewVor}
+      />
+      <VorDiffDrawer
+        open={!!diffVor}
+        onClose={() => setDiffVor(null)}
+        estimateId={estimateId}
+        vor={diffVor}
       />
     </>
   );

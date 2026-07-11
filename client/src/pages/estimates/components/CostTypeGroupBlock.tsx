@@ -10,7 +10,8 @@ import {
 import { Table, Button, App, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { ExpandableConfig } from 'antd/es/table/interface';
-import { PlusOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
+import { PlusOutlined, CaretRightOutlined, CaretDownOutlined, WarningOutlined } from '@ant-design/icons';
+import type { VorMark } from '@estimat/shared';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useQuery } from '@tanstack/react-query';
@@ -108,14 +109,56 @@ interface Props {
   canEditCiphers?: boolean;
   /** Мобильный режим: min-width таблицы работ в px (горизонтальный скролл). */
   tableScrollX?: number;
-  /** Отметки строк: в какие ВОР входит работа (метка «В» в ячейке раскрытия). */
-  vorByItem?: Map<string, { id: string; name: string }[]>;
-  /** Клик по метке «В»: открыть список ВОР с подсветкой нужной записи. */
+  /** Отметки строк: агрегатный статус ВОР работы (метка «В»/«В!»/«В?» в ячейке раскрытия). */
+  vorByItem?: Map<string, VorMark>;
+  /** Клик по метке «В»: открыть список ВОР строки. */
   onOpenVor?: (itemId: string) => void;
 }
 
 const noopAsync = async () => {};
 const noop = () => {};
+
+// Метка «В» строки в ячейке раскрытия: три состояния, различимые не только цветом (для дальтонизма).
+// В — в ВОР без изменений (синий); В! — изменилась после выгрузки (оранжевый); В? — старый ВОР
+// без снимка, статус неизвестен (серый). «×N» — строка входит в несколько ВОР.
+function VorBadge({ mark, onClick }: { mark: VorMark; onClick: () => void }) {
+  const suffix = mark.vorCount > 1 ? `×${mark.vorCount}` : '';
+  let symbol = 'В';
+  let cls = '';
+  let tip: string;
+  let aria: string;
+  if (mark.state === 'changed') {
+    symbol = 'В!';
+    cls = 'estimat-vor-badge--changed';
+    tip = `Строка изменилась после выгрузки${mark.changedCount > 1 ? ` (в ${mark.changedCount} ВОР)` : ''}. Нажмите, чтобы открыть ВОР`;
+    aria = 'ВОР строки: есть изменения после выгрузки';
+  } else if (mark.state === 'unknown') {
+    symbol = 'В?';
+    cls = 'estimat-vor-badge--unknown';
+    tip = 'Выгружен до включения отслеживания изменений — неизвестно, менялась ли строка';
+    aria = 'ВОР строки: снимок недоступен';
+  } else {
+    tip = mark.vorCount > 1 ? `В ${mark.vorCount} ВОР, без изменений` : 'В ВОР, без изменений';
+    aria = 'ВОР строки: без изменений';
+  }
+  return (
+    <Tooltip title={tip}>
+      <button
+        type="button"
+        className={`estimat-vor-badge ${cls}`.trim()}
+        aria-label={aria}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+      >
+        {mark.state === 'changed' && <WarningOutlined style={{ fontSize: 10, marginRight: 1 }} />}
+        {symbol}
+        {suffix}
+      </button>
+    </Tooltip>
+  );
+}
 
 function CostTypeGroupBlockImpl({
   group,
@@ -448,22 +491,11 @@ function CostTypeGroupBlockImpl({
         // Отметка «В»/«В×N» — строка входит в один/несколько ВОР. Стоит в фиксированном слоте
         // СЛЕВА от «+» (пустой слот, когда ВОР нет, — «+» не «прыгает»). Нативная кнопка:
         // Enter/Space работают, клик гасит всплытие (не раскрывает материалы и не выделяет работу).
-        const vors = vorByItem?.get(record.id);
+        const mark = vorByItem?.get(record.id);
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center' }}>
             <span className="estimat-vor-slot">
-              {vors && vors.length > 0 && (
-                <Tooltip title={vors.map((v) => v.name).join(', ')}>
-                  <button
-                    type="button"
-                    className="estimat-vor-badge"
-                    aria-label={`Показать ВОР строки: ${vors.map((v) => v.name).join(', ')}`}
-                    onClick={(e) => { e.stopPropagation(); onOpenVor?.(record.id); }}
-                  >
-                    В{vors.length > 1 ? `×${vors.length}` : ''}
-                  </button>
-                </Tooltip>
-              )}
+              {mark && mark.vorCount > 0 && <VorBadge mark={mark} onClick={() => onOpenVor?.(record.id)} />}
             </span>
             {icon}
           </span>

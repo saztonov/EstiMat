@@ -247,19 +247,17 @@ export function SmetaPanel({
     queryKey: ['estimate-vor-marks', estimateId],
     queryFn: () => api.get<{ data: VorMarksMap }>(`/estimates/${estimateId}/vors/marks`).then((r) => r.data),
   });
-  const vorByItem = useMemo(() => new Map<string, VorMark[]>(Object.entries(vorMarks ?? {})), [vorMarks]);
+  const vorByItem = useMemo(() => new Map<string, VorMark>(Object.entries(vorMarks ?? {})), [vorMarks]);
 
   // Модалка списка ВОР: состояние + открытие с подсветкой конкретного ВОР (клик по метке «В»).
   const [vorListOpen, setVorListOpen] = useState(false);
   const [vorFocusId, setVorFocusId] = useState<string | null>(null);
-  const onOpenVor = useCallback(
-    (itemId: string) => {
-      const list = vorByItem.get(itemId);
-      setVorFocusId(list?.[0]?.id ?? null);
-      setVorListOpen(true);
-    },
-    [vorByItem],
-  );
+  // Клик по метке «В» строки — открыть список ВОР (со статусами актуальности). Конкретный ВОР не
+  // подсвечиваем: агрегатная отметка не хранит id ВОР (объём ответа O(работ), не O(работ×ВОР)).
+  const onOpenVor = useCallback(() => {
+    setVorFocusId(null);
+    setVorListOpen(true);
+  }, []);
 
   const blockProps = useMemo(
     () => ({

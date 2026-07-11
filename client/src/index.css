@@ -263,6 +263,13 @@ html, body, #root {
   outline-offset: 1px;
   border-radius: 2px;
 }
+/* Изменилась после выгрузки (В!) — оранжевый; снимок недоступен (В?) — серый */
+.estimat-vor-badge--changed {
+  color: #d46b08;
+}
+.estimat-vor-badge--unknown {
+  color: #8c8c8c;
+}
 
 /* Предпросмотр xlsx (sheet_to_html): компактная таблица с рамками, помещается в скролл-контейнер */
 .estimat-xlsx-preview table {

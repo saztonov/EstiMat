@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import {
-  gatherExportData,
+  gatherExportModel,
   ExportError,
   ExportUnitConflictError,
   type ExportItemRef,
@@ -12,9 +12,17 @@ import {
   type ExportConflict,
 } from './references.js';
 import { exportKpWorkbook } from './writer.js';
+import { VOR_CONTENT_SCHEMA_VERSION, type VorManifest } from './vor-content.js';
 
 export { ExportError, ExportUnitConflictError };
 export type { ExportItemRef, ExportRefRow, ExportConflict };
+
+/** Результат экспорта ВОР: файл + построчный снимок (manifest) + хэши содержимого работ. */
+export interface VorExportResult {
+  buffer: Buffer;
+  manifest: VorManifest;
+  hashByItem: Map<string, Buffer>;
+}
 
 /**
  * Экспорт сметы в Excel-шаблон: собрать данные по видимым (отфильтрованным на клиенте)
@@ -29,8 +37,8 @@ export async function exportEstimateKp(
   estimateId: string,
   refs: ExportItemRef[],
   opts?: { ignoreUnitConflicts?: boolean },
-): Promise<Buffer> {
-  const blocks = await gatherExportData(pool, estimateId, refs);
+): Promise<VorExportResult> {
+  const { blocks, items, hashByItem } = await gatherExportModel(pool, estimateId, refs);
   const { rows: unitRows } = await pool.query('SELECT name, synonyms FROM units');
   const unitAliases = buildUnitAliasMap(unitRows as { name: string; synonyms: string[] | null }[]);
   const ref = buildReferenceLists(blocks, unitAliases);
@@ -61,5 +69,6 @@ export async function exportEstimateKp(
     address: (projectRows[0]?.address as string | null) ?? null,
     ciphers,
   };
-  return exportKpWorkbook(blocks, { materials: ref.materials, works: ref.works }, project);
+  const buffer = await exportKpWorkbook(blocks, { materials: ref.materials, works: ref.works }, project);
+  return { buffer, manifest: { schemaVersion: VOR_CONTENT_SCHEMA_VERSION, items }, hashByItem };
 }
