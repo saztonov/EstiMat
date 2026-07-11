@@ -47,6 +47,40 @@ function trimSheetRef(XLSX: typeof import('xlsx'), ws: WorkSheet): void {
   });
 }
 
+// Ширины колонок из содержимого: sheet_to_html их не задаёт, а table-layout: auto делает текстовую
+// «Наименование» узкой. Считаем макс. длину текста по колонке (игнорируя ячейки в горизонтальных
+// объединениях — абзацы «хвоста» на 15 колонок не должны раздувать одну колонку), ограничиваем
+// и переводим в проценты. Возвращаем <colgroup> для вставки в таблицу (table-layout: fixed в CSS).
+const COL_MIN = 3;
+const COL_MAX = 40;
+function buildColgroup(XLSX: typeof import('xlsx'), ws: WorkSheet): string {
+  const ref = ws['!ref'];
+  if (!ref) return '';
+  const range = XLSX.utils.decode_range(ref);
+  const ncols = range.e.c - range.s.c + 1;
+  if (ncols <= 0) return '';
+  const spanned = new Set<string>();
+  for (const m of ws['!merges'] ?? []) {
+    if (m.e.c > m.s.c) {
+      for (let r = m.s.r; r <= m.e.r; r++) for (let c = m.s.c; c <= m.e.c; c++) spanned.add(`${r}:${c}`);
+    }
+  }
+  const widths = new Array<number>(ncols).fill(COL_MIN);
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      if (spanned.has(`${r}:${c}`)) continue;
+      const cell = ws[XLSX.utils.encode_cell({ r, c })] as CellObject | undefined;
+      if (cell == null || cell.v == null || cell.v === '') continue;
+      const len = String(cell.v).length;
+      const ci = c - range.s.c;
+      if (len > widths[ci]!) widths[ci] = Math.min(len, COL_MAX);
+    }
+  }
+  const total = widths.reduce((a, b) => a + b, 0) || ncols;
+  const cols = widths.map((w) => `<col style="width:${((w / total) * 100).toFixed(3)}%"/>`).join('');
+  return `<colgroup>${cols}</colgroup>`;
+}
+
 // Предпросмотр выгруженного ВОР прямо в приложении: тянем xlsx как ArrayBuffer, парсим SheetJS
 // (ленивый импорт — вне стартового бандла) и рендерим готовый HTML таблицы. Денежные колонки/итоги
 // в файле — живые формулы без кэш-результата (цены заполняет подрядчик), поэтому в предпросмотре они
@@ -81,7 +115,9 @@ export function VorPreviewModal({ open, onClose, estimateId, vor }: Props) {
         const parsed: SheetHtml[] = wb.SheetNames.map((name) => {
           const ws = wb.Sheets[name]!;
           trimSheetRef(XLSX, ws);
-          return { name, html: DOMPurify.sanitize(XLSX.utils.sheet_to_html(ws)) };
+          // Вставляем <colgroup> с ширинами колонок в <table> перед санитайзером.
+          const raw = XLSX.utils.sheet_to_html(ws).replace('<table>', `<table>${buildColgroup(XLSX, ws)}`);
+          return { name, html: DOMPurify.sanitize(raw) };
         });
         if (ac.signal.aborted) return;
         setSheets(parsed);
@@ -106,7 +142,7 @@ export function VorPreviewModal({ open, onClose, estimateId, vor }: Props) {
       onCancel={onClose}
       footer={null}
       width="90%"
-      style={{ maxWidth: 1100, top: 24 }}
+      style={{ top: 24 }}
     >
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0' }}>
@@ -136,7 +172,12 @@ export function VorPreviewModal({ open, onClose, estimateId, vor }: Props) {
           )}
           <div
             className="estimat-xlsx-preview"
-            style={{ maxHeight: '70vh', overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8 }}
+            style={{
+              maxHeight: 'calc(100vh - 170px)',
+              overflow: 'auto',
+              border: '1px solid #f0f0f0',
+              borderRadius: 8,
+            }}
             // HTML санитизирован DOMPurify (см. загрузку выше); sheet_to_html к тому же html-экранирует
             // текст ячеек, а файл серверный (из нашей БД) — активный контент невозможен.
             dangerouslySetInnerHTML={{ __html: current?.html ?? '' }}

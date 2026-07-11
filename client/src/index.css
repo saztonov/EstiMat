@@ -272,11 +272,13 @@ html, body, #root {
 }
 
 /* Предпросмотр xlsx (sheet_to_html): компактная таблица с рамками, помещается в скролл-контейнер.
-   Перенос длинных строк + ограничение ширины ячеек — иначе объединённые на всю ширину абзацы
-   («хвост» условий листа КП) растягивают таблицу на тысячи px и колонки «схлопываются». */
+   table-layout: fixed + <colgroup> (ширины по содержимому, задаёт VorPreviewModal) — «Наименование»
+   широкое, денежные узкие; перенос длинных строк не даёт таблице расползаться вширь. */
 .estimat-xlsx-preview table {
   border-collapse: collapse;
   font-size: 12px;
+  table-layout: fixed;
+  width: 100%;
 }
 .estimat-xlsx-preview td,
 .estimat-xlsx-preview th {
@@ -285,8 +287,10 @@ html, body, #root {
   white-space: normal;
   overflow-wrap: anywhere;
   vertical-align: top;
-  max-width: 360px;
-  min-width: 26px;
+}
+/* Числа (объёмы/количества) — по правому краю, как в Excel */
+.estimat-xlsx-preview td[data-t='n'] {
+  text-align: right;
 }
 
 /* Навигационное меню-гамбургер: пункты — настоящие ссылки (<a href>),
