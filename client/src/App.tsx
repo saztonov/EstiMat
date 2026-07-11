@@ -46,13 +46,16 @@ export default function App() {
               <Route path="/estimates/:id/materials" element={<EstimateMaterialsPage />} />
               <Route path="/administration" element={<AdministrationPage />} />
             </Route>
+            {/* Заявки — пульт снабжения, закрыт для роли contractor */}
+            <Route element={<RoleRoute allow={['admin', 'engineer', 'manager']} redirect="/contractors" />}>
+              <Route path="/requests" element={<RequestsPage />} />
+              <Route path="/requests/:id" element={<RequestDetailPage />} />
+            </Route>
             {/* Доступно всем ролям */}
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/contractors" element={<ContractorsPage />} />
             <Route path="/contractors/:estimateId" element={<ContractorsPage />} />
             <Route path="/execution" element={<ExecutionPage />} />
-            <Route path="/requests" element={<RequestsPage />} />
-            <Route path="/requests/:id" element={<RequestDetailPage />} />
           </Route>
         </Route>
       </Routes>

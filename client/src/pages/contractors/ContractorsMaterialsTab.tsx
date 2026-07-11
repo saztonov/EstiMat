@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Table, Tag, Space, Empty, Tooltip, Select, Button, InputNumber, Segmented, App } from 'antd';
-import { PlusOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { Table, Tag, Space, Empty, Tooltip, Select, Button, InputNumber, Dropdown, App } from 'antd';
+import { PlusOutlined, UnorderedListOutlined, DownOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -267,23 +267,30 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
         {viewerIsContractor &&
           (editing ? (
             <>
-              <Segmented
-                value={requestType ?? ''}
-                onChange={(v) => setRequestType(v as MaterialRequestType)}
-                options={MATERIAL_REQUEST_TYPES.map((t) => ({
-                  value: t,
-                  label: MATERIAL_REQUEST_TYPE_LABELS[t],
-                }))}
-              />
+              {requestType && <Tag color="blue">{MATERIAL_REQUEST_TYPE_LABELS[requestType]}</Tag>}
               <Button type="primary" loading={submitMutation.isPending} onClick={submit}>
                 Подтвердить
               </Button>
               <Button onClick={cancelEditing}>Отмена</Button>
             </>
           ) : (
-            <Button icon={<PlusOutlined />} onClick={() => setEditing(true)}>
-              Заявка на материалы
-            </Button>
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: MATERIAL_REQUEST_TYPES.map((t) => ({
+                  key: t,
+                  label: MATERIAL_REQUEST_TYPE_LABELS[t],
+                })),
+                onClick: ({ key }) => {
+                  setRequestType(key as MaterialRequestType);
+                  setEditing(true);
+                },
+              }}
+            >
+              <Button icon={<PlusOutlined />}>
+                Заявка на материалы <DownOutlined />
+              </Button>
+            </Dropdown>
           ))}
         {!editing && (
           <Button icon={<UnorderedListOutlined />} onClick={() => setRequestsOpen(true)}>

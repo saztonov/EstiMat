@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
 import { Modal, Table, Tag, Button, Empty, Space, Tooltip, App } from 'antd';
 import { FileExcelOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -12,6 +11,7 @@ import {
 import { api } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
+import { RequestDetailContent } from '../requests/RequestDetailContent';
 
 interface RequestItem {
   name: string;
@@ -49,38 +49,11 @@ const STATUS_COLOR: Record<RequestStatus, string> = {
   delivered: 'success',
 };
 
-const num = (v: number | string | null | undefined) => Number(v ?? 0);
-
-function ItemsTable({ items }: { items: RequestItem[] }) {
-  const columns: ColumnsType<RequestItem> = [
-    { title: 'Вид работ', dataIndex: 'costTypeName', key: 'costTypeName', render: (v: string | null) => v || '—' },
-    { title: 'Материал', dataIndex: 'name', key: 'name' },
-    { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 80 },
-    {
-      title: 'Кол-во',
-      dataIndex: 'quantity',
-      key: 'quantity',
-      width: 110,
-      align: 'right',
-      render: (v) => Math.round(num(v) * 1e4) / 1e4,
-    },
-  ];
-  return (
-    <Table<RequestItem>
-      rowKey={(_, i) => String(i)}
-      size="small"
-      pagination={false}
-      columns={columns}
-      dataSource={items}
-      scroll={{ x: 520 }}
-    />
-  );
-}
-
 export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContractor }: Props) {
   const { message } = App.useApp();
-  const navigate = useNavigate();
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  // Открытая во вложенной модалке карточка заявки.
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['material-requests', estimateId],
@@ -153,7 +126,7 @@ export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContr
       width: 220,
       render: (_, r) => (
         <Space size={4} wrap>
-          <Button size="small" type="link" onClick={() => { onClose(); navigate(`/requests/${r.id}`); }}>
+          <Button size="small" type="link" onClick={() => setOpenId(r.id)}>
             Открыть
           </Button>
           <Tooltip title="Выгрузить заявку в Excel для поставщика">
@@ -189,11 +162,18 @@ export function MaterialRequestsModal({ open, onClose, estimateId, viewerIsContr
           pagination={DEFAULT_PAGINATION}
           scroll={{ x: 900 }}
           locale={{ emptyText: <Empty description="Заявок пока нет" /> }}
-          expandable={{
-            expandedRowRender: (r) => <ItemsTable items={r.items} />,
-            rowExpandable: (r) => r.items.length > 0,
-          }}
         />
+      </Modal>
+
+      {/* Карточка заявки поверх списка — по кнопке «Открыть» */}
+      <Modal
+        open={!!openId}
+        onCancel={() => setOpenId(null)}
+        footer={null}
+        width={modalWidth(1000)}
+        destroyOnClose
+      >
+        {openId && <RequestDetailContent id={openId} onBack={() => setOpenId(null)} />}
       </Modal>
     </>
   );
