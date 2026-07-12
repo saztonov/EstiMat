@@ -157,6 +157,63 @@ export const PAYMENT_REQUEST_STATUS_LABELS: Record<PaymentRequestStatus, string>
   withdrawn: 'Отозвана',
 };
 
+// ===== Закупочные лоты СУ-10 (supplier_orders.kind='sourcing') =====
+
+// Стадия жизненного цикла лота (ось процесса; не путать с каналом закупки и статусом тендера):
+//   forming — редактируется снабженцем, резервирует остаток материалов заявок;
+//   sourcing — состав заморожен, идёт сбор КП (почта) или тендер;
+//   awarded — поставщик зафиксирован (победитель тендера / лучшее КП);
+//   cancel_pending — запрошена отмена внешнего тендера (остаток ещё резервируется);
+//   cancelled — лот отменён, остаток освобождён.
+export const SOURCING_STATUSES = [
+  'forming',
+  'sourcing',
+  'awarded',
+  'cancel_pending',
+  'cancelled',
+] as const;
+export type SourcingStatus = (typeof SOURCING_STATUSES)[number];
+
+export const SOURCING_STATUS_LABELS: Record<SourcingStatus, string> = {
+  forming: 'Формируется',
+  sourcing: 'Закупка',
+  awarded: 'Поставщик выбран',
+  cancel_pending: 'Отмена тендера',
+  cancelled: 'Отменён',
+};
+
+export const SOURCING_STATUS_TONE: Record<SourcingStatus, 'info' | 'warning' | 'accent' | 'success' | 'done'> = {
+  forming: 'info',
+  sourcing: 'accent',
+  awarded: 'success',
+  cancel_pending: 'warning',
+  cancelled: 'done',
+};
+
+// Канал закупки лота (взаимоисключающий в v1): фиксируется при старте закупки.
+export const PROCUREMENT_METHODS = ['manual', 'tender'] as const;
+export type ProcurementMethod = (typeof PROCUREMENT_METHODS)[number];
+
+export const PROCUREMENT_METHOD_LABELS: Record<ProcurementMethod, string> = {
+  manual: 'По почте (запрос КП)',
+  tender: 'Тендер',
+};
+
+// Статус тендера на внешней площадке (снимок с портала; ось интеграции). Контракт billhub.
+export const TENDER_STATUSES = ['draft', 'published', 'awaiting_results', 'finished', 'cancelled'] as const;
+export type TenderStatus = (typeof TENDER_STATUSES)[number];
+
+export const TENDER_STATUS_LABELS: Record<TenderStatus, string> = {
+  draft: 'Черновик',
+  published: 'Опубликован',
+  awaiting_results: 'Ожидание результатов',
+  finished: 'Завершён',
+  cancelled: 'Отменён',
+};
+
+// Нетерминальные статусы тендера — их poller продолжает опрашивать.
+export const TENDER_ACTIVE_STATUSES = ['draft', 'published', 'awaiting_results'] as const;
+
 // Статус оплаты заявки (отдельная ось, приходит из BillHub).
 export const PAYMENT_PAID_STATUSES = ['not_paid', 'partially_paid', 'paid'] as const;
 export type PaymentPaidStatus = (typeof PAYMENT_PAID_STATUSES)[number];

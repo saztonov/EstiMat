@@ -22,6 +22,7 @@ import {
   appendRequestAudit,
 } from '../../lib/material-requests/access.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
+import { hasActiveAllocations } from '../../lib/supplier-orders/helpers.js';
 import { guardedStreamUpload, FileGuardError } from '../../lib/uploads/file-guard.js';
 import { exportMaterialRequestXlsx, MaterialRequestExportError } from '../../lib/material-request-export/index.js';
 import { getPayHubClient } from '../../lib/payhub/client.js';
@@ -376,7 +377,11 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     if (mr.request_type === 'own_supplier') {
       return reply.status(400).send({ error: 'Для заявки «Оплата по РП» используйте «Оформить РП»' });
     }
-    // По заявкам СУ-10 поставщика выбирает снабжение, а не подрядчик (прямой маршрут — только own_supply).
+    // По заявкам СУ-10 закупка ведётся снабжением через закупочные лоты — прямой заказ запрещён всем ролям.
+    if (mr.request_type === 'su10') {
+      return reply.status(400).send({ error: 'По заявке СУ-10 закупка ведётся через закупочные лоты' });
+    }
+    // Прямой маршрут выбора поставщика подрядчиком — только для собственной закупки (own_supply).
     if (user.role === 'contractor' && mr.request_type !== 'own_supply') {
       return reply.status(403).send({ error: 'Поставщика по этой заявке выбирает снабжение' });
     }
@@ -493,6 +498,10 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       if (!canRevise) {
         return reply.status(409).send({ error: 'Заявку сейчас нельзя вернуть на доработку' });
       }
+      // И3: доработка удаляет и пересоздаёт позиции — запрещаем, пока они заняты активным лотом.
+      if (await hasActiveAllocations(fastify.pool, mr.id)) {
+        return reply.status(409).send({ error: 'Позиции заявки включены в закупочный лот — доработка недоступна' });
+      }
       if (body.expectedVersion != null && body.expectedVersion !== mr.row_version) {
         return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
       }
@@ -538,6 +547,10 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       if (!res.ok) return reply.status(res.code).send({ error: res.msg });
       const mr = res.row;
       if (mr.status !== 'revision') return reply.status(409).send({ error: 'Заявка не на доработке' });
+      // И3: пересборка позиций осиротила бы закупочные лоты — блокируем при активных аллокациях.
+      if (body.lines && (await hasActiveAllocations(fastify.pool, mr.id))) {
+        return reply.status(409).send({ error: 'Позиции заявки включены в закупочный лот — правка недоступна' });
+      }
 
       const client = await fastify.pool.connect();
       try {
@@ -663,6 +676,9 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       const obj = await fastify.storage.getObject(f.file_key);
       reply.type(f.mime_type || 'application/octet-stream');
       reply.header('X-Content-Type-Options', 'nosniff');
+      // Явный Content-Length: без него ответ идёт chunked и прокси может оборвать тело
+      // (файл приходит неполным — «Corrupted zip / не удалось загрузить PDF»).
+      if (obj.contentLength != null) reply.header('Content-Length', obj.contentLength);
       reply.header(
         'Content-Disposition',
         `attachment; filename="file"; filename*=UTF-8''${encodeURIComponent(f.file_name)}`,
@@ -975,6 +991,10 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     const mr = res.row;
     if (['rp_sent', 'rp_paid', 'cancelled', 'delivered'].includes(mr.status)) {
       return reply.status(409).send({ error: 'Заявку уже нельзя отменить' });
+    }
+    // И3: нельзя отменить заявку, чьи позиции включены в активный закупочный лот.
+    if (await hasActiveAllocations(fastify.pool, mr.id)) {
+      return reply.status(409).send({ error: 'Позиции заявки включены в закупочный лот — отмена недоступна' });
     }
     const client = await fastify.pool.connect();
     try {

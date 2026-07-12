@@ -150,4 +150,22 @@ export const config = {
       return Boolean(this.baseUrl && this.apiToken);
     },
   },
+
+  // Интеграция с тендерным порталом СУ-10 (закупочные лоты → площадка). EstiMat создаёт тендер
+  // через внешний API /api/external/v1 (Bearer-токен — СЕКРЕТ, только из env) и опрашивает
+  // результаты. Пустой baseUrl/token = «не настроено». syncEnabled — отдельный kill-switch:
+  // наличие credentials не включает отправку/опрос (безопасный поэтапный rollout).
+  tender: {
+    baseUrl: (process.env.TENDER_BASE_URL || '').replace(/\/+$/, ''),
+    apiToken: process.env.TENDER_API_TOKEN || '',
+    timeoutMs: Number(process.env.TENDER_TIMEOUT_MS || '15000'),
+    syncEnabled: process.env.TENDER_SYNC_ENABLED === 'true',
+    get configured(): boolean {
+      return Boolean(this.baseUrl && this.apiToken);
+    },
+    // Обращаемся к порталу (создание тендера, опрос) только когда и настроено, и включено рубильником.
+    get outboundEnabled(): boolean {
+      return this.configured && this.syncEnabled;
+    },
+  },
 } as const;

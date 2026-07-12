@@ -19,6 +19,7 @@ import { modalWidth } from '../../lib/modalWidth';
 import { formatSize } from '../../lib/files';
 import { RequestStatusTag, RequestTypeTag, money, round4 } from './requestConstants';
 import { RpFormModal } from './RpFormModal';
+import { RequestLotsSection } from './RequestLotsSection';
 import { CommentsChat } from './CommentsChat';
 import { FileUploadList, type UploadItem } from '../../components/files/FileUploadList';
 import { FilePreviewModal } from '../../components/files/FilePreview';
@@ -240,6 +241,11 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
           columns={itemCols} dataSource={r.items} scroll={{ x: 600 }} />
       ),
     },
+    ...(r.request_type === 'su10' && isSupply ? [{
+      key: 'lots',
+      label: 'Закупочные лоты',
+      children: <RequestLotsSection requestId={id} />,
+    }] : []),
     {
       key: 'files',
       label: `Документы (${r.files.length})`,

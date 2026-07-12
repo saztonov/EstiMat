@@ -18,6 +18,26 @@ import { appendRequestAudit } from '../material-requests/access.js';
 
 type Db = Pool | PoolClient;
 
+/**
+ * Полностью ли покрыты ВСЕ актуальные строки su10-заявки присуждёнными лотами
+ * (sourcing_status='awarded'). Сравнение количеств — в SQL (numeric). Пустая заявка → false.
+ */
+async function su10FullyCovered(db: Db, requestId: string): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT EXISTS (SELECT 1 FROM material_request_items WHERE request_id = $1) AS has_items,
+            NOT EXISTS (
+              SELECT 1 FROM material_request_items mri
+               WHERE mri.request_id = $1
+                 AND mri.quantity > COALESCE((
+                       SELECT SUM(soi.quantity) FROM supplier_order_items soi
+                         JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status = 'awarded'
+                        WHERE soi.request_item_id = mri.id), 0)
+            ) AS covered`,
+    [requestId],
+  );
+  return rows[0]?.has_items === true && rows[0]?.covered === true;
+}
+
 /** Покрыта ли сумма заказа незасторнированными оплатами (numeric-сравнение в SQL). */
 async function orderCovered(db: Db, orderId: string): Promise<boolean> {
   const { rows } = await db.query(
@@ -91,7 +111,17 @@ export async function recalcRequestStatus(
     return req.status;
   }
 
-  // ===== Прочие маршруты (su10 / own_supply) — прежнее поведение =====
+  // ===== Закупка через СУ-10 (su10) — покрытие по присуждённым закупочным лотам =====
+  // Поставщика выбирает снабжение через лоты (kind='sourcing'); прямого заказа (kind='direct') нет.
+  //   все актуальные строки покрыты awarded-лотами → supplier_selected; иначе → in_work
+  //   (частичное покрытие — прогресс показываем отдельно, статусом не двигаем).
+  if (req.request_type === 'su10') {
+    const target = (await su10FullyCovered(db, requestId)) ? 'supplier_selected' : 'in_work';
+    await applyTarget(db, requestId, req.status, target, req, actorId);
+    return target;
+  }
+
+  // ===== Собственная закупка (own_supply) — прежнее поведение (прямой заказ) =====
   let target = 'in_work';
   if (order) {
     target = (await orderCovered(db, order.id)) ? 'paid' : 'supplier_selected';

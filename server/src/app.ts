@@ -13,6 +13,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { config } from './config.js';
 import { createOutboxWorker } from './lib/integration/outbox-worker.js';
+import { createTenderPoller } from './lib/tender/poller.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UPLOADS_DIR = join(__dirname, '..', 'uploads');
@@ -156,6 +157,12 @@ export async function buildApp() {
     await outbox.stop();
   });
 
+  // Фоновый опрос результатов тендеров с портала СУ-10 (самотормозится при выключенном рубильнике).
+  const tenderPoller = createTenderPoller(app);
+  app.addHook('onClose', async () => {
+    await tenderPoller.stop();
+  });
+
   // Routes
   await app.register(import('./routes/auth/index.js'), { prefix: '/api/auth' });
   await app.register(import('./routes/organizations/index.js'), { prefix: '/api/organizations' });
@@ -170,6 +177,7 @@ export async function buildApp() {
   await app.register(import('./routes/contractors/index.js'), { prefix: '/api/contractors' });
   await app.register(import('./routes/material-requests/index.js'), { prefix: '/api/material-requests' });
   await app.register(import('./routes/requests/index.js'), { prefix: '/api/requests' });
+  await app.register(import('./routes/supplier-orders/index.js'), { prefix: '/api/supplier-orders' });
   await app.register(import('./routes/suppliers/index.js'), { prefix: '/api/suppliers' });
   await app.register(import('./routes/payhub/index.js'), { prefix: '/api/payhub' });
   await app.register(import('./routes/payment-requests/index.js'), { prefix: '/api/payment-requests' });
@@ -185,6 +193,8 @@ export async function buildApp() {
 
   // Запуск фоновой доставки команд в BillHub (самотормозится при выключенном рубильнике).
   outbox.start();
+  // Запуск опроса тендеров (самотормозится при выключенном TENDER_SYNC_ENABLED).
+  tenderPoller.start();
 
   // Health endpoints (§5) — без auth и без rate-limit, на корне для nginx/uptime.
   app.get('/health/live', { config: { rateLimit: false } }, async () => ({ status: 'ok' }));

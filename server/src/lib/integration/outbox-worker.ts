@@ -18,6 +18,8 @@ import { billhub, BillhubError } from '../billhub/client.js';
 import { getPayHubClient } from '../payhub/client.js';
 import { PayHubApiError, PayHubNotConfiguredError, PayHubWaitingConfigError } from '../payhub/errors.js';
 import { syncRpLetterAttachments } from '../payhub/rp-sync.js';
+import { getTenderClient, type CreateTenderInput } from '../tender/client.js';
+import { TenderApiError, TenderNotConfiguredError } from '../tender/errors.js';
 
 async function streamToBuffer(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -60,6 +62,8 @@ function toIntErr(e: unknown): IntErr {
   if (e instanceof PayHubNotConfiguredError) return { retryable: false, code: 'not_configured', message: e.message, waitingConfig: true };
   if (e instanceof PayHubApiError) return { retryable: e.retryable, code: e.code, message: e.message };
   if (e instanceof BillhubError) return { retryable: e.retryable, code: e.code, message: e.message };
+  if (e instanceof TenderNotConfiguredError) return { retryable: false, code: 'not_configured', message: e.message, waitingConfig: true };
+  if (e instanceof TenderApiError) return { retryable: e.retryable, code: e.code, message: e.message };
   return { retryable: true, code: 'internal', message: (e as Error).message };
 }
 
@@ -220,6 +224,30 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
     }
   }
 
+  /** Тендерный портал: создание тендера по закупочному лоту (идемпотентно по external_ref). */
+  async function deliverTenderCreate(row: OutboxRow): Promise<void> {
+    const client = getTenderClient();
+    if (!client) throw new TenderNotConfiguredError();
+    const p = row.payload as unknown as { orderId: string; input: CreateTenderInput };
+    try {
+      const tender = await client.createTender(p.input);
+      await fastify.pool.query(
+        `UPDATE supplier_orders
+            SET tender_portal_id=$2, tender_url=$3, tender_status=$4, tender_sync_status='synced',
+                tender_last_error=NULL, tender_attempts=tender_attempts+1,
+                tender_next_poll_at = now() + interval '60 seconds'
+          WHERE id=$1`,
+        [p.orderId, tender.id, tender.url ?? null, tender.status],
+      );
+    } catch (e) {
+      await fastify.pool.query(
+        `UPDATE supplier_orders SET tender_sync_status='failed', tender_last_error=$2, tender_attempts=tender_attempts+1 WHERE id=$1`,
+        [p.orderId, (e as Error).message.slice(0, 500)],
+      );
+      throw e;
+    }
+  }
+
   async function process(row: OutboxRow): Promise<void> {
     try {
       if (row.command_type === 'payment_request.submit') {
@@ -229,6 +257,10 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
       } else if (row.command_type === 'rp_letter.sync') {
         if (!config.payhub.configured) return await markWaitingConfig(row);
         await deliverRpLetterSync(row);
+        await markDelivered(row);
+      } else if (row.command_type === 'tender.create') {
+        if (!config.tender.outboundEnabled) return await markWaitingConfig(row);
+        await deliverTenderCreate(row);
         await markDelivered(row);
       } else {
         await markRetryOrDead(row, { retryable: false, code: 'unknown_command', message: `Неизвестный тип команды: ${row.command_type}` });

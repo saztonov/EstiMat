@@ -104,3 +104,102 @@ export interface RequestDetail extends RequestRow {
   history: RequestHistoryEntry[];
   rp_letter: RpLetterInfo | null;
 }
+
+// ===== Закупочные лоты СУ-10 =====
+
+// Строка свода материалов (исходная позиция su10-заявки; 1:1 с формированием лота).
+export interface Su10MaterialRow {
+  request_item_id: string;
+  request_id: string;
+  request_no: number | null;
+  cost_type_id: string | null;
+  cost_type_name: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  category_sort: number | null;
+  cost_type_sort: number | null;
+  material_id: string | null;
+  material_name: string;
+  unit: string;
+  agg_key: string;
+  requested: string | number;
+  ordered: string | number;
+  remaining: number;
+  contractor_id: string | null;
+  contractor_name: string | null;
+}
+
+export interface SupplierLotRow {
+  id: string;
+  order_no: number | null;
+  title: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  sourcing_status: string;
+  procurement_method: string | null;
+  supplier_name: string | null;
+  supplier_inn: string | null;
+  amount: string | number | null;
+  tender_status: string | null;
+  tender_url: string | null;
+  tender_sync_status: string | null;
+  awarded_at: string | null;
+  created_at: string;
+  row_version: number;
+  items_count: number | string;
+  requests_count: number | string;
+}
+
+export interface SupplierLotItem {
+  id: string;
+  request_id: string | null;
+  request_item_id: string | null;
+  material_id: string | null;
+  material_name: string;
+  unit: string;
+  quantity: string | number;
+  contractor_id: string | null;
+  contractor_name: string | null;
+  request_no: number | null;
+  cost_type_name: string | null;
+  cost_category_name: string | null;
+}
+
+export interface SupplierLotSource {
+  request_id: string;
+  request_no: number | null;
+  contractor_name: string | null;
+  status: string;
+}
+
+export interface SupplierLotOffer {
+  id: string;
+  supplier_id: string | null;
+  supplier_name: string;
+  supplier_inn: string | null;
+  amount: string | number;
+  currency: string;
+  terms: string | null;
+  note: string | null;
+  file_id: string | null;
+  submitted_at: string | null;
+  created_at: string;
+}
+
+export interface TenderResults {
+  tender_id?: string;
+  status?: string;
+  participants?: { id: string; name: string; inn?: string | null }[];
+  bids?: { participant_id: string; amount: number; currency?: string | null }[];
+  winner?: { participant_id: string; bid_index?: number | null } | null;
+  finished_at?: string | null;
+}
+
+export interface SupplierLotDetail extends SupplierLotRow {
+  tender_results: TenderResults | null;
+  tender_last_error: string | null;
+  tender_deadline_at: string | null;
+  items: SupplierLotItem[];
+  sources: SupplierLotSource[];
+  offers: SupplierLotOffer[];
+}
