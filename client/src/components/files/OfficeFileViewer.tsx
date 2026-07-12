@@ -26,7 +26,7 @@ export function OfficeFileViewer({ buffer, fileName, height = '70vh' }: Props) {
       try {
         if (ext === 'xlsx' || ext === 'xls') {
           const XLSX = await import('xlsx');
-          const wb = XLSX.read(buffer, { type: 'array' });
+          const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
           const list: Sheet[] = [];
           for (const n of wb.SheetNames) {
             const ws = wb.Sheets[n];

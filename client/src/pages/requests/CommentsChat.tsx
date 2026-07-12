@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Input, Button, Select, Space, Tag, Typography, Popconfirm, App } from 'antd';
+import { Input, Button, Space, Tag, Typography, Popconfirm, App } from 'antd';
 import { SendOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
@@ -29,10 +29,8 @@ export function CommentsChat({ requestId }: { requestId: string }) {
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'admin';
-  const isInternal = !!user && INTERNAL.has(user.role);
 
   const [text, setText] = useState('');
-  const [recipient, setRecipient] = useState<'' | CommentRecipient>('');
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -53,20 +51,12 @@ export function CommentsChat({ requestId }: { requestId: string }) {
 
   const refetch = () => qc.invalidateQueries({ queryKey: ['requests', 'comments', requestId] });
 
-  // Адресаты по роли (пустое = «Всем»).
-  const recipientOptions = [
-    { value: '', label: 'Всем' },
-    ...(isInternal
-      ? [{ value: 'contractor', label: COMMENT_RECIPIENT_LABELS.contractor }]
-      : [{ value: 'supply', label: COMMENT_RECIPIENT_LABELS.supply }]),
-  ];
-
   async function send() {
     const t = text.trim();
     if (!t) return;
     setBusy(true);
     try {
-      await api.post(`/requests/${requestId}/comments`, { text: t, recipient: recipient || null });
+      await api.post(`/requests/${requestId}/comments`, { text: t, recipient: null });
       setText('');
       refetch();
     } catch (e) { message.error((e as Error).message); }
@@ -137,12 +127,6 @@ export function CommentsChat({ requestId }: { requestId: string }) {
       </div>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        <Select
-          value={recipient}
-          onChange={(v) => setRecipient(v as '' | CommentRecipient)}
-          options={recipientOptions}
-          style={{ width: 130, flexShrink: 0 }}
-        />
         <TextArea
           value={text}
           onChange={(e) => setText(e.target.value)}
