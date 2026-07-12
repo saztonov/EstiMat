@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Table, Tag, Space, Empty, Tooltip, Select, Button, InputNumber, Dropdown, App } from 'antd';
-import { PlusOutlined, UnorderedListOutlined, DownOutlined } from '@ant-design/icons';
+import { PlusOutlined, DownOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -11,7 +11,7 @@ import {
 import { api } from '../../services/api';
 import { buildMaterialGroups, type AggregatedMaterial } from '../estimates/materials/aggregateMaterials';
 import { formatMoney, type EstimateItem } from '../estimates/components/types';
-import { MaterialRequestsModal } from './MaterialRequestsModal';
+import { RpNextStepModal } from './RpNextStepModal';
 
 interface Props {
   estimateId: string;
@@ -51,8 +51,8 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
   // Тип заявки выбирается осознанно (без значения по умолчанию).
   const [requestType, setRequestType] = useState<MaterialRequestType | null>(null);
   const [draft, setDraft] = useState<Map<string, number>>(new Map());
-  // Модалка «Созданные заявки».
-  const [requestsOpen, setRequestsOpen] = useState(false);
+  // Развилка после создания заявки «Оплата по РП» (Excel / Оформить РП / ОК).
+  const [created, setCreated] = useState<{ id: string; number: string } | null>(null);
   const { message } = App.useApp();
   const queryClient = useQueryClient();
 
@@ -104,21 +104,26 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
 
   const submitMutation = useMutation({
     mutationFn: (vars: { requestType: MaterialRequestType; lines: unknown[]; createRequestId: string }) =>
-      api.post<{ data: { number: string } }>('/requests', {
+      api.post<{ data: { id: string; number: string } }>('/requests', {
         estimateId,
         requestType: vars.requestType,
         lines: vars.lines,
         createRequestId: vars.createRequestId,
       }),
-    onSuccess: (res) => {
-      const number = res?.data?.number;
-      message.success(number ? `Заявка ${number} создана` : 'Заявка создана');
+    onSuccess: (res, vars) => {
+      const number = res?.data?.number ?? '';
       setEditing(false);
       setRequestType(null);
       setDraft(new Map());
       queryClient.invalidateQueries({ queryKey: ['material-ordered', estimateId] });
       queryClient.invalidateQueries({ queryKey: ['material-requests', estimateId] });
       queryClient.invalidateQueries({ queryKey: ['requests', 'list'] });
+      // Для «Оплата по РП» показываем развилку (Excel / Оформить РП); иначе — просто тост.
+      if (vars.requestType === 'own_supplier' && res?.data?.id) {
+        setCreated({ id: res.data.id, number });
+      } else {
+        message.success(number ? `Заявка ${number} создана` : 'Заявка создана');
+      }
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -292,11 +297,6 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
               </Button>
             </Dropdown>
           ))}
-        {!editing && (
-          <Button icon={<UnorderedListOutlined />} onClick={() => setRequestsOpen(true)}>
-            Созданные заявки
-          </Button>
-        )}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {groups.length === 0 ? (
@@ -325,12 +325,12 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
           </Space>
         )}
       </div>
-      {requestsOpen && (
-        <MaterialRequestsModal
+      {created && (
+        <RpNextStepModal
           open
-          onClose={() => setRequestsOpen(false)}
-          estimateId={estimateId}
-          viewerIsContractor={viewerIsContractor}
+          requestId={created.id}
+          requestNumber={created.number}
+          onClose={() => setCreated(null)}
         />
       )}
     </div>

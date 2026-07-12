@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { PoolClient } from 'pg';
 import { createHash } from 'node:crypto';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
@@ -10,6 +11,9 @@ import {
   directSupplierSchema,
   createPaymentSchema,
   requestFileMetaSchema,
+  rpApplicationSchema,
+  rpSendSchema,
+  cancelRequestSchema,
 } from '@estimat/shared';
 import {
   assertContractorEstimateAccess,
@@ -20,6 +24,15 @@ import {
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { guardedStreamUpload, FileGuardError } from '../../lib/uploads/file-guard.js';
 import { exportMaterialRequestXlsx, MaterialRequestExportError } from '../../lib/material-request-export/index.js';
+import { getPayHubClient } from '../../lib/payhub/client.js';
+import { PayHubApiError, PayHubWaitingConfigError } from '../../lib/payhub/errors.js';
+import {
+  rpExternalRef,
+  resolveLetterConfig,
+  buildLetterContent,
+  ensureRpLetter,
+  syncRpLetterAttachments,
+} from '../../lib/payhub/rp-sync.js';
 
 const INTERNAL_ROLES = new Set(['admin', 'engineer', 'manager']);
 const FILE_LIMIT = 50 * 1024 * 1024; // 50 МБ на файл (per-route)
@@ -29,6 +42,23 @@ const canonicalHash = (obj: unknown): string =>
 
 const requestNumber = (projectCode: string | null, no: number | null): string =>
   `${projectCode ?? 'ЗМ'}-${String(no ?? 0).padStart(2, '0')}`;
+
+// Атомарная смена статуса с optimistic lock: false — версия рассинхронизирована (конкурентная правка).
+async function atomicSetStatus(
+  client: PoolClient,
+  id: string,
+  expectedVersion: number,
+  newStatus: string,
+  actorId: string,
+): Promise<boolean> {
+  const { rowCount } = await client.query(
+    `UPDATE material_requests
+        SET status = $2, status_changed_at = now(), status_changed_by = $3, row_version = row_version + 1
+      WHERE id = $1 AND row_version = $4`,
+    [id, newStatus, actorId, expectedVersion],
+  );
+  return rowCount === 1;
+}
 
 export default async function requestRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -76,8 +106,12 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       where.push(`mr.request_type = $${values.length}`);
     }
     if (q.status) {
-      values.push(q.status);
-      where.push(`mr.status = $${values.length}`);
+      // status может быть списком через запятую (напр. реестр РП: rp_sent,rp_paid).
+      const statuses = q.status.split(',').map((s) => s.trim()).filter(Boolean);
+      if (statuses.length) {
+        values.push(statuses);
+        where.push(`mr.status = ANY($${values.length}::text[])`);
+      }
     }
     if (q.projectId) {
       values.push(q.projectId);
@@ -106,7 +140,8 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       `SELECT mr.id, mr.request_no, mr.request_type, mr.status, mr.created_at,
               mr.row_version, mr.contractor_name, mr.contractor_inn, mr.project_name,
               p.code AS project_code,
-              so.supplier_name, so.supplier_inn, so.amount AS order_amount, so.rp_number,
+              so.supplier_name, so.supplier_inn, so.amount AS order_amount, so.rp_number, so.rp_date,
+              rl.payhub_reg_number, rl.payhub_url, rl.sync_status AS rp_sync_status,
               (SELECT count(*) FROM material_request_files f
                 WHERE f.request_id = mr.id AND NOT f.superseded) AS files_count,
               (SELECT count(*) FROM material_request_items i WHERE i.request_id = mr.id) AS items_count,
@@ -117,6 +152,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
          FROM material_requests mr
          LEFT JOIN projects p ON p.id = mr.project_id
          LEFT JOIN supplier_orders so ON so.request_id = mr.id AND so.kind = 'direct'
+         LEFT JOIN rp_letters rl ON rl.request_id = mr.id AND rl.sync_status <> 'annulled'
          ${whereSql}
         ORDER BY mr.created_at DESC
         LIMIT $${values.length - 1} OFFSET $${values.length}`,
@@ -155,7 +191,8 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         [mr.id],
       ),
       fastify.pool.query(
-        `SELECT id, supplier_name, supplier_inn, amount, rp_number, rp_date, created_at
+        `SELECT id, supplier_id, supplier_name, supplier_inn, amount, rp_number, rp_date,
+                delivery_days, delivery_days_type, shipping_conditions, rp_comment, created_at
            FROM supplier_orders WHERE request_id = $1 AND kind = 'direct' LIMIT 1`,
         [mr.id],
       ),
@@ -181,11 +218,17 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     let payments: { rows: unknown[] } = { rows: [] };
     if (order.rows[0]) {
       payments = await fastify.pool.query(
-        `SELECT id, amount, paid_at, doc_number, comment, created_at
+        `SELECT id, amount, paid_at, doc_number, comment, reversed, created_at
            FROM supplier_order_payments WHERE order_id = $1 ORDER BY created_at`,
         [order.rows[0].id],
       );
     }
+
+    const rpLetter = await fastify.pool.query(
+      `SELECT payhub_reg_number, payhub_url, payhub_status, sync_status, sent_at, last_error
+         FROM rp_letters WHERE request_id = $1 AND sync_status <> 'annulled' LIMIT 1`,
+      [mr.id],
+    );
 
     return {
       data: {
@@ -197,6 +240,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         payments: payments.rows,
         revisions: revisions.rows,
         history: history.rows,
+        rp_letter: rpLetter.rows[0] ?? null,
       },
     };
   });
@@ -279,12 +323,9 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         );
       }
 
-      // Прямой заказ при создании — только для прямых маршрутов (РП / собственная закупка).
-      // По su10 поставщика выбирает снабжение, поэтому реквизиты из тела игнорируются.
-      if (
-        body.supplierName && body.resultAmount &&
-        (body.requestType === 'own_supplier' || body.requestType === 'own_supply')
-      ) {
+      // Прямой заказ при создании — только для собственной закупки (own_supply).
+      // По РП (own_supplier) заказ оформляется отдельно через «Оформить РП»; по su10 — снабжением.
+      if (body.supplierName && body.resultAmount && body.requestType === 'own_supply') {
         await client.query(
           `INSERT INTO supplier_orders (request_id, kind, supplier_name, supplier_inn, amount, created_by)
            VALUES ($1,'direct',$2,$3,$4,$5)`,
@@ -320,8 +361,12 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     if (!res.ok) return reply.status(res.code).send({ error: res.msg });
     const mr = res.row;
     if (mr.status === 'delivered') return reply.status(409).send({ error: 'Заявка закрыта' });
-    // По заявкам СУ-10 поставщика выбирает снабжение, а не подрядчик (прямой маршрут — только own_supplier/own_supply).
-    if (user.role === 'contractor' && mr.request_type !== 'own_supplier' && mr.request_type !== 'own_supply') {
+    // Заявка «Оплата по РП» ведётся через «Оформить РП» / «Отправить РП», не через этот роут.
+    if (mr.request_type === 'own_supplier') {
+      return reply.status(400).send({ error: 'Для заявки «Оплата по РП» используйте «Оформить РП»' });
+    }
+    // По заявкам СУ-10 поставщика выбирает снабжение, а не подрядчик (прямой маршрут — только own_supply).
+    if (user.role === 'contractor' && mr.request_type !== 'own_supply') {
       return reply.status(403).send({ error: 'Поставщика по этой заявке выбирает снабжение' });
     }
     const body = directSupplierSchema.parse(request.body);
@@ -365,28 +410,49 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const user = request.currentUser;
       const body = createPaymentSchema.parse(request.body);
-      const orderRes = await fastify.pool.query(
-        `SELECT id FROM supplier_orders WHERE request_id = $1 AND kind = 'direct' LIMIT 1`,
+      const mrRes = await fastify.pool.query(
+        `SELECT request_type, status FROM material_requests WHERE id = $1`,
         [request.params.id],
       );
-      const order = orderRes.rows[0];
-      if (!order) return reply.status(400).send({ error: 'Сначала выберите поставщика (заказ отсутствует)' });
+      const mr = mrRes.rows[0];
+      if (!mr) return reply.status(404).send({ error: 'Заявка не найдена' });
+      // По РП-маршруту оплату регистрируем только после отправки РП.
+      if (mr.request_type === 'own_supplier' && mr.status !== 'rp_sent' && mr.status !== 'rp_paid') {
+        return reply.status(409).send({ error: 'Оплату можно регистрировать после отправки РП' });
+      }
 
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query(
-          `INSERT INTO supplier_order_payments (order_id, amount, paid_at, doc_number, comment, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [order.id, body.amount, body.paidAt ?? null, body.docNumber ?? null, body.comment ?? null, user.id],
+        // Блокируем заказ на время регистрации оплаты и пересчёта (гонка частичных оплат).
+        const orderRes = await client.query(
+          `SELECT id FROM supplier_orders WHERE request_id = $1 AND kind = 'direct' LIMIT 1 FOR UPDATE`,
+          [request.params.id],
         );
-        await appendRequestAudit(client, {
-          requestId: request.params.id, action: 'payment_added', userId: user.id,
-          changes: { amount: body.amount },
-        });
+        const order = orderRes.rows[0];
+        if (!order) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Сначала выберите поставщика (заказ отсутствует)' });
+        }
+        // Идемпотентность по clientPaymentId (защита от двойного POST).
+        const ins = await client.query(
+          `INSERT INTO supplier_order_payments
+             (order_id, amount, paid_at, doc_number, comment, client_payment_id, file_id, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (order_id, client_payment_id) WHERE client_payment_id IS NOT NULL DO NOTHING
+           RETURNING id`,
+          [order.id, body.amount, body.paidAt ?? null, body.docNumber ?? null, body.comment ?? null,
+           body.clientPaymentId ?? null, body.fileId ?? null, user.id],
+        );
+        if (ins.rows[0]) {
+          await appendRequestAudit(client, {
+            requestId: request.params.id, action: 'payment_added', userId: user.id,
+            changes: { amount: body.amount },
+          });
+        }
         const status = await recalcRequestStatus(client, request.params.id, user.id);
         await client.query('COMMIT');
-        return { data: { status } };
+        return { data: { status, deduped: !ins.rows[0] } };
       } catch (e) {
         await client.query('ROLLBACK');
         throw e;
@@ -408,8 +474,13 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       const res = await loadScoped(request.params.id, user);
       if (!res.ok) return reply.status(res.code).send({ error: res.msg });
       const mr = res.row;
-      if (mr.status !== 'in_work') {
-        return reply.status(409).send({ error: 'Доработка возможна только до выбора поставщика' });
+      // own_supplier можно вернуть на доработку из in_work или из «Оформление РП» (до отправки РП);
+      // прочие маршруты — только из in_work (до выбора поставщика).
+      const canRevise = mr.request_type === 'own_supplier'
+        ? mr.status === 'in_work' || mr.status === 'rp_forming'
+        : mr.status === 'in_work';
+      if (!canRevise) {
+        return reply.status(409).send({ error: 'Заявку сейчас нельзя вернуть на доработку' });
       }
       if (body.expectedVersion != null && body.expectedVersion !== mr.row_version) {
         return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
@@ -520,6 +591,10 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       const user = request.currentUser;
       const res = await loadScoped(request.params.id, user);
       if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+      // Подрядчик добавляет документы только до отправки РП (после — исходящий пакет зафиксирован).
+      if (isContractor(user) && !['in_work', 'rp_forming', 'revision'].includes(res.row.status)) {
+        return reply.status(409).send({ error: 'Документы можно добавлять до отправки РП' });
+      }
       if (!fastify.storage) return reply.status(503).send({ error: 'Хранилище файлов не настроено' });
       const { docType } = requestFileMetaSchema.parse({ docType: request.query.docType });
 
@@ -593,8 +668,8 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       const res = await loadScoped(request.params.id, user);
       if (!res.ok) return reply.status(res.code).send({ error: res.msg });
       const mr = res.row;
-      if (isContractor(user) && !['in_work', 'revision'].includes(mr.status)) {
-        return reply.status(409).send({ error: 'Файлы можно менять только до выбора поставщика' });
+      if (isContractor(user) && !['in_work', 'rp_forming', 'revision'].includes(mr.status)) {
+        return reply.status(409).send({ error: 'Файлы можно менять только до отправки РП' });
       }
       const { rows } = await fastify.pool.query(
         `DELETE FROM material_request_files
@@ -627,6 +702,292 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     } catch (e) {
       if (e instanceof MaterialRequestExportError) return reply.status(e.status).send({ error: e.message });
       throw e;
+    }
+  });
+
+  // ============================================================
+  // POST /:id/rp-application — «Оформить РП» (contractor): реквизиты формы → rp_forming
+  // ============================================================
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/rp-application',
+    { preHandler: [requireRole('contractor')] },
+    async (request, reply) => {
+      const user = request.currentUser;
+      const body = rpApplicationSchema.parse(request.body);
+      const res = await loadScoped(request.params.id, user);
+      if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+      const mr = res.row;
+      if (mr.request_type !== 'own_supplier') {
+        return reply.status(400).send({ error: 'Оформление РП доступно только для заявки «Оплата по РП»' });
+      }
+      if (!['in_work', 'rp_forming', 'revision'].includes(mr.status)) {
+        return reply.status(409).send({ error: 'Заявку сейчас нельзя оформить' });
+      }
+      // Поставщик — из справочника; имя/ИНН/статус СБ берём на сервере (клиент их не задаёт).
+      const supRes = await fastify.pool.query(
+        `SELECT name, inn, security_status FROM suppliers WHERE id = $1 AND is_active`,
+        [body.supplierId],
+      );
+      const sup = supRes.rows[0];
+      if (!sup) return reply.status(400).send({ error: 'Поставщик не найден' });
+      if (sup.security_status === 'rejected') {
+        return reply.status(400).send({ error: 'Поставщик отклонён службой безопасности' });
+      }
+      // Счёт обязателен до перевода в «Оформление РП».
+      const inv = await fastify.pool.query(
+        `SELECT 1 FROM material_request_files
+          WHERE request_id = $1 AND doc_type = 'invoice' AND NOT superseded LIMIT 1`,
+        [mr.id],
+      );
+      if (!inv.rows[0]) return reply.status(400).send({ error: 'Приложите счёт (тип «Счёт»)' });
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const ok = await atomicSetStatus(client, mr.id, body.expectedVersion, 'rp_forming', user.id);
+        if (!ok) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
+        }
+        await client.query(
+          `INSERT INTO supplier_orders
+             (request_id, kind, supplier_id, supplier_name, supplier_inn, amount,
+              delivery_days, delivery_days_type, shipping_conditions, rp_comment, created_by)
+           VALUES ($1,'direct',$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           ON CONFLICT (request_id) WHERE kind = 'direct' AND request_id IS NOT NULL
+           DO UPDATE SET supplier_id = EXCLUDED.supplier_id, supplier_name = EXCLUDED.supplier_name,
+                         supplier_inn = EXCLUDED.supplier_inn, amount = EXCLUDED.amount,
+                         delivery_days = EXCLUDED.delivery_days, delivery_days_type = EXCLUDED.delivery_days_type,
+                         shipping_conditions = EXCLUDED.shipping_conditions, rp_comment = EXCLUDED.rp_comment,
+                         updated_at = now()`,
+          [mr.id, body.supplierId, sup.name, sup.inn, body.invoiceAmount,
+           body.deliveryDays, body.deliveryDaysType, body.shippingConditions, body.comment ?? null, user.id],
+        );
+        // Пришли из доработки — закрыть открытую доработку (единое «Исправить и отправить»).
+        if (mr.status === 'revision') {
+          await client.query(
+            `UPDATE material_request_revisions SET completed_by=$2, completed_at=now(), response=$3
+              WHERE id = (SELECT id FROM material_request_revisions
+                           WHERE request_id=$1 AND completed_at IS NULL
+                           ORDER BY requested_at DESC LIMIT 1)`,
+            [mr.id, user.id, body.comment ?? null],
+          );
+        }
+        await appendRequestAudit(client, {
+          requestId: mr.id, action: 'rp_application_submitted', userId: user.id,
+          changes: { supplier: sup.name, amount: body.invoiceAmount },
+          estimateId: mr.estimate_id, projectId: mr.project_id,
+        });
+        await client.query('COMMIT');
+        return { data: { id: mr.id, status: 'rp_forming' } };
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // ============================================================
+  // POST /:id/rp-send — «Отправить РП» (internal): создать письмо в PayHub → rp_sent
+  // ============================================================
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/rp-send',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const user = request.currentUser;
+      const body = rpSendSchema.parse(request.body);
+      const res = await loadScoped(request.params.id, user);
+      if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+      const mr = res.row;
+      if (mr.request_type !== 'own_supplier') {
+        return reply.status(400).send({ error: 'Отправка РП доступна только для заявки «Оплата по РП»' });
+      }
+      // Идемпотентность: уже отправлено/оплачено.
+      if (mr.status === 'rp_sent' || mr.status === 'rp_paid') {
+        return reply.status(200).send({ data: { id: mr.id, status: mr.status, deduped: true } });
+      }
+      if (mr.status !== 'rp_forming') {
+        return reply.status(409).send({ error: 'Отправить РП можно из статуса «Оформление РП»' });
+      }
+      if (body.expectedVersion !== mr.row_version) {
+        return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
+      }
+      const orderRes = await fastify.pool.query(
+        `SELECT amount, supplier_name FROM supplier_orders WHERE request_id = $1 AND kind = 'direct' LIMIT 1`,
+        [mr.id],
+      );
+      const order = orderRes.rows[0];
+      if (!order) return reply.status(400).send({ error: 'Не оформлен заказ (нет поставщика и суммы)' });
+
+      const payhub = getPayHubClient();
+      if (!payhub) return reply.status(400).send({ error: 'Интеграция PayHub не настроена' });
+
+      // Резолв маппинга (проект/получатель/отправитель); нехватка → 400 (статус не меняем).
+      let cfg;
+      try {
+        cfg = await resolveLetterConfig(fastify.pool, mr.id);
+      } catch (e) {
+        if (e instanceof PayHubWaitingConfigError) return reply.status(400).send({ error: e.message });
+        throw e;
+      }
+
+      // Синхронное создание письма PayHub (получить рег.номер) — вне транзакции БД.
+      let ensured;
+      try {
+        ensured = await ensureRpLetter(payhub, {
+          externalRef: rpExternalRef(mr.id),
+          projectId: cfg.projectId,
+          senderId: cfg.senderId,
+          recipientId: cfg.recipientId,
+          letterDate: body.rpDate,
+          subject: body.subject ?? 'РП',
+          content: body.content ?? buildLetterContent({
+            amount: order.amount, supplierName: order.supplier_name, description: mr.project_name,
+          }),
+          responsibleName: user.fullName ?? null,
+        });
+      } catch (e) {
+        if (e instanceof PayHubApiError) {
+          return reply.status(e.retryable ? 503 : 502).send({ error: `PayHub: ${e.message}` });
+        }
+        throw e;
+      }
+
+      // Исходящий набор вложений письма (счёт/КП/спецификация/договор/прочее; платёжки НЕ входят).
+      const outFiles = await fastify.pool.query(
+        `SELECT id FROM material_request_files
+          WHERE request_id = $1 AND NOT superseded
+            AND doc_type IN ('invoice','quote','spec','contract','other')`,
+        [mr.id],
+      );
+      const hasFiles = outFiles.rows.length > 0;
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const ok = await atomicSetStatus(client, mr.id, body.expectedVersion, 'rp_sent', user.id);
+        if (!ok) {
+          await client.query('ROLLBACK');
+          // Письмо в PayHub уже создано (external_ref идемпотентен) — при повторе усыновится.
+          return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
+        }
+        await client.query(
+          `UPDATE supplier_orders SET rp_number = $2, rp_date = $3, updated_at = now()
+            WHERE request_id = $1 AND kind = 'direct'`,
+          [mr.id, ensured.regNumber, body.rpDate],
+        );
+        const rlRes = await client.query(
+          `INSERT INTO rp_letters
+             (request_id, external_ref, payhub_letter_id, payhub_reg_number, payhub_url,
+              sent_at, sync_status, created_by)
+           VALUES ($1,$2,$3,$4,$5, now(), $6, $7)
+           ON CONFLICT (external_ref) DO UPDATE SET
+             payhub_letter_id = EXCLUDED.payhub_letter_id, payhub_reg_number = EXCLUDED.payhub_reg_number,
+             payhub_url = EXCLUDED.payhub_url,
+             sent_at = COALESCE(rp_letters.sent_at, EXCLUDED.sent_at),
+             sync_status = EXCLUDED.sync_status
+           RETURNING id`,
+          [mr.id, rpExternalRef(mr.id), ensured.letterId, ensured.regNumber, ensured.url,
+           hasFiles ? 'pending' : 'synced', user.id],
+        );
+        const rpLetterId = rlRes.rows[0].id as string;
+        for (const f of outFiles.rows) {
+          await client.query(
+            `INSERT INTO rp_letter_attachments (rp_letter_id, file_id)
+             VALUES ($1,$2) ON CONFLICT (rp_letter_id, file_id) DO NOTHING`,
+            [rpLetterId, f.id],
+          );
+        }
+        if (hasFiles) {
+          await client.query(
+            `INSERT INTO integration_outbox
+               (aggregate_type, aggregate_id, command_type, external_ref, payload, payload_hash, status, next_attempt_at)
+             VALUES ('rp_letter', $1, 'rp_letter.sync', $2, $3::jsonb, $4, 'queued', now())`,
+            [mr.id, rpExternalRef(mr.id), JSON.stringify({ rpLetterId }), canonicalHash({ rpLetterId })],
+          );
+        }
+        await appendRequestAudit(client, {
+          requestId: mr.id, action: 'rp_sent', userId: user.id,
+          changes: { regNumber: ensured.regNumber },
+          estimateId: mr.estimate_id, projectId: mr.project_id,
+        });
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+
+      if (hasFiles) fastify.outbox.kick();
+      return { data: { id: mr.id, status: 'rp_sent', regNumber: ensured.regNumber, url: ensured.url } };
+    },
+  );
+
+  // ============================================================
+  // POST /:id/rp-resync — ручная повторная синхронизация письма/вложений (internal)
+  // ============================================================
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/rp-resync',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const res = await loadScoped(request.params.id, request.currentUser);
+      if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+      const mr = res.row;
+      const rl = await fastify.pool.query(
+        `SELECT id FROM rp_letters WHERE request_id = $1 AND sync_status <> 'annulled' LIMIT 1`,
+        [mr.id],
+      );
+      if (!rl.rows[0]) return reply.status(404).send({ error: 'Письмо РП не найдено' });
+      const rpLetterId = rl.rows[0].id as string;
+      await fastify.pool.query(
+        `INSERT INTO integration_outbox
+           (aggregate_type, aggregate_id, command_type, external_ref, payload, payload_hash, status, next_attempt_at)
+         VALUES ('rp_letter', $1, 'rp_letter.sync', $2, $3::jsonb, $4, 'queued', now())`,
+        [mr.id, rpExternalRef(mr.id), JSON.stringify({ rpLetterId }), canonicalHash({ rpLetterId, ts: 'resync' })],
+      );
+      await fastify.pool.query(
+        `UPDATE rp_letters SET sync_status='pending', last_error=NULL WHERE id=$1 AND sync_status='failed'`,
+        [rpLetterId],
+      );
+      fastify.outbox.kick();
+      return { data: { ok: true } };
+    },
+  );
+
+  // ============================================================
+  // POST /:id/cancel — отмена заявки до отправки РП (владелец-подрядчик или internal)
+  // ============================================================
+  fastify.post<{ Params: { id: string } }>('/:id/cancel', async (request, reply) => {
+    const user = request.currentUser;
+    const body = cancelRequestSchema.parse(request.body);
+    const res = await loadScoped(request.params.id, user);
+    if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+    const mr = res.row;
+    if (['rp_sent', 'rp_paid', 'cancelled', 'delivered'].includes(mr.status)) {
+      return reply.status(409).send({ error: 'Заявку уже нельзя отменить' });
+    }
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const ok = await atomicSetStatus(client, mr.id, body.expectedVersion, 'cancelled', user.id);
+      if (!ok) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
+      }
+      await appendRequestAudit(client, {
+        requestId: mr.id, action: 'cancelled', userId: user.id,
+        changes: { reason: body.reason ?? null }, estimateId: mr.estimate_id, projectId: mr.project_id,
+      });
+      await client.query('COMMIT');
+      return { data: { id: mr.id, status: 'cancelled' } };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
     }
   });
 }

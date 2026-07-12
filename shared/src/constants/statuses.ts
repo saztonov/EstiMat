@@ -26,12 +26,19 @@ export const ORG_TYPE_LABELS: Record<OrgType, string> = {
 // Статусы supplier_selected/paid/delivered ВЫЧИСЛЯЮТСЯ доменным сервисом пересчёта
 // по фактам (выбор поставщика, оплаты, поставки) и не выставляются вручную;
 // in_work/revision — состояние процесса.
+// Единый статус жизненного цикла заявки. Статусы rp_forming/rp_sent/rp_paid/cancelled применяются
+// только к заявкам типа own_supplier («Оплата по РП»); su10/own_supply используют
+// in_work/supplier_selected/paid/delivered. Целостность пары тип↔статус — на уровне роутов.
 export const REQUEST_STATUSES = [
   'in_work',
   'revision',
   'supplier_selected',
   'paid',
   'delivered',
+  'rp_forming',
+  'rp_sent',
+  'rp_paid',
+  'cancelled',
 ] as const;
 export type RequestStatus = (typeof REQUEST_STATUSES)[number];
 
@@ -41,6 +48,10 @@ export const REQUEST_STATUS_LABELS: Record<RequestStatus, string> = {
   supplier_selected: 'Выбран поставщик',
   paid: 'Оплачено',
   delivered: 'Поставлено',
+  rp_forming: 'Оформление РП',
+  rp_sent: 'РП отправлено',
+  rp_paid: 'РП оплачено',
+  cancelled: 'Отменена',
 };
 
 // Намёк на тон бейджа (клиент маппит на свою палитру).
@@ -50,10 +61,17 @@ export const REQUEST_STATUS_TONE: Record<RequestStatus, 'info' | 'warning' | 'ac
   supplier_selected: 'accent',
   paid: 'success',
   delivered: 'done',
+  rp_forming: 'accent',
+  rp_sent: 'info',
+  rp_paid: 'success',
+  cancelled: 'done',
 };
 
 // Статусы, вычисляемые системой по фактам (не выставляются вручную через API).
-export const REQUEST_COMPUTED_STATUSES = ['supplier_selected', 'paid', 'delivered'] as const;
+export const REQUEST_COMPUTED_STATUSES = ['supplier_selected', 'paid', 'delivered', 'rp_paid'] as const;
+
+// Статусы РП, попадающие в «Реестр РП» (заявка отправлена в PayHub / оплачена).
+export const RP_REGISTRY_STATUSES = ['rp_sent', 'rp_paid'] as const;
 
 // Legacy-статусы заявки (до единого жизненного цикла) — только для backfill/справки.
 export const MATERIAL_REQUEST_STATUSES = ['created', 'sent', 'rp_created', 'paid'] as const;

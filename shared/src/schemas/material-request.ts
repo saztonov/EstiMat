@@ -66,13 +66,47 @@ export const directSupplierSchema = z.object({
 export type DirectSupplierInput = z.infer<typeof directSupplierSchema>;
 
 // Регистрация оплаты по заказу заявки (частичные оплаты допускаются).
+// clientPaymentId — ключ идемпотентности (защита от двойного POST); fileId — платёжный документ.
 export const createPaymentSchema = z.object({
   amount: z.number().positive(),
   paidAt: z.string().nullish(), // ISO date
   docNumber: z.string().max(100).nullish(),
   comment: z.string().max(1000).nullish(),
+  clientPaymentId: z.string().min(8).nullish(),
+  fileId: z.string().uuid().nullish(),
 });
 export type CreatePaymentInput = z.infer<typeof createPaymentSchema>;
+
+// ===== РП-поток (заявки типа own_supplier) =====
+
+// «Оформить РП» (подрядчик): поставщик берётся из справочника по supplierId (имя/ИНН/статус СБ —
+// на сервере), плюс реквизиты поставки и сумма счёта. Заявка → 'rp_forming'.
+export const rpApplicationSchema = z.object({
+  supplierId: z.string().uuid(),
+  deliveryDays: z.number().int().positive(),
+  deliveryDaysType: z.enum(['working', 'calendar']).default('working'),
+  shippingConditions: z.string().min(1).max(500),
+  invoiceAmount: z.number().positive(),
+  comment: z.string().max(2000).nullish(),
+  expectedVersion: z.number().int().nonnegative(),
+});
+export type RpApplicationInput = z.infer<typeof rpApplicationSchema>;
+
+// «Отправить РП» (инженер): дата и описание письма; номер присваивает PayHub.
+export const rpSendSchema = z.object({
+  rpDate: z.string(), // ISO date
+  subject: z.string().max(500).nullish(),
+  content: z.string().max(4000).nullish(),
+  expectedVersion: z.number().int().nonnegative(),
+});
+export type RpSendInput = z.infer<typeof rpSendSchema>;
+
+// Отмена заявки до отправки РП.
+export const cancelRequestSchema = z.object({
+  reason: z.string().max(500).nullish(),
+  expectedVersion: z.number().int().nonnegative(),
+});
+export type CancelRequestInput = z.infer<typeof cancelRequestSchema>;
 
 // Метаданные при загрузке файла (doc_type приходит полем multipart).
 export const requestFileMetaSchema = z.object({

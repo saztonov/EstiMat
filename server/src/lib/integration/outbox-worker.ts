@@ -1,22 +1,29 @@
 /**
- * Исходящая очередь команд EstiMat → BillHub (transactional outbox).
+ * Исходящая очередь команд EstiMat → внешние системы (transactional outbox).
+ * Провайдеры: BillHub (payment_request.submit) и PayHub (rp_letter.sync — догрузка вложений РП).
  *
  * Надёжность:
- *  - claim строк через FOR UPDATE SKIP LOCKED + lease (locked_until) — несколько экземпляров
- *    API и fast-path не отправят одну команду дважды; зависший lease перезабирается по TTL;
- *  - сеть выполняется ПОСЛЕ фиксации claim (короткая транзакция на claim, HTTP вне транзакции);
- *  - экспоненциальный backoff по attempts; постоянные ошибки (4xx, конфликт идемпотентности)
- *    и превышение лимита попыток → dead_letter (не молча теряем — видно в БД/логах);
- *  - при выключенном рубильнике (config.billhub.outboundEnabled=false) команды остаются в
- *    waiting_config и НЕ теряются — забираются после включения;
- *  - overlap-guard (одна активная итерация) + ожидание активной доставки при shutdown.
- *
- * Идемпотентность на стороне BillHub — по external_ref (+ payload_hash).
+ *  - claim строк через FOR UPDATE SKIP LOCKED + lease (locked_until, lease_token) — несколько
+ *    экземпляров API и fast-path не отправят одну команду дважды; зависший lease перезабирается;
+ *  - fenced lease: финальные апдейты статуса делаются только владельцем текущего lease_token
+ *    (WHERE lease_token=$token) — старый воркер не завершит перезахваченную команду;
+ *  - сеть выполняется ПОСЛЕ фиксации claim; экспоненциальный backoff; постоянные ошибки и
+ *    превышение лимита → dead_letter; недоступность конфигурации провайдера → waiting_config;
+ *  - гейт доступности — per-command (выключенный BillHub не блокирует PayHub-команды и наоборот).
  */
 import type { FastifyInstance } from 'fastify';
-import type { Readable } from 'stream';
+import type { Readable } from 'node:stream';
 import { config } from '../../config.js';
 import { billhub, BillhubError } from '../billhub/client.js';
+import { getPayHubClient } from '../payhub/client.js';
+import { PayHubApiError, PayHubNotConfiguredError, PayHubWaitingConfigError } from '../payhub/errors.js';
+import { syncRpLetterAttachments } from '../payhub/rp-sync.js';
+
+async function streamToBuffer(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
 
 const BATCH = 10;
 const LEASE_MS = 120_000; // 2 мин — на время доставки
@@ -29,34 +36,31 @@ function backoffSeconds(attempts: number): number {
   return Math.min(BACKOFF_CAP_SEC, BASE_BACKOFF_SEC * 2 ** Math.min(attempts, 20));
 }
 
-async function streamToBuffer(stream: Readable): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  return Buffer.concat(chunks);
-}
-
 interface OutboxRow {
   id: string;
   aggregate_id: string;
   command_type: string;
   external_ref: string | null;
-  payload: PaymentRequestSubmitPayload;
+  payload: Record<string, unknown>;
   payload_hash: string;
   attempts: number;
+  lease_token: string;
 }
 
-interface SubmitFile {
-  fileKey: string;
-  fileName: string;
-  mimeType: string | null;
-  fileSize: number | null;
-  documentTypeId: string | null;
+/** Единый вид ошибки доставки (независимый от провайдера). */
+interface IntErr {
+  retryable: boolean;
+  code: string;
+  message: string;
+  waitingConfig?: boolean;
 }
-interface PaymentRequestSubmitPayload {
-  paymentRequestId: string;
-  externalRef: string;
-  request: Record<string, unknown>;
-  files: SubmitFile[];
+
+function toIntErr(e: unknown): IntErr {
+  if (e instanceof PayHubWaitingConfigError) return { retryable: false, code: 'waiting_config', message: e.message, waitingConfig: true };
+  if (e instanceof PayHubNotConfiguredError) return { retryable: false, code: 'not_configured', message: e.message, waitingConfig: true };
+  if (e instanceof PayHubApiError) return { retryable: e.retryable, code: e.code, message: e.message };
+  if (e instanceof BillhubError) return { retryable: e.retryable, code: e.code, message: e.message };
+  return { retryable: true, code: 'internal', message: (e as Error).message };
 }
 
 export interface OutboxWorker {
@@ -90,32 +94,33 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
          FROM claimed c
         WHERE o.id = c.id
       RETURNING o.id, o.aggregate_id, o.command_type, o.external_ref,
-                o.payload, o.payload_hash, o.attempts`,
+                o.payload, o.payload_hash, o.attempts, o.lease_token`,
       [BATCH, LEASE_MS],
     );
     return rows;
   }
 
-  async function markDelivered(id: string) {
+  // Финальные апдесты — только владельцем текущего lease (fenced).
+  async function markDelivered(row: OutboxRow) {
     await fastify.pool.query(
       `UPDATE integration_outbox
           SET status='delivered', delivered_at=now(), locked_until=NULL, lease_token=NULL, error_code=NULL
-        WHERE id=$1`,
-      [id],
+        WHERE id=$1 AND lease_token=$2`,
+      [row.id, row.lease_token],
     );
   }
 
-  async function markWaitingConfig(id: string) {
+  async function markWaitingConfig(row: OutboxRow) {
     await fastify.pool.query(
       `UPDATE integration_outbox
           SET status='waiting_config', locked_until=NULL, lease_token=NULL,
               next_attempt_at = now() + ($2::text || ' seconds')::interval
-        WHERE id=$1`,
-      [id, WAITING_RETRY_SEC],
+        WHERE id=$1 AND lease_token=$3`,
+      [row.id, WAITING_RETRY_SEC, row.lease_token],
     );
   }
 
-  async function markRetryOrDead(row: OutboxRow, err: BillhubError) {
+  async function markRetryOrDead(row: OutboxRow, err: IntErr) {
     const attempts = row.attempts + 1;
     const permanent = !err.retryable || attempts >= MAX_ATTEMPTS;
     if (permanent) {
@@ -123,12 +128,12 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
         `UPDATE integration_outbox
             SET status='dead_letter', attempts=$2, error_code=$3, last_error=$4,
                 locked_until=NULL, lease_token=NULL
-          WHERE id=$1`,
-        [row.id, attempts, err.code, err.message.slice(0, 500)],
+          WHERE id=$1 AND lease_token=$5`,
+        [row.id, attempts, err.code, err.message.slice(0, 500), row.lease_token],
       );
       fastify.log.error(
-        { outboxId: row.id, externalRef: row.external_ref, code: err.code },
-        'BillHub outbox: команда в dead_letter',
+        { outboxId: row.id, externalRef: row.external_ref, code: err.code, command: row.command_type },
+        'outbox: команда в dead_letter',
       );
     } else {
       await fastify.pool.query(
@@ -136,15 +141,20 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
             SET status='retry_wait', attempts=$2, error_code=$3, last_error=$4,
                 locked_until=NULL, lease_token=NULL,
                 next_attempt_at = now() + ($5::text || ' seconds')::interval
-          WHERE id=$1`,
-        [row.id, attempts, err.code, err.message.slice(0, 500), backoffSeconds(attempts)],
+          WHERE id=$1 AND lease_token=$6`,
+        [row.id, attempts, err.code, err.message.slice(0, 500), backoffSeconds(attempts), row.lease_token],
       );
     }
   }
 
-  /** Доставка одной команды создания заявки на оплату: import → confirm files → submit. */
+  /** BillHub: создание заявки на оплату (import → confirm files → submit). */
   async function deliverSubmit(row: OutboxRow): Promise<void> {
-    const p = row.payload;
+    const p = row.payload as unknown as {
+      paymentRequestId: string;
+      externalRef: string;
+      request: Record<string, unknown>;
+      files: { fileKey: string; fileName: string; mimeType: string | null; fileSize: number | null; documentTypeId: string | null }[];
+    };
     const session = await billhub.createImportSession({
       externalRef: p.externalRef,
       payloadHash: row.payload_hash,
@@ -153,13 +163,8 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
 
     for (const f of p.files) {
       const contentType = f.mimeType || 'application/octet-stream';
-      const up = await billhub.requestFileUploadUrl(session.importId, {
-        fileName: f.fileName,
-        contentType,
-      });
-      if (!fastify.storage) {
-        throw new BillhubError('S3-хранилище EstiMat не сконфигурировано', 0, 'no_storage', false);
-      }
+      const up = await billhub.requestFileUploadUrl(session.importId, { fileName: f.fileName, contentType });
+      if (!fastify.storage) throw new BillhubError('S3-хранилище EstiMat не сконфигурировано', 0, 'no_storage', false);
       const obj = await fastify.storage.getObject(f.fileKey);
       const bytes = await streamToBuffer(obj.body);
       await billhub.putFileBytes(up.uploadUrl, bytes, contentType);
@@ -188,21 +193,49 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
     );
   }
 
-  async function process(row: OutboxRow): Promise<void> {
-    if (!config.billhub.outboundEnabled) {
-      await markWaitingConfig(row.id);
-      return;
+  /** PayHub: догрузка вложений РП-письма (письмо уже создано синхронно в rp-send). */
+  async function deliverRpLetterSync(row: OutboxRow): Promise<void> {
+    const p = row.payload as unknown as { rpLetterId: string };
+    const client = getPayHubClient();
+    if (!client) throw new PayHubNotConfiguredError();
+    if (!fastify.storage) throw new PayHubApiError('S3-хранилище EstiMat не сконфигурировано', 0, 'no_storage', false);
+    const { rows } = await fastify.pool.query(
+      `SELECT id, payhub_letter_id FROM rp_letters WHERE id = $1`,
+      [p.rpLetterId],
+    );
+    const rl = rows[0];
+    if (!rl || !rl.payhub_letter_id) return; // письмо ещё не создано — грузить нечего
+    try {
+      await syncRpLetterAttachments(fastify.pool, fastify.storage, client, {
+        id: rl.id,
+        payhubLetterId: rl.payhub_letter_id,
+      });
+      await fastify.pool.query(`UPDATE rp_letters SET sync_status='synced', last_error=NULL WHERE id=$1`, [rl.id]);
+    } catch (e) {
+      await fastify.pool.query(
+        `UPDATE rp_letters SET sync_status='failed', last_error=$2 WHERE id=$1`,
+        [rl.id, (e as Error).message.slice(0, 500)],
+      );
+      throw e;
     }
+  }
+
+  async function process(row: OutboxRow): Promise<void> {
     try {
       if (row.command_type === 'payment_request.submit') {
+        if (!config.billhub.outboundEnabled) return await markWaitingConfig(row);
         await deliverSubmit(row);
+        await markDelivered(row);
+      } else if (row.command_type === 'rp_letter.sync') {
+        if (!config.payhub.configured) return await markWaitingConfig(row);
+        await deliverRpLetterSync(row);
+        await markDelivered(row);
       } else {
-        throw new BillhubError(`Неизвестный тип команды: ${row.command_type}`, 0, 'unknown_command', false);
+        await markRetryOrDead(row, { retryable: false, code: 'unknown_command', message: `Неизвестный тип команды: ${row.command_type}` });
       }
-      await markDelivered(row.id);
     } catch (e) {
-      const err =
-        e instanceof BillhubError ? e : new BillhubError((e as Error).message, 0, 'internal', true);
+      const err = toIntErr(e);
+      if (err.waitingConfig) return await markWaitingConfig(row);
       await markRetryOrDead(row, err);
     }
   }
@@ -212,14 +245,13 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
     running = true;
     const done = (async () => {
       try {
-        // Забираем и обрабатываем, пока есть готовые команды (но не бесконечно).
         for (let i = 0; i < 5; i++) {
           const rows = await claim();
           if (rows.length === 0) break;
           for (const row of rows) await process(row);
         }
       } catch (e) {
-        fastify.log.error({ err: e }, 'BillHub outbox tick failed');
+        fastify.log.error({ err: e }, 'outbox tick failed');
       } finally {
         running = false;
       }
@@ -232,13 +264,11 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
   return {
     start() {
       if (timer) return;
-      // Плановая итерация каждые 60 c (waiting_config пересматривается по next_attempt_at).
       timer = setInterval(() => void tick(), 60_000);
-      // Первая попытка вскоре после старта.
       setTimeout(() => void tick(), 5_000);
       fastify.log.info(
-        { outboundEnabled: config.billhub.outboundEnabled },
-        'BillHub outbox worker started',
+        { billhub: config.billhub.outboundEnabled, payhub: config.payhub.configured },
+        'outbox worker started',
       );
     },
     kick() {
@@ -248,7 +278,7 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
       stopped = true;
       if (timer) clearInterval(timer);
       timer = null;
-      if (activeTick) await activeTick; // дождаться активной доставки
+      if (activeTick) await activeTick;
     },
   };
 }

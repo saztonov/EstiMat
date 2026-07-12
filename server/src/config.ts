@@ -138,4 +138,16 @@ export const config = {
       return Boolean(this.apiKey);
     },
   },
+
+  // Интеграция с PayHub (документооборот): EstiMat создаёт «РП» как исходящее письмо через
+  // внешний API PayHub /api/external/v1 (Bearer-токен — СЕКРЕТ, только из env). Пустой
+  // baseUrl/token = «не настроено» (валидное состояние; «Отправить РП» вернёт понятную ошибку).
+  payhub: {
+    baseUrl: (process.env.PAYHUB_BASE_URL || '').replace(/\/+$/, ''),
+    apiToken: process.env.PAYHUB_API_TOKEN || '',
+    timeoutMs: Number(process.env.PAYHUB_TIMEOUT_MS || '15000'),
+    get configured(): boolean {
+      return Boolean(this.baseUrl && this.apiToken);
+    },
+  },
 } as const;

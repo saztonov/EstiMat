@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import {
   Card, Descriptions, Table, Space, Button, Tag, Empty, Timeline, Alert, Modal,
-  Form, Input, InputNumber, Select, Upload, App, Typography, Spin,
+  Form, Input, InputNumber, Select, Upload, DatePicker, App, Typography, Spin,
 } from 'antd';
 import {
   ArrowLeftOutlined, FileExcelOutlined, DownloadOutlined, UploadOutlined,
   DeleteOutlined, DollarOutlined, ShopOutlined, RollbackOutlined,
+  FileDoneOutlined, SendOutlined, CloseCircleOutlined, SyncOutlined, LinkOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,6 +15,7 @@ import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { modalWidth } from '../../lib/modalWidth';
 import { RequestStatusTag, RequestTypeTag, money, round4 } from './requestConstants';
+import { RpFormModal } from './RpFormModal';
 import type { RequestDetail, RequestItem, RequestFile, RequestPayment } from './types';
 
 const { Text, Title } = Typography;
@@ -25,15 +27,17 @@ const ACTION_LABELS: Record<string, string> = {
   payment_added: 'Добавлена оплата',
   revision_requested: 'Отправлена на доработку',
   revision_completed: 'Доработка завершена',
+  rp_application_submitted: 'Оформление РП',
+  rp_sent: 'РП отправлено',
+  cancelled: 'Заявка отменена',
   file_added: 'Добавлен файл',
   file_removed: 'Удалён файл',
 };
 
 /**
- * Карточка заявки — переиспользуется страницей /requests/:id и вложенной модалкой
- * «Открыть» из списка «Созданные заявки». Данные тянутся по id через react-query,
- * поэтому одинаково работают и на странице, и в модалке. Кнопка «назад» рендерится
- * только при переданном onBack (на странице — навигация, в модалке — закрытие).
+ * Карточка заявки — переиспользуется страницей /requests/:id и вложенными модалками.
+ * Для типа own_supplier ведётся РП-поток (Оформить РП → Отправить РП → оплаты);
+ * для su10/own_supply — прежний поток (поставщик/оплаты/доработка).
  */
 export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () => void }) {
   const { message } = App.useApp();
@@ -45,11 +49,14 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   const [supplierOpen, setSupplierOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [revisionOpen, setRevisionOpen] = useState(false);
+  const [rpFormOpen, setRpFormOpen] = useState(false);
+  const [rpSendOpen, setRpSendOpen] = useState(false);
   const [docType, setDocType] = useState<RequestDocType>('invoice');
   const [busy, setBusy] = useState(false);
   const [supForm] = Form.useForm();
   const [payForm] = Form.useForm();
   const [revForm] = Form.useForm();
+  const [rpSendForm] = Form.useForm();
 
   const { data, isLoading } = useQuery({
     queryKey: ['requests', 'detail', id],
@@ -61,6 +68,7 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['requests', 'detail', id] });
     qc.invalidateQueries({ queryKey: ['requests', 'list'] });
+    qc.invalidateQueries({ queryKey: ['requests', 'rp-registry'] });
     qc.invalidateQueries({ queryKey: ['material-requests'] });
   };
 
@@ -76,8 +84,7 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
     const ok = await mut(
       () => api.post(`/requests/${id}/supplier`, {
         supplierName: v.supplierName, supplierInn: v.supplierInn || null,
-        resultAmount: v.resultAmount, rpNumber: v.rpNumber || null,
-        expectedVersion: r?.row_version,
+        resultAmount: v.resultAmount, expectedVersion: r?.row_version,
       }),
       'Поставщик сохранён',
     )();
@@ -88,7 +95,9 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
     const v = await payForm.validateFields();
     const ok = await mut(
       () => api.post(`/requests/${id}/payments`, {
-        amount: v.amount, paidAt: v.paidAt || null, docNumber: v.docNumber || null, comment: v.comment || null,
+        amount: v.amount, paidAt: v.paidAt ? v.paidAt.format('YYYY-MM-DD') : null,
+        docNumber: v.docNumber || null, comment: v.comment || null,
+        clientPaymentId: crypto.randomUUID(),
       }),
       'Оплата добавлена',
     )();
@@ -104,9 +113,33 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
     if (ok) { setRevisionOpen(false); revForm.resetFields(); }
   }
 
+  async function submitRpSend() {
+    const v = await rpSendForm.validateFields();
+    const ok = await mut(
+      () => api.post(`/requests/${id}/rp-send`, {
+        rpDate: v.rpDate.format('YYYY-MM-DD'),
+        subject: v.subject || null,
+        content: v.content || null,
+        expectedVersion: r?.row_version,
+      }),
+      'РП отправлено, письмо создано в PayHub',
+    )();
+    if (ok) { setRpSendOpen(false); rpSendForm.resetFields(); }
+  }
+
   const completeRevision = mut(
     () => api.post(`/requests/${id}/revision-complete`, {}),
     'Отправлено на проверку',
+  );
+
+  const cancelRequest = mut(
+    () => api.post(`/requests/${id}/cancel`, { expectedVersion: r?.row_version }),
+    'Заявка отменена',
+  );
+
+  const resync = mut(
+    () => api.post(`/requests/${id}/rp-resync`, {}),
+    'Повторная синхронизация запущена',
   );
 
   async function uploadFile(file: File) {
@@ -138,12 +171,25 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   if (isLoading) return <div style={{ padding: 48 }}><Spin /></div>;
   if (!r) return <div style={{ padding: 48 }}><Empty description="Заявка не найдена" /></div>;
 
-  const canEditFiles = isContractor && ['in_work', 'revision'].includes(r.status);
-  const canRevisionComplete = isContractor && r.status === 'revision';
-  const canRevision = isSupply && r.status === 'in_work';
-  const isDirectRoute = r.request_type === 'own_supplier' || r.request_type === 'own_supply';
-  const canSetSupplier = (isSupply || (isContractor && isDirectRoute)) && r.status !== 'delivered' && r.status !== 'revision';
-  const canPay = isSupply && !!r.order && r.status !== 'delivered';
+  const isOwnSupplier = r.request_type === 'own_supplier';
+  const isDirectRoute = r.request_type === 'own_supply'; // прямой поставщик без РП
+
+  // Гейты действий РП (own_supplier).
+  const canApplyRp = isContractor && isOwnSupplier && ['in_work', 'revision'].includes(r.status);
+  const canCancel = (isContractor || isSupply) && isOwnSupplier
+    && ['in_work', 'rp_forming', 'revision'].includes(r.status);
+  const canSendRp = isSupply && isOwnSupplier && r.status === 'rp_forming';
+  const canReviseRp = isSupply && isOwnSupplier && ['in_work', 'rp_forming'].includes(r.status);
+  const canPayRp = isSupply && isOwnSupplier && ['rp_sent', 'rp_paid'].includes(r.status);
+  const canResync = isSupply && isOwnSupplier && r.rp_letter?.sync_status === 'failed';
+
+  // Прежний поток (su10 / own_supply).
+  const canEditFiles = isContractor && ['in_work', 'rp_forming', 'revision'].includes(r.status);
+  const canRevisionComplete = isContractor && !isOwnSupplier && r.status === 'revision';
+  const canRevisionStd = isSupply && !isOwnSupplier && r.status === 'in_work';
+  const canSetSupplier = (isSupply || (isContractor && isDirectRoute)) && !isOwnSupplier
+    && r.status !== 'delivered' && r.status !== 'revision' && r.status !== 'cancelled';
+  const canPayStd = isSupply && !isOwnSupplier && !!r.order && r.status !== 'delivered';
 
   const itemCols: ColumnsType<RequestItem> = [
     { title: '№', key: 'idx', width: 50, render: (_, __, i) => i + 1 },
@@ -154,11 +200,13 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   ];
 
   const payCols: ColumnsType<RequestPayment> = [
-    { title: 'Сумма', dataIndex: 'amount', key: 'amount', align: 'right', render: (v) => money(v) },
+    { title: 'Сумма', dataIndex: 'amount', key: 'amount', align: 'right', render: (v, p) => (p.reversed ? <Text delete>{money(v)}</Text> : money(v)) },
     { title: 'Дата', dataIndex: 'paid_at', key: 'paid_at', render: (v: string | null) => v ? new Date(v).toLocaleDateString('ru-RU') : '—' },
     { title: '№ документа', dataIndex: 'doc_number', key: 'doc_number', render: (v: string | null) => v || '—' },
     { title: 'Комментарий', dataIndex: 'comment', key: 'comment', render: (v: string | null) => v || '—' },
   ];
+
+  const rpReg = r.rp_letter?.payhub_reg_number || r.order?.rp_number;
 
   return (
     <Card
@@ -182,6 +230,12 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
         {r.status === 'revision' && r.revision_reason && (
           <Alert type="warning" showIcon message="Возвращено на доработку" description={r.revision_reason} />
         )}
+        {r.rp_letter?.sync_status === 'failed' && (
+          <Alert
+            type="error" showIcon message="Ошибка синхронизации письма РП с PayHub"
+            description={r.rp_letter.last_error || 'Повторите синхронизацию.'}
+          />
+        )}
 
         <Descriptions size="small" column={{ xs: 1, sm: 2 }} bordered>
           <Descriptions.Item label="Объект">{r.project_name || '—'}</Descriptions.Item>
@@ -190,24 +244,60 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
             {r.order?.supplier_name || r.supplier_name || '—'}
             {r.order?.supplier_inn ? `, ИНН ${r.order.supplier_inn}` : ''}
           </Descriptions.Item>
-          <Descriptions.Item label="Сумма заказа">{money(r.order?.amount ?? r.order_amount)}</Descriptions.Item>
-          {r.rp_number || r.order?.rp_number ? (
-            <Descriptions.Item label="РП">{r.order?.rp_number || r.rp_number}</Descriptions.Item>
+          <Descriptions.Item label="Сумма счёта">{money(r.order?.amount ?? r.order_amount)}</Descriptions.Item>
+          {isOwnSupplier && r.order?.delivery_days ? (
+            <Descriptions.Item label="Срок поставки">
+              {r.order.delivery_days} {r.order.delivery_days_type === 'calendar' ? 'кал.' : 'раб.'} дн.
+            </Descriptions.Item>
+          ) : null}
+          {isOwnSupplier && r.order?.shipping_conditions ? (
+            <Descriptions.Item label="Условия отгрузки">{r.order.shipping_conditions}</Descriptions.Item>
+          ) : null}
+          {rpReg ? <Descriptions.Item label="№ РП">{rpReg}</Descriptions.Item> : null}
+          {r.order?.rp_date ? (
+            <Descriptions.Item label="Дата РП">{new Date(r.order.rp_date).toLocaleDateString('ru-RU')}</Descriptions.Item>
+          ) : null}
+          {r.rp_letter?.payhub_url ? (
+            <Descriptions.Item label="Письмо PayHub">
+              <a href={r.rp_letter.payhub_url} target="_blank" rel="noopener noreferrer">
+                Открыть <LinkOutlined />
+              </a>
+            </Descriptions.Item>
           ) : null}
           <Descriptions.Item label="Создана">{new Date(r.created_at).toLocaleString('ru-RU')}</Descriptions.Item>
         </Descriptions>
 
         {/* Действия */}
         <Space wrap>
+          {canApplyRp && (
+            <Button type="primary" icon={<FileDoneOutlined />} onClick={() => setRpFormOpen(true)}>
+              {r.status === 'revision' ? 'Исправить и отправить' : 'Оформить РП'}
+            </Button>
+          )}
+          {canSendRp && (
+            <Button type="primary" icon={<SendOutlined />} onClick={() => setRpSendOpen(true)}>Отправить РП</Button>
+          )}
+          {canReviseRp && (
+            <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>
+          )}
+          {canPayRp && (
+            <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Документы оплаты</Button>
+          )}
+          {canResync && (
+            <Button icon={<SyncOutlined />} loading={busy} onClick={resync}>Повторить синхронизацию</Button>
+          )}
           {canSetSupplier && (
             <Button icon={<ShopOutlined />} onClick={() => setSupplierOpen(true)}>
               {r.order ? 'Изменить поставщика' : 'Выбрать поставщика'}
             </Button>
           )}
-          {canPay && <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Добавить оплату</Button>}
-          {canRevision && <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>}
+          {canPayStd && <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Добавить оплату</Button>}
+          {canRevisionStd && <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>}
           {canRevisionComplete && (
             <Button type="primary" loading={busy} onClick={completeRevision}>Отправить доработку</Button>
+          )}
+          {canCancel && (
+            <Button danger icon={<CloseCircleOutlined />} loading={busy} onClick={cancelRequest}>Отменить</Button>
           )}
         </Space>
 
@@ -293,7 +383,7 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
         )}
       </Space>
 
-      {/* Модалка: выбор поставщика */}
+      {/* Модалка: выбор поставщика (su10 / own_supply) */}
       <Modal
         title="Поставщик и сумма" open={supplierOpen} onCancel={() => setSupplierOpen(false)}
         onOk={submitSupplier} confirmLoading={busy} okText="Сохранить" width={modalWidth(520)}
@@ -308,9 +398,6 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
           <Form.Item name="resultAmount" label="Сумма, ₽" rules={[{ required: true, message: 'Укажите сумму' }]}>
             <InputNumber min={0.01} precision={2} style={{ width: 220 }} />
           </Form.Item>
-          {r.request_type === 'own_supplier' && (
-            <Form.Item name="rpNumber" label="Номер РП"><Input maxLength={100} /></Form.Item>
-          )}
         </Form>
       </Modal>
 
@@ -323,8 +410,12 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
           <Form.Item name="amount" label="Сумма, ₽" rules={[{ required: true, message: 'Укажите сумму' }]}>
             <InputNumber min={0.01} precision={2} style={{ width: 220 }} />
           </Form.Item>
+          <Form.Item name="paidAt" label="Дата оплаты"><DatePicker style={{ width: 220 }} format="DD.MM.YYYY" /></Form.Item>
           <Form.Item name="docNumber" label="№ документа"><Input maxLength={100} /></Form.Item>
           <Form.Item name="comment" label="Комментарий"><Input.TextArea rows={2} maxLength={1000} /></Form.Item>
+          {isOwnSupplier && (
+            <Text type="secondary">Платёжный документ приложите в блоке «Документы» (тип «Платёжный документ»).</Text>
+          )}
         </Form>
       </Modal>
 
@@ -339,6 +430,32 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* Модалка: отправить РП */}
+      <Modal
+        title="Отправить РП" open={rpSendOpen} onCancel={() => setRpSendOpen(false)}
+        onOk={submitRpSend} confirmLoading={busy} okText="Отправить в PayHub" width={modalWidth(520)}
+      >
+        <Alert
+          type="info" showIcon style={{ marginBottom: 12 }}
+          message="Будет создано распределительное письмо в PayHub; номер РП присвоит PayHub."
+        />
+        <Form form={rpSendForm} layout="vertical">
+          <Form.Item name="rpDate" label="Дата РП" rules={[{ required: true, message: 'Укажите дату' }]}>
+            <DatePicker style={{ width: 220 }} format="DD.MM.YYYY" />
+          </Form.Item>
+          <Form.Item name="subject" label="Тема письма"><Input maxLength={500} placeholder="РП" /></Form.Item>
+          <Form.Item name="content" label="Описание"><Input.TextArea rows={3} maxLength={4000} placeholder="По умолчанию: сумма, поставщик, объект" /></Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Модалка: оформить РП (форма заявки на оплату) */}
+      <RpFormModal
+        open={rpFormOpen}
+        requestId={id}
+        requestNumber={r.number}
+        onClose={() => setRpFormOpen(false)}
+      />
     </Card>
   );
 }

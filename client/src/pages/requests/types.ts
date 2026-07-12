@@ -18,11 +18,16 @@ export interface RequestFile {
 
 export interface RequestOrder {
   id: string;
+  supplier_id: string | null;
   supplier_name: string;
   supplier_inn: string | null;
   amount: string | number;
   rp_number: string | null;
   rp_date: string | null;
+  delivery_days: number | null;
+  delivery_days_type: string | null;
+  shipping_conditions: string | null;
+  rp_comment: string | null;
   created_at: string;
 }
 
@@ -32,7 +37,17 @@ export interface RequestPayment {
   paid_at: string | null;
   doc_number: string | null;
   comment: string | null;
+  reversed?: boolean;
   created_at: string;
+}
+
+export interface RpLetterInfo {
+  payhub_reg_number: string | null;
+  payhub_url: string | null;
+  payhub_status: string | null;
+  sync_status: string;
+  sent_at: string | null;
+  last_error: string | null;
 }
 
 export interface RequestRevision {
@@ -68,6 +83,10 @@ export interface RequestRow {
   supplier_inn: string | null;
   order_amount: string | number | null;
   rp_number: string | null;
+  rp_date: string | null;
+  payhub_reg_number: string | null;
+  payhub_url: string | null;
+  rp_sync_status: string | null;
   files_count: number | string;
   items_count: number | string;
   revision_reason: string | null;
@@ -81,4 +100,5 @@ export interface RequestDetail extends RequestRow {
   payments: RequestPayment[];
   revisions: RequestRevision[];
   history: RequestHistoryEntry[];
+  rp_letter: RpLetterInfo | null;
 }

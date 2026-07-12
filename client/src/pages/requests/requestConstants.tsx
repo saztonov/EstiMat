@@ -13,6 +13,10 @@ const STATUS_COLOR: Record<RequestStatus, string> = {
   supplier_selected: 'blue',
   paid: 'green',
   delivered: 'success',
+  rp_forming: 'gold',
+  rp_sent: 'geekblue',
+  rp_paid: 'green',
+  cancelled: 'default',
 };
 
 const TYPE_COLOR: Record<string, string> = {

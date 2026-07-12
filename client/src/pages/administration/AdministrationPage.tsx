@@ -4,11 +4,13 @@ import { UsersPanel } from './UsersPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { AiJobsPanel } from './AiJobsPanel';
 import { LlmServerPanel } from './LlmServerPanel';
+import { PayhubPanel } from './PayhubPanel';
 
 const tabs = [
   { key: 'users', label: 'Пользователи', children: <UsersPanel /> },
   { key: 'ai-jobs', label: 'Задания ИИ', children: <AiJobsPanel /> },
   { key: 'llm-server', label: 'Сервер моделей', children: <LlmServerPanel /> },
+  { key: 'payhub', label: 'Интеграция PayHub', children: <PayhubPanel /> },
   { key: 'settings', label: 'Настройки', children: <SettingsPanel /> },
 ];
 
