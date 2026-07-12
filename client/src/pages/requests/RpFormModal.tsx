@@ -1,15 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Modal, Form, Select, InputNumber, Input, Segmented, Upload, Button, Collapse, Table, Space, App,
-} from 'antd';
-import { UploadOutlined } from '@ant-design/icons';
-import type { UploadFile } from 'antd/es/upload/interface';
+import { Modal, Form, Select, InputNumber, Input, Segmented, Collapse, Table, Space, App } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { REQUEST_DOC_TYPES, REQUEST_DOC_TYPE_LABELS, type RequestDocType } from '@estimat/shared';
+import { SHIPPING_CONDITIONS, RP_APPLICATION_DOC_TYPES, REQUEST_DOC_TYPE_LABELS } from '@estimat/shared';
 import { api } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
 import { round4 } from './requestConstants';
+import { FileUploadList, type UploadItem } from '../../components/files/FileUploadList';
 import type { RequestDetail, RequestItem } from './types';
 
 interface Supplier {
@@ -27,17 +24,19 @@ interface Props {
   onDone?: () => void;
 }
 
+const DOC_TYPE_OPTIONS = RP_APPLICATION_DOC_TYPES.map((d) => ({ value: d, label: REQUEST_DOC_TYPE_LABELS[d] }));
+
 /**
  * Форма «Оформить РП» (подрядчик): свёрнутый список материалов + реквизиты заявки на оплату
- * в стиле billhub. Поставщик выбирается из справочника EstiMat; файлы грузятся до перевода
- * заявки в «Оформление РП» (счёт обязателен).
+ * в стиле billhub. Поставщик из справочника; условия отгрузки — типовой список; документы —
+ * drag-n-drop с типом на каждый файл (счёт обязателен).
  */
 export function RpFormModal({ open, requestId, requestNumber, onClose, onDone }: Props) {
   const { message } = App.useApp();
   const qc = useQueryClient();
   const [form] = Form.useForm();
-  const [fileList, setFileList] = useState<UploadFile[]>([]);
-  const [docType, setDocType] = useState<RequestDocType>('invoice');
+  const [files, setFiles] = useState<UploadItem[]>([]);
+  const [showFileValidation, setShowFileValidation] = useState(false);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const createRequestId = useRef(crypto.randomUUID());
@@ -87,13 +86,23 @@ export function RpFormModal({ open, requestId, requestNumber, onClose, onDone }:
 
   async function handleSubmit() {
     const v = await form.validateFields();
+    // Валидация документов: у каждого файла — тип; должен быть приложен счёт.
+    if (files.length === 0 || !files.some((f) => f.docType === 'invoice')) {
+      message.warning('Приложите счёт (тип «Счет»)');
+      return;
+    }
+    if (files.some((f) => !f.docType)) {
+      setShowFileValidation(true);
+      message.warning('Укажите тип для каждого документа');
+      return;
+    }
     setSubmitting(true);
     try {
-      // 1. Загрузка приложенных документов (счёт обязателен на сервере).
-      for (const f of fileList) {
+      // 1. Загрузка документов с их типами.
+      for (const f of files) {
         const fd = new FormData();
-        fd.append('file', f.originFileObj as File);
-        await api.upload(`/requests/${requestId}/files?docType=${docType}`, fd);
+        fd.append('file', f.file);
+        await api.upload(`/requests/${requestId}/files?docType=${f.docType}`, fd);
       }
       // 2. Оформление РП → статус «Оформление РП».
       await api.post(`/requests/${requestId}/rp-application`, {
@@ -109,8 +118,9 @@ export function RpFormModal({ open, requestId, requestNumber, onClose, onDone }:
       message.success('Заявка отправлена на оформление РП');
       qc.invalidateQueries({ queryKey: ['requests', 'detail', requestId] });
       qc.invalidateQueries({ queryKey: ['requests', 'list'] });
+      qc.invalidateQueries({ queryKey: ['requests', 'by-estimate'] });
       qc.invalidateQueries({ queryKey: ['material-requests'] });
-      setFileList([]);
+      setFiles([]);
       onClose();
       onDone?.();
     } catch (e) {
@@ -131,6 +141,7 @@ export function RpFormModal({ open, requestId, requestNumber, onClose, onDone }:
       okText="Отправить на РП"
       confirmLoading={submitting}
       width={modalWidth(640)}
+      styles={{ body: { maxHeight: 'calc(85vh - 140px)', overflowY: 'auto' } }}
       destroyOnClose
     >
       <Collapse
@@ -181,31 +192,22 @@ export function RpFormModal({ open, requestId, requestNumber, onClose, onDone }:
             </Form.Item>
           </Space>
         </Form.Item>
-        <Form.Item name="shippingConditions" label="Условия отгрузки" rules={[{ required: true, message: 'Укажите условия отгрузки' }]}>
-          <Input maxLength={500} placeholder="Например: самовывоз / доставка до объекта" />
+        <Form.Item name="shippingConditions" label="Условия отгрузки" rules={[{ required: true, message: 'Выберите условия отгрузки' }]}>
+          <Select
+            placeholder="Выберите условия"
+            options={SHIPPING_CONDITIONS.map((c) => ({ value: c, label: c }))}
+          />
         </Form.Item>
         <Form.Item name="invoiceAmount" label="Сумма счёта, ₽" rules={[{ required: true, message: 'Укажите сумму счёта' }]}>
           <InputNumber min={0.01} precision={2} style={{ width: 220 }} />
         </Form.Item>
         <Form.Item label="Документы" required tooltip="Обязательно приложите счёт">
-          <Space wrap>
-            <Select
-              size="small"
-              style={{ width: 170 }}
-              value={docType}
-              onChange={setDocType}
-              options={REQUEST_DOC_TYPES.map((d) => ({ value: d, label: REQUEST_DOC_TYPE_LABELS[d] }))}
-            />
-            <Upload
-              beforeUpload={() => false}
-              fileList={fileList}
-              onChange={({ fileList: fl }) => setFileList(fl)}
-              multiple
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.tiff,.tif,.bmp"
-            >
-              <Button size="small" icon={<UploadOutlined />}>Прикрепить</Button>
-            </Upload>
-          </Space>
+          <FileUploadList
+            value={files}
+            onChange={setFiles}
+            docTypeOptions={DOC_TYPE_OPTIONS}
+            showValidation={showFileValidation}
+          />
         </Form.Item>
         <Form.Item name="comment" label="Комментарий">
           <Input.TextArea rows={2} maxLength={2000} />

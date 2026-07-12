@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Table, Space, Button, Tooltip, Empty, Modal, App } from 'antd';
-import { FileExcelOutlined } from '@ant-design/icons';
+import { Table, Space, Button, Tooltip, Empty, Modal, Badge, App } from 'antd';
+import { FileExcelOutlined, MessageOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -8,6 +8,7 @@ import { modalWidth } from '../../lib/modalWidth';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { RequestStatusTag, RequestTypeTag, money } from '../requests/requestConstants';
 import { RequestDetailContent } from '../requests/RequestDetailContent';
+import { useUnreadCounts } from '../requests/useUnreadCounts';
 import type { RequestRow } from '../requests/types';
 
 interface Props {
@@ -21,6 +22,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
   const { message } = App.useApp();
   const [openId, setOpenId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const unread = useUnreadCounts();
 
   const { data, isLoading } = useQuery({
     queryKey: ['requests', 'by-estimate', estimateId],
@@ -42,6 +44,10 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
   }
 
   const columns: ColumnsType<RequestRow> = [
+    { title: '', key: 'unread', width: 40, align: 'center', render: (_, r) => {
+      const c = unread[r.id] || 0;
+      return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: '#8c8c8c' }} /></Badge> : null;
+    } },
     { title: 'Номер', dataIndex: 'number', key: 'number', width: 120, render: (v: string) => <strong>{v}</strong> },
     {
       title: 'Дата', dataIndex: 'created_at', key: 'created_at', width: 150,
@@ -102,6 +108,8 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
         onCancel={() => setOpenId(null)}
         footer={null}
         width={modalWidth(1000)}
+        style={{ top: 20 }}
+        styles={{ body: { height: 'calc(90vh - 56px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12 } }}
         destroyOnClose
       >
         {openId && <RequestDetailContent id={openId} onBack={() => setOpenId(null)} />}

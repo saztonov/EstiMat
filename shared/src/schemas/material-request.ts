@@ -110,7 +110,7 @@ export type CancelRequestInput = z.infer<typeof cancelRequestSchema>;
 
 // Метаданные при загрузке файла (doc_type приходит полем multipart).
 export const requestFileMetaSchema = z.object({
-  docType: z.enum(REQUEST_DOC_TYPES).default('other'),
+  docType: z.enum(REQUEST_DOC_TYPES).default('invoice'),
 });
 export type RequestFileMetaInput = z.infer<typeof requestFileMetaSchema>;
 

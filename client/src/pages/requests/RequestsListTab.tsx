@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, App } from 'antd';
-import { SearchOutlined, PaperClipOutlined, FileExcelOutlined } from '@ant-design/icons';
+import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, App } from 'antd';
+import { SearchOutlined, PaperClipOutlined, FileExcelOutlined, MessageOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
+import { useUnreadCounts } from './useUnreadCounts';
 import {
   MATERIAL_REQUEST_TYPES,
   MATERIAL_REQUEST_TYPE_LABELS,
@@ -34,6 +35,7 @@ export function RequestsListTab() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const unread = useUnreadCounts();
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -68,6 +70,10 @@ export function RequestsListTab() {
   }
 
   const columns: ColumnsType<RequestRow> = [
+    { title: '', key: 'unread', width: 40, align: 'center', render: (_, r) => {
+      const c = unread[r.id] || 0;
+      return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: '#8c8c8c' }} /></Badge> : null;
+    } },
     { title: 'Номер', dataIndex: 'number', key: 'number', width: 120, render: (v: string) => <strong>{v}</strong> },
     {
       title: 'Дата', dataIndex: 'created_at', key: 'created_at', width: 150,

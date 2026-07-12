@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Table, Space, Segmented, Empty, Tag, Tooltip } from 'antd';
-import { LinkOutlined, SyncOutlined, CheckCircleOutlined, WarningOutlined } from '@ant-design/icons';
+import { Table, Space, Segmented, Empty, Tag, Tooltip, Badge } from 'antd';
+import { LinkOutlined, SyncOutlined, CheckCircleOutlined, WarningOutlined, MessageOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { money } from './requestConstants';
+import { useUnreadCounts } from './useUnreadCounts';
 import type { RequestRow } from './types';
 
 type RegFilter = 'all' | 'rp_sent' | 'rp_paid';
@@ -32,6 +33,7 @@ export function RpRegistryTab() {
   const [flt, setFlt] = useState<RegFilter>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
+  const unread = useUnreadCounts();
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -50,6 +52,10 @@ export function RpRegistryTab() {
   const total = data?.meta?.total ?? 0;
 
   const columns: ColumnsType<RequestRow> = [
+    { title: '', key: 'unread', width: 40, align: 'center', render: (_, r) => {
+      const c = unread[r.id] || 0;
+      return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: '#8c8c8c' }} /></Badge> : null;
+    } },
     {
       title: '№ РП', dataIndex: 'payhub_reg_number', key: 'reg', width: 150,
       render: (v: string | null, r) => <strong>{v || r.rp_number || '—'}</strong>,

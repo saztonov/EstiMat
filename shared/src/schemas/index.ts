@@ -8,6 +8,7 @@ export * from './estimate.js';
 export * from './material-request.js';
 export * from './payment-request.js';
 export * from './payhub.js';
+export * from './request-comment.js';
 export * from './rate.js';
 export * from './rd.js';
 export * from './rd-cipher.js';

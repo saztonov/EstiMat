@@ -33,6 +33,7 @@ import {
   ensureRpLetter,
   syncRpLetterAttachments,
 } from '../../lib/payhub/rp-sync.js';
+import { registerRequestCommentRoutes } from './comments.js';
 
 const INTERNAL_ROLES = new Set(['admin', 'engineer', 'manager']);
 const FILE_LIMIT = 50 * 1024 * 1024; // 50 МБ на файл (per-route)
@@ -62,6 +63,9 @@ async function atomicSetStatus(
 
 export default async function requestRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
+
+  // Чат-комментарии к заявке (общение подрядчик ↔ снабжение).
+  registerRequestCommentRoutes(fastify);
 
   const isInternal = (role: string) => INTERNAL_ROLES.has(role);
 
@@ -859,8 +863,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       // Исходящий набор вложений письма (счёт/КП/спецификация/договор/прочее; платёжки НЕ входят).
       const outFiles = await fastify.pool.query(
         `SELECT id FROM material_request_files
-          WHERE request_id = $1 AND NOT superseded
-            AND doc_type IN ('invoice','quote','spec','contract','other')`,
+          WHERE request_id = $1 AND NOT superseded AND doc_type <> 'payment'`,
         [mr.id],
       );
       const hasFiles = outFiles.rows.length > 0;

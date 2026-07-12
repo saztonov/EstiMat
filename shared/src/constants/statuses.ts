@@ -90,26 +90,49 @@ export const MATERIAL_REQUEST_TYPE_LABELS: Record<MaterialRequestType, string> =
   own_supply: 'Собственная закупка',
 };
 
-// Типы прикрепляемых документов (заявка/заказ/оплата/поставка).
+// Типы прикрепляемых документов (снимок операционного справочника BillHub) + платёжный.
 export const REQUEST_DOC_TYPES = [
-  'invoice',
-  'quote',
-  'spec',
-  'contract',
-  'payment',
-  'delivery',
-  'other',
+  'invoice',        // Счет (обязательный для оформления РП)
+  'contract',       // Договор поставки
+  'spec',           // Спецификация
+  'proxy',          // Доверенность
+  'protocol',       // Протокол
+  'approval',       // Согласование
+  'rp_su10',        // Распред.письмо в адрес СУ-10
+  'docs_set',       // Комплект документов
+  'founding_docs',  // Учредительные документы
+  'payment',        // Платёжный документ (регистрируется снабжением при оплате)
 ] as const;
 export type RequestDocType = (typeof REQUEST_DOC_TYPES)[number];
 
 export const REQUEST_DOC_TYPE_LABELS: Record<RequestDocType, string> = {
-  invoice: 'Счёт',
-  quote: 'КП',
+  invoice: 'Счет',
+  contract: 'Договор поставки',
   spec: 'Спецификация',
-  contract: 'Договор',
+  proxy: 'Доверенность',
+  protocol: 'Протокол',
+  approval: 'Согласование',
+  rp_su10: 'Распред.письмо в адрес СУ-10',
+  docs_set: 'Комплект документов',
+  founding_docs: 'Учредительные документы',
   payment: 'Платёжный документ',
-  delivery: 'Документ поставки',
-  other: 'Прочее',
+};
+
+// Типы документов, доступные подрядчику в форме «Оформить РП» (без платёжных).
+export const RP_APPLICATION_DOC_TYPES = [
+  'invoice', 'contract', 'spec', 'proxy', 'protocol', 'approval', 'rp_su10', 'docs_set', 'founding_docs',
+] as const;
+
+// Варианты условий отгрузки (снимок справочника BillHub) — хранятся текстом.
+export const SHIPPING_CONDITIONS = ['Предоплата / Аванс', 'Отсрочка'] as const;
+export type ShippingCondition = (typeof SHIPPING_CONDITIONS)[number];
+
+// Адресат комментария в чате заявки: null = «Всем».
+export const COMMENT_RECIPIENTS = ['contractor', 'supply'] as const;
+export type CommentRecipient = (typeof COMMENT_RECIPIENTS)[number];
+export const COMMENT_RECIPIENT_LABELS: Record<CommentRecipient, string> = {
+  contractor: 'Подрядчику',
+  supply: 'Снабжению',
 };
 
 // Статусы согласования заявки на оплату (проекция из BillHub, entity_type='payment_request').

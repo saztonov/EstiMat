@@ -1,21 +1,27 @@
 import { useState } from 'react';
 import {
-  Card, Descriptions, Table, Space, Button, Tag, Empty, Timeline, Alert, Modal,
-  Form, Input, InputNumber, Select, Upload, DatePicker, App, Typography, Spin,
+  Card, Descriptions, Table, Space, Button, Tag, Empty, Timeline, Alert, Modal, Collapse,
+  Form, Input, InputNumber, DatePicker, Typography, Spin, App,
 } from 'antd';
 import {
-  ArrowLeftOutlined, FileExcelOutlined, DownloadOutlined, UploadOutlined,
+  ArrowLeftOutlined, FileExcelOutlined, DownloadOutlined, EyeOutlined,
   DeleteOutlined, DollarOutlined, ShopOutlined, RollbackOutlined,
   FileDoneOutlined, SendOutlined, CloseCircleOutlined, SyncOutlined, LinkOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { REQUEST_DOC_TYPES, REQUEST_DOC_TYPE_LABELS, type RequestDocType } from '@estimat/shared';
+import {
+  REQUEST_DOC_TYPES, RP_APPLICATION_DOC_TYPES, REQUEST_DOC_TYPE_LABELS, type RequestDocType,
+} from '@estimat/shared';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { modalWidth } from '../../lib/modalWidth';
+import { formatSize } from '../../lib/files';
 import { RequestStatusTag, RequestTypeTag, money, round4 } from './requestConstants';
 import { RpFormModal } from './RpFormModal';
+import { CommentsChat } from './CommentsChat';
+import { FileUploadList, type UploadItem } from '../../components/files/FileUploadList';
+import { FilePreviewModal } from '../../components/files/FilePreview';
 import type { RequestDetail, RequestItem, RequestFile, RequestPayment } from './types';
 
 const { Text, Title } = Typography;
@@ -35,9 +41,8 @@ const ACTION_LABELS: Record<string, string> = {
 };
 
 /**
- * Карточка заявки — переиспользуется страницей /requests/:id и вложенными модалками.
- * Для типа own_supplier ведётся РП-поток (Оформить РП → Отправить РП → оплаты);
- * для su10/own_supply — прежний поток (поставщик/оплаты/доработка).
+ * Карточка заявки (стиль billhub ViewRequestModal): реквизиты + действия, затем секции-блоки
+ * (Состав / Документы / Оплаты / История / Обсуждение). Предпросмотр файлов — всем ролям.
  */
 export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () => void }) {
   const { message } = App.useApp();
@@ -51,7 +56,8 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [rpFormOpen, setRpFormOpen] = useState(false);
   const [rpSendOpen, setRpSendOpen] = useState(false);
-  const [docType, setDocType] = useState<RequestDocType>('invoice');
+  const [docFiles, setDocFiles] = useState<UploadItem[]>([]);
+  const [preview, setPreview] = useState<{ fileId: string; fileName: string; mimeType: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [supForm] = Form.useForm();
   const [payForm] = Form.useForm();
@@ -69,6 +75,7 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
     qc.invalidateQueries({ queryKey: ['requests', 'detail', id] });
     qc.invalidateQueries({ queryKey: ['requests', 'list'] });
     qc.invalidateQueries({ queryKey: ['requests', 'rp-registry'] });
+    qc.invalidateQueries({ queryKey: ['requests', 'by-estimate'] });
     qc.invalidateQueries({ queryKey: ['material-requests'] });
   };
 
@@ -127,37 +134,27 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
     if (ok) { setRpSendOpen(false); rpSendForm.resetFields(); }
   }
 
-  const completeRevision = mut(
-    () => api.post(`/requests/${id}/revision-complete`, {}),
-    'Отправлено на проверку',
-  );
+  const completeRevision = mut(() => api.post(`/requests/${id}/revision-complete`, {}), 'Отправлено на проверку');
+  const cancelRequest = mut(() => api.post(`/requests/${id}/cancel`, { expectedVersion: r?.row_version }), 'Заявка отменена');
+  const resync = mut(() => api.post(`/requests/${id}/rp-resync`, {}), 'Повторная синхронизация запущена');
 
-  const cancelRequest = mut(
-    () => api.post(`/requests/${id}/cancel`, { expectedVersion: r?.row_version }),
-    'Заявка отменена',
-  );
-
-  const resync = mut(
-    () => api.post(`/requests/${id}/rp-resync`, {}),
-    'Повторная синхронизация запущена',
-  );
-
-  async function uploadFile(file: File) {
+  async function uploadDocs() {
+    if (docFiles.some((f) => !f.docType)) { message.warning('Укажите тип для каждого документа'); return; }
     setBusy(true);
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      await api.upload(`/requests/${id}/files?docType=${docType}`, fd);
-      message.success('Файл загружен');
+      for (const f of docFiles) {
+        const fd = new FormData();
+        fd.append('file', f.file);
+        await api.upload(`/requests/${id}/files?docType=${f.docType}`, fd);
+      }
+      message.success('Документы загружены');
+      setDocFiles([]);
       invalidate();
     } catch (e) { message.error((e as Error).message); }
     finally { setBusy(false); }
   }
 
-  const deleteFile = (fileId: string) => mut(
-    () => api.delete(`/requests/${id}/files/${fileId}`),
-    'Файл удалён',
-  );
+  const deleteFile = (fileId: string) => mut(() => api.delete(`/requests/${id}/files/${fileId}`), 'Файл удалён');
 
   async function exportExcel() {
     try { await api.download(`/requests/${id}/export`, {}, `Заявка_${r?.number ?? id}.xlsx`); }
@@ -172,24 +169,24 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   if (!r) return <div style={{ padding: 48 }}><Empty description="Заявка не найдена" /></div>;
 
   const isOwnSupplier = r.request_type === 'own_supplier';
-  const isDirectRoute = r.request_type === 'own_supply'; // прямой поставщик без РП
+  const isDirectRoute = r.request_type === 'own_supply';
 
-  // Гейты действий РП (own_supplier).
   const canApplyRp = isContractor && isOwnSupplier && ['in_work', 'revision'].includes(r.status);
-  const canCancel = (isContractor || isSupply) && isOwnSupplier
-    && ['in_work', 'rp_forming', 'revision'].includes(r.status);
+  const canCancel = (isContractor || isSupply) && isOwnSupplier && ['in_work', 'rp_forming', 'revision'].includes(r.status);
   const canSendRp = isSupply && isOwnSupplier && r.status === 'rp_forming';
   const canReviseRp = isSupply && isOwnSupplier && ['in_work', 'rp_forming'].includes(r.status);
   const canPayRp = isSupply && isOwnSupplier && ['rp_sent', 'rp_paid'].includes(r.status);
   const canResync = isSupply && isOwnSupplier && r.rp_letter?.sync_status === 'failed';
 
-  // Прежний поток (su10 / own_supply).
   const canEditFiles = isContractor && ['in_work', 'rp_forming', 'revision'].includes(r.status);
   const canRevisionComplete = isContractor && !isOwnSupplier && r.status === 'revision';
   const canRevisionStd = isSupply && !isOwnSupplier && r.status === 'in_work';
   const canSetSupplier = (isSupply || (isContractor && isDirectRoute)) && !isOwnSupplier
     && r.status !== 'delivered' && r.status !== 'revision' && r.status !== 'cancelled';
   const canPayStd = isSupply && !isOwnSupplier && !!r.order && r.status !== 'delivered';
+  const canUploadDocs = canEditFiles || isSupply;
+  const uploadDocOptions = (isSupply ? REQUEST_DOC_TYPES : RP_APPLICATION_DOC_TYPES)
+    .map((d) => ({ value: d, label: REQUEST_DOC_TYPE_LABELS[d as RequestDocType] }));
 
   const itemCols: ColumnsType<RequestItem> = [
     { title: '№', key: 'idx', width: 50, render: (_, __, i) => i + 1 },
@@ -206,7 +203,80 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
     { title: 'Комментарий', dataIndex: 'comment', key: 'comment', render: (v: string | null) => v || '—' },
   ];
 
+  const fileCols: ColumnsType<RequestFile> = [
+    { title: 'Тип', dataIndex: 'doc_type', key: 'doc_type', width: 200,
+      render: (v: string) => <Tag>{REQUEST_DOC_TYPE_LABELS[v as RequestDocType] ?? v}</Tag> },
+    { title: 'Имя', dataIndex: 'file_name', key: 'file_name', ellipsis: true },
+    { title: 'Размер', dataIndex: 'file_size', key: 'file_size', width: 100, render: (v: number | null) => formatSize(v) },
+    { title: '', key: 'act', width: 110, align: 'right', render: (_, f) => (
+      <Space size={4}>
+        <Button size="small" type="text" icon={<EyeOutlined />}
+          onClick={() => setPreview({ fileId: f.id, fileName: f.file_name, mimeType: f.mime_type })} />
+        <Button size="small" type="text" icon={<DownloadOutlined />} onClick={() => downloadFile(f)} />
+        {canEditFiles && <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={deleteFile(f.id)} />}
+      </Space>
+    ) },
+  ];
+
   const rpReg = r.rp_letter?.payhub_reg_number || r.order?.rp_number;
+
+  const sections = [
+    {
+      key: 'items',
+      label: `Состав заявки (${r.items.length})`,
+      children: (
+        <Table<RequestItem> rowKey={(_, i) => String(i)} size="small" pagination={false}
+          columns={itemCols} dataSource={r.items} scroll={{ x: 600 }} />
+      ),
+    },
+    {
+      key: 'files',
+      label: `Документы (${r.files.length})`,
+      children: (
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          {r.files.length === 0
+            ? <Text type="secondary">Файлов нет</Text>
+            : <Table<RequestFile> rowKey="id" size="small" pagination={false} columns={fileCols} dataSource={r.files} scroll={{ x: 560 }} />}
+          {canUploadDocs && (
+            <div>
+              <FileUploadList value={docFiles} onChange={setDocFiles} docTypeOptions={uploadDocOptions} />
+              {docFiles.length > 0 && (
+                <Button type="primary" style={{ marginTop: 8 }} loading={busy} onClick={uploadDocs}>
+                  Загрузить ({docFiles.length})
+                </Button>
+              )}
+            </div>
+          )}
+        </Space>
+      ),
+    },
+    ...(r.payments.length > 0 ? [{
+      key: 'payments',
+      label: 'Оплаты',
+      children: <Table<RequestPayment> rowKey="id" size="small" pagination={false} columns={payCols} dataSource={r.payments} />,
+    }] : []),
+    ...(r.history.length > 0 ? [{
+      key: 'history',
+      label: 'История',
+      children: (
+        <Timeline items={r.history.map((h) => ({
+          children: (
+            <Space direction="vertical" size={0}>
+              <Text>{ACTION_LABELS[h.action] ?? h.action}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {h.actor_name || 'Система'} · {new Date(h.created_at).toLocaleString('ru-RU')}
+              </Text>
+            </Space>
+          ),
+        }))} />
+      ),
+    }] : []),
+    {
+      key: 'chat',
+      label: 'Обсуждение',
+      children: <CommentsChat requestId={id} />,
+    },
+  ];
 
   return (
     <Card
@@ -231,10 +301,8 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
           <Alert type="warning" showIcon message="Возвращено на доработку" description={r.revision_reason} />
         )}
         {r.rp_letter?.sync_status === 'failed' && (
-          <Alert
-            type="error" showIcon message="Ошибка синхронизации письма РП с PayHub"
-            description={r.rp_letter.last_error || 'Повторите синхронизацию.'}
-          />
+          <Alert type="error" showIcon message="Ошибка синхронизации письма РП с PayHub"
+            description={r.rp_letter.last_error || 'Повторите синхронизацию.'} />
         )}
 
         <Descriptions size="small" column={{ xs: 1, sm: 2 }} bordered>
@@ -259,9 +327,7 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
           ) : null}
           {r.rp_letter?.payhub_url ? (
             <Descriptions.Item label="Письмо PayHub">
-              <a href={r.rp_letter.payhub_url} target="_blank" rel="noopener noreferrer">
-                Открыть <LinkOutlined />
-              </a>
+              <a href={r.rp_letter.payhub_url} target="_blank" rel="noopener noreferrer">Открыть <LinkOutlined /></a>
             </Descriptions.Item>
           ) : null}
           <Descriptions.Item label="Создана">{new Date(r.created_at).toLocaleString('ru-RU')}</Descriptions.Item>
@@ -274,18 +340,10 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
               {r.status === 'revision' ? 'Исправить и отправить' : 'Оформить РП'}
             </Button>
           )}
-          {canSendRp && (
-            <Button type="primary" icon={<SendOutlined />} onClick={() => setRpSendOpen(true)}>Отправить РП</Button>
-          )}
-          {canReviseRp && (
-            <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>
-          )}
-          {canPayRp && (
-            <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Документы оплаты</Button>
-          )}
-          {canResync && (
-            <Button icon={<SyncOutlined />} loading={busy} onClick={resync}>Повторить синхронизацию</Button>
-          )}
+          {canSendRp && <Button type="primary" icon={<SendOutlined />} onClick={() => setRpSendOpen(true)}>Отправить РП</Button>}
+          {canReviseRp && <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>}
+          {canPayRp && <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Документы оплаты</Button>}
+          {canResync && <Button icon={<SyncOutlined />} loading={busy} onClick={resync}>Повторить синхронизацию</Button>}
           {canSetSupplier && (
             <Button icon={<ShopOutlined />} onClick={() => setSupplierOpen(true)}>
               {r.order ? 'Изменить поставщика' : 'Выбрать поставщика'}
@@ -293,101 +351,16 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
           )}
           {canPayStd && <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Добавить оплату</Button>}
           {canRevisionStd && <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>}
-          {canRevisionComplete && (
-            <Button type="primary" loading={busy} onClick={completeRevision}>Отправить доработку</Button>
-          )}
-          {canCancel && (
-            <Button danger icon={<CloseCircleOutlined />} loading={busy} onClick={cancelRequest}>Отменить</Button>
-          )}
+          {canRevisionComplete && <Button type="primary" loading={busy} onClick={completeRevision}>Отправить доработку</Button>}
+          {canCancel && <Button danger icon={<CloseCircleOutlined />} loading={busy} onClick={cancelRequest}>Отменить</Button>}
         </Space>
 
-        {/* Позиции */}
-        <div>
-          <Text strong>Состав заявки</Text>
-          <Table<RequestItem>
-            rowKey={(_, i) => String(i)} size="small" pagination={false}
-            columns={itemCols} dataSource={r.items} scroll={{ x: 600 }} style={{ marginTop: 8 }}
-          />
-        </div>
-
-        {/* Файлы */}
-        <div>
-          <Space style={{ marginBottom: 8 }}>
-            <Text strong>Документы</Text>
-            {(canEditFiles || isSupply) && (
-              <>
-                <Select
-                  size="small" style={{ width: 160 }} value={docType} onChange={setDocType}
-                  options={REQUEST_DOC_TYPES.map((d) => ({ value: d, label: REQUEST_DOC_TYPE_LABELS[d] }))}
-                />
-                <Upload
-                  showUploadList={false}
-                  beforeUpload={(file) => { uploadFile(file as File); return false; }}
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.tiff,.tif,.bmp"
-                >
-                  <Button size="small" icon={<UploadOutlined />} loading={busy}>Добавить файл</Button>
-                </Upload>
-              </>
-            )}
-          </Space>
-          {r.files.length === 0 ? (
-            <Text type="secondary">Файлов нет</Text>
-          ) : (
-            <Table<RequestFile>
-              rowKey="id" size="small" pagination={false} showHeader={false}
-              columns={[
-                { title: 'Тип', dataIndex: 'doc_type', key: 'doc_type', width: 150,
-                  render: (v: string) => <Tag>{REQUEST_DOC_TYPE_LABELS[v as RequestDocType] ?? v}</Tag> },
-                { title: 'Имя', dataIndex: 'file_name', key: 'file_name' },
-                { title: '', key: 'act', width: 90, align: 'right', render: (_, f) => (
-                  <Space size={4}>
-                    <Button size="small" type="text" icon={<DownloadOutlined />} onClick={() => downloadFile(f)} />
-                    {canEditFiles && (
-                      <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={deleteFile(f.id)} />
-                    )}
-                  </Space>
-                ) },
-              ]}
-              dataSource={r.files}
-            />
-          )}
-        </div>
-
-        {/* Оплаты */}
-        {r.payments.length > 0 && (
-          <div>
-            <Text strong>Оплаты</Text>
-            <Table<RequestPayment> rowKey="id" size="small" pagination={false}
-              columns={payCols} dataSource={r.payments} style={{ marginTop: 8 }} />
-          </div>
-        )}
-
-        {/* История */}
-        {r.history.length > 0 && (
-          <div>
-            <Text strong>История</Text>
-            <Timeline
-              style={{ marginTop: 12 }}
-              items={r.history.map((h) => ({
-                children: (
-                  <Space direction="vertical" size={0}>
-                    <Text>{ACTION_LABELS[h.action] ?? h.action}</Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {h.actor_name || 'Система'} · {new Date(h.created_at).toLocaleString('ru-RU')}
-                    </Text>
-                  </Space>
-                ),
-              }))}
-            />
-          </div>
-        )}
+        <Collapse defaultActiveKey={['items', 'files', 'payments', 'history', 'chat']} items={sections} />
       </Space>
 
       {/* Модалка: выбор поставщика (su10 / own_supply) */}
-      <Modal
-        title="Поставщик и сумма" open={supplierOpen} onCancel={() => setSupplierOpen(false)}
-        onOk={submitSupplier} confirmLoading={busy} okText="Сохранить" width={modalWidth(520)}
-      >
+      <Modal title="Поставщик и сумма" open={supplierOpen} onCancel={() => setSupplierOpen(false)}
+        onOk={submitSupplier} confirmLoading={busy} okText="Сохранить" width={modalWidth(520)}>
         <Form form={supForm} layout="vertical">
           <Form.Item name="supplierName" label="Поставщик" rules={[{ required: true, message: 'Укажите поставщика' }]}>
             <Input maxLength={300} />
@@ -402,10 +375,8 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
       </Modal>
 
       {/* Модалка: оплата */}
-      <Modal
-        title="Оплата" open={paymentOpen} onCancel={() => setPaymentOpen(false)}
-        onOk={submitPayment} confirmLoading={busy} okText="Добавить" width={modalWidth(480)}
-      >
+      <Modal title="Оплата" open={paymentOpen} onCancel={() => setPaymentOpen(false)}
+        onOk={submitPayment} confirmLoading={busy} okText="Добавить" width={modalWidth(480)}>
         <Form form={payForm} layout="vertical">
           <Form.Item name="amount" label="Сумма, ₽" rules={[{ required: true, message: 'Укажите сумму' }]}>
             <InputNumber min={0.01} precision={2} style={{ width: 220 }} />
@@ -420,10 +391,8 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
       </Modal>
 
       {/* Модалка: на доработку */}
-      <Modal
-        title="Отправить на доработку" open={revisionOpen} onCancel={() => setRevisionOpen(false)}
-        onOk={submitRevision} confirmLoading={busy} okText="Отправить" width={modalWidth(480)}
-      >
+      <Modal title="Отправить на доработку" open={revisionOpen} onCancel={() => setRevisionOpen(false)}
+        onOk={submitRevision} confirmLoading={busy} okText="Отправить" width={modalWidth(480)}>
         <Form form={revForm} layout="vertical">
           <Form.Item name="comment" label="Что доработать" rules={[{ required: true, message: 'Укажите комментарий' }]}>
             <Input.TextArea rows={3} maxLength={2000} />
@@ -432,14 +401,10 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
       </Modal>
 
       {/* Модалка: отправить РП */}
-      <Modal
-        title="Отправить РП" open={rpSendOpen} onCancel={() => setRpSendOpen(false)}
-        onOk={submitRpSend} confirmLoading={busy} okText="Отправить в PayHub" width={modalWidth(520)}
-      >
-        <Alert
-          type="info" showIcon style={{ marginBottom: 12 }}
-          message="Будет создано распределительное письмо в PayHub; номер РП присвоит PayHub."
-        />
+      <Modal title="Отправить РП" open={rpSendOpen} onCancel={() => setRpSendOpen(false)}
+        onOk={submitRpSend} confirmLoading={busy} okText="Отправить в PayHub" width={modalWidth(520)}>
+        <Alert type="info" showIcon style={{ marginBottom: 12 }}
+          message="Будет создано распределительное письмо в PayHub; номер РП присвоит PayHub." />
         <Form form={rpSendForm} layout="vertical">
           <Form.Item name="rpDate" label="Дата РП" rules={[{ required: true, message: 'Укажите дату' }]}>
             <DatePicker style={{ width: 220 }} format="DD.MM.YYYY" />
@@ -449,13 +414,14 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
         </Form>
       </Modal>
 
-      {/* Модалка: оформить РП (форма заявки на оплату) */}
-      <RpFormModal
-        open={rpFormOpen}
-        requestId={id}
-        requestNumber={r.number}
-        onClose={() => setRpFormOpen(false)}
-      />
+      <RpFormModal open={rpFormOpen} requestId={id} requestNumber={r.number} onClose={() => setRpFormOpen(false)} />
+
+      {preview && (
+        <FilePreviewModal
+          open onClose={() => setPreview(null)}
+          requestId={id} fileId={preview.fileId} fileName={preview.fileName} mimeType={preview.mimeType}
+        />
+      )}
     </Card>
   );
 }
