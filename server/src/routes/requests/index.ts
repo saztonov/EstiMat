@@ -83,7 +83,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
   // ============================================================
   fastify.get<{
     Querystring: {
-      type?: string; status?: string; projectId?: string; contractorId?: string;
+      type?: string; status?: string; projectId?: string; estimateId?: string; contractorId?: string;
       dateFrom?: string; dateTo?: string; q?: string; limit?: string; offset?: string;
     };
   }>('/', async (request, reply) => {
@@ -116,6 +116,10 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     if (q.projectId) {
       values.push(q.projectId);
       where.push(`mr.project_id = $${values.length}`);
+    }
+    if (q.estimateId) {
+      values.push(q.estimateId);
+      where.push(`mr.estimate_id = $${values.length}`);
     }
     if (q.dateFrom) {
       values.push(q.dateFrom);

@@ -9,6 +9,7 @@ import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { formatMoney, type EstimateDetail, type EstimateItem } from '../estimates/components/types';
 import { ContractorsSmetaTab } from './ContractorsSmetaTab';
 import { ContractorsMaterialsTab } from './ContractorsMaterialsTab';
+import { ContractorsRequestsTab } from './ContractorsRequestsTab';
 
 // Строка списка объектов раздела (поля зависят от роли — см. /api/contractors/estimates).
 // Карточка = объект; у объекта одна смета (estimate_id = null, если смета не заведена).
@@ -171,6 +172,11 @@ export function ContractorsPage() {
               key: 'materials',
               label: 'Материалы',
               children: <ContractorsMaterialsTab estimateId={estimateId} items={items} viewerIsContractor={viewerIsContractor} />,
+            },
+            {
+              key: 'requests',
+              label: 'Заявки',
+              children: <ContractorsRequestsTab estimateId={estimateId} viewerIsContractor={viewerIsContractor} />,
             },
           ]}
         />

@@ -46,9 +46,13 @@ export default function App() {
               <Route path="/estimates/:id/materials" element={<EstimateMaterialsPage />} />
               <Route path="/administration" element={<AdministrationPage />} />
             </Route>
-            {/* Доступно всем ролям (подрядчик видит только свои заявки — скоуп на сервере) */}
-            <Route path="/requests" element={<RequestsPage />} />
-            <Route path="/requests/:id" element={<RequestDetailPage />} />
+            {/* Заявки — пульт снабжения, только для внутренних ролей. Подрядчик видит свои
+                заявки на вкладке «Заявки» внутри сметы объекта (раздел «Подрядчики»/«Сметы»). */}
+            <Route element={<RoleRoute allow={['admin', 'engineer', 'manager']} redirect="/contractors" />}>
+              <Route path="/requests" element={<RequestsPage />} />
+              <Route path="/requests/:id" element={<RequestDetailPage />} />
+            </Route>
+            {/* Доступно всем ролям */}
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/contractors" element={<ContractorsPage />} />
             <Route path="/contractors/:estimateId" element={<ContractorsPage />} />
