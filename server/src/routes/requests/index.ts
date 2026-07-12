@@ -723,16 +723,13 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       if (!['in_work', 'rp_forming', 'revision'].includes(mr.status)) {
         return reply.status(409).send({ error: 'Заявку сейчас нельзя оформить' });
       }
-      // Поставщик — из справочника; имя/ИНН/статус СБ берём на сервере (клиент их не задаёт).
+      // Поставщик — из справочника организаций; имя/ИНН берём на сервере (клиент их не задаёт).
       const supRes = await fastify.pool.query(
-        `SELECT name, inn, security_status FROM suppliers WHERE id = $1 AND is_active`,
+        `SELECT name, inn FROM organizations WHERE id = $1 AND type = 'supplier' AND is_active`,
         [body.supplierId],
       );
       const sup = supRes.rows[0];
       if (!sup) return reply.status(400).send({ error: 'Поставщик не найден' });
-      if (sup.security_status === 'rejected') {
-        return reply.status(400).send({ error: 'Поставщик отклонён службой безопасности' });
-      }
       // Счёт обязателен до перевода в «Оформление РП».
       const inv = await fastify.pool.query(
         `SELECT 1 FROM material_request_files
