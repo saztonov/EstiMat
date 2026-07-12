@@ -14,6 +14,8 @@ export interface RequestFile {
   file_size: number | null;
   mime_type: string | null;
   created_at: string;
+  created_by_name: string | null;
+  created_by_role: string | null;
 }
 
 export interface RequestOrder {

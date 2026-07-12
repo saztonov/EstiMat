@@ -90,9 +90,9 @@ export async function buildApp() {
     },
   });
 
-  // Multipart (file uploads)
+  // Multipart (file uploads). Глобальный лимит согласован с per-route (заявки — 50 МБ).
   await app.register(multipart, {
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 50 * 1024 * 1024 },
   });
 
   // Static files (user uploads) — только dev-фолбэк без S3.

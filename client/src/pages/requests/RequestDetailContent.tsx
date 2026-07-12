@@ -203,11 +203,22 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
     { title: 'Комментарий', dataIndex: 'comment', key: 'comment', render: (v: string | null) => v || '—' },
   ];
 
+  const fileSide = (roleOfUploader: string | null) =>
+    roleOfUploader && ['admin', 'engineer', 'manager'].includes(roleOfUploader)
+      ? 'СУ-10'
+      : (r.contractor_name || 'Подрядчик');
+
   const fileCols: ColumnsType<RequestFile> = [
-    { title: 'Тип', dataIndex: 'doc_type', key: 'doc_type', width: 200,
+    { title: 'Тип', dataIndex: 'doc_type', key: 'doc_type', width: 180,
       render: (v: string) => <Tag>{REQUEST_DOC_TYPE_LABELS[v as RequestDocType] ?? v}</Tag> },
     { title: 'Имя', dataIndex: 'file_name', key: 'file_name', ellipsis: true },
-    { title: 'Размер', dataIndex: 'file_size', key: 'file_size', width: 100, render: (v: number | null) => formatSize(v) },
+    { title: 'Размер', dataIndex: 'file_size', key: 'file_size', width: 90, render: (v: number | null) => formatSize(v) },
+    { title: 'Загрузил', key: 'author', width: 190, render: (_, f) => (
+      <div style={{ lineHeight: 1.2 }}>
+        <div>{f.created_by_name || '—'}</div>
+        <Text type="secondary" style={{ fontSize: 12 }}>{fileSide(f.created_by_role)}</Text>
+      </div>
+    ) },
     { title: '', key: 'act', width: 110, align: 'right', render: (_, f) => (
       <Space size={4}>
         <Button size="small" type="text" icon={<EyeOutlined />}

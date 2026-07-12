@@ -193,9 +193,12 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         [mr.id],
       ),
       fastify.pool.query(
-        `SELECT id, doc_type, file_name, file_size, mime_type, created_at
-           FROM material_request_files WHERE request_id = $1 AND NOT superseded
-          ORDER BY created_at`,
+        `SELECT f.id, f.doc_type, f.file_name, f.file_size, f.mime_type, f.created_at,
+                u.full_name AS created_by_name, u.role AS created_by_role
+           FROM material_request_files f
+           LEFT JOIN users u ON u.id = f.created_by
+          WHERE f.request_id = $1 AND NOT f.superseded
+          ORDER BY f.created_at`,
         [mr.id],
       ),
       fastify.pool.query(

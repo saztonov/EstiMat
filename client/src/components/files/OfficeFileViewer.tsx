@@ -11,7 +11,39 @@ interface Props {
 
 interface Sheet { name: string; html: string }
 
-/** Просмотр офисных документов в браузере: Excel (SheetJS) и Word (mammoth), lazy-import. */
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** Рендер листа Excel через ExcelJS в HTML-таблицу с базовым форматированием (заливка/жирный/выравнивание). */
+async function renderXlsx(buffer: ArrayBuffer): Promise<Sheet[]> {
+  const mod = await import('exceljs');
+  const ExcelJS = (mod as unknown as { default?: typeof mod }).default ?? mod;
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  const sheets: Sheet[] = [];
+  wb.eachSheet((ws) => {
+    const colCount = Math.min(ws.actualColumnCount || ws.columnCount || 1, 60);
+    let html = '<table>';
+    ws.eachRow({ includeEmpty: true }, (row) => {
+      html += '<tr>';
+      for (let c = 1; c <= colCount; c++) {
+        const cell = row.getCell(c);
+        const text = cell.text ?? '';
+        const fill = cell.fill && cell.fill.type === 'pattern' && cell.fill.fgColor?.argb
+          ? `background:#${cell.fill.fgColor.argb.slice(-6)};` : '';
+        const bold = cell.font?.bold ? 'font-weight:bold;' : '';
+        const align = cell.alignment?.horizontal ? `text-align:${cell.alignment.horizontal};` : '';
+        html += `<td style="${fill}${bold}${align}">${escapeHtml(String(text))}</td>`;
+      }
+      html += '</tr>';
+    });
+    html += '</table>';
+    sheets.push({ name: ws.name, html });
+  });
+  return sheets;
+}
+
+/** Просмотр офисных документов: Excel (ExcelJS), старый xls (SheetJS), Word (mammoth). Lazy-import. */
 export function OfficeFileViewer({ buffer, fileName, height = '70vh' }: Props) {
   const [loading, setLoading] = useState(true);
   const [sheets, setSheets] = useState<Sheet[]>([]);
@@ -24,7 +56,10 @@ export function OfficeFileViewer({ buffer, fileName, height = '70vh' }: Props) {
       setLoading(true);
       setError(null);
       try {
-        if (ext === 'xlsx' || ext === 'xls') {
+        if (ext === 'xlsx') {
+          const list = await renderXlsx(buffer);
+          if (!cancelled) setSheets(list);
+        } else if (ext === 'xls') {
           const XLSX = await import('xlsx');
           const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
           const list: Sheet[] = [];
@@ -55,7 +90,7 @@ export function OfficeFileViewer({ buffer, fileName, height = '70vh' }: Props) {
 
   const render = (html: string) => (
     <div className="office-preview" style={{ height, overflow: 'auto', padding: 12, background: '#fff' }}>
-      <style>{`.office-preview table{border-collapse:collapse}.office-preview td,.office-preview th{border:1px solid #e0e0e0;padding:2px 6px;font-size:13px}`}</style>
+      <style>{`.office-preview table{border-collapse:collapse}.office-preview td,.office-preview th{border:1px solid #e0e0e0;padding:2px 6px;font-size:13px;white-space:nowrap}`}</style>
       <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />
     </div>
   );
