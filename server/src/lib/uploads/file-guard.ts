@@ -1,11 +1,13 @@
 /**
  * Общие проверки и потоковая загрузка файлов в S3 (переиспользуется заявками и заявками на оплату).
  * MIME выводится сервером из проверенного расширения — клиентскому content-type не доверяем.
- * Загрузка потоковая (managed multipart), без буферизации крупных файлов в память: первые байты
- * читаются для sniff magic-bytes, затем остаток стримится в S3; checksum считается на лету.
+ * Загрузка потоковая (managed multipart), без буферизации крупных файлов в память: magic-bytes
+ * проверяются на первом чанке внутри Transform, данные перекачиваются одним pipeline (корректный
+ * backpressure, без потери байтов); checksum/size считаются на лету.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { PassThrough, type Readable } from 'node:stream';
+import { Transform, type Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type { Storage } from '../../plugins/s3.js';
 
 // Разрешённые типы файлов + сигнатуры (magic bytes) — документы, не изображения проекта.
@@ -58,29 +60,6 @@ export class FileGuardError extends Error {
   }
 }
 
-/** Читает первый непустой чанк из потока (для sniff), не теряя его для последующей передачи. */
-function readFirstChunk(src: Readable): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const onReadable = () => {
-      const chunk = src.read();
-      if (chunk) {
-        cleanup();
-        resolve(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-    };
-    const onEnd = () => { cleanup(); resolve(Buffer.alloc(0)); };
-    const onError = (e: Error) => { cleanup(); reject(e); };
-    const cleanup = () => {
-      src.off('readable', onReadable);
-      src.off('end', onEnd);
-      src.off('error', onError);
-    };
-    src.on('readable', onReadable);
-    src.on('end', onEnd);
-    src.on('error', onError);
-  });
-}
-
 /**
  * Потоково загружает файл multipart в S3 с проверкой magic-bytes и подсчётом checksum/size.
  * @param source   поток файла (Fastify multipart `file.file`)
@@ -97,29 +76,42 @@ export async function guardedStreamUpload(
   const ext = extOf(fileName);
   if (!ALLOWED_EXT.has(ext)) throw new FileGuardError('Недопустимый тип файла');
 
-  const firstChunk = await readFirstChunk(source);
-  if (!sniffOk(firstChunk, ext)) {
-    source.resume(); // осушить остаток, чтобы не подвесить соединение
-    throw new FileGuardError('Содержимое файла не соответствует расширению');
-  }
-
   const mime = EXT_TO_MIME[ext] ?? 'application/octet-stream';
   const safeName = safeFileName(fileName);
   const key = `${keyPrefix}/${randomUUID()}_${safeName}`;
 
-  // Собираем поток заново: первый чанк + остаток; попутно считаем hash и размер.
   const hash = createHash('sha256');
   let size = 0;
-  const pass = new PassThrough();
-  pass.on('data', (c: Buffer) => { hash.update(c); size += c.length; });
+  let checked = false;
 
-  const pump = (async () => {
-    pass.write(firstChunk);
-    for await (const chunk of source) pass.write(chunk as Buffer);
-    pass.end();
-  })();
+  // Sniff magic-bytes на первом чанке, считаем checksum/size и пропускаем данные дальше в S3.
+  // Единый поток (source → guard → S3) через pipeline: без смешивания paused/flowing режимов
+  // и с корректным backpressure — иначе часть байтов терялась и в S3 попадал обрезанный файл.
+  const guard = new Transform({
+    transform(chunk, _enc, cb) {
+      const buf: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (!checked) {
+        checked = true;
+        if (!sniffOk(buf, ext)) {
+          cb(new FileGuardError('Содержимое файла не соответствует расширению'));
+          return;
+        }
+      }
+      hash.update(buf);
+      size += buf.length;
+      cb(null, buf);
+    },
+  });
 
-  await Promise.all([storage.putObjectStream(key, pass, mime), pump]);
+  // S3 читает readable-сторону guard; pipeline перекачивает source в writable-сторону.
+  const uploadDone = storage.putObjectStream(key, guard, mime);
+  try {
+    await pipeline(source, guard);
+  } catch (e) {
+    await uploadDone.catch(() => {}); // дождаться аборта S3-загрузки, не оставляя висящий upload
+    throw e;
+  }
+  await uploadDone;
 
   return { key, mime, checksum: hash.digest('hex'), size, safeName };
 }
