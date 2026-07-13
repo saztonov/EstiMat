@@ -43,3 +43,51 @@ export async function hasActiveAllocations(db: Db, requestId: string): Promise<b
   );
   return rows[0]?.active === true;
 }
+
+// Позиции заявки в лотах, ушедших в закупку (sourcing/awarded/cancel_pending) — состав заморожен,
+// освободить их отменой заявки нельзя (снабжение сначала отменяет лот). Только для su10-заявок.
+export async function hasFrozenAllocations(db: Db, requestId: string): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM supplier_order_items soi
+        JOIN supplier_orders so ON so.id = soi.order_id
+       WHERE soi.request_id = $1 AND so.kind = 'sourcing'
+         AND so.sourcing_status IN ('sourcing', 'awarded', 'cancel_pending')
+     ) AS frozen`,
+    [requestId],
+  );
+  return rows[0]?.frozen === true;
+}
+
+// Освобождение материалов заявки из ФОРМИРУЕМЫХ лотов (при отмене заявки): удаляем позиции
+// таких лотов и бумпаем row_version затронутых лотов с записью в журнал. Резерв — вычисляемый,
+// поэтому удаление позиций сразу возвращает остаток в свод материалов. Вызывать в транзакции.
+export async function releaseFormingAllocations(
+  client: PoolClient,
+  requestId: string,
+  userId?: string | null,
+): Promise<void> {
+  const { rows } = await client.query(
+    `DELETE FROM supplier_order_items soi
+       USING supplier_orders so
+      WHERE soi.order_id = so.id AND soi.request_id = $1
+        AND so.kind = 'sourcing' AND so.sourcing_status = 'forming'
+      RETURNING soi.order_id`,
+    [requestId],
+  );
+  const orderIds = [...new Set(rows.map((r) => r.order_id as string))];
+  for (const orderId of orderIds) {
+    const { rows: lotRows } = await client.query(
+      `UPDATE supplier_orders SET row_version = row_version + 1, updated_at = now()
+        WHERE id = $1 RETURNING project_id`,
+      [orderId],
+    );
+    await appendOrderAudit(client, {
+      orderId,
+      action: 'item_removed',
+      userId,
+      changes: { reason: 'request_cancelled' },
+      projectId: lotRows[0]?.project_id ?? null,
+    });
+  }
+}

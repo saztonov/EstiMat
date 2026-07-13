@@ -5,5 +5,5 @@ import { RequestDetailContent } from './RequestDetailContent';
 export function RequestDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  return <RequestDetailContent id={id} onBack={() => navigate('/requests')} />;
+  return <RequestDetailContent id={id} onBack={() => navigate('/requests')} backLabel="К списку" />;
 }

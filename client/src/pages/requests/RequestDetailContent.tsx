@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import {
   Card, Descriptions, Table, Space, Button, Tag, Empty, Timeline, Alert, Modal, Collapse,
-  Form, Input, InputNumber, DatePicker, Typography, Spin, App, Popconfirm,
+  Form, Input, InputNumber, DatePicker, Typography, Spin, App, Popconfirm, Tooltip,
 } from 'antd';
 import {
-  ArrowLeftOutlined, FileExcelOutlined, DownloadOutlined, EyeOutlined,
+  FileExcelOutlined, DownloadOutlined, EyeOutlined,
   DeleteOutlined, DollarOutlined, ShopOutlined, RollbackOutlined,
-  FileDoneOutlined, SendOutlined, CloseCircleOutlined, SyncOutlined, LinkOutlined,
+  FileDoneOutlined, SendOutlined, CloseCircleOutlined, CheckCircleOutlined, SyncOutlined,
+  LinkOutlined, EditOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -19,6 +20,7 @@ import { modalWidth } from '../../lib/modalWidth';
 import { formatSize } from '../../lib/files';
 import { RequestStatusTag, RequestTypeTag, money, round4 } from './requestConstants';
 import { RpFormModal } from './RpFormModal';
+import { OrderEditModal } from './OrderEditModal';
 import { RequestLotsSection } from './RequestLotsSection';
 import { CommentsChat } from './CommentsChat';
 import { FileUploadList, type UploadItem } from '../../components/files/FileUploadList';
@@ -37,15 +39,20 @@ const ACTION_LABELS: Record<string, string> = {
   rp_application_submitted: 'Оформление РП',
   rp_sent: 'РП отправлено',
   cancelled: 'Заявка отменена',
+  order_updated: 'Изменены реквизиты',
   file_added: 'Добавлен файл',
   file_removed: 'Удалён файл',
+  file_rejected: 'Документ вычеркнут',
+  file_restored: 'Документ восстановлен',
 };
 
 /**
  * Карточка заявки (стиль billhub ViewRequestModal): реквизиты + действия, затем секции-блоки
  * (Состав / Документы / Оплаты / История / Обсуждение). Предпросмотр файлов — всем ролям.
  */
-export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () => void }) {
+export function RequestDetailContent(
+  { id, onBack, backLabel = 'Закрыть' }: { id: string; onBack?: () => void; backLabel?: string },
+) {
   const { message } = App.useApp();
   const qc = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
@@ -57,6 +64,7 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [rpFormOpen, setRpFormOpen] = useState(false);
   const [rpSendOpen, setRpSendOpen] = useState(false);
+  const [orderEditOpen, setOrderEditOpen] = useState(false);
   const [docFiles, setDocFiles] = useState<UploadItem[]>([]);
   const [preview, setPreview] = useState<{ fileId: string; fileName: string; mimeType: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -156,6 +164,10 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   }
 
   const deleteFile = (fileId: string) => mut(() => api.delete(`/requests/${id}/files/${fileId}`), 'Файл удалён');
+  const rejectFile = (fileId: string, isRejected: boolean) => mut(
+    () => api.patch(`/requests/${id}/files/${fileId}/rejection`, { isRejected }),
+    isRejected ? 'Документ вычеркнут' : 'Документ восстановлен',
+  );
 
   async function exportExcel() {
     try { await api.download(`/requests/${id}/export`, {}, `Заявка_${r?.number ?? id}.xlsx`); }
@@ -171,9 +183,19 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
 
   const isOwnSupplier = r.request_type === 'own_supplier';
   const isDirectRoute = r.request_type === 'own_supply';
+  const isSu10 = r.request_type === 'su10';
 
   const canApplyRp = isContractor && isOwnSupplier && ['in_work', 'revision'].includes(r.status);
-  const canCancel = (isContractor || isSupply) && isOwnSupplier && ['in_work', 'rp_forming', 'revision'].includes(r.status);
+  // Отмена: own_supplier — до отправки РП; su10 — до ухода материалов в закупку (сервер освободит
+  // формируемые лоты, а при активной закупке вернёт 409).
+  const canCancel =
+    // «Оплата по РП»: подрядчик — только до первой смены статуса (пока «В работе»); снабжение — до отправки РП.
+    (isOwnSupplier && (
+      (isContractor && r.status === 'in_work') ||
+      (isSupply && ['in_work', 'rp_forming', 'revision'].includes(r.status))
+    )) ||
+    // su10: до ухода материалов в закупку (сервер освободит формируемые лоты, при активной закупке — 409).
+    (isSu10 && (isContractor || isSupply) && ['in_work', 'revision'].includes(r.status));
   const canSendRp = isSupply && isOwnSupplier && r.status === 'rp_forming';
   const canReviseRp = isSupply && isOwnSupplier && ['in_work', 'rp_forming'].includes(r.status);
   const canPayRp = isSupply && isOwnSupplier && ['rp_sent', 'rp_paid'].includes(r.status);
@@ -182,6 +204,11 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   const canEditFiles = isContractor && ['in_work', 'rp_forming', 'revision'].includes(r.status);
   // Удаление документов: подрядчик — до отправки РП; инженер/снабжение — на любом этапе (сервер разрешает internal).
   const canDeleteFiles = canEditFiles || isSupply;
+  // Вычёркивание документов («Оплата по РП», снабжение и подрядчик, до отправки РП).
+  const canRejectFiles = isOwnSupplier && (isSupply || isContractor)
+    && ['in_work', 'rp_forming', 'revision'].includes(r.status);
+  // Правка реквизитов оформленной заявки (до отправки в PayHub).
+  const canEditOrder = isOwnSupplier && !!r.order && r.status === 'rp_forming' && (isSupply || isContractor);
   const canRevisionComplete = isContractor && !isOwnSupplier && r.status === 'revision';
   const canRevisionStd = isSupply && !isOwnSupplier && r.status === 'in_work';
   const canSetSupplier = (isSupply || (isContractor && isDirectRoute)) && !isOwnSupplier
@@ -214,7 +241,12 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   const fileCols: ColumnsType<RequestFile> = [
     { title: 'Тип', dataIndex: 'doc_type', key: 'doc_type', width: 180,
       render: (v: string) => <Tag>{REQUEST_DOC_TYPE_LABELS[v as RequestDocType] ?? v}</Tag> },
-    { title: 'Имя', dataIndex: 'file_name', key: 'file_name', ellipsis: true },
+    { title: 'Имя', dataIndex: 'file_name', key: 'file_name', ellipsis: true,
+      render: (v: string, f) => (f.is_rejected ? (
+        <Tooltip title={`Вычеркнул: ${f.rejected_by_name || '—'}${f.rejected_at ? ' · ' + new Date(f.rejected_at).toLocaleString('ru-RU') : ''}`}>
+          <span style={{ textDecoration: 'line-through', color: '#999' }}>{v}</span>
+        </Tooltip>
+      ) : v) },
     { title: 'Размер', dataIndex: 'file_size', key: 'file_size', width: 90, render: (v: number | null) => formatSize(v) },
     { title: 'Загрузил', key: 'author', width: 190, render: (_, f) => (
       <div style={{ lineHeight: 1.2 }}>
@@ -222,11 +254,19 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
         <Text type="secondary" style={{ fontSize: 12 }}>{fileSide(f.created_by_role)}</Text>
       </div>
     ) },
-    { title: '', key: 'act', width: 110, align: 'right', render: (_, f) => (
+    { title: '', key: 'act', width: 140, align: 'right', render: (_, f) => (
       <Space size={4}>
         <Button size="small" type="text" icon={<EyeOutlined />}
           onClick={() => setPreview({ fileId: f.id, fileName: f.file_name, mimeType: f.mime_type })} />
         <Button size="small" type="text" icon={<DownloadOutlined />} onClick={() => downloadFile(f)} />
+        {canRejectFiles && (
+          <Tooltip title={f.is_rejected ? 'Вернуть' : 'Вычеркнуть'}>
+            <Button size="small" type="text" loading={busy}
+              icon={f.is_rejected ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+              style={{ color: f.is_rejected ? '#52c41a' : '#ff4d4f' }}
+              onClick={rejectFile(f.id, !f.is_rejected)} />
+          </Tooltip>
+        )}
         {canDeleteFiles && (
           <Popconfirm title="Удалить документ?" okText="Удалить" cancelText="Отмена" okButtonProps={{ danger: true }} onConfirm={deleteFile(f.id)}>
             <Button size="small" type="text" danger icon={<DeleteOutlined />} />
@@ -259,7 +299,8 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           {r.files.length === 0
             ? <Text type="secondary">Файлов нет</Text>
-            : <Table<RequestFile> rowKey="id" size="small" pagination={false} columns={fileCols} dataSource={r.files} scroll={{ x: 560 }} />}
+            : <Table<RequestFile> rowKey="id" size="small" pagination={false} columns={fileCols} dataSource={r.files} scroll={{ x: 560 }}
+                rowClassName={(f) => (f.is_rejected ? 'file-rejected-row' : '')} />}
           {canUploadDocs && (
             <div>
               <FileUploadList value={docFiles} onChange={setDocFiles} docTypeOptions={uploadDocOptions} />
@@ -305,7 +346,6 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
     <Card
       title={
         <Space>
-          {onBack && <Button type="text" icon={<ArrowLeftOutlined />} onClick={onBack} />}
           <span>Заявка {r.number}</span>
           <RequestTypeTag type={r.request_type} />
           <RequestStatusTag status={r.status} comment={r.revision_reason} />
@@ -313,8 +353,9 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
       }
       extra={<Button icon={<FileExcelOutlined />} onClick={exportExcel}>Экспорт в Excel</Button>}
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-      styles={{ header: { paddingLeft: onBack ? 48 : 16 }, body: { flex: 1, minHeight: 0, overflow: 'auto' } }}
+      styles={{ header: { paddingLeft: 16 }, body: { flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: 0 } }}
     >
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
         <Title level={5} style={{ margin: 0 }}>
           {r.contractor_name || '—'}{r.contractor_inn ? `, ИНН ${r.contractor_inn}` : ''}
@@ -356,7 +397,16 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
           <Descriptions.Item label="Создана">{new Date(r.created_at).toLocaleString('ru-RU')}</Descriptions.Item>
         </Descriptions>
 
-        {/* Действия */}
+        <Collapse defaultActiveKey={[]} items={sections} />
+      </Space>
+      </div>
+
+      {/* Нижняя панель управления: слева закрытие, справа действия по роли/статусу */}
+      <div style={{
+        flexShrink: 0, borderTop: '1px solid #f0f0f0', padding: '10px 16px',
+        display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8,
+      }}>
+        <div>{onBack && <Button onClick={onBack}>{backLabel}</Button>}</div>
         <Space wrap>
           {canApplyRp && (
             <Button type="primary" icon={<FileDoneOutlined />} onClick={() => setRpFormOpen(true)}>
@@ -375,11 +425,15 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
           {canPayStd && <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Добавить оплату</Button>}
           {canRevisionStd && <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>}
           {canRevisionComplete && <Button type="primary" loading={busy} onClick={completeRevision}>Отправить доработку</Button>}
-          {canCancel && <Button danger icon={<CloseCircleOutlined />} loading={busy} onClick={cancelRequest}>Отменить</Button>}
+          {canEditOrder && <Button icon={<EditOutlined />} onClick={() => setOrderEditOpen(true)}>Редактировать</Button>}
+          {canCancel && (
+            <Popconfirm title="Отменить заявку?" okText="Отменить" cancelText="Нет"
+              okButtonProps={{ danger: true }} onConfirm={cancelRequest}>
+              <Button danger icon={<CloseCircleOutlined />} loading={busy}>Отменить</Button>
+            </Popconfirm>
+          )}
         </Space>
-
-        <Collapse defaultActiveKey={['items', 'files', 'payments', 'history', 'chat']} items={sections} />
-      </Space>
+      </div>
 
       {/* Модалка: выбор поставщика (su10 / own_supply) */}
       <Modal title="Поставщик и сумма" open={supplierOpen} onCancel={() => setSupplierOpen(false)}
@@ -438,6 +492,8 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
       </Modal>
 
       <RpFormModal open={rpFormOpen} requestId={id} requestNumber={r.number} onClose={() => setRpFormOpen(false)} />
+
+      <OrderEditModal open={orderEditOpen} requestId={id} requestNumber={r.number} onClose={() => setOrderEditOpen(false)} />
 
       {preview && (
         <FilePreviewModal

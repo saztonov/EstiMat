@@ -1,8 +1,14 @@
-import { useState } from 'react';
-import { Table, Space, Button, Tooltip, Empty, Modal, Badge, App } from 'antd';
-import { FileExcelOutlined, MessageOutlined } from '@ant-design/icons';
+import { useMemo, useState } from 'react';
+import { Table, Space, Button, Tooltip, Empty, Modal, Badge, Select, Input, App } from 'antd';
+import { FileExcelOutlined, MessageOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
+import {
+  MATERIAL_REQUEST_TYPES,
+  MATERIAL_REQUEST_TYPE_LABELS,
+  REQUEST_STATUSES,
+  REQUEST_STATUS_LABELS,
+} from '@estimat/shared';
 import { api } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
@@ -17,20 +23,43 @@ interface Props {
   viewerIsContractor: boolean;
 }
 
+interface Filters {
+  type?: string;
+  status?: string;
+  q?: string;
+}
+
 /** Вкладка «Заявки» на странице сметы объекта: заявки только по этому объекту, карточка в окне. */
 export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props) {
   const { message } = App.useApp();
   const [openId, setOpenId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<Filters>({});
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const unread = useUnreadCounts();
 
+  const qs = useMemo(() => {
+    const p = new URLSearchParams();
+    p.set('estimateId', estimateId);
+    for (const [k, v] of Object.entries(filters)) if (v) p.set(k, v);
+    p.set('limit', String(pageSize));
+    p.set('offset', String((page - 1) * pageSize));
+    return p.toString();
+  }, [estimateId, filters, page, pageSize]);
+
   const { data, isLoading } = useQuery({
-    queryKey: ['requests', 'by-estimate', estimateId],
-    queryFn: () =>
-      api.get<{ data: RequestRow[] }>(`/requests?estimateId=${encodeURIComponent(estimateId)}&limit=500`),
+    queryKey: ['requests', 'by-estimate', estimateId, filters, page, pageSize],
+    queryFn: () => api.get<{ data: RequestRow[]; meta: { total: number } }>(`/requests?${qs}`),
     enabled: !!estimateId,
   });
   const rows = data?.data ?? [];
+  const total = data?.meta?.total ?? 0;
+
+  const setF = (patch: Partial<Filters>) => {
+    setFilters((f) => ({ ...f, ...patch }));
+    setPage(1);
+  };
 
   async function exportExcel(r: RequestRow) {
     setDownloadingId(r.id);
@@ -72,34 +101,65 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
       render: (v: string | number | null) => money(v),
     },
     {
-      title: 'Действия', key: 'actions', width: 200,
+      title: '', key: 'actions', width: 110,
       render: (_, r) => (
-        <Space size={4} wrap>
-          <Button size="small" type="link" onClick={() => setOpenId(r.id)}>Открыть</Button>
-          <Tooltip title="Выгрузить заявку в Excel">
-            <Button
-              size="small" icon={<FileExcelOutlined />}
-              loading={downloadingId === r.id}
-              onClick={() => exportExcel(r)}
-            >
-              Excel
-            </Button>
-          </Tooltip>
-        </Space>
+        <Tooltip title="Выгрузить заявку в Excel">
+          <Button
+            size="small" icon={<FileExcelOutlined />}
+            loading={downloadingId === r.id}
+            onClick={(e) => { e.stopPropagation(); exportExcel(r); }}
+          >
+            Excel
+          </Button>
+        </Tooltip>
       ),
     },
   ];
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+      <Space wrap style={{ marginBottom: 12 }}>
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="Номер / поставщик"
+          style={{ width: 220 }}
+          value={filters.q}
+          onChange={(e) => setF({ q: e.target.value || undefined })}
+        />
+        <Select
+          allowClear placeholder="Вид" style={{ width: 200 }}
+          value={filters.type}
+          onChange={(v) => setF({ type: v })}
+          options={MATERIAL_REQUEST_TYPES.map((t) => ({ value: t, label: MATERIAL_REQUEST_TYPE_LABELS[t] }))}
+        />
+        <Select
+          allowClear placeholder="Статус" style={{ width: 180 }}
+          value={filters.status}
+          onChange={(v) => setF({ status: v })}
+          options={REQUEST_STATUSES.map((s) => ({ value: s, label: REQUEST_STATUS_LABELS[s] }))}
+        />
+      </Space>
       <Table<RequestRow>
         rowKey="id"
         size="small"
         loading={isLoading}
         columns={columns}
         dataSource={rows}
-        pagination={DEFAULT_PAGINATION}
+        pagination={{
+          ...DEFAULT_PAGINATION,
+          current: page,
+          pageSize,
+          total,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps); },
+        }}
         scroll={{ x: 900 }}
+        onRow={(r) => ({
+          onClick: () => setOpenId(r.id),
+          onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(r.id); } },
+          tabIndex: 0,
+          style: { cursor: 'pointer' },
+        })}
         locale={{ emptyText: <Empty description="Заявок по объекту пока нет" /> }}
       />
 

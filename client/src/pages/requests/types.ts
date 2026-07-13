@@ -16,6 +16,9 @@ export interface RequestFile {
   created_at: string;
   created_by_name: string | null;
   created_by_role: string | null;
+  is_rejected: boolean;
+  rejected_by_name: string | null;
+  rejected_at: string | null;
 }
 
 export interface RequestOrder {

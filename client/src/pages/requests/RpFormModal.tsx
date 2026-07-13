@@ -1,19 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Form, Select, InputNumber, Input, Segmented, Collapse, Table, Space, App } from 'antd';
+import { useEffect, useRef, useState } from 'react';
+import { Modal, Form, Input, Collapse, Table, App } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { SHIPPING_CONDITIONS, RP_APPLICATION_DOC_TYPES, REQUEST_DOC_TYPE_LABELS } from '@estimat/shared';
+import { RP_APPLICATION_DOC_TYPES, REQUEST_DOC_TYPE_LABELS } from '@estimat/shared';
 import { api } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
 import { round4 } from './requestConstants';
+import { RequisitesFields } from './RequisitesFields';
 import { FileUploadList, type UploadItem } from '../../components/files/FileUploadList';
 import type { RequestDetail, RequestItem } from './types';
-
-interface Supplier {
-  id: string;
-  name: string;
-  inn: string | null;
-}
 
 interface Props {
   open: boolean;
@@ -37,7 +32,6 @@ export function RpFormModal({ open, requestId, requestNumber, onClose, onDone }:
   const [form] = Form.useForm();
   const [files, setFiles] = useState<UploadItem[]>([]);
   const [showFileValidation, setShowFileValidation] = useState(false);
-  const [supplierSearch, setSupplierSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const createRequestId = useRef(crypto.randomUUID());
 
@@ -47,20 +41,6 @@ export function RpFormModal({ open, requestId, requestNumber, onClose, onDone }:
     enabled: open && !!requestId,
   });
   const detail = detailQ.data?.data;
-
-  const suppliersQ = useQuery({
-    queryKey: ['suppliers', supplierSearch],
-    queryFn: () => api.get<{ data: Supplier[] }>(`/suppliers?q=${encodeURIComponent(supplierSearch)}`),
-    enabled: open,
-  });
-  const supplierOptions = useMemo(
-    () => (suppliersQ.data?.data ?? []).map((s) => ({
-      value: s.id,
-      label: s.inn ? `${s.name} (ИНН ${s.inn})` : s.name,
-      supplier: s,
-    })),
-    [suppliersQ.data],
-  );
 
   // Префилл реквизитов при дооформлении (после доработки).
   useEffect(() => {
@@ -165,42 +145,12 @@ export function RpFormModal({ open, requestId, requestNumber, onClose, onDone }:
         ]}
       />
       <Form form={form} layout="vertical" disabled={submitting}>
-        <Form.Item name="supplierId" label="Поставщик" rules={[{ required: true, message: 'Выберите поставщика' }]}>
-          <Select
-            showSearch
-            filterOption={false}
-            onSearch={setSupplierSearch}
-            loading={suppliersQ.isLoading}
-            options={supplierOptions}
-            placeholder="Поиск по названию или ИНН"
-            onChange={(val) => {
-              const s = supplierOptions.find((o) => o.value === val)?.supplier;
-              form.setFieldValue('supplierInn', s?.inn ?? '');
-            }}
-          />
-        </Form.Item>
-        <Form.Item name="supplierInn" label="ИНН поставщика">
-          <Input disabled placeholder="Заполнится из справочника" />
-        </Form.Item>
-        <Form.Item label="Срок поставки" required style={{ marginBottom: 8 }}>
-          <Space align="start">
-            <Form.Item name="deliveryDays" rules={[{ required: true, message: 'Укажите срок' }]} noStyle>
-              <InputNumber min={1} placeholder="дней" style={{ width: 120 }} />
-            </Form.Item>
-            <Form.Item name="deliveryDaysType" initialValue="working" noStyle>
-              <Segmented options={[{ value: 'working', label: 'рабочих' }, { value: 'calendar', label: 'календарных' }]} />
-            </Form.Item>
-          </Space>
-        </Form.Item>
-        <Form.Item name="shippingConditions" label="Условия отгрузки" rules={[{ required: true, message: 'Выберите условия отгрузки' }]}>
-          <Select
-            placeholder="Выберите условия"
-            options={SHIPPING_CONDITIONS.map((c) => ({ value: c, label: c }))}
-          />
-        </Form.Item>
-        <Form.Item name="invoiceAmount" label="Сумма счёта, ₽" rules={[{ required: true, message: 'Укажите сумму счёта' }]}>
-          <InputNumber min={0.01} precision={2} style={{ width: 220 }} />
-        </Form.Item>
+        <RequisitesFields
+          form={form}
+          currentSupplier={detail?.order?.supplier_id
+            ? { id: detail.order.supplier_id, name: detail.order.supplier_name, inn: detail.order.supplier_inn }
+            : null}
+        />
         <Form.Item label="Документы" required tooltip="Обязательно приложите счёт">
           <FileUploadList
             value={files}

@@ -65,5 +65,8 @@
 - manager — руководитель
 
 ## Референсные проекты
-- BillHub: C:\Users\Usr\billhub (паттерн auth, структура Fastify)
+- BillHub (алиасы: «биллхаб», «биллзаб», «Billhub» — один и тот же проект): `C:\Users\Usr\billhub`.
+  Стек Vite + React 19 + Ant Design 6 (клиент) и Fastify + Drizzle + PostgreSQL (сервер). Референс
+  паттернов: auth и структура Fastify; вычёркивание/отклонение файлов (`is_rejected`/`rejected_by`/
+  `rejected_at`, PATCH-тоггл, `line-through`); структура заявок на оплату/договор
 - PassDesk: github.com/loliloopp/PassDesk (Sequelize + Yandex PG)

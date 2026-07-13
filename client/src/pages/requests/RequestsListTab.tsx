@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, App } from 'antd';
-import { SearchOutlined, PaperClipOutlined, FileExcelOutlined, MessageOutlined } from '@ant-design/icons';
+import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, Popconfirm, App } from 'antd';
+import { SearchOutlined, PaperClipOutlined, FileExcelOutlined, MessageOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useUnreadCounts } from './useUnreadCounts';
 import {
   MATERIAL_REQUEST_TYPES,
@@ -29,12 +29,15 @@ interface Filters {
 export function RequestsListTab() {
   const navigate = useNavigate();
   const { message } = App.useApp();
+  const queryClient = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
   const isSupply = role === 'engineer' || role === 'admin' || role === 'manager';
+  const isAdmin = role === 'admin';
   const [filters, setFilters] = useState<Filters>({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const unread = useUnreadCounts();
 
   const qs = useMemo(() => {
@@ -66,6 +69,19 @@ export function RequestsListTab() {
       message.error((e as Error).message);
     } finally {
       setDownloadingId(null);
+    }
+  }
+
+  async function deleteRequest(r: RequestRow) {
+    setDeletingId(r.id);
+    try {
+      await api.delete(`/requests/${r.id}`);
+      message.success('Заявка удалена');
+      queryClient.invalidateQueries({ queryKey: ['requests', 'list'] });
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -117,6 +133,28 @@ export function RequestsListTab() {
                 Excel
               </Button>
             </Tooltip>
+          ),
+        }] as ColumnsType<RequestRow>)
+      : []),
+    ...(isAdmin
+      ? ([{
+          title: 'Действие', key: 'admin_actions', width: 110, align: 'center',
+          render: (_: unknown, r: RequestRow) => (
+            <Popconfirm
+              title="Удалить заявку?"
+              description="Заявка, документы и позиции лотов будут удалены без возможности восстановления."
+              okText="Удалить" okButtonProps={{ danger: true }} cancelText="Отмена"
+              onConfirm={() => deleteRequest(r)}
+            >
+              <Tooltip title="Удалить заявку">
+                <Button
+                  danger size="small"
+                  icon={<DeleteOutlined />}
+                  loading={deletingId === r.id}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </Tooltip>
+            </Popconfirm>
           ),
         }] as ColumnsType<RequestRow>)
       : []),

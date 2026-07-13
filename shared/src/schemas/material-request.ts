@@ -92,6 +92,27 @@ export const rpApplicationSchema = z.object({
 });
 export type RpApplicationInput = z.infer<typeof rpApplicationSchema>;
 
+// Правка реквизитов оформленной заявки (own_supplier, статус 'rp_forming'): те же поля, что
+// при оформлении, но без смены статуса. При смене поставщика/суммы обязателен новый счёт
+// (replacementInvoiceFileId) — прежние действующие счета вычёркиваются на сервере.
+export const orderEditSchema = z.object({
+  supplierId: z.string().uuid(),
+  deliveryDays: z.number().int().positive(),
+  deliveryDaysType: z.enum(['working', 'calendar']).default('working'),
+  shippingConditions: z.string().min(1).max(500),
+  invoiceAmount: z.number().positive(),
+  comment: z.string().max(2000).nullish(),
+  replacementInvoiceFileId: z.string().uuid().nullish(),
+  expectedVersion: z.number().int().nonnegative(),
+});
+export type OrderEditInput = z.infer<typeof orderEditSchema>;
+
+// Вычёркивание/восстановление документа заявки (is_rejected — «неактуальный» файл).
+export const setFileRejectionSchema = z.object({
+  isRejected: z.boolean(),
+});
+export type SetFileRejectionInput = z.infer<typeof setFileRejectionSchema>;
+
 // «Отправить РП» (инженер): дата и описание письма; номер присваивает PayHub.
 export const rpSendSchema = z.object({
   rpDate: z.string(), // ISO date
