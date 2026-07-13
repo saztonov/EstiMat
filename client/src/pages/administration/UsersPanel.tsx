@@ -8,6 +8,7 @@ import { ROLES, ROLE_LABELS } from '@estimat/shared';
 import type { Role } from '@estimat/shared';
 import type { ColumnsType } from 'antd/es/table';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
+import { useColumnSearch } from '../../lib/tableColumnSearch';
 
 interface User {
   id: string;
@@ -36,6 +37,7 @@ export function UsersPanel() {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
   const currentUserId = useAuthStore((s) => s.user?.id);
+  const { getColumnSearchProps } = useColumnSearch<User>();
 
   const { data: usersData, isLoading } = useQuery({
     queryKey: ['users'],
@@ -123,21 +125,45 @@ export function UsersPanel() {
   }
 
   const columns: ColumnsType<User> = [
-    { title: 'ФИО', dataIndex: 'full_name', sorter: (a, b) => (a.full_name || '').localeCompare(b.full_name || '') },
-    { title: 'Email', dataIndex: 'email', width: 220, sorter: (a, b) => (a.email || '').localeCompare(b.email || '') },
+    {
+      title: 'ФИО',
+      dataIndex: 'full_name',
+      sorter: (a, b) => (a.full_name || '').localeCompare(b.full_name || ''),
+      ...getColumnSearchProps((r) => r.full_name),
+    },
+    {
+      title: 'Email',
+      dataIndex: 'email',
+      width: 220,
+      sorter: (a, b) => (a.email || '').localeCompare(b.email || ''),
+      ...getColumnSearchProps((r) => r.email),
+    },
     {
       title: 'Роль',
       dataIndex: 'role',
       width: 160,
       sorter: (a, b) => ROLE_LABELS[a.role].localeCompare(ROLE_LABELS[b.role]),
+      filters: ROLES.map((r) => ({ text: ROLE_LABELS[r], value: r })),
+      onFilter: (value, record) => record.role === value,
       render: (role: Role) => <Tag color={roleColors[role]}>{ROLE_LABELS[role]}</Tag>,
     },
-    { title: 'Организация', dataIndex: 'org_name', width: 200, sorter: (a, b) => (a.org_name || '').localeCompare(b.org_name || '') },
+    {
+      title: 'Организация',
+      dataIndex: 'org_name',
+      width: 200,
+      sorter: (a, b) => (a.org_name || '').localeCompare(b.org_name || ''),
+      ...getColumnSearchProps((r) => r.org_name),
+    },
     {
       title: 'Активен',
       dataIndex: 'is_active',
       width: 100,
       sorter: (a, b) => Number(a.is_active) - Number(b.is_active),
+      filters: [
+        { text: 'Да', value: true },
+        { text: 'Нет', value: false },
+      ],
+      onFilter: (value, record) => record.is_active === value,
       render: (v: boolean, record: User) => (
         <Switch
           checked={v}

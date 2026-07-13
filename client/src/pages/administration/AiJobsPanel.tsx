@@ -4,6 +4,7 @@ import { StopOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listAllAiJobs, cancelAiJob, deleteAiJob, type AiJobAdminItem } from '../../services/aiExtract';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
+import { useColumnSearch } from '../../lib/tableColumnSearch';
 
 const SOURCE_LABELS: Record<string, string> = {
   rd_document: 'РД-документ',
@@ -26,6 +27,7 @@ const isActive = (s: string) => s === 'pending' || s === 'running';
 export function AiJobsPanel() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
+  const { getColumnSearchProps } = useColumnSearch<AiJobAdminItem>();
 
   const { data, isLoading } = useQuery({
     queryKey: ['ai-jobs'],
@@ -57,6 +59,8 @@ export function AiJobsPanel() {
     {
       title: 'Документ',
       dataIndex: 'source_ref',
+      sorter: (a, b) => (a.source_ref || '').localeCompare(b.source_ref || ''),
+      ...getColumnSearchProps((r) => r.source_ref),
       render: (v: string | null, r) => (
         <div>
           <div>{v || '—'}</div>
@@ -64,17 +68,36 @@ export function AiJobsPanel() {
         </div>
       ),
     },
-    { title: 'Проект', dataIndex: 'project_name', width: 200, render: (v: string | null) => v || '—' },
-    { title: 'Запустил', dataIndex: 'created_by_name', width: 180, render: (v: string | null) => v || '—' },
+    {
+      title: 'Проект',
+      dataIndex: 'project_name',
+      width: 200,
+      sorter: (a, b) => (a.project_name || '').localeCompare(b.project_name || ''),
+      ...getColumnSearchProps((r) => r.project_name),
+      render: (v: string | null) => v || '—',
+    },
+    {
+      title: 'Запустил',
+      dataIndex: 'created_by_name',
+      width: 180,
+      sorter: (a, b) => (a.created_by_name || '').localeCompare(b.created_by_name || ''),
+      ...getColumnSearchProps((r) => r.created_by_name),
+      render: (v: string | null) => v || '—',
+    },
     {
       title: 'Статус',
       dataIndex: 'status',
       width: 130,
+      sorter: (a, b) => (STATUS[a.status]?.label ?? a.status).localeCompare(STATUS[b.status]?.label ?? b.status),
+      filters: Object.entries(STATUS).map(([value, { label }]) => ({ text: label, value })),
+      onFilter: (value, record) => record.status === value,
       render: (s: string) => <Tag color={STATUS[s]?.color}>{STATUS[s]?.label ?? s}</Tag>,
     },
     {
       title: 'Добавлено',
       width: 120,
+      sorter: (a, b) =>
+        ((a.works_count ?? 0) + (a.materials_count ?? 0)) - ((b.works_count ?? 0) + (b.materials_count ?? 0)),
       render: (_: unknown, r) =>
         r.status === 'applied'
           ? `Р: ${r.works_count ?? 0} · М: ${r.materials_count ?? 0}`
@@ -84,12 +107,16 @@ export function AiJobsPanel() {
       title: 'Создано',
       dataIndex: 'created_at',
       width: 160,
+      sorter: (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      defaultSortOrder: 'descend',
       render: (v: string) => new Date(v).toLocaleString('ru-RU'),
     },
     {
       title: 'Ошибка',
       dataIndex: 'error',
       width: 80,
+      sorter: (a, b) => Number(!!a.error) - Number(!!b.error),
+      ...getColumnSearchProps((r) => r.error),
       render: (e: string | null) =>
         e ? (
           <Tooltip title={e}>

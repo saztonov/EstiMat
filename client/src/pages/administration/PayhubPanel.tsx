@@ -4,6 +4,7 @@ import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { useColumnSearch } from '../../lib/tableColumnSearch';
 
 const { Text } = Typography;
 
@@ -24,6 +25,7 @@ export function PayhubPanel() {
   const qc = useQueryClient();
   const [edits, setEdits] = useState<Record<string, { p: number | null; c: number | null }>>({});
   const [senderId, setSenderId] = useState<number | undefined>(undefined);
+  const { getColumnSearchProps } = useColumnSearch<EstimatProject>();
 
   const pingQ = useQuery({
     queryKey: ['payhub', 'ping'],
@@ -75,9 +77,19 @@ export function PayhubPanel() {
   const rows = estimatQ.data?.data ?? [];
 
   const columns: ColumnsType<EstimatProject> = [
-    { title: 'Объект', key: 'name', render: (_, r) => <span><strong>{r.code}</strong> · {r.name}</span> },
+    {
+      title: 'Объект', key: 'name',
+      sorter: (a, b) => `${a.code} ${a.name}`.localeCompare(`${b.code} ${b.name}`),
+      ...getColumnSearchProps((r) => `${r.code} ${r.name}`),
+      render: (_, r) => <span><strong>{r.code}</strong> · {r.name}</span>,
+    },
     {
       title: 'Проект PayHub', key: 'php', width: 260,
+      filters: [
+        { text: 'Сопоставлен', value: 'yes' },
+        { text: 'Не сопоставлен', value: 'no' },
+      ],
+      onFilter: (value, r) => (value === 'yes' ? r.payhub_project_id != null : r.payhub_project_id == null),
       render: (_, r) => (
         <Select
           allowClear showSearch optionFilterProp="label" style={{ width: 240 }}
@@ -91,6 +103,11 @@ export function PayhubPanel() {
     },
     {
       title: 'Получатель РП', key: 'phc', width: 260,
+      filters: [
+        { text: 'Сопоставлен', value: 'yes' },
+        { text: 'Не сопоставлен', value: 'no' },
+      ],
+      onFilter: (value, r) => (value === 'yes' ? r.payhub_contractor_id != null : r.payhub_contractor_id == null),
       render: (_, r) => (
         <Select
           allowClear showSearch optionFilterProp="label" style={{ width: 240 }}

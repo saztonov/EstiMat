@@ -13,6 +13,7 @@ import type {
 import { api } from '../../services/api';
 import { useAppSettings } from '../../hooks/useAppSettings';
 import { getLlmConnection, getLlmModels, refreshLlmModels, updateLlmConnection } from '../../services/llm';
+import { useColumnSearch, uniqueFilters } from '../../lib/tableColumnSearch';
 
 // Вкладка «Сервер моделей»: подключение к LM Studio (адрес — в БД, токен — в env),
 // живой каталог моделей и режим Qwen /no_think.
@@ -20,6 +21,7 @@ export function LlmServerPanel() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [draftUrl, setDraftUrl] = useState<string | undefined>(undefined);
+  const { getColumnSearchProps } = useColumnSearch<LlmModelInfo>();
 
   const connQuery = useQuery({
     queryKey: ['llm-connection'],
@@ -78,23 +80,49 @@ export function LlmServerPanel() {
     conn?.baseUrlSource === 'db' ? 'из настроек' : conn?.baseUrlSource === 'env' ? 'из env (по умолчанию)' : 'не задан';
   const qwenNoThink = settingsData?.data.aiQwenNoThink ?? true;
 
+  const models = modelsQuery.data?.data ?? [];
   const columns: ColumnsType<LlmModelInfo> = [
-    { title: 'Модель (id)', dataIndex: 'id', render: (v: string) => <Typography.Text code>{v}</Typography.Text> },
-    { title: 'Тип', dataIndex: 'type', width: 120, render: (v?: string) => v || '—' },
+    {
+      title: 'Модель (id)',
+      dataIndex: 'id',
+      sorter: (a, b) => (a.id || '').localeCompare(b.id || ''),
+      ...getColumnSearchProps((r) => r.id),
+      render: (v: string) => <Typography.Text code>{v}</Typography.Text>,
+    },
+    {
+      title: 'Тип',
+      dataIndex: 'type',
+      width: 120,
+      sorter: (a, b) => (a.type || '').localeCompare(b.type || ''),
+      filters: uniqueFilters(models, (r) => r.type),
+      onFilter: (value, record) => record.type === value,
+      render: (v?: string) => v || '—',
+    },
     {
       title: 'Контекст',
       dataIndex: 'contextLength',
       width: 120,
+      sorter: (a, b) => (a.contextLength ?? 0) - (b.contextLength ?? 0),
       render: (v?: number) => (typeof v === 'number' ? v.toLocaleString('ru-RU') : '—'),
     },
     {
       title: 'Состояние',
       dataIndex: 'state',
       width: 130,
+      sorter: (a, b) => (a.state || '').localeCompare(b.state || ''),
+      filters: uniqueFilters(models, (r) => r.state),
+      onFilter: (value, record) => record.state === value,
       render: (v?: string) =>
         v ? <Tag color={v === 'loaded' ? 'green' : 'default'}>{v}</Tag> : '—',
     },
-    { title: 'Издатель', dataIndex: 'publisher', width: 160, render: (v?: string) => v || '—' },
+    {
+      title: 'Издатель',
+      dataIndex: 'publisher',
+      width: 160,
+      sorter: (a, b) => (a.publisher || '').localeCompare(b.publisher || ''),
+      ...getColumnSearchProps((r) => r.publisher),
+      render: (v?: string) => v || '—',
+    },
   ];
 
   return (
@@ -161,7 +189,7 @@ export function LlmServerPanel() {
         rowKey="id"
         size="small"
         columns={columns}
-        dataSource={modelsQuery.data?.data ?? []}
+        dataSource={models}
         loading={modelsQuery.isLoading}
         pagination={false}
         scroll={{ x: 700 }}
