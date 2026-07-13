@@ -155,17 +155,21 @@ export const config = {
   // через внешний API /api/external/v1 (Bearer-токен — СЕКРЕТ, только из env) и опрашивает
   // результаты. Пустой baseUrl/token = «не настроено». syncEnabled — отдельный kill-switch:
   // наличие credentials не включает отправку/опрос (безопасный поэтапный rollout).
+  // mock (TENDER_MOCK, только dev) — встроенная заглушка портала: тендер сразу «завершается»
+  // с детерминированным победителем, без реального URL/токена (для локального прогона сценария).
   tender: {
     baseUrl: (process.env.TENDER_BASE_URL || '').replace(/\/+$/, ''),
     apiToken: process.env.TENDER_API_TOKEN || '',
     timeoutMs: Number(process.env.TENDER_TIMEOUT_MS || '15000'),
     syncEnabled: process.env.TENDER_SYNC_ENABLED === 'true',
+    mock: process.env.TENDER_MOCK === 'true',
     get configured(): boolean {
-      return Boolean(this.baseUrl && this.apiToken);
+      return this.mock || Boolean(this.baseUrl && this.apiToken);
     },
-    // Обращаемся к порталу (создание тендера, опрос) только когда и настроено, и включено рубильником.
+    // Обращаемся к порталу (создание тендера, опрос) только когда и настроено, и включено рубильником
+    // (либо включён mock-режим — заглушка не требует рубильника).
     get outboundEnabled(): boolean {
-      return this.configured && this.syncEnabled;
+      return this.mock || (this.configured && this.syncEnabled);
     },
   },
 } as const;

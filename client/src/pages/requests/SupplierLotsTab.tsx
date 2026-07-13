@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Table, Select, Segmented, Space, Empty } from 'antd';
+import { Table, Select, Segmented, Space, Empty, Button } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -13,7 +13,7 @@ interface ProjectOpt { id: string; code: string | null; name: string }
 type StatusFilter = 'all' | 'forming' | 'sourcing' | 'awarded' | 'cancelled';
 
 /** Реестр закупочных лотов СУ-10 (снабжение): выгрузка КП/тендер, фиксация поставщика. */
-export function SupplierLotsTab() {
+export function SupplierLotsTab({ onGoToMaterials }: { onGoToMaterials?: () => void }) {
   const [projectId, setProjectId] = useState<string | undefined>();
   const [status, setStatus] = useState<StatusFilter>('all');
   const [page, setPage] = useState(1);
@@ -94,7 +94,13 @@ export function SupplierLotsTab() {
           onChange: (p, ps) => { setPage(p); setPageSize(ps); },
         }}
         scroll={{ x: 1200 }}
-        locale={{ emptyText: <Empty description="Закупочных лотов пока нет" /> }}
+        locale={{ emptyText: (
+          <Empty description="Закупочных лотов пока нет. Лот формируется из материалов заявок СУ-10 на вкладке «Материалы».">
+            {onGoToMaterials && (
+              <Button type="primary" onClick={onGoToMaterials}>Перейти к формированию лота</Button>
+            )}
+          </Empty>
+        ) }}
       />
     </>
   );

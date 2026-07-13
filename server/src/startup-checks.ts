@@ -70,6 +70,24 @@ export function runStartupChecks(): void {
     errors.push('INTEGRATION_API_KEY: длина меньше 32 символов');
   }
 
+  // Тендерный портал: конфигурация либо полная (baseUrl + token), либо пустая. Частичная — ошибка.
+  const tBaseUrl = config.tender.baseUrl;
+  const tToken = config.tender.apiToken;
+  if (Boolean(tBaseUrl) !== Boolean(tToken)) {
+    errors.push('Тендер: задайте оба TENDER_BASE_URL и TENDER_API_TOKEN, либо ни одного');
+  }
+  if (tBaseUrl && !/^https:\/\//.test(tBaseUrl)) {
+    errors.push('TENDER_BASE_URL должен использовать https в production');
+  }
+  // Рубильник отправки нельзя включить без полной конфигурации.
+  if (config.tender.syncEnabled && !(tBaseUrl && tToken)) {
+    errors.push('TENDER_SYNC_ENABLED=true требует TENDER_BASE_URL и TENDER_API_TOKEN');
+  }
+  // Заглушка портала — только для dev.
+  if (config.tender.mock) {
+    errors.push('TENDER_MOCK=true недопустим в production (заглушка только для dev)');
+  }
+
   if (errors.length > 0) {
     const message = ['Production startup checks failed:', ...errors.map((e) => `  - ${e}`)].join('\n');
     throw new Error(message);

@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router';
-import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, Popconfirm, App } from 'antd';
+import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, Popconfirm, Modal, App } from 'antd';
 import { SearchOutlined, PaperClipOutlined, FileExcelOutlined, MessageOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,8 +12,10 @@ import {
 } from '@estimat/shared';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
+import { modalWidth } from '../../lib/modalWidth';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { RequestStatusTag, RequestTypeTag, money } from './requestConstants';
+import { RequestDetailContent } from './RequestDetailContent';
 import type { RequestRow } from './types';
 
 interface Filters {
@@ -27,12 +28,12 @@ interface Filters {
 
 /** Список заявок с серверными фильтрами и пагинацией. Для подрядчика — колонка «Excel». */
 export function RequestsListTab() {
-  const navigate = useNavigate();
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
   const isSupply = role === 'engineer' || role === 'admin' || role === 'manager';
   const isAdmin = role === 'admin';
+  const [openId, setOpenId] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
@@ -201,9 +202,21 @@ export function RequestsListTab() {
           onChange: (p, ps) => { setPage(p); setPageSize(ps); },
         }}
         scroll={{ x: 1000 }}
-        onRow={(r) => ({ onClick: () => navigate(`/requests/${r.id}`), style: { cursor: 'pointer' } })}
+        onRow={(r) => ({ onClick: () => setOpenId(r.id), style: { cursor: 'pointer' } })}
         locale={{ emptyText: <Empty description="Заявок нет" /> }}
       />
+
+      <Modal
+        open={!!openId}
+        onCancel={() => setOpenId(null)}
+        footer={null}
+        width={modalWidth(1000)}
+        style={{ top: 20 }}
+        styles={{ body: { height: 'calc(90vh - 56px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12 } }}
+        destroyOnClose
+      >
+        {openId && <RequestDetailContent id={openId} onBack={() => setOpenId(null)} />}
+      </Modal>
     </>
   );
 }

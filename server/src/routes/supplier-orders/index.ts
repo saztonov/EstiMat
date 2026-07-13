@@ -694,7 +694,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   // ============================================================
   fastify.get<{ Params: { requestId: string } }>('/by-request/:requestId', async (request) => {
     const rid = request.params.requestId;
-    const [lots, cov] = await Promise.all([
+    const [lots, cov, mats] = await Promise.all([
       fastify.pool.query(
         `SELECT so.id, so.order_no, so.title, so.sourcing_status, so.procurement_method, so.tender_status,
                 so.tender_url, so.supplier_name, so.amount,
@@ -708,6 +708,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       ),
       fastify.pool.query(
         `SELECT
+           (SELECT project_id FROM material_requests WHERE id = $1) AS project_id,
            (SELECT COALESCE(SUM(quantity),0) FROM material_request_items WHERE request_id = $1)::numeric AS requested,
            (SELECT COALESCE(SUM(soi.quantity),0) FROM supplier_order_items soi
               JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status <> 'cancelled'
@@ -717,8 +718,34 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
              WHERE soi.request_id = $1)::numeric AS awarded`,
         [rid],
       ),
+      // Позиции самой заявки в формате свода (для «Сформировать лот» прямо из карточки).
+      fastify.pool.query(
+        `SELECT mri.id AS request_item_id, mri.request_id, mr.request_no,
+                mri.cost_type_id, ct.name AS cost_type_name,
+                cc.id AS category_id, cc.name AS category_name,
+                cc.sort_order AS category_sort, ct.sort_order AS cost_type_sort,
+                mri.material_id, mri.material_name, mri.unit, mri.agg_key,
+                mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS ordered,
+                mr.contractor_id, mr.contractor_name
+           FROM material_request_items mri
+           JOIN material_requests mr ON mr.id = mri.request_id
+                AND mr.request_type = 'su10' AND mr.status <> 'cancelled'
+           LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
+           LEFT JOIN cost_categories cc ON cc.id = ct.category_id
+           LEFT JOIN (
+             SELECT soi.request_item_id, SUM(soi.quantity) AS qty
+               FROM supplier_order_items soi
+               JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status <> 'cancelled'
+              GROUP BY soi.request_item_id
+           ) placed ON placed.request_item_id = mri.id
+          WHERE mri.request_id = $1
+          ORDER BY cc.sort_order NULLS LAST, ct.sort_order NULLS LAST, mri.material_name`,
+        [rid],
+      ),
     ]);
-    return { data: { lots: lots.rows, coverage: cov.rows[0] } };
+    const { project_id, ...coverage } = cov.rows[0] ?? {};
+    const materials = mats.rows.map((r) => ({ ...r, remaining: Number(r.requested) - Number(r.ordered) }));
+    return { data: { lots: lots.rows, coverage, projectId: project_id ?? null, materials } };
   });
 
   // ============================================================

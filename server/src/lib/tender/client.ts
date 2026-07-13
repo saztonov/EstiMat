@@ -8,6 +8,7 @@
 import { config } from '../../config.js';
 import { tenderSchema, tenderResultsSchema, type TenderDto, type TenderResultsDto } from '@estimat/shared';
 import { TenderApiError } from './errors.js';
+import { MockTenderClient } from './mock-client.js';
 
 const API_PREFIX = '/api/external/v1';
 const PING_TIMEOUT_MS = 5000;
@@ -25,6 +26,15 @@ export interface CreateTenderInput {
   deadline_at?: string | null;
   items: TenderItemInput[];
   conditions?: { delivery?: string | null; payment?: string | null; deadline?: string | null };
+}
+
+/** Контракт клиента тендерного портала (реальный HTTP-клиент и mock-заглушка). */
+export interface TenderClientLike {
+  createTender(input: CreateTenderInput): Promise<TenderDto>;
+  getTender(id: string): Promise<TenderDto>;
+  getTenderResults(id: string): Promise<TenderResultsDto>;
+  cancelTender(id: string): Promise<void>;
+  ping(): Promise<boolean>;
 }
 
 /** Нормализация baseUrl: http(s)-origin без пути/кредов, https в проде. */
@@ -50,7 +60,7 @@ export function normalizeTenderBaseUrl(raw: string): string {
   return url.origin;
 }
 
-export class TenderClient {
+export class TenderClient implements TenderClientLike {
   readonly baseUrl: string;
   private readonly token: string;
   private readonly timeoutMs: number;
@@ -140,7 +150,8 @@ export class TenderClient {
 }
 
 /** Фабрика из config. null — интеграция не настроена (валидное состояние). */
-export function getTenderClient(): TenderClient | null {
+export function getTenderClient(): TenderClientLike | null {
+  if (config.tender.mock) return new MockTenderClient(); // dev-заглушка портала
   if (!config.tender.configured) return null;
   return new TenderClient({
     baseUrl: config.tender.baseUrl,

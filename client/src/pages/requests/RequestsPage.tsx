@@ -28,7 +28,7 @@ export function RequestsPage() {
           items={[
             { key: 'requests', label: 'Заявки', children: <RequestsListTab /> },
             { key: 'materials', label: 'Материалы', children: <SU10MaterialsTab /> },
-            { key: 'lots', label: 'Закупочные лоты', children: <SupplierLotsTab /> },
+            { key: 'lots', label: 'Закупочные лоты', children: <SupplierLotsTab onGoToMaterials={() => setTab('materials')} /> },
             { key: 'rp-registry', label: 'Реестр РП', children: <RpRegistryTab /> },
           ]}
         />
