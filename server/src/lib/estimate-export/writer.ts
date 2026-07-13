@@ -69,6 +69,77 @@ function applyRowStyle(row: ExcelJS.Row, styles: CellStyle[], maxCol: number = C
   }
 }
 
+// --- Условное форматирование (УФ) ---
+// ExcelJS хранит УФ в рантайм-поле worksheet.conditionalFormattings (в публичных типах его нет —
+// обращаемся через адаптер). Каждый элемент — { ref, rules }; XML-писатель берёт sqref из ref,
+// стили красного/зелёного лежат внутри rules[].style, поэтому переписываем ТОЛЬКО ref — цвета и
+// приоритеты сохраняются, тип правил (cellIs) не меняется.
+interface CfEntry {
+  ref: string;
+  rules: unknown[];
+}
+function getCfList(ws: ExcelJS.Worksheet): CfEntry[] {
+  const holder = ws as unknown as { conditionalFormattings?: CfEntry[] };
+  if (!holder.conditionalFormattings) holder.conditionalFormattings = [];
+  return holder.conditionalFormattings;
+}
+function setCfList(ws: ExcelJS.Worksheet, list: CfEntry[]): void {
+  (ws as unknown as { conditionalFormattings: CfEntry[] }).conditionalFormattings = list;
+}
+
+// Буква колонки первого адреса sqref: «I20 I22» → «I», «E4:E14» → «E».
+function cfFirstColumn(ref: string): string {
+  return /^\s*([A-Z]+)\d+/.exec(ref)?.[1] ?? '';
+}
+
+// Найти РОВНО ОДНО правило УФ, чей sqref начинается с указанной колонки. Иначе шаблон
+// несовместим с кодом — кидаем понятную ошибку, а не молча промахиваемся мимо правила.
+function findCfByColumn(ws: ExcelJS.Worksheet, column: string): CfEntry {
+  const hits = getCfList(ws).filter((cf) => cfFirstColumn(cf.ref) === column);
+  if (hits.length !== 1) {
+    throw new Error(
+      `Несовместимый шаблон: на листе «${ws.name}» для колонки ${column} ожидалось ровно одно ` +
+        `условное форматирование, найдено ${hits.length}`,
+    );
+  }
+  return hits[0]!;
+}
+function removeCfByColumn(ws: ExcelJS.Worksheet, column: string): void {
+  setCfList(ws, getCfList(ws).filter((cf) => cfFirstColumn(cf.ref) !== column));
+}
+
+// Номера строк одной колонки → компактный sqref со слиянием последовательных в диапазоны:
+// coalesceColumnRefs('I', [20,21,22,24]) → 'I20:I22 I24'.
+function coalesceColumnRefs(column: string, rowNumbers: number[]): string {
+  const rows = [...rowNumbers].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let start = -1;
+  let prev = -1;
+  const flush = (): void => {
+    if (start < 0) return;
+    parts.push(start === prev ? `${column}${start}` : `${column}${start}:${column}${prev}`);
+  };
+  for (const r of rows) {
+    if (start < 0) start = prev = r;
+    else if (r === prev + 1) prev = r;
+    else {
+      flush();
+      start = prev = r;
+    }
+  }
+  flush();
+  return parts.join(' ');
+}
+
+// Скопировать ТОЛЬКО заливку с одной ячейки на другую (рамка/шрифт цели не меняются). Нет
+// заливки у источника → снять заливку у цели (pattern none).
+function copyCellFill(target: ExcelJS.Cell, source: ExcelJS.Cell): void {
+  const srcFill = source.style?.fill;
+  target.fill = srcFill
+    ? (JSON.parse(JSON.stringify(srcFill)) as ExcelJS.Fill)
+    : { type: 'pattern', pattern: 'none' };
+}
+
 interface MergeRect {
   top: number;
   left: number;
@@ -116,11 +187,14 @@ function fillReferenceSheet(
   rows: ExportRefRow[],
   subtotalStyleRow: number,
   code: string,
-): void {
+): number {
   const maxCol = REF_COL.note;
   // Стили снимаем ДО записей: строку-итог могут перезаписать данные, если их много.
   const dataStyle = captureRowStyle(ws, dataStartRow, maxCol);
   const subtotalStyle = captureRowStyle(ws, subtotalStyleRow, maxCol);
+  // Высоты строк-образцов (applyRowStyle копирует только стили ячеек, не высоту строки).
+  const dataHeight = ws.getRow(dataStartRow).height;
+  const subtotalHeight = ws.getRow(subtotalStyleRow).height;
 
   // Последняя существующая строка данных — сплошной блок наименований от dataStartRow;
   // старый итог (в нём наименование пусто) добавляем к границе очистки явно.
@@ -144,6 +218,7 @@ function fillReferenceSheet(
     const rowNum = dataStartRow + i;
     const row = ws.getRow(rowNum);
     applyRowStyle(row, dataStyle, maxCol);
+    if (dataHeight) row.height = dataHeight;
     row.getCell(REF_COL.num).value = i + 1;
     row.getCell(REF_COL.name).value = item.name;
     row.getCell(REF_COL.unit).value = item.unit ?? null;
@@ -159,6 +234,7 @@ function fillReferenceSheet(
   const subtotalRow = dataStartRow + rows.length;
   const sub = ws.getRow(subtotalRow);
   applyRowStyle(sub, subtotalStyle, maxCol);
+  if (subtotalHeight) sub.height = subtotalHeight;
   for (let c = 1; c <= maxCol; c++) sub.getCell(c).value = null;
   if (rows.length) {
     const first = dataStartRow;
@@ -166,11 +242,46 @@ function fillReferenceSheet(
     sub.getCell(REF_COL.total).value = { formula: `SUBTOTAL(9,${refTotal}${first}:${refTotal}${last})` };
   }
 
-  // Очистить оставшиеся строки-образцы (значения) ниже строки-итога.
-  for (let r = subtotalRow + 1; r <= lastExisting; r++) {
+  // Границы фактического оформления листа (шаблон раздут: «МАТЕРИАЛЫ» до Z977, «РАБОТЫ» до 977).
+  const bottomRow = Math.max(ws.rowCount, lastExisting, subtotalRow);
+  const rightCol = Math.max(ws.columnCount, maxCol);
+
+  // Ниже строки-итога — снять значения, стиль и высоту по всей ширине листа, чтобы под таблицей
+  // не оставалось «протянутых» рамок/заливок/УФ.
+  for (let r = subtotalRow + 1; r <= bottomRow; r++) {
     const row = ws.getRow(r);
-    for (let c = 1; c <= maxCol; c++) row.getCell(c).value = null;
+    for (let c = 1; c <= rightCol; c++) {
+      const cell = row.getCell(c);
+      cell.value = null;
+      cell.style = {};
+    }
+    row.height = undefined as unknown as number;
   }
+  // Правее колонки G (данные только A:G) — снять оформление на всех строках листа.
+  if (rightCol > maxCol) {
+    for (let r = 1; r <= bottomRow; r++) {
+      const row = ws.getRow(r);
+      for (let c = maxCol + 1; c <= rightCol; c++) {
+        const cell = row.getCell(c);
+        cell.value = null;
+        cell.style = {};
+      }
+    }
+  }
+
+  // Автофильтр и УФ колонок E/G — строго по фактическим данным; строка-итог остаётся вне их.
+  if (rows.length) {
+    const lastData = subtotalRow - 1;
+    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: lastData, column: maxCol } };
+    findCfByColumn(ws, 'E').ref = `E4:E${lastData}`;
+    findCfByColumn(ws, 'G').ref = `G4:G${lastData}`;
+    return subtotalRow; // последняя значимая строка листа — строка-итог
+  }
+  // Пустой справочник: фильтр только на заголовок, УФ E/G убрать.
+  ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: maxCol } };
+  removeCfByColumn(ws, 'E');
+  removeCfByColumn(ws, 'G');
+  return 3;
 }
 
 const L = colLetter(COL.costMat); //  L
@@ -367,17 +478,45 @@ export async function exportKpWorkbook(
   setFormula(ndsRow, COL.costSmr, `${M}${itogoRowNum}/122*22`);
   setFormula(ndsRow, COL.costTotal, `${N}${itogoRowNum}/122*22`);
 
+  // Подсветка и нейтральная заливка ценовых колонок «КП» по факту наличия формулы.
+  // Красное (=0) / зелёное (>0.01) УФ шаблона привязано к строкам образца — переносим его на
+  // фактические ячейки-формулы (материалы: I=XLOOKUP; работы: J=XLOOKUP, I=SUMPRODUCT при наличии
+  // материалов). Ячейки без формулы (СМР у материала, Материалы у работы без материалов, локации)
+  // исключаем из УФ и красим нейтрально: I без формулы → заливка как в H, J без формулы → как в K.
+  const iFormulaRows: number[] = [];
+  const jFormulaRows: number[] = [];
+  for (let rr = TABLE_START_ROW; rr <= tableLast; rr++) {
+    const row = ws.getRow(rr);
+    const cellI = row.getCell(COL.priceMat);
+    const cellJ = row.getCell(COL.priceSmr);
+    if (cellI.formula) iFormulaRows.push(rr);
+    else copyCellFill(cellI, row.getCell(COL.coef)); // H → I
+    if (cellJ.formula) jFormulaRows.push(rr);
+    else copyCellFill(cellJ, row.getCell(COL.priceTotal)); // K → J
+  }
+  // Переписать sqref ценовых правил под фактические ячейки-формулы (либо снять, если формул нет).
+  if (iFormulaRows.length) findCfByColumn(ws, I).ref = coalesceColumnRefs(I, iFormulaRows);
+  else removeCfByColumn(ws, I);
+  if (jFormulaRows.length) findCfByColumn(ws, J).ref = coalesceColumnRefs(J, jFormulaRows);
+  else removeCfByColumn(ws, J);
+
+  // Автофильтр «КП» строго по данным (заголовок таблицы — строка 17); ИТОГО/НДС вне фильтра.
+  ws.autoFilter = { from: { row: 17, column: 1 }, to: { row: tableLast, column: COL.note } };
+
   // Группировка: локация (0) → работа (1) → материал (2), итог группы — сверху (summaryBelow=0).
   ws.properties.outlineLevelRow = 2;
   ws.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
 
   // Листы-справочники МАТЕРИАЛЫ и РАБОТЫ — уникальные наименования с ед.изм., объёмом (SUMIFS
   // из «КП») и строкой-итогом; код (Мат/Работа) фильтрует SUMIFS, цену вносит подрядчик.
+  // Карта «имя листа → последняя значимая строка» для точной обрезки used range (Ctrl+End) в
+  // sanitize: ExcelJS-очистка стилей убирает видимое оформление, но не сжимает dimension.
+  const cropMap: Record<string, number> = {};
   const bsm = wb.getWorksheet(BSM_SHEET);
-  if (bsm) fillReferenceSheet(bsm, REF_DATA_START_ROW, refs.materials, REF_SUBTOTAL_STYLE_ROW.materials, CODE_MATERIAL);
+  if (bsm) cropMap[BSM_SHEET] = fillReferenceSheet(bsm, REF_DATA_START_ROW, refs.materials, REF_SUBTOTAL_STYLE_ROW.materials, CODE_MATERIAL);
   const bsr = wb.getWorksheet(BSR_SHEET);
-  if (bsr) fillReferenceSheet(bsr, REF_DATA_START_ROW, refs.works, REF_SUBTOTAL_STYLE_ROW.works, CODE_WORK);
+  if (bsr) cropMap[BSR_SHEET] = fillReferenceSheet(bsr, REF_DATA_START_ROW, refs.works, REF_SUBTOTAL_STYLE_ROW.works, CODE_WORK);
 
   const out = await wb.xlsx.writeBuffer();
-  return sanitizeXlsx(Buffer.from(out as ArrayBuffer));
+  return sanitizeXlsx(Buffer.from(out as ArrayBuffer), cropMap);
 }
