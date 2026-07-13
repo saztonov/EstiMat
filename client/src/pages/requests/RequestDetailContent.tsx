@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Card, Descriptions, Table, Space, Button, Tag, Empty, Timeline, Alert, Modal, Collapse,
-  Form, Input, InputNumber, DatePicker, Typography, Spin, App,
+  Form, Input, InputNumber, DatePicker, Typography, Spin, App, Popconfirm,
 } from 'antd';
 import {
   ArrowLeftOutlined, FileExcelOutlined, DownloadOutlined, EyeOutlined,
@@ -180,6 +180,8 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
   const canResync = isSupply && isOwnSupplier && r.rp_letter?.sync_status === 'failed';
 
   const canEditFiles = isContractor && ['in_work', 'rp_forming', 'revision'].includes(r.status);
+  // Удаление документов: подрядчик — до отправки РП; инженер/снабжение — на любом этапе (сервер разрешает internal).
+  const canDeleteFiles = canEditFiles || isSupply;
   const canRevisionComplete = isContractor && !isOwnSupplier && r.status === 'revision';
   const canRevisionStd = isSupply && !isOwnSupplier && r.status === 'in_work';
   const canSetSupplier = (isSupply || (isContractor && isDirectRoute)) && !isOwnSupplier
@@ -225,7 +227,11 @@ export function RequestDetailContent({ id, onBack }: { id: string; onBack?: () =
         <Button size="small" type="text" icon={<EyeOutlined />}
           onClick={() => setPreview({ fileId: f.id, fileName: f.file_name, mimeType: f.mime_type })} />
         <Button size="small" type="text" icon={<DownloadOutlined />} onClick={() => downloadFile(f)} />
-        {canEditFiles && <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={deleteFile(f.id)} />}
+        {canDeleteFiles && (
+          <Popconfirm title="Удалить документ?" okText="Удалить" cancelText="Отмена" okButtonProps={{ danger: true }} onConfirm={deleteFile(f.id)}>
+            <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        )}
       </Space>
     ) },
   ];

@@ -14,6 +14,23 @@ interface Sheet { name: string; html: string }
 const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// Безопасное текстовое значение ячейки ExcelJS: cell.text может кидать на некоторых типах
+// (formula/richText/hyperlink/error/date) — обрабатываем cell.value вручную.
+function cellText(cell: { value: unknown }): string {
+  const v = cell.value;
+  if (v == null) return '';
+  if (v instanceof Date) return v.toLocaleDateString('ru-RU');
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (Array.isArray(o.richText)) return (o.richText as { text?: string }[]).map((r) => r.text ?? '').join('');
+    if ('text' in o && o.text != null) return String(o.text);       // hyperlink
+    if ('result' in o) return o.result != null ? String(o.result) : ''; // formula
+    if ('error' in o && o.error != null) return String(o.error);
+    return '';
+  }
+  return String(v);
+}
+
 /** Рендер листа Excel через ExcelJS в HTML-таблицу с базовым форматированием (заливка/жирный/выравнивание). */
 async function renderXlsx(buffer: ArrayBuffer): Promise<Sheet[]> {
   const mod = await import('exceljs');
@@ -28,7 +45,7 @@ async function renderXlsx(buffer: ArrayBuffer): Promise<Sheet[]> {
       html += '<tr>';
       for (let c = 1; c <= colCount; c++) {
         const cell = row.getCell(c);
-        const text = cell.text ?? '';
+        const text = cellText(cell);
         const fill = cell.fill && cell.fill.type === 'pattern' && cell.fill.fgColor?.argb
           ? `background:#${cell.fill.fgColor.argb.slice(-6)};` : '';
         const bold = cell.font?.bold ? 'font-weight:bold;' : '';
