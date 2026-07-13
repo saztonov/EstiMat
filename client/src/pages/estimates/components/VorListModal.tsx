@@ -12,6 +12,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { DEFAULT_PAGINATION } from '../../../lib/tableConfig';
+import { useColumnSearch, uniqueFilters } from '../../../lib/tableColumnSearch';
 import type { EstimateVor, VorFilterSnapshot } from '@estimat/shared';
 import { VorPreviewModal } from './VorPreviewModal';
 import { VorDiffDrawer } from './VorDiffDrawer';
@@ -90,6 +91,7 @@ function filtersShort(f: VorFilterSnapshot): string {
 export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFilters, onExport }: Props) {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
+  const { getColumnSearchProps } = useColumnSearch<EstimateVor>();
   // Предпросмотр файла ВОР поверх списка (null — закрыт).
   const [previewVor, setPreviewVor] = useState<{ id: string; name: string } | null>(null);
   // Drawer «Отличия от ВОР» (null — закрыт).
@@ -121,7 +123,7 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
   }, [open, focusVorId, data]);
 
   const columns: ColumnsType<EstimateVor> = [
-    { title: 'Название', dataIndex: 'name', key: 'name', ellipsis: true },
+    { title: 'Название', dataIndex: 'name', key: 'name', ellipsis: true, ...getColumnSearchProps((r) => r.name) },
     {
       title: 'Дата',
       dataIndex: 'createdAt',
@@ -135,7 +137,16 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
       width: 150,
       render: (_v, r) => <VorStatusCell r={r} />,
     },
-    { title: 'Автор', dataIndex: 'createdByName', key: 'createdByName', width: 160, ellipsis: true },
+    {
+      title: 'Автор',
+      dataIndex: 'createdByName',
+      key: 'createdByName',
+      width: 160,
+      ellipsis: true,
+      filters: uniqueFilters(data ?? [], (r) => r.createdByName),
+      filterSearch: true,
+      onFilter: (value, record) => record.createdByName === value,
+    },
     {
       title: 'Фильтры',
       key: 'filters',
@@ -226,7 +237,7 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
 
   return (
     <>
-      <Modal title="ВОР" open={open} onCancel={onClose} footer={null} width="90%" style={{ maxWidth: 1100 }}>
+      <Modal title="ВОР" open={open} onCancel={onClose} footer={null} width="90%" style={{ maxWidth: 1100 }} destroyOnClose>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
           <Button type="primary" icon={<FileExcelOutlined />} onClick={onExport}>
             Экспорт в Excel
