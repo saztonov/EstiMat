@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { useColumnSearch } from '../../lib/tableColumnSearch';
+import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
 const { Text } = Typography;
 
@@ -25,6 +26,8 @@ export function PayhubPanel() {
   const qc = useQueryClient();
   const [edits, setEdits] = useState<Record<string, { p: number | null; c: number | null }>>({});
   const [senderId, setSenderId] = useState<number | undefined>(undefined);
+  // callback-ref в state: узел смонтирован → ре-рендер → sticky таблицы получает контейнер прокрутки.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const { getColumnSearchProps } = useColumnSearch<EstimatProject>();
 
   const pingQ = useQuery({
@@ -90,16 +93,19 @@ export function PayhubPanel() {
         { text: 'Не сопоставлен', value: 'no' },
       ],
       onFilter: (value, r) => (value === 'yes' ? r.payhub_project_id != null : r.payhub_project_id == null),
-      render: (_, r) => (
-        <Select
-          allowClear showSearch optionFilterProp="label" style={{ width: 240 }}
-          disabled={!configured}
-          value={edits[r.id]?.p ?? r.payhub_project_id ?? undefined}
-          options={projectOpts}
-          placeholder="Не сопоставлен"
-          onChange={(v) => setEdits((e) => ({ ...e, [r.id]: { p: v ?? null, c: e[r.id]?.c ?? r.payhub_contractor_id ?? null } }))}
-        />
-      ),
+      render: (_, r) => {
+        const draft = edits[r.id];
+        return (
+          <Select
+            allowClear showSearch optionFilterProp="label" style={{ width: 240, maxWidth: '100%' }}
+            disabled={!configured}
+            value={draft ? (draft.p ?? undefined) : (r.payhub_project_id ?? undefined)}
+            options={projectOpts}
+            placeholder="Не сопоставлен"
+            onChange={(v) => setEdits((e) => { const cur = e[r.id]; return { ...e, [r.id]: { p: v ?? null, c: cur ? cur.c : (r.payhub_contractor_id ?? null) } }; })}
+          />
+        );
+      },
     },
     {
       title: 'Получатель РП', key: 'phc', width: 260,
@@ -108,29 +114,32 @@ export function PayhubPanel() {
         { text: 'Не сопоставлен', value: 'no' },
       ],
       onFilter: (value, r) => (value === 'yes' ? r.payhub_contractor_id != null : r.payhub_contractor_id == null),
-      render: (_, r) => (
-        <Select
-          allowClear showSearch optionFilterProp="label" style={{ width: 240 }}
-          disabled={!configured}
-          value={edits[r.id]?.c ?? r.payhub_contractor_id ?? undefined}
-          options={contractorOpts}
-          placeholder="Не сопоставлен"
-          onChange={(v) => setEdits((e) => ({ ...e, [r.id]: { p: e[r.id]?.p ?? r.payhub_project_id ?? null, c: v ?? null } }))}
-        />
-      ),
+      render: (_, r) => {
+        const draft = edits[r.id];
+        return (
+          <Select
+            allowClear showSearch optionFilterProp="label" style={{ width: 240, maxWidth: '100%' }}
+            disabled={!configured}
+            value={draft ? (draft.c ?? undefined) : (r.payhub_contractor_id ?? undefined)}
+            options={contractorOpts}
+            placeholder="Не сопоставлен"
+            onChange={(v) => setEdits((e) => { const cur = e[r.id]; return { ...e, [r.id]: { p: cur ? cur.p : (r.payhub_project_id ?? null), c: v ?? null } }; })}
+          />
+        );
+      },
     },
     {
       title: '', key: 'act', width: 120,
       render: (_, r) => {
-        const dirty = !!edits[r.id];
+        const draft = edits[r.id];
         return (
           <Button
-            size="small" type="primary" disabled={!dirty}
+            size="small" type="primary" disabled={!draft}
             loading={saveMapping.isPending && saveMapping.variables?.id === r.id}
             onClick={() => saveMapping.mutate({
               id: r.id,
-              p: edits[r.id]?.p ?? r.payhub_project_id ?? null,
-              c: edits[r.id]?.c ?? r.payhub_contractor_id ?? null,
+              p: draft ? draft.p : (r.payhub_project_id ?? null),
+              c: draft ? draft.c : (r.payhub_contractor_id ?? null),
             })}
           >
             Сохранить
@@ -141,6 +150,10 @@ export function PayhubPanel() {
   ];
 
   return (
+    <div
+      ref={setScrollEl}
+      style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}
+    >
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {!configured && (
         <Alert
@@ -185,10 +198,12 @@ export function PayhubPanel() {
           loading={estimatQ.isLoading}
           columns={columns}
           dataSource={rows}
-          pagination={false}
+          pagination={DEFAULT_PAGINATION}
           scroll={{ x: 800 }}
+          sticky={scrollEl ? { getContainer: () => scrollEl } : undefined}
         />
       </Card>
     </Space>
+    </div>
   );
 }

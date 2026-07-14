@@ -51,12 +51,20 @@ export default async function payhubRoutes(fastify: FastifyInstance) {
   });
 
   // Объекты EstiMat с текущим сопоставлением.
+  // payhub_project_id/contractor_id — BIGINT, драйвер pg отдаёт их строкой; приводим к number,
+  // иначе на клиенте id не совпадёт с числовыми value опций селекта и вместо названия покажется цифра.
   fastify.get('/projects', async () => {
     const { rows } = await fastify.pool.query(
       `SELECT id, code, name, payhub_project_id, payhub_contractor_id
          FROM projects ORDER BY code`,
     );
-    return { data: rows };
+    return {
+      data: rows.map((r) => ({
+        ...r,
+        payhub_project_id: r.payhub_project_id == null ? null : Number(r.payhub_project_id),
+        payhub_contractor_id: r.payhub_contractor_id == null ? null : Number(r.payhub_contractor_id),
+      })),
+    };
   });
 
   // Сохранить сопоставление объекта: проект PayHub + получатель.
