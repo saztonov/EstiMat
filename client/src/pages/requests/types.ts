@@ -252,3 +252,72 @@ export interface SupplierLotDetail extends SupplierLotRow {
   sources: SupplierLotSource[];
   offers: SupplierLotOffer[];
 }
+
+// ===== Заказ поставщику: оформление в одном окне =====
+
+// Поставщик-предложение (список всех, кому отправлен запрос). Документ (КП/счёт) — на строке.
+export interface OrderOffer {
+  id: string;
+  supplier_id: string | null;
+  supplier_name: string;
+  supplier_inn: string | null;
+  amount: string | number | null;
+  currency: string;
+  response_status: 'pending' | 'received' | 'no_response';
+  document_type: 'quote' | 'invoice' | null;
+  terms: string | null;
+  note: string | null;
+  has_file: boolean;
+  file_name: string | null;
+  created_at: string;
+}
+
+// Агрегат материала заказа (по agg_key) — финансовая строка оформления победителя.
+export interface OrderAggItem {
+  agg_key: string;
+  material_name: string;
+  unit: string;
+  quantity: string | number;
+  cost_category_name: string | null;
+}
+
+// Цена победителя по агрегату.
+export interface OrderPriceLine {
+  agg_key: string;
+  unit_price: string | number;
+  warranty_months: number | null;
+}
+
+// Карточка заказа поставщику (GET /supplier-orders/:id).
+export interface SupplierOrderDetail extends SupplierLotRow {
+  vat_rate: string | null;
+  payment_type: string | null;
+  award_source: string | null;
+  awarded_quote_id: string | null;
+  procurement_method: string | null;
+  tender_results: TenderResults | null;
+  tender_last_error: string | null;
+  tender_sync_status: string | null;
+  tender_deadline_at: string | null;
+  items: SupplierLotItem[];
+  aggItems: OrderAggItem[];
+  sources: SupplierLotSource[];
+  offers: OrderOffer[];
+  priceLines: OrderPriceLine[];
+}
+
+// Строка единого реестра «Закупки».
+export interface RegistryRow {
+  kind_tag: 'supplier_order' | 'tender' | 'rp_order' | 'direct_order';
+  id: string;
+  link_kind: 'order' | 'request';
+  project_id: string | null;
+  project_name: string | null;
+  number: string;
+  supplier_name: string | null;
+  amount: string | number | null;
+  status: string;
+  tender_status: string | null;
+  tender_url: string | null;
+  created_at: string;
+}

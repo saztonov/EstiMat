@@ -143,7 +143,7 @@ export function RequestsListTab() {
           render: (_: unknown, r: RequestRow) => (
             <Popconfirm
               title="Удалить заявку?"
-              description="Заявка, документы и позиции лотов будут удалены без возможности восстановления."
+              description="Заявка, документы и позиции заказов будут удалены без возможности восстановления."
               okText="Удалить" okButtonProps={{ danger: true }} cancelText="Отмена"
               onConfirm={() => deleteRequest(r)}
             >

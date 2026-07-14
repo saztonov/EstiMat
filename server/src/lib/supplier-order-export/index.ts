@@ -25,7 +25,7 @@ export async function exportSupplierOrderXlsx(
     [orderId],
   );
   const header = hRes.rows[0];
-  if (!header) throw new SupplierOrderExportError('Лот не найден', 404);
+  if (!header) throw new SupplierOrderExportError('Заказ не найден', 404);
 
   // Агрегация одинаковых материалов (наименование+ед.) — без подрядчиков и номеров заявок.
   const items = await pool.query<{ material_name: string; unit: string; quantity: string; cost_category_name: string | null }>(
@@ -37,7 +37,7 @@ export async function exportSupplierOrderXlsx(
     [orderId],
   );
 
-  const number = `Л-${String(header.order_no ?? 0).padStart(3, '0')}`;
+  const number = `З-${String(header.order_no ?? 0).padStart(3, '0')}`;
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Запрос КП');
@@ -47,7 +47,7 @@ export async function exportSupplierOrderXlsx(
   titleRow.font = { bold: true, size: 14 };
   ws.mergeCells(titleRow.number, 1, titleRow.number, 5);
   ws.addRow([`Объект:`, header.project_name ?? '—']);
-  if (header.title) ws.addRow([`Лот:`, header.title]);
+  if (header.title) ws.addRow([`Заказ:`, header.title]);
   ws.addRow([]);
 
   const head = ws.addRow(['№', 'Наименование материала', 'Ед. изм.', 'Количество', 'Категория работ']);

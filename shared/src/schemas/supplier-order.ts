@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { PROCUREMENT_METHODS, TENDER_STATUSES, TENDER_OUTCOMES, TENDER_VAT_RATES } from '../constants/statuses.js';
+import {
+  PROCUREMENT_METHODS, TENDER_STATUSES, TENDER_OUTCOMES, TENDER_VAT_RATES,
+  MANUAL_VAT_RATES, PAYMENT_TYPES, OFFER_RESPONSE_STATUSES, OFFER_DOC_TYPES,
+} from '../constants/statuses.js';
+
+// Деньги — десятичной строкой (без float): до 13 знаков целой части и ≤2 дробной. Считаем в SQL numeric.
+const money2 = z.string().regex(/^\d{1,13}(\.\d{1,2})?$/, 'Некорректная сумма');
 
 // ===== Вход (клиент → сервер) =====
 
@@ -66,6 +72,54 @@ export const awardSchema = z.object({
   expectedVersion: z.number().int().nonnegative().optional(),
 });
 export type AwardInput = z.infer<typeof awardSchema>;
+
+// ===== Оформление заказа поставщику (ручной канал: одно окно) =====
+
+// Атомарное создание заказа-тендера из выбранных материалов (без промежуточного manual-заказа):
+// создать позиции + зарезервировать остаток + tender.create в outbox в одной транзакции.
+export const createTenderOrderSchema = z.object({
+  projectId: z.string().uuid(),
+  title: z.string().max(300).nullish(),
+  clientRequestId: z.string().min(8),
+  items: z.array(lotItemSchema).min(1, 'Не выбраны материалы'),
+  tender: tenderConditionsSchema,
+});
+export type CreateTenderOrderInput = z.infer<typeof createTenderOrderSchema>;
+
+// Добавить/обновить поставщика-предложение. Сумма НЕОБЯЗАТЕЛЬНА (поставщика можно добавить только с файлом).
+export const upsertOfferSchema = z.object({
+  supplierId: z.string().uuid().nullish(),
+  supplierName: z.string().min(1).max(300),
+  supplierInn: z.string().regex(/^\d{10}(\d{2})?$/, 'ИНН 10 или 12 цифр').nullish(),
+  amount: money2.nullish(),
+  responseStatus: z.enum(OFFER_RESPONSE_STATUSES).optional(),
+  terms: z.string().max(1000).nullish(),
+  note: z.string().max(1000).nullish(),
+});
+export type UpsertOfferInput = z.infer<typeof upsertOfferSchema>;
+
+// Метаданные при загрузке файла предложения (тип документа — КП/счёт — приходит query-параметром).
+export const offerFileMetaSchema = z.object({
+  documentType: z.enum(OFFER_DOC_TYPES).default('quote'),
+});
+export type OfferFileMetaInput = z.infer<typeof offerFileMetaSchema>;
+
+// Одна финансовая строка оформления победителя — по АГРЕГАТУ материала (agg_key), не по исходной позиции.
+export const finalizeLineSchema = z.object({
+  aggKey: z.string().min(1),
+  unitPrice: money2,                 // цена за единицу, без НДС
+  warrantyMonths: z.number().int().min(0).max(1200).nullish(),
+});
+
+// «Оформить заказ»: победитель + условия + цены → awarded (атомарно).
+export const finalizeOrderSchema = z.object({
+  winnerOfferId: z.string().uuid(),
+  vatRate: z.enum(MANUAL_VAT_RATES),
+  paymentType: z.enum(PAYMENT_TYPES),
+  lines: z.array(finalizeLineSchema).min(1),
+  expectedVersion: z.number().int().nonnegative().optional(),
+});
+export type FinalizeOrderInput = z.infer<typeof finalizeOrderSchema>;
 
 // ===== Runtime-схемы ответов тендерного портала (валидация на границе) =====
 

@@ -2,7 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { formLotSchema, startProcurementSchema, addOfferSchema, awardSchema, mapTenderUnit } from '@estimat/shared';
+import {
+  formLotSchema, startProcurementSchema, awardSchema, mapTenderUnit,
+  upsertOfferSchema, offerFileMetaSchema, finalizeOrderSchema,
+  MANUAL_VAT_RATE_VALUE, type ManualVatRate,
+} from '@estimat/shared';
 import { config } from '../../config.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
@@ -10,6 +14,9 @@ import { assertCategoryAccess } from '../../lib/procurement/access.js';
 import { exportSupplierOrderXlsx, SupplierOrderExportError } from '../../lib/supplier-order-export/index.js';
 import { refreshTenderLot } from '../../lib/tender/sync.js';
 import { TenderApiError, TenderNotConfiguredError } from '../../lib/tender/errors.js';
+import { guardedStreamUpload, FileGuardError } from '../../lib/uploads/file-guard.js';
+
+const FILE_LIMIT = 50 * 1024 * 1024; // 50 МБ на файл предложения
 
 /**
  * Закупочные лоты СУ-10 (supplier_orders.kind='sourcing'). Инструмент снабжения — доступ только
@@ -149,19 +156,19 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         const lot = rows[0];
         if (!lot) {
           await client.query('ROLLBACK');
-          return reply.status(404).send({ error: 'Лот не найден' });
+          return reply.status(404).send({ error: 'Заказ не найден' });
         }
         if (lot.sourcing_status !== 'forming') {
           await client.query('ROLLBACK');
-          return reply.status(409).send({ error: 'Лот заморожен — состав менять нельзя' });
+          return reply.status(409).send({ error: 'Заказ зафиксирован — состав менять нельзя' });
         }
         if (lot.project_id !== body.projectId) {
           await client.query('ROLLBACK');
-          return reply.status(400).send({ error: 'Лот относится к другому объекту' });
+          return reply.status(400).send({ error: 'Заказ относится к другому объекту' });
         }
         if (body.expectedVersion != null && body.expectedVersion !== lot.row_version) {
           await client.query('ROLLBACK');
-          return reply.status(409).send({ error: 'Лот изменён, обновите страницу', rowVersion: lot.row_version });
+          return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: lot.row_version });
         }
         orderId = lot.id;
       } else {
@@ -177,7 +184,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           const d = dup.rows[0];
           if (d.sourcing_status !== 'forming' || d.project_id !== body.projectId) {
             await client.query('ROLLBACK');
-            return reply.status(409).send({ error: 'Повторный запрос по изменённому лоту, обновите страницу' });
+            return reply.status(409).send({ error: 'Повторный запрос по изменённому заказу, обновите страницу' });
           }
           orderId = d.id;
         } else {
@@ -225,7 +232,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         }
         if (r.request_type !== 'su10') {
           await client.query('ROLLBACK');
-          return reply.status(400).send({ error: 'В лот попадают только материалы заявок СУ-10' });
+          return reply.status(400).send({ error: 'В заказ попадают только материалы заявок СУ-10' });
         }
         if (r.project_id !== body.projectId) {
           await client.query('ROLLBACK');
@@ -331,14 +338,14 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         [request.params.id],
       );
       const lot = rows[0];
-      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Лот не найден' }); }
+      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       if (user.role !== 'admin' && lot.created_by !== user.id) {
         await client.query('ROLLBACK');
-        return reply.status(403).send({ error: 'Изменять состав лота может только его создатель или администратор' });
+        return reply.status(403).send({ error: 'Изменять состав заказа может только его создатель или администратор' });
       }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Лот заморожен — состав менять нельзя' });
+        return reply.status(409).send({ error: 'Заказ зафиксирован — состав менять нельзя' });
       }
       const { rows: delRows } = await client.query(
         `DELETE FROM supplier_order_items WHERE id = $1 AND order_id = $2 RETURNING request_id`,
@@ -371,20 +378,25 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         [request.params.id],
       );
       const lot = rows[0];
-      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Лот не найден' }); }
+      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       if (user.role !== 'admin' && lot.created_by !== user.id) {
         await client.query('ROLLBACK');
-        return reply.status(403).send({ error: 'Удалить лот может только его создатель или администратор' });
+        return reply.status(403).send({ error: 'Удалить заказ может только его создатель или администратор' });
       }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Удалить можно только формируемый лот' });
+        return reply.status(409).send({ error: 'Удалить можно только формируемый заказ' });
       }
       const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [lot.id]);
+      // Соберём ключи S3-объектов предложений до каскадного удаления (БД каскад файлы в S3 не чистит).
+      const { rows: fileRows } = await client.query(
+        `SELECT file_key FROM supplier_order_offers WHERE order_id = $1 AND file_key IS NOT NULL`, [lot.id],
+      );
       await client.query('DELETE FROM supplier_orders WHERE id = $1', [lot.id]);
       await appendOrderAudit(client, { orderId: lot.id, action: 'deleted', userId: user.id, projectId: lot.project_id });
       for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, user.id);
       await client.query('COMMIT');
+      if (fastify.storage) for (const f of fileRows) await fastify.storage.deleteObject(f.file_key).catch(() => {});
       return { data: { ok: true } };
     } catch (e) {
       await client.query('ROLLBACK');
@@ -414,10 +426,10 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         [request.params.id],
       );
       const lot = rows[0];
-      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Лот не найден' }); }
+      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       if (['cancelled', 'cancel_pending', 'awarded', 'no_award'].includes(lot.sourcing_status)) {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Лот уже нельзя отменить' });
+        return reply.status(409).send({ error: 'Заказ уже нельзя отменить' });
       }
 
       const isTender = lot.procurement_method === 'tender';
@@ -495,17 +507,17 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         [request.params.id],
       );
       const lot = rows[0];
-      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Лот не найден' }); }
+      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Лот уже в закупке' });
+        return reply.status(409).send({ error: 'Заказ уже в закупке' });
       }
       if (body.expectedVersion != null && body.expectedVersion !== lot.row_version) {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Лот изменён, обновите страницу', rowVersion: lot.row_version });
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: lot.row_version });
       }
       const { rows: cnt } = await client.query('SELECT count(*)::int AS n FROM supplier_order_items WHERE order_id = $1', [lot.id]);
-      if (cnt[0].n === 0) { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Лот пуст' }); }
+      if (cnt[0].n === 0) { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Заказ пуст' }); }
       await client.query(
         `UPDATE supplier_orders SET sourcing_status = 'sourcing', procurement_method = 'manual',
                 row_version = row_version + 1, updated_at = now() WHERE id = $1`,
@@ -538,14 +550,14 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         [request.params.id],
       );
       const lot = rows[0];
-      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Лот не найден' }); }
+      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Лот уже в закупке' });
+        return reply.status(409).send({ error: 'Заказ уже в закупке' });
       }
       if (body.expectedVersion != null && body.expectedVersion !== lot.row_version) {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Лот изменён, обновите страницу', rowVersion: lot.row_version });
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: lot.row_version });
       }
       // Условия тендера обязательны; дедлайн — ISO и строго в будущем (портал требует deadline_at).
       const tc = body.tender;
@@ -564,7 +576,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           GROUP BY agg_key, unit ORDER BY MIN(material_name)`,
         [lot.id],
       );
-      if (items.length === 0) { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Лот пуст' }); }
+      if (items.length === 0) { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Заказ пуст' }); }
 
       // Единицы: сопоставляем со справочником портала; неизвестную не отправляем (блокируем выгрузку).
       const unmapped = [...new Set(items.filter((it) => mapTenderUnit(it.unit) == null).map((it) => it.unit as string))];
@@ -581,7 +593,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
 
       const externalRef = `estimat:lot:${lot.id}`;
       const input = {
-        title: lot.title ?? `Закупочный лот № Л-${String(lot.order_no ?? 0).padStart(3, '0')}`,
+        title: lot.title ?? `Заказ поставщику № З-${String(lot.order_no ?? 0).padStart(3, '0')}`,
         external_ref: externalRef,
         source_revision: (lot.row_version ?? 0) + 1,
         deadline_at: tc.deadlineAt,
@@ -636,8 +648,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       `SELECT tender_portal_id FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
       [request.params.id],
     );
-    if (!rows[0]) return reply.status(404).send({ error: 'Лот не найден' });
-    if (!rows[0].tender_portal_id) return reply.status(409).send({ error: 'Тендер по лоту не создан' });
+    if (!rows[0]) return reply.status(404).send({ error: 'Заказ не найден' });
+    if (!rows[0].tender_portal_id) return reply.status(409).send({ error: 'Тендер по заказу не создан' });
     try {
       await refreshTenderLot(fastify, request.params.id);
       const { rows: fresh } = await fastify.pool.query(
@@ -669,46 +681,142 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // Заказ доступен для работы с поставщиками: стадия сбора предложений (sourcing), не тендер.
+  async function loadOfferableOrder(id: string) {
+    const { rows } = await fastify.pool.query(
+      `SELECT id, sourcing_status, procurement_method, project_id FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
+      [id],
+    );
+    return rows[0] as { id: string; sourcing_status: string; procurement_method: string | null; project_id: string | null } | undefined;
+  }
+
   // ============================================================
-  // POST /:id/offers — зарегистрировать КП поставщика (manual-канал, стадия sourcing)
+  // POST /:id/offers — добавить поставщика-предложение (manual, стадия сбора; сумма необязательна)
   // ============================================================
   fastify.post<{ Params: { id: string } }>('/:id/offers', async (request, reply) => {
     const user = request.currentUser;
-    const body = addOfferSchema.parse(request.body);
-    const { rows } = await fastify.pool.query(
-      `SELECT id, sourcing_status, procurement_method, project_id FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
-      [request.params.id],
-    );
-    const lot = rows[0];
-    if (!lot) return reply.status(404).send({ error: 'Лот не найден' });
-    if (lot.sourcing_status !== 'sourcing' || lot.procurement_method !== 'manual') {
-      return reply.status(409).send({ error: 'КП добавляются только по лоту в стадии сбора предложений' });
+    const body = upsertOfferSchema.parse(request.body);
+    const order = await loadOfferableOrder(request.params.id);
+    if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
+    if (order.sourcing_status !== 'sourcing' || order.procurement_method === 'tender') {
+      return reply.status(409).send({ error: 'Поставщиков можно добавлять только по заказу в стадии сбора предложений' });
     }
     const { rows: ins } = await fastify.pool.query(
       `INSERT INTO supplier_order_offers
-         (order_id, supplier_id, supplier_name, supplier_inn, amount, currency, terms, note, file_id, submitted_at, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-      [lot.id, body.supplierId ?? null, body.supplierName, body.supplierInn ?? null, body.amount,
-       body.currency ?? 'RUB', body.terms ?? null, body.note ?? null, body.fileId ?? null, body.submittedAt ?? null, user.id],
+         (order_id, supplier_id, supplier_name, supplier_inn, amount, currency, response_status, terms, note, created_by)
+       VALUES ($1,$2,$3,$4,$5,'RUB',$6,$7,$8,$9) RETURNING id`,
+      [order.id, body.supplierId ?? null, body.supplierName, body.supplierInn ?? null, body.amount ?? null,
+       body.responseStatus ?? 'pending', body.terms ?? null, body.note ?? null, user.id],
     );
-    await appendOrderAudit(fastify.pool, { orderId: lot.id, action: 'offer_added', userId: user.id, changes: { amount: body.amount }, projectId: lot.project_id });
+    await appendOrderAudit(fastify.pool, { orderId: order.id, action: 'offer_added', userId: user.id, changes: { supplierName: body.supplierName }, projectId: order.project_id });
     return reply.status(201).send({ data: { id: ins[0].id } });
   });
 
-  // DELETE /:id/offers/:offerId — убрать КП (пока лот не присуждён).
+  // PATCH /:id/offers/:offerId — правка поставщика (имя/ИНН/сумма/статус ответа), пока не оформлен.
+  fastify.patch<{ Params: { id: string; offerId: string } }>('/:id/offers/:offerId', async (request, reply) => {
+    const user = request.currentUser;
+    const body = upsertOfferSchema.parse(request.body);
+    const order = await loadOfferableOrder(request.params.id);
+    if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
+    if (order.sourcing_status !== 'sourcing' || order.procurement_method === 'tender') {
+      return reply.status(409).send({ error: 'Поставщиков можно менять только по заказу в стадии сбора предложений' });
+    }
+    const { rowCount } = await fastify.pool.query(
+      `UPDATE supplier_order_offers
+          SET supplier_id = $3, supplier_name = $4, supplier_inn = $5, amount = $6,
+              response_status = COALESCE($7, response_status), terms = $8, note = $9
+        WHERE id = $1 AND order_id = $2`,
+      [request.params.offerId, order.id, body.supplierId ?? null, body.supplierName, body.supplierInn ?? null,
+       body.amount ?? null, body.responseStatus ?? null, body.terms ?? null, body.note ?? null],
+    );
+    if (!rowCount) return reply.status(404).send({ error: 'Предложение не найдено' });
+    return { data: { ok: true } };
+  });
+
+  // DELETE /:id/offers/:offerId — убрать поставщика (пока заказ не оформлен); S3-объект чистим.
   fastify.delete<{ Params: { id: string; offerId: string } }>('/:id/offers/:offerId', async (request, reply) => {
     const { rows } = await fastify.pool.query(
       `SELECT sourcing_status FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
       [request.params.id],
     );
-    if (!rows[0]) return reply.status(404).send({ error: 'Лот не найден' });
-    if (rows[0].sourcing_status === 'awarded') return reply.status(409).send({ error: 'Лот уже присуждён' });
-    const { rowCount } = await fastify.pool.query(
-      `DELETE FROM supplier_order_offers WHERE id = $1 AND order_id = $2`,
+    if (!rows[0]) return reply.status(404).send({ error: 'Заказ не найден' });
+    if (rows[0].sourcing_status === 'awarded') return reply.status(409).send({ error: 'Заказ уже оформлен' });
+    const { rows: del } = await fastify.pool.query(
+      `DELETE FROM supplier_order_offers WHERE id = $1 AND order_id = $2 RETURNING file_key`,
       [request.params.offerId, request.params.id],
     );
-    if (!rowCount) return reply.status(404).send({ error: 'КП не найдено' });
+    if (!del[0]) return reply.status(404).send({ error: 'Предложение не найдено' });
+    if (del[0].file_key && fastify.storage) await fastify.storage.deleteObject(del[0].file_key).catch(() => {});
     return { data: { ok: true } };
+  });
+
+  // ============================================================
+  // POST /:id/offers/:offerId/file — приложить документ поставщика (КП/счёт), потоковый multipart.
+  //   Загрузка автоматически ставит статус ответа 'received'. Замена: новый объект → БД → удалить старый.
+  // ============================================================
+  fastify.post<{ Params: { id: string; offerId: string }; Querystring: { documentType?: string } }>(
+    '/:id/offers/:offerId/file',
+    async (request, reply) => {
+      const user = request.currentUser;
+      const order = await loadOfferableOrder(request.params.id);
+      if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
+      if (order.sourcing_status !== 'sourcing' || order.procurement_method === 'tender') {
+        return reply.status(409).send({ error: 'Документы поставщиков — только по заказу в стадии сбора предложений' });
+      }
+      if (!fastify.storage) return reply.status(503).send({ error: 'Хранилище файлов не настроено' });
+      const { documentType } = offerFileMetaSchema.parse({ documentType: request.query.documentType });
+      const { rows: oRows } = await fastify.pool.query(
+        `SELECT id, file_key FROM supplier_order_offers WHERE id = $1 AND order_id = $2`,
+        [request.params.offerId, order.id],
+      );
+      if (!oRows[0]) return reply.status(404).send({ error: 'Предложение не найдено' });
+      const prevKey: string | null = oRows[0].file_key;
+
+      const file = await request.file({ limits: { fileSize: FILE_LIMIT } });
+      if (!file) return reply.status(400).send({ error: 'Файл не загружен' });
+      try {
+        const meta = await guardedStreamUpload(fastify.storage, file.file, file.filename, `supplier-orders/${order.id}/offers`);
+        if (file.file.truncated) {
+          await fastify.storage.deleteObject(meta.key);
+          return reply.status(400).send({ error: 'Файл больше 50 МБ' });
+        }
+        try {
+          await fastify.pool.query(
+            `UPDATE supplier_order_offers
+                SET file_key = $3, file_name = $4, mime_type = $5, checksum = $6, file_size = $7,
+                    document_type = $8, response_status = 'received'
+              WHERE id = $1 AND order_id = $2`,
+            [request.params.offerId, order.id, meta.key, meta.safeName, meta.mime, meta.checksum, meta.size, documentType],
+          );
+        } catch (dbErr) {
+          await fastify.storage.deleteObject(meta.key).catch(() => {});
+          throw dbErr;
+        }
+        // Успешная замена — удаляем прежний объект.
+        if (prevKey && prevKey !== meta.key) await fastify.storage.deleteObject(prevKey).catch(() => {});
+        await appendOrderAudit(fastify.pool, { orderId: order.id, action: 'offer_file_added', userId: user.id, changes: { documentType, fileName: meta.safeName }, projectId: order.project_id });
+        return reply.status(201).send({ data: { fileName: meta.safeName, documentType } });
+      } catch (e) {
+        if (e instanceof FileGuardError) return reply.status(e.status).send({ error: e.message });
+        throw e;
+      }
+    },
+  );
+
+  // GET /:id/offers/:offerId/file — download-proxy документа поставщика (S3-ключ наружу не отдаём).
+  fastify.get<{ Params: { id: string; offerId: string } }>('/:id/offers/:offerId/file', async (request, reply) => {
+    const { rows } = await fastify.pool.query(
+      `SELECT file_key, file_name, mime_type FROM supplier_order_offers WHERE id = $1 AND order_id = $2`,
+      [request.params.offerId, request.params.id],
+    );
+    const f = rows[0];
+    if (!f || !f.file_key || !fastify.storage) return reply.status(404).send({ error: 'Файл не найден' });
+    const obj = await fastify.storage.getObject(f.file_key);
+    reply.type(f.mime_type || 'application/octet-stream');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    if (obj.contentLength != null) reply.header('Content-Length', obj.contentLength);
+    reply.header('Content-Disposition', `attachment; filename="file"; filename*=UTF-8''${encodeURIComponent(f.file_name || 'file')}`);
+    return reply.send(obj.body);
   });
 
   // ============================================================
@@ -727,14 +835,14 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         [request.params.id],
       );
       const lot = rows[0];
-      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Лот не найден' }); }
+      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       if (lot.sourcing_status !== 'sourcing') {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Присудить можно только лот в стадии закупки' });
+        return reply.status(409).send({ error: 'Присудить можно только заказ в стадии закупки' });
       }
       if (body.expectedVersion != null && body.expectedVersion !== lot.row_version) {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Лот изменён, обновите страницу', rowVersion: lot.row_version });
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: lot.row_version });
       }
 
       let supplierName: string;
@@ -744,7 +852,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       let quoteId: string | null = null;
 
       if (body.source === 'manual') {
-        if (lot.procurement_method !== 'manual') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Лот закупается через тендер' }); }
+        if (lot.procurement_method !== 'manual') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Заказ закупается через тендер' }); }
         if (!body.quoteId) { await client.query('ROLLBACK'); return reply.status(400).send({ error: 'Не выбрано КП' }); }
         const { rows: oRows } = await client.query(
           `SELECT * FROM supplier_order_offers WHERE id = $1 AND order_id = $2`,
@@ -760,7 +868,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         quoteId = offer.id;
       } else {
         // tender: победитель определён площадкой; сервер резолвит ставку из сохранённых результатов.
-        if (lot.procurement_method !== 'tender') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Лот закупается по почте' }); }
+        if (lot.procurement_method !== 'tender') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Заказ закупается по почте' }); }
         if (lot.tender_status !== 'finished') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Тендер ещё не завершён' }); }
         const results = lot.tender_results as {
           outcome?: string | null;
@@ -813,6 +921,162 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     } finally {
       client.release();
     }
+  });
+
+  // ============================================================
+  // POST /:id/finalize — оформить победителя с ценами (manual): sourcing → awarded (атомарно).
+  //   Победитель — предложение с ответом 'received' и приложенным документом. Цены вводятся ПО АГРЕГАТУ
+  //   материала (agg_key). Итог считается в SQL numeric (построчное округление до копеек), amount = ИТОГО > 0.
+  // ============================================================
+  fastify.post<{ Params: { id: string } }>('/:id/finalize', async (request, reply) => {
+    const user = request.currentUser;
+    const body = finalizeOrderSchema.parse(request.body);
+    const aggKeys = body.lines.map((l) => l.aggKey);
+    if (new Set(aggKeys).size !== aggKeys.length) {
+      return reply.status(400).send({ error: 'Дублирующиеся материалы в ценах' });
+    }
+    const rate = MANUAL_VAT_RATE_VALUE[body.vatRate as ManualVatRate];
+
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT id, project_id, sourcing_status, procurement_method, row_version FROM supplier_orders
+          WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        [request.params.id],
+      );
+      const order = rows[0];
+      if (!order) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      if (order.sourcing_status !== 'sourcing' || order.procurement_method === 'tender') {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Оформить можно только заказ в стадии сбора предложений' });
+      }
+      if (body.expectedVersion != null && body.expectedVersion !== order.row_version) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: order.row_version });
+      }
+
+      // Победитель: принадлежит заказу, ответ получен, документ приложен.
+      const { rows: wRows } = await client.query(
+        `SELECT id, supplier_id, supplier_name, supplier_inn, response_status, file_key
+           FROM supplier_order_offers WHERE id = $1 AND order_id = $2 FOR UPDATE`,
+        [body.winnerOfferId, order.id],
+      );
+      const winner = wRows[0];
+      if (!winner) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Победитель не найден' }); }
+      if (winner.response_status !== 'received' || !winner.file_key) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Победителем можно выбрать только поставщика с полученным предложением и приложенным документом' });
+      }
+
+      // Цены должны покрывать ВСЕ агрегаты заказа (точное совпадение множеств agg_key).
+      const { rows: orderKeys } = await client.query(
+        `SELECT DISTINCT agg_key FROM supplier_order_items WHERE order_id = $1`,
+        [order.id],
+      );
+      const orderSet = new Set(orderKeys.map((r) => r.agg_key as string));
+      if (orderSet.size !== aggKeys.length || aggKeys.some((k) => !orderSet.has(k))) {
+        await client.query('ROLLBACK');
+        return reply.status(400).send({ error: 'Заполните цены по всем материалам заказа' });
+      }
+
+      // Записываем цены победителя по агрегату.
+      await client.query('DELETE FROM supplier_order_price_lines WHERE order_id = $1', [order.id]);
+      await client.query(
+        `INSERT INTO supplier_order_price_lines (order_id, agg_key, unit_price, warranty_months)
+         SELECT $1, k, p, w FROM unnest($2::text[], $3::numeric[], $4::int[]) AS t(k, p, w)`,
+        [order.id, aggKeys, body.lines.map((l) => l.unitPrice), body.lines.map((l) => l.warrantyMonths ?? null)],
+      );
+
+      // ИТОГО в SQL numeric: построчно net=ROUND(кол-во×цена,2), НДС=ROUND(net×ставка,2), итого=net+НДС.
+      const { rows: totRows } = await client.query(
+        `WITH agg AS (
+           SELECT agg_key, SUM(quantity) AS qty FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key
+         ), line AS (
+           SELECT ROUND(a.qty * pl.unit_price, 2) AS net
+             FROM agg a JOIN supplier_order_price_lines pl ON pl.order_id = $1 AND pl.agg_key = a.agg_key
+         )
+         SELECT COALESCE(SUM(net + ROUND(net * $2::numeric, 2)), 0)::numeric(15,2) AS total FROM line`,
+        [order.id, rate],
+      );
+      const amount: string = String(totRows[0].total);
+      if (Number(amount) <= 0) {
+        await client.query('ROLLBACK');
+        return reply.status(400).send({ error: 'Итоговая сумма заказа должна быть больше нуля' });
+      }
+
+      await client.query(
+        `UPDATE supplier_orders
+            SET sourcing_status = 'awarded', vat_rate = $2, payment_type = $3,
+                supplier_id = $4, supplier_name = $5, supplier_inn = $6, amount = $7,
+                award_source = 'manual', awarded_quote_id = $8, awarded_at = now(), awarded_by = $9,
+                row_version = row_version + 1, updated_at = now()
+          WHERE id = $1`,
+        [order.id, body.vatRate, body.paymentType, winner.supplier_id, winner.supplier_name, winner.supplier_inn,
+         amount, winner.id, user.id],
+      );
+      await appendOrderAudit(client, {
+        orderId: order.id, action: 'finalized', userId: user.id,
+        changes: { vatRate: body.vatRate, paymentType: body.paymentType, amount, supplierName: winner.supplier_name },
+        projectId: order.project_id,
+      });
+      const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [order.id]);
+      for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, user.id);
+      await client.query('COMMIT');
+      return { data: { id: order.id, sourcingStatus: 'awarded', amount, supplierName: winner.supplier_name } };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  });
+
+  // ============================================================
+  // GET /registry — единый реестр закупок (4 вида: заказ поставщику / тендер / заказ по РП / заказ
+  //   поставщиком). Один скан supplier_orders (kind='sourcing' + kind='direct' JOIN заявок). Read-only.
+  // ============================================================
+  fastify.get<{ Querystring: { projectId?: string; type?: string; limit?: string; offset?: string } }>('/registry', async (request) => {
+    const q = request.query;
+    const projectId = q.projectId || null;
+    const types = q.type ? q.type.split(',').map((s) => s.trim()).filter(Boolean) : null;
+    const limit = Math.min(Math.max(Number(q.limit) || 100, 1), 500);
+    const offset = Math.max(Number(q.offset) || 0, 0);
+
+    const { rows } = await fastify.pool.query(
+      `WITH reg AS (
+         SELECT
+           CASE WHEN so.procurement_method = 'tender' THEN 'tender' ELSE 'supplier_order' END AS kind_tag,
+           so.id, 'order'::text AS link_kind, so.project_id, so.project_name,
+           'З-' || lpad(COALESCE(so.order_no, 0)::text, 3, '0') AS number,
+           so.supplier_name, so.amount, so.sourcing_status AS status,
+           so.tender_status, so.tender_url, so.created_at
+           FROM supplier_orders so
+          WHERE so.kind = 'sourcing'
+         UNION ALL
+         SELECT
+           CASE WHEN mr.request_type = 'own_supplier' THEN 'rp_order' ELSE 'direct_order' END AS kind_tag,
+           mr.id, 'request'::text AS link_kind, mr.project_id, mr.project_name,
+           COALESCE(p.code, '') || '-' || lpad(COALESCE(mr.request_no, 0)::text, 2, '0') AS number,
+           so.supplier_name, so.amount, mr.status,
+           NULL::text AS tender_status, NULL::text AS tender_url, so.created_at
+           FROM supplier_orders so
+           JOIN material_requests mr ON mr.id = so.request_id
+           LEFT JOIN projects p ON p.id = mr.project_id
+          WHERE so.kind = 'direct'
+            AND mr.request_type IN ('own_supplier', 'own_supply')
+            AND mr.status <> 'cancelled'
+       )
+       SELECT reg.*, count(*) OVER() AS total
+         FROM reg
+        WHERE ($1::uuid IS NULL OR reg.project_id = $1)
+          AND ($2::text[] IS NULL OR reg.kind_tag = ANY($2))
+        ORDER BY reg.created_at DESC
+        LIMIT $3 OFFSET $4`,
+      [projectId, types, limit, offset],
+    );
+    const total = rows[0] ? Number(rows[0].total) : 0;
+    return { data: rows.map(({ total: _t, ...r }) => r), meta: { total } };
   });
 
   // ============================================================
@@ -911,7 +1175,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   });
 
   // ============================================================
-  // GET /:id — карточка лота (позиции, заявки-источники, КП, результаты тендера)
+  // GET /:id — карточка заказа (позиции, агрегаты, заявки-источники, поставщики-предложения, цены, тендер)
   // ============================================================
   fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
     const { rows } = await fastify.pool.query(
@@ -919,13 +1183,21 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       [request.params.id],
     );
     const lot = rows[0];
-    if (!lot) return reply.status(404).send({ error: 'Лот не найден' });
+    if (!lot) return reply.status(404).send({ error: 'Заказ не найден' });
 
-    const [items, sources, offers] = await Promise.all([
+    const [items, aggItems, sources, offers, priceLines] = await Promise.all([
       fastify.pool.query(
-        `SELECT id, request_id, request_item_id, material_id, material_name, unit, quantity,
+        `SELECT id, request_id, request_item_id, material_id, material_name, unit, quantity, agg_key,
                 contractor_id, contractor_name, request_no, cost_type_name, cost_category_name
            FROM supplier_order_items WHERE order_id = $1 ORDER BY cost_category_name, cost_type_name, material_name`,
+        [lot.id],
+      ),
+      // Агрегаты материалов по agg_key — финансовые строки оформления (как в Excel КП и тендере).
+      fastify.pool.query(
+        `SELECT agg_key, MIN(material_name) AS material_name, unit, SUM(quantity)::numeric AS quantity,
+                MIN(cost_category_name) AS cost_category_name
+           FROM supplier_order_items WHERE order_id = $1
+          GROUP BY agg_key, unit ORDER BY MIN(cost_category_name) NULLS LAST, MIN(material_name)`,
         [lot.id],
       ),
       fastify.pool.query(
@@ -935,11 +1207,25 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         [lot.id],
       ),
       fastify.pool.query(
-        `SELECT id, supplier_id, supplier_name, supplier_inn, amount, currency, terms, note, file_id, submitted_at, created_at
-           FROM supplier_order_offers WHERE order_id = $1 ORDER BY amount`,
+        `SELECT id, supplier_id, supplier_name, supplier_inn, amount, currency, response_status, document_type,
+                terms, note, (file_key IS NOT NULL) AS has_file, file_name, created_at
+           FROM supplier_order_offers WHERE order_id = $1 ORDER BY response_status, amount NULLS LAST, created_at`,
+        [lot.id],
+      ),
+      fastify.pool.query(
+        `SELECT agg_key, unit_price, warranty_months FROM supplier_order_price_lines WHERE order_id = $1`,
         [lot.id],
       ),
     ]);
-    return { data: { ...lot, items: items.rows, sources: sources.rows, offers: offers.rows } };
+    return {
+      data: {
+        ...lot,
+        items: items.rows,
+        aggItems: aggItems.rows,
+        sources: sources.rows,
+        offers: offers.rows,
+        priceLines: priceLines.rows,
+      },
+    };
   });
 }

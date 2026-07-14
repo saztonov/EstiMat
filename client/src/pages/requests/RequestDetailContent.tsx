@@ -276,7 +276,7 @@ export function RequestDetailContent(
     },
     ...(r.request_type === 'su10' && isSupply ? [{
       key: 'lots',
-      label: 'Закупочные лоты',
+      label: 'Закупки',
       children: <RequestLotsSection requestId={id} />,
     }] : []),
     {

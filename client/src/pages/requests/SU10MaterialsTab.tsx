@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Select, Table, Button, Space, Empty, Tag, Tooltip, Popover, Checkbox, Badge, Alert } from 'antd';
-import { ShoppingCartOutlined, ReloadOutlined, FilterOutlined } from '@ant-design/icons';
+import { Select, Table, Button, Space, Empty, Tag, Tooltip, Popover, Checkbox, Badge, Alert, Dropdown } from 'antd';
+import { ShoppingCartOutlined, ReloadOutlined, FilterOutlined, DownOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
@@ -10,7 +10,8 @@ import { useAuthStore } from '../../store/authStore';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { round4 } from './requestConstants';
-import { SupplierLotFormModal } from './SupplierLotFormModal';
+import { SupplierOrderModal } from './SupplierOrderModal';
+import { TenderCreateModal } from './TenderCreateModal';
 import type { Su10MaterialRow, MaterialsFacets, CategoryResponsibles } from './types';
 
 const EPS = 1e-6;
@@ -123,7 +124,7 @@ export function SU10MaterialsTab() {
   const [limit, setLimit] = useState(100);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [modalOpen, setModalOpen] = useState(false);
+  const [action, setAction] = useState<'order' | 'tender' | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
 
   const grouped = groupContractor || groupSecond !== null;
@@ -263,7 +264,7 @@ export function SU10MaterialsTab() {
         return (
           <Space size={4}>
             {r.material_name}
-            {r.request_type === 'su10' && r.remaining != null && r.remaining <= EPS && <Tag color="default">в лотах</Tag>}
+            {r.request_type === 'su10' && r.remaining != null && r.remaining <= EPS && <Tag color="default">в заказах</Tag>}
           </Space>
         );
       },
@@ -295,7 +296,7 @@ export function SU10MaterialsTab() {
     },
     { title: 'Запрошено', dataIndex: 'requested', key: 'requested', width: 100, align: 'right', ...hideForGroup, render: (v) => round4(v) },
     {
-      title: 'В лотах СУ-10', dataIndex: 'ordered', key: 'ordered', width: 110, align: 'right', ...hideForGroup,
+      title: 'В заказах', dataIndex: 'ordered', key: 'ordered', width: 110, align: 'right', ...hideForGroup,
       render: (v: number | null) => (v == null ? <span style={{ color: '#bfbfbf' }}>—</span> : Number(v) > 0 ? round4(v) : <span style={{ color: '#bfbfbf' }}>0</span>),
     },
     {
@@ -350,15 +351,21 @@ export function SU10MaterialsTab() {
           </Button>
         </Badge>
         <div style={{ flex: 1 }} />
-        <Tooltip title={!lockedProjectId && selected.size > 0 ? 'Материалы без объекта — лот не сформировать' : ''}>
-          <Button
-            type="primary"
-            icon={<ShoppingCartOutlined />}
+        <Tooltip title={!lockedProjectId && selected.size > 0 ? 'Материалы без объекта — заказ не сформировать' : ''}>
+          <Dropdown
             disabled={selectedRows.length === 0 || !lockedProjectId}
-            onClick={() => setModalOpen(true)}
+            menu={{
+              items: [
+                { key: 'order', icon: <ShoppingCartOutlined />, label: 'Заказ поставщику' },
+                { key: 'tender', label: 'Тендер' },
+              ],
+              onClick: ({ key }) => setAction(key as 'order' | 'tender'),
+            }}
           >
-            Заказ поставщику{selectedRows.length > 0 ? ` (${selectedRows.length})` : ''}
-          </Button>
+            <Button type="primary" icon={<ShoppingCartOutlined />}>
+              Заказ{selectedRows.length > 0 ? ` (${selectedRows.length})` : ''} <DownOutlined />
+            </Button>
+          </Dropdown>
         </Tooltip>
       </div>
 
@@ -429,13 +436,19 @@ export function SU10MaterialsTab() {
         />
       </div>
 
-      {modalOpen && lockedProjectId && (
-        <SupplierLotFormModal
-          open
+      {action === 'order' && lockedProjectId && (
+        <SupplierOrderModal
+          create={{ projectId: lockedProjectId, rows: selectedRows }}
+          onClose={() => { setAction(null); resetSelection(); materialsQ.refetch(); }}
+          onChanged={() => materialsQ.refetch()}
+        />
+      )}
+      {action === 'tender' && lockedProjectId && (
+        <TenderCreateModal
           projectId={lockedProjectId}
           rows={selectedRows}
-          onClose={() => setModalOpen(false)}
-          onDone={() => { setModalOpen(false); resetSelection(); materialsQ.refetch(); }}
+          onClose={() => setAction(null)}
+          onDone={() => { setAction(null); resetSelection(); materialsQ.refetch(); }}
         />
       )}
     </div>

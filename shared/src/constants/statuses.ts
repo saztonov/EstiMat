@@ -243,3 +243,60 @@ export const PAYMENT_PAID_STATUS_LABELS: Record<PaymentPaidStatus, string> = {
   partially_paid: 'Частично оплачено',
   paid: 'Оплачено',
 };
+
+// ===== Оформление заказа поставщику (ручной канал supplier_orders.kind='sourcing', method='manual') =====
+
+// Ставки НДС РУЧНОГО заказа. Отдельно от TENDER_VAT_RATES: тендерный портал zakupki принимает только
+// свой фиксированный перечень (vat20/vat10/vat0/none) — ломать его нельзя. vat22 — новая ставка РФ (2026).
+export const MANUAL_VAT_RATES = ['vat0', 'vat22'] as const;
+export type ManualVatRate = (typeof MANUAL_VAT_RATES)[number];
+
+export const MANUAL_VAT_RATE_LABELS: Record<ManualVatRate, string> = {
+  vat0: 'НДС 0%',
+  vat22: 'НДС 22%',
+};
+
+// Числовое значение ставки десятичной строкой (деньги считаем в SQL numeric, не через JS Number).
+export const MANUAL_VAT_RATE_VALUE: Record<ManualVatRate, string> = {
+  vat0: '0',
+  vat22: '0.22',
+};
+
+// Тип поставки (условие оплаты) ручного заказа. UI-подпись поля — «Тип поставки».
+export const PAYMENT_TYPES = ['advance', 'postpay'] as const;
+export type PaymentType = (typeof PAYMENT_TYPES)[number];
+
+export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
+  advance: 'Аванс',
+  postpay: 'Постоплата',
+};
+
+// Статус ответа поставщика по запросу КП. Победителем можно выбрать только 'received' с приложенным документом.
+export const OFFER_RESPONSE_STATUSES = ['pending', 'received', 'no_response'] as const;
+export type OfferResponseStatus = (typeof OFFER_RESPONSE_STATUSES)[number];
+
+export const OFFER_RESPONSE_STATUS_LABELS: Record<OfferResponseStatus, string> = {
+  pending: 'Ожидается',
+  received: 'Предложение получено',
+  no_response: 'Нет ответа',
+};
+
+// Тип документа предложения поставщика (КП или счёт).
+export const OFFER_DOC_TYPES = ['quote', 'invoice'] as const;
+export type OfferDocType = (typeof OFFER_DOC_TYPES)[number];
+
+export const OFFER_DOC_TYPE_LABELS: Record<OfferDocType, string> = {
+  quote: 'КП',
+  invoice: 'Счёт',
+};
+
+// Виды строк единого реестра «Закупки».
+export const PURCHASE_KINDS = ['supplier_order', 'tender', 'rp_order', 'direct_order'] as const;
+export type PurchaseKind = (typeof PURCHASE_KINDS)[number];
+
+export const PURCHASE_KIND_LABELS: Record<PurchaseKind, string> = {
+  supplier_order: 'Заказ поставщику',
+  tender: 'Тендер',
+  rp_order: 'Заказ по РП',
+  direct_order: 'Заказ поставщиком',
+};

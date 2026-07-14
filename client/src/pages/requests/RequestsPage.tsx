@@ -4,7 +4,7 @@ import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { RequestsListTab } from './RequestsListTab';
 import { RpRegistryTab } from './RpRegistryTab';
 import { SU10MaterialsTab } from './SU10MaterialsTab';
-import { SupplierLotsTab } from './SupplierLotsTab';
+import { PurchasesRegistryTab } from './PurchasesRegistryTab';
 
 /**
  * Раздел «Заявки». Инженер/внутренние роли — вкладки «Заявки» и «Реестр РП».
@@ -28,7 +28,7 @@ export function RequestsPage() {
           items={[
             { key: 'requests', label: 'Заявки', children: <RequestsListTab /> },
             { key: 'materials', label: 'Материалы', children: <SU10MaterialsTab /> },
-            { key: 'lots', label: 'Закупочные лоты', children: <SupplierLotsTab onGoToMaterials={() => setTab('materials')} /> },
+            { key: 'lots', label: 'Закупки', children: <PurchasesRegistryTab /> },
             { key: 'rp-registry', label: 'Реестр РП', children: <RpRegistryTab /> },
           ]}
         />
