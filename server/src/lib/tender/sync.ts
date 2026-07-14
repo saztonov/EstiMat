@@ -13,37 +13,57 @@ import { TenderApiError, TenderNotConfiguredError } from './errors.js';
 import { recalcRequestStatus } from '../requests/status-recalc.js';
 import { appendOrderAudit } from '../supplier-orders/helpers.js';
 
-const TERMINAL = new Set(['finished', 'cancelled']);
-
 interface LotRow {
   id: string;
   tender_portal_id: string | null;
   sourcing_status: string;
   tender_status: string | null;
+  tender_remote_revision: number | null;
   project_id: string | null;
 }
 
-// Применить снимок состояния тендера к лоту (транзакция). Подтверждённая отмена (cancel_pending →
-// портал 'cancelled') освобождает остаток заявок; терминальный статус останавливает опрос.
+// Применить снимок состояния тендера к лоту (транзакция). Инварианты:
+//   • revision-guard: устаревший снимок (revision меньше сохранённого) не применяется;
+//   • 'finished' считаем терминальным ТОЛЬКО когда есть исход (winner/outcome) — иначе держим
+//     'awaiting_results' и продолжаем опрос (портал уже перевёл в under_review/closed, но результаты
+//     ещё не готовы);
+//   • подтверждённая отмена (cancel_pending → портал 'cancelled') освобождает остаток (лот → cancelled);
+//   • тендер завершён без победителя (outcome='no_award') → терминальный no_award, остаток освобождён.
 async function applyState(fastify: FastifyInstance, lot: LotRow, t: TenderDto, results: TenderResultsDto | null): Promise<void> {
+  // Устаревший снимок при параллельном опросе/ручном обновлении — не откатываем состояние.
+  if (t.revision != null && lot.tender_remote_revision != null && t.revision < lot.tender_remote_revision) return;
+
+  const hasOutcome = !!(results && (results.winner || results.outcome === 'no_award' || results.outcome === 'awarded'));
+  const localStatus = t.status === 'finished' && !hasOutcome ? 'awaiting_results' : t.status;
+  const terminal = localStatus === 'finished' || localStatus === 'cancelled';
+  const isNoAward = localStatus === 'finished' && results?.outcome === 'no_award';
+
   const client = await fastify.pool.connect();
   try {
     await client.query('BEGIN');
-    const nextPoll = TERMINAL.has(t.status) ? null : undefined; // null → остановить опрос; undefined → не трогать
     await client.query(
       `UPDATE supplier_orders
           SET tender_status = $2,
               tender_results = COALESCE($3::jsonb, tender_results),
+              tender_remote_revision = GREATEST(COALESCE(tender_remote_revision, -1), COALESCE($4::int, -1)),
+              tender_deadline_at = COALESCE($5::timestamptz, tender_deadline_at),
               tender_last_error = NULL,
-              tender_next_poll_at = CASE WHEN $4::boolean THEN NULL ELSE tender_next_poll_at END,
+              tender_next_poll_at = CASE WHEN $6::boolean THEN NULL ELSE tender_next_poll_at END,
               updated_at = now()
         WHERE id = $1`,
-      [lot.id, t.status, results ? JSON.stringify(results) : null, nextPoll === null],
+      [lot.id, localStatus, results ? JSON.stringify(results) : null, t.revision ?? null, t.deadline_at ?? null, terminal],
     );
     // Подтверждённая отмена внешнего тендера — освобождаем остаток (лот → cancelled).
-    if (lot.sourcing_status === 'cancel_pending' && t.status === 'cancelled') {
+    if (lot.sourcing_status === 'cancel_pending' && localStatus === 'cancelled') {
       await client.query(`UPDATE supplier_orders SET sourcing_status = 'cancelled', row_version = row_version + 1 WHERE id = $1`, [lot.id]);
       await appendOrderAudit(client, { orderId: lot.id, action: 'tender_cancelled', projectId: lot.project_id });
+      const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [lot.id]);
+      for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, null);
+    }
+    // Тендер завершён без победителя — терминальный no_award, освобождаем остаток.
+    if (isNoAward && lot.sourcing_status === 'sourcing') {
+      await client.query(`UPDATE supplier_orders SET sourcing_status = 'no_award', row_version = row_version + 1 WHERE id = $1`, [lot.id]);
+      await appendOrderAudit(client, { orderId: lot.id, action: 'tender_no_award', projectId: lot.project_id });
       const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [lot.id]);
       for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, null);
     }
@@ -64,7 +84,7 @@ export async function refreshTenderLot(fastify: FastifyInstance, orderId: string
   const tc = getTenderClient();
   if (!tc) throw new TenderNotConfiguredError();
   const { rows } = await fastify.pool.query<LotRow>(
-    `SELECT id, tender_portal_id, sourcing_status, tender_status, project_id
+    `SELECT id, tender_portal_id, sourcing_status, tender_status, tender_remote_revision, project_id
        FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
     [orderId],
   );

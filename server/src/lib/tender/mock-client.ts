@@ -31,16 +31,18 @@ export class MockTenderClient implements TenderClientLike {
     const p1 = { id: `${id}-p1`, name: 'ООО «Поставка-1»', inn: '7700000001' };
     const p2 = { id: `${id}-p2`, name: 'ООО «Поставка-2»', inn: '7700000002' };
     const p3 = { id: `${id}-p3`, name: 'ООО «Поставка-3»', inn: '7700000003' };
+    // Суммы — decimal-строки (как отдаёт реальный портал).
     return {
       tender_id: id,
       status: 'finished',
+      outcome: 'awarded',
       participants: [p1, p2, p3],
       bids: [
-        { participant_id: p1.id, amount: base + 15_000, currency: 'RUB' },
-        { participant_id: p2.id, amount: base, currency: 'RUB' }, // минимальная ставка → победитель
-        { participant_id: p3.id, amount: base + 8_000, currency: 'RUB' },
+        { participant_id: p1.id, bid_id: `${id}-b1`, amount: String(base + 15_000), currency: 'RUB' },
+        { participant_id: p2.id, bid_id: `${id}-b2`, amount: String(base), currency: 'RUB' }, // минимальная ставка → победитель
+        { participant_id: p3.id, bid_id: `${id}-b3`, amount: String(base + 8_000), currency: 'RUB' },
       ],
-      winner: { participant_id: p2.id, bid_index: 1 },
+      winner: { participant_id: p2.id, bid_id: `${id}-b2`, bid_index: 1 },
       finished_at: null,
     };
   }

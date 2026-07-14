@@ -14,6 +14,7 @@ const SOURCING_COLOR: Record<string, string> = {
   awarded: 'green',
   cancel_pending: 'warning',
   cancelled: 'default',
+  no_award: 'default',
 };
 
 const TENDER_COLOR: Record<string, string> = {

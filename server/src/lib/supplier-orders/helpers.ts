@@ -31,13 +31,14 @@ export async function appendOrderAudit(
   );
 }
 
-// Позиции заявки заняты активным лотом (стадия ≠ 'cancelled'): доработку/отмену заявки блокируем.
+// Позиции заявки заняты активным лотом (не терминальные cancelled/no_award): доработку/отмену
+// заявки блокируем (осиротило бы лоты). Освобождённые лоты (cancelled/no_award) не блокируют.
 export async function hasActiveAllocations(db: Db, requestId: string): Promise<boolean> {
   const { rows } = await db.query(
     `SELECT EXISTS (
        SELECT 1 FROM supplier_order_items soi
         JOIN supplier_orders so ON so.id = soi.order_id
-       WHERE soi.request_id = $1 AND so.kind = 'sourcing' AND so.sourcing_status <> 'cancelled'
+       WHERE soi.request_id = $1 AND so.kind = 'sourcing' AND so.sourcing_status NOT IN ('cancelled','no_award')
      ) AS active`,
     [requestId],
   );

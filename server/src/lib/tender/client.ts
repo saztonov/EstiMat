@@ -10,22 +10,29 @@ import { tenderSchema, tenderResultsSchema, type TenderDto, type TenderResultsDt
 import { TenderApiError } from './errors.js';
 import { MockTenderClient } from './mock-client.js';
 
-const API_PREFIX = '/api/external/v1';
+const API_PREFIX = '/api/v1/external';
 const PING_TIMEOUT_MS = 5000;
 
 export interface TenderItemInput {
   material: string;
-  quantity: number;
-  unit?: string | null;
+  quantity: string; // decimal-строка (масштаб ≤3); НЕ number — точность денег/количеств
+  unit?: string | null; // код единицы портала (pcs|m|m2|m3|kg|t|l|set|h)
   spec?: string | null;
 }
 
 export interface CreateTenderInput {
   title: string;
   external_ref: string;
-  deadline_at?: string | null;
+  source_revision?: number | null;
+  deadline_at: string; // ISO datetime, обязателен и в будущем (портал требует)
+  vat_rate?: string | null; // vat20|vat10|vat0|none; дефолт на портале vat20
   items: TenderItemInput[];
-  conditions?: { delivery?: string | null; payment?: string | null; deadline?: string | null };
+  conditions?: {
+    delivery?: string | null;
+    payment?: string | null;
+    deadline?: string | null;
+    place?: string | null;
+  };
 }
 
 /** Контракт клиента тендерного портала (реальный HTTP-клиент и mock-заглушка). */
@@ -98,12 +105,20 @@ export class TenderClient implements TenderClientLike {
     let code = 'http_error';
     let message = `Портал ответил ${res.status}`;
     try {
-      const err = (await res.json()) as { error?: { code?: string; message?: string } | string };
-      if (err && typeof err.error === 'object') {
+      // Портал zakupki: плоский конверт { error:<code>, message:<текст>, details }.
+      // Поддерживаем и старый вложенный { error:{ code, message } }.
+      const err = (await res.json()) as {
+        error?: { code?: string; message?: string } | string;
+        message?: string;
+      };
+      if (err && typeof err.error === 'object' && err.error !== null) {
         code = err.error.code ?? code;
-        message = err.error.message ?? message;
+        message = err.error.message ?? err.message ?? message;
       } else if (typeof err.error === 'string') {
-        message = err.error;
+        code = err.error; // плоский конверт: error — код
+        if (typeof err.message === 'string' && err.message) message = err.message;
+      } else if (typeof err.message === 'string' && err.message) {
+        message = err.message;
       }
     } catch {
       /* тело не JSON */

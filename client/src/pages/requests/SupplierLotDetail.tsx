@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { App, Button, Space, Table, Tag, Descriptions, Modal, Form, Input, InputNumber, DatePicker, Divider, Popconfirm, Alert } from 'antd';
+import { App, Button, Space, Table, Tag, Descriptions, Modal, Form, Input, InputNumber, DatePicker, Select, Divider, Popconfirm, Alert } from 'antd';
 import { DownloadOutlined, ReloadOutlined, LinkOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { TENDER_VAT_RATES, TENDER_VAT_RATE_LABELS } from '@estimat/shared';
 import { api } from '../../services/api';
 import { money, round4 } from './requestConstants';
 import { SourcingStatusTag, ProcurementMethodTag, TenderStatusTag } from './supplierLotConstants';
@@ -61,7 +62,9 @@ export function SupplierLotDetail({ lotId }: { lotId: string }) {
   const isManual = lot.procurement_method === 'manual';
   const isTender = lot.procurement_method === 'tender';
   const tenderFinished = lot.tender_status === 'finished';
+  const outcome = lot.tender_results?.outcome;
   const winnerId = lot.tender_results?.winner?.participant_id;
+  const isNoAward = lot.sourcing_status === 'no_award' || outcome === 'no_award';
 
   const itemCols: ColumnsType<SupplierLotItem> = [
     { title: 'Материал', dataIndex: 'material_name', key: 'name' },
@@ -119,6 +122,9 @@ export function SupplierLotDetail({ lotId }: { lotId: string }) {
       {lot.tender_sync_status === 'failed' && (
         <Alert type="error" showIcon style={{ marginBottom: 12 }} message={`Ошибка выгрузки тендера: ${lot.tender_last_error ?? ''}`} />
       )}
+      {isNoAward && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }} message="Тендер завершён без победителя — остаток материалов возвращён в свод" />
+      )}
 
       {/* Действия по стадии */}
       <Space wrap style={{ marginBottom: 12 }}>
@@ -140,7 +146,7 @@ export function SupplierLotDetail({ lotId }: { lotId: string }) {
         {isSourcing && isTender && (
           <>
             <Button icon={<ReloadOutlined />} onClick={() => run.mutate({ url: `/supplier-orders/${lotId}/tender-refresh` })}>Обновить результаты</Button>
-            {tenderFinished && winnerId && (
+            {tenderFinished && winnerId && outcome !== 'no_award' && (
               <Popconfirm title="Зафиксировать победителя тендера?" onConfirm={() => run.mutate({ url: `/supplier-orders/${lotId}/award`, body: { source: 'tender', winnerParticipantId: winnerId, expectedVersion: ev } })}>
                 <Button type="primary">Зафиксировать победителя</Button>
               </Popconfirm>
@@ -200,6 +206,7 @@ export function SupplierLotDetail({ lotId }: { lotId: string }) {
       >
         <Form
           layout="vertical"
+          initialValues={{ vatRate: 'vat20', place: lot.project_name ?? undefined }}
           onFinish={(v) => {
             run.mutate({
               url: `/supplier-orders/${lotId}/tender`,
@@ -207,7 +214,9 @@ export function SupplierLotDetail({ lotId }: { lotId: string }) {
                 method: 'tender',
                 expectedVersion: ev,
                 tender: {
-                  deadlineAt: v.deadlineAt ? v.deadlineAt.toISOString() : null,
+                  deadlineAt: v.deadlineAt.toISOString(),
+                  vatRate: v.vatRate ?? 'vat20',
+                  place: v.place || null,
                   delivery: v.delivery || null,
                   payment: v.payment || null,
                   deadline: v.deadline || null,
@@ -216,7 +225,18 @@ export function SupplierLotDetail({ lotId }: { lotId: string }) {
             }, { onSuccess: () => { setTenderOpen(false); message.success('Тендер поставлен в очередь на выгрузку'); invalidate(); } });
           }}
         >
-          <Form.Item name="deadlineAt" label="Дедлайн приёма ставок"><DatePicker showTime style={{ width: '100%' }} /></Form.Item>
+          <Alert type="info" showIcon style={{ marginBottom: 12 }} message="Тендер будет опубликован на портале сразу (приём предложений начнётся немедленно)." />
+          <Form.Item
+            name="deadlineAt"
+            label="Дедлайн приёма ставок"
+            rules={[{ required: true, message: 'Укажите дедлайн приёма ставок' }]}
+          >
+            <DatePicker showTime style={{ width: '100%' }} disabledDate={(d) => !!d && d.endOf('day').valueOf() < Date.now()} />
+          </Form.Item>
+          <Form.Item name="vatRate" label="Ставка НДС">
+            <Select options={TENDER_VAT_RATES.map((r) => ({ value: r, label: TENDER_VAT_RATE_LABELS[r] }))} />
+          </Form.Item>
+          <Form.Item name="place" label="Место поставки"><Input /></Form.Item>
           <Form.Item name="delivery" label="Условия поставки"><Input /></Form.Item>
           <Form.Item name="payment" label="Условия оплаты"><Input /></Form.Item>
           <Form.Item name="deadline" label="Срок поставки"><Input /></Form.Item>

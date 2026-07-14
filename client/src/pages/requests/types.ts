@@ -237,9 +237,10 @@ export interface SupplierLotOffer {
 export interface TenderResults {
   tender_id?: string;
   status?: string;
+  outcome?: 'pending' | 'awarded' | 'no_award' | null;
   participants?: { id: string; name: string; inn?: string | null }[];
-  bids?: { participant_id: string; amount: number; currency?: string | null }[];
-  winner?: { participant_id: string; bid_index?: number | null } | null;
+  bids?: { participant_id: string; bid_id?: string | null; amount: string | number; currency?: string | null }[];
+  winner?: { participant_id: string; bid_id?: string | null; bid_index?: number | null } | null;
   finished_at?: string | null;
 }
 

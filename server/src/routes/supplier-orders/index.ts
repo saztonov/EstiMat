@@ -2,13 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { formLotSchema, startProcurementSchema, addOfferSchema, awardSchema } from '@estimat/shared';
+import { formLotSchema, startProcurementSchema, addOfferSchema, awardSchema, mapTenderUnit } from '@estimat/shared';
 import { config } from '../../config.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
 import { assertCategoryAccess } from '../../lib/procurement/access.js';
 import { exportSupplierOrderXlsx, SupplierOrderExportError } from '../../lib/supplier-order-export/index.js';
-import { getTenderClient } from '../../lib/tender/client.js';
 import { refreshTenderLot } from '../../lib/tender/sync.js';
 import { TenderApiError, TenderNotConfiguredError } from '../../lib/tender/errors.js';
 
@@ -79,7 +78,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
          LEFT JOIN (
            SELECT soi.request_item_id, SUM(soi.quantity) AS qty
              FROM supplier_order_items soi
-             JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status <> 'cancelled'
+             JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status NOT IN ('cancelled','no_award')
             GROUP BY soi.request_item_id
          ) placed ON placed.request_item_id = mri.id
         WHERE ${whereSql}
@@ -263,7 +262,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
            LEFT JOIN (
              SELECT soi.request_item_id, SUM(soi.quantity) AS qty
                FROM supplier_order_items soi
-               JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status <> 'cancelled'
+               JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status NOT IN ('cancelled','no_award')
               WHERE soi.order_id <> $3
               GROUP BY soi.request_item_id
            ) pl ON pl.request_item_id = req.request_item_id
@@ -396,47 +395,78 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   });
 
   // ============================================================
-  // POST /:id/cancel — отменить лот (освобождает остаток; для внешнего тендера — cancel_pending)
+  // POST /:id/cancel — отменить лот (cancel-saga).
+  //   manual / тендер без выгрузки на портал → сразу cancelled (остаток освобождён);
+  //   тендер выгружен (есть portal_id) → cancel_pending + надёжная команда tender.cancel в outbox
+  //     (доставляется с ретраями; poller подтвердит 'cancelled' и освободит остаток);
+  //   тендер в очереди на выгрузку (portal_id ещё нет, create в outbox) → cancel_pending +
+  //     desired_tender_state='cancelled'; create-worker перечитает намерение и прервёт создание.
   // ============================================================
   fastify.post<{ Params: { id: string } }>('/:id/cancel', async (request, reply) => {
     const user = request.currentUser;
     const client = await fastify.pool.connect();
+    let kick = false;
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        `SELECT id, project_id, sourcing_status, tender_portal_id, tender_status
+        `SELECT id, project_id, sourcing_status, procurement_method, tender_portal_id, tender_external_ref
            FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
         [request.params.id],
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Лот не найден' }); }
-      if (['cancelled', 'cancel_pending', 'awarded'].includes(lot.sourcing_status)) {
+      if (['cancelled', 'cancel_pending', 'awarded', 'no_award'].includes(lot.sourcing_status)) {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Лот уже нельзя отменить' });
       }
-      // Активный внешний тендер — запрашиваем отмену на портале; остаток держим (cancel_pending)
-      // до подтверждения площадкой (poller переведёт в cancelled и освободит остаток).
-      const tenderActive = lot.tender_portal_id && ['draft', 'published', 'awaiting_results'].includes(lot.tender_status);
-      const next = tenderActive ? 'cancel_pending' : 'cancelled';
-      const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [lot.id]);
+
+      const isTender = lot.procurement_method === 'tender';
+      const { rows: createRows } = isTender
+        ? await client.query(
+            `SELECT 1 FROM integration_outbox WHERE aggregate_id = $1 AND command_type = 'tender.create'
+               AND status IN ('queued','retry_wait','waiting_config') LIMIT 1`,
+            [lot.id],
+          )
+        : { rows: [] as unknown[] };
+      const createPending = createRows.length > 0;
+      // Тендер «живёт» на портале либо ещё создаётся — держим остаток до подтверждения отмены.
+      const holdForTender = isTender && (Boolean(lot.tender_portal_id) || createPending);
+      const next = holdForTender ? 'cancel_pending' : 'cancelled';
+
       await client.query(
         `UPDATE supplier_orders
-            SET sourcing_status = $2, row_version = row_version + 1, updated_at = now(),
-                tender_next_poll_at = CASE WHEN $3::boolean THEN now() ELSE tender_next_poll_at END
+            SET sourcing_status = $2,
+                desired_tender_state = CASE WHEN $3::boolean THEN 'cancelled' ELSE desired_tender_state END,
+                tender_next_poll_at = CASE WHEN $4::boolean THEN now() ELSE tender_next_poll_at END,
+                row_version = row_version + 1, updated_at = now()
           WHERE id = $1`,
-        [lot.id, next, tenderActive],
+        [lot.id, next, isTender, Boolean(lot.tender_portal_id)],
       );
-      await appendOrderAudit(client, { orderId: lot.id, action: 'cancelled', userId: user.id, changes: { next }, projectId: lot.project_id });
-      if (next === 'cancelled') for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, user.id);
-      await client.query('COMMIT');
-      // Отмена на площадке — best-effort (poller подтвердит статус и освободит остаток).
-      if (tenderActive) {
-        try {
-          await getTenderClient()?.cancelTender(lot.tender_portal_id);
-        } catch (err) {
-          fastify.log.warn({ err, orderId: lot.id }, 'tender cancel: портал недоступен, отмена подтвердится опросом');
-        }
+      // Тендер уже на портале — ставим надёжную команду отмены (идемпотентно по partial-unique).
+      if (lot.tender_portal_id) {
+        const cancelPayload = JSON.stringify({ orderId: lot.id });
+        const cancelHash = createHash('sha256').update(`tender.cancel:${lot.id}`).digest('hex');
+        await client.query(
+          `INSERT INTO integration_outbox
+             (aggregate_type, aggregate_id, command_type, external_ref, payload, payload_hash, status, next_attempt_at)
+           VALUES ('supplier_order', $1, 'tender.cancel', $2, $3::jsonb, $4, 'queued', now())
+           ON CONFLICT (aggregate_id, command_type)
+             WHERE command_type IN ('tender.create','tender.cancel')
+               AND status IN ('queued','retry_wait','waiting_config')
+           DO NOTHING`,
+          [lot.id, lot.tender_external_ref, cancelPayload, cancelHash],
+        );
+        kick = true;
+      } else if (createPending) {
+        kick = true; // разбудить create-worker, чтобы он перечитал намерение и прервал создание
       }
+      await appendOrderAudit(client, { orderId: lot.id, action: 'cancelled', userId: user.id, changes: { next }, projectId: lot.project_id });
+      if (next === 'cancelled') {
+        const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [lot.id]);
+        for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, user.id);
+      }
+      await client.query('COMMIT');
+      if (kick) fastify.outbox.kick();
       return { data: { id: lot.id, sourcingStatus: next } };
     } catch (e) {
       await client.query('ROLLBACK');
@@ -517,25 +547,56 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Лот изменён, обновите страницу', rowVersion: lot.row_version });
       }
-      // Агрегированные позиции лота (без подрядчиков/№ заявок) — предмет тендера.
+      // Условия тендера обязательны; дедлайн — ISO и строго в будущем (портал требует deadline_at).
+      const tc = body.tender;
+      if (!tc?.deadlineAt) { await client.query('ROLLBACK'); return reply.status(400).send({ error: 'Укажите дедлайн приёма ставок' }); }
+      const deadline = new Date(tc.deadlineAt);
+      if (Number.isNaN(deadline.getTime()) || deadline.getTime() <= Date.now()) {
+        await client.query('ROLLBACK');
+        return reply.status(400).send({ error: 'Дедлайн приёма ставок должен быть в будущем' });
+      }
+      // Агрегированные позиции лота (без подрядчиков/№ заявок) — предмет тендера. Группировка по
+      // agg_key (каноническая идентичность материала+ед.), чтобы разные материалы с одинаковым
+      // названием не сливались. Количество — decimal-строка из SQL (не через JS Number).
       const { rows: items } = await client.query(
-        `SELECT material_name, unit, SUM(quantity)::numeric AS quantity
+        `SELECT MIN(material_name) AS material_name, unit, SUM(quantity)::numeric AS quantity
            FROM supplier_order_items WHERE order_id = $1
-          GROUP BY material_name, unit ORDER BY material_name`,
+          GROUP BY agg_key, unit ORDER BY MIN(material_name)`,
         [lot.id],
       );
       if (items.length === 0) { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Лот пуст' }); }
+
+      // Единицы: сопоставляем со справочником портала; неизвестную не отправляем (блокируем выгрузку).
+      const unmapped = [...new Set(items.filter((it) => mapTenderUnit(it.unit) == null).map((it) => it.unit as string))];
+      if (unmapped.length) {
+        await client.query('ROLLBACK');
+        return reply.status(400).send({ error: `Единицы не сопоставлены с тендерным справочником: ${unmapped.join(', ')}. Приведите единицы измерения перед выгрузкой.` });
+      }
+      // Количество — не более 3 знаков после запятой (масштаб портала numeric(18,3)); не округляем молча.
+      const badQty = items.find((it) => (String(it.quantity).split('.')[1]?.length ?? 0) > 3);
+      if (badQty) {
+        await client.query('ROLLBACK');
+        return reply.status(400).send({ error: `Количество «${badQty.material_name}» имеет более 3 знаков после запятой — недопустимо для тендера` });
+      }
 
       const externalRef = `estimat:lot:${lot.id}`;
       const input = {
         title: lot.title ?? `Закупочный лот № Л-${String(lot.order_no ?? 0).padStart(3, '0')}`,
         external_ref: externalRef,
-        deadline_at: body.tender?.deadlineAt ?? null,
-        items: items.map((it) => ({ material: it.material_name, quantity: Number(it.quantity), unit: it.unit })),
+        source_revision: (lot.row_version ?? 0) + 1,
+        deadline_at: tc.deadlineAt,
+        vat_rate: tc.vatRate ?? 'vat20',
+        items: items.map((it) => ({
+          material: it.material_name,
+          quantity: String(it.quantity),
+          unit: mapTenderUnit(it.unit),
+          spec: null,
+        })),
         conditions: {
-          delivery: body.tender?.delivery ?? null,
-          payment: body.tender?.payment ?? null,
-          deadline: body.tender?.deadline ?? null,
+          delivery: tc.delivery ?? null,
+          payment: tc.payment ?? null,
+          deadline: tc.deadline ?? null,
+          place: tc.place ?? null,
         },
       };
       const payload = { orderId: lot.id, input };
@@ -543,11 +604,11 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
 
       await client.query(
         `UPDATE supplier_orders
-            SET procurement_method='tender', sourcing_status='sourcing', tender_external_ref=$2,
-                tender_sync_status='pending', tender_deadline_at=$3, tender_last_error=NULL,
-                row_version=row_version+1, updated_at=now()
+            SET procurement_method='tender', sourcing_status='sourcing', desired_tender_state='active',
+                tender_external_ref=$2, tender_sync_status='pending', tender_deadline_at=$3,
+                tender_last_error=NULL, row_version=row_version+1, updated_at=now()
           WHERE id=$1`,
-        [lot.id, externalRef, body.tender?.deadlineAt ?? null],
+        [lot.id, externalRef, tc.deadlineAt],
       );
       await client.query(
         `INSERT INTO integration_outbox
@@ -679,7 +740,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       let supplierName: string;
       let supplierInn: string | null = null;
       let supplierId: string | null = null;
-      let amount: number;
+      let amount: string; // decimal-строка (без потери точности через JS Number)
       let quoteId: string | null = null;
 
       if (body.source === 'manual') {
@@ -695,17 +756,19 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         supplierName = offer.supplier_name;
         supplierInn = offer.supplier_inn;
         supplierId = offer.supplier_id;
-        amount = Number(offer.amount);
+        amount = String(offer.amount);
         quoteId = offer.id;
       } else {
         // tender: победитель определён площадкой; сервер резолвит ставку из сохранённых результатов.
         if (lot.procurement_method !== 'tender') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Лот закупается по почте' }); }
         if (lot.tender_status !== 'finished') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Тендер ещё не завершён' }); }
         const results = lot.tender_results as {
+          outcome?: string | null;
           participants?: { id: string; name: string; inn?: string | null }[];
-          bids?: { participant_id: string; amount: number; currency?: string | null }[];
-          winner?: { participant_id: string; bid_index?: number | null } | null;
+          bids?: { participant_id: string; bid_id?: string | null; amount: string; currency?: string | null }[];
+          winner?: { participant_id: string; bid_id?: string | null; bid_index?: number | null } | null;
         } | null;
+        if (results?.outcome === 'no_award') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Тендер завершён без победителя' }); }
         const portalWinner = results?.winner?.participant_id;
         if (!portalWinner) { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Победитель тендера не определён' }); }
         // Подтверждаем именно победителя площадки (клиент не может назначить произвольного участника).
@@ -714,15 +777,18 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           return reply.status(409).send({ error: 'Победителя тендера определяет площадка' });
         }
         const participant = results?.participants?.find((p) => p.id === portalWinner);
+        // Ставку победителя ищем по bid_id (надёжнее), затем по bid_index, иначе — минимальная его ставка.
+        const winnerBidId = results?.winner?.bid_id;
         const bidIdx = results?.winner?.bid_index;
-        const bid = (bidIdx != null && results?.bids?.[bidIdx]?.participant_id === portalWinner)
-          ? results.bids[bidIdx]
-          : results?.bids?.filter((b) => b.participant_id === portalWinner).sort((a, b) => a.amount - b.amount)[0];
+        const bid =
+          (winnerBidId && results?.bids?.find((b) => b.bid_id === winnerBidId)) ||
+          (bidIdx != null && results?.bids?.[bidIdx]?.participant_id === portalWinner ? results.bids[bidIdx] : undefined) ||
+          results?.bids?.filter((b) => b.participant_id === portalWinner).sort((a, b) => Number(a.amount) - Number(b.amount))[0];
         if (!participant || !bid) { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Ставка победителя не найдена в результатах' }); }
         if (bid.currency && bid.currency !== 'RUB') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Валюта ставки не поддерживается (только RUB)' }); }
         supplierName = participant.name;
         supplierInn = participant.inn ?? null;
-        amount = Number(bid.amount);
+        amount = String(bid.amount);
       }
 
       await client.query(
@@ -805,7 +871,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
            (SELECT project_id FROM material_requests WHERE id = $1) AS project_id,
            (SELECT COALESCE(SUM(quantity),0) FROM material_request_items WHERE request_id = $1)::numeric AS requested,
            (SELECT COALESCE(SUM(soi.quantity),0) FROM supplier_order_items soi
-              JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status <> 'cancelled'
+              JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status NOT IN ('cancelled','no_award')
              WHERE soi.request_id = $1)::numeric AS placed,
            (SELECT COALESCE(SUM(soi.quantity),0) FROM supplier_order_items soi
               JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status = 'awarded'
@@ -831,7 +897,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
            LEFT JOIN (
              SELECT soi.request_item_id, SUM(soi.quantity) AS qty
                FROM supplier_order_items soi
-               JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status <> 'cancelled'
+               JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status NOT IN ('cancelled','no_award')
               GROUP BY soi.request_item_id
            ) placed ON placed.request_item_id = mri.id
           WHERE mri.request_id = $1

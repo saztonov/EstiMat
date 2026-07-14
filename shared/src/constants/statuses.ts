@@ -164,13 +164,15 @@ export const PAYMENT_REQUEST_STATUS_LABELS: Record<PaymentRequestStatus, string>
 //   sourcing — состав заморожен, идёт сбор КП (почта) или тендер;
 //   awarded — поставщик зафиксирован (победитель тендера / лучшее КП);
 //   cancel_pending — запрошена отмена внешнего тендера (остаток ещё резервируется);
-//   cancelled — лот отменён, остаток освобождён.
+//   cancelled — лот отменён, остаток освобождён;
+//   no_award — тендер завершён без победителя, остаток освобождён (терминальная стадия).
 export const SOURCING_STATUSES = [
   'forming',
   'sourcing',
   'awarded',
   'cancel_pending',
   'cancelled',
+  'no_award',
 ] as const;
 export type SourcingStatus = (typeof SOURCING_STATUSES)[number];
 
@@ -180,6 +182,7 @@ export const SOURCING_STATUS_LABELS: Record<SourcingStatus, string> = {
   awarded: 'Поставщик выбран',
   cancel_pending: 'Отмена тендера',
   cancelled: 'Отменён',
+  no_award: 'Без победителя',
 };
 
 export const SOURCING_STATUS_TONE: Record<SourcingStatus, 'info' | 'warning' | 'accent' | 'success' | 'done'> = {
@@ -188,6 +191,7 @@ export const SOURCING_STATUS_TONE: Record<SourcingStatus, 'info' | 'warning' | '
   awarded: 'success',
   cancel_pending: 'warning',
   cancelled: 'done',
+  no_award: 'done',
 };
 
 // Канал закупки лота (взаимоисключающий в v1): фиксируется при старте закупки.
@@ -199,9 +203,25 @@ export const PROCUREMENT_METHOD_LABELS: Record<ProcurementMethod, string> = {
   tender: 'Тендер',
 };
 
-// Статус тендера на внешней площадке (снимок с портала; ось интеграции). Контракт billhub.
+// Статус тендера на внешней площадке (снимок с портала; ось интеграции). Значения — уже после
+// маппинга портала zakupki (collecting→published, under_review→awaiting_results, awarded/closed→finished).
 export const TENDER_STATUSES = ['draft', 'published', 'awaiting_results', 'finished', 'cancelled'] as const;
 export type TenderStatus = (typeof TENDER_STATUSES)[number];
+
+// Итог тендера в отдаваемых порталом результатах: приём идёт / выбран победитель / без победителя.
+export const TENDER_OUTCOMES = ['pending', 'awarded', 'no_award'] as const;
+export type TenderOutcome = (typeof TENDER_OUTCOMES)[number];
+
+// Ставка НДS тендера (совпадает с перечнем портала zakupki).
+export const TENDER_VAT_RATES = ['vat20', 'vat10', 'vat0', 'none'] as const;
+export type TenderVatRate = (typeof TENDER_VAT_RATES)[number];
+
+export const TENDER_VAT_RATE_LABELS: Record<TenderVatRate, string> = {
+  vat20: 'НДС 20%',
+  vat10: 'НДС 10%',
+  vat0: 'НДС 0%',
+  none: 'Без НДС',
+};
 
 export const TENDER_STATUS_LABELS: Record<TenderStatus, string> = {
   draft: 'Черновик',

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PROCUREMENT_METHODS, TENDER_STATUSES } from '../constants/statuses.js';
+import { PROCUREMENT_METHODS, TENDER_STATUSES, TENDER_OUTCOMES, TENDER_VAT_RATES } from '../constants/statuses.js';
 
 // ===== Вход (клиент → сервер) =====
 
@@ -23,9 +23,12 @@ export const formLotSchema = z.object({
 });
 export type FormLotInput = z.infer<typeof formLotSchema>;
 
-// Условия лота, передаваемые в тендерный портал.
+// Условия лота, передаваемые в тендерный портал. Дедлайн приёма ставок обязателен и должен быть в
+// будущем (портал zakupki требует deadline_at); финальная проверка «в будущем» — на сервере.
 export const tenderConditionsSchema = z.object({
-  deadlineAt: z.string().nullish(), // ISO datetime — дедлайн приёма ставок
+  deadlineAt: z.string().datetime({ message: 'Укажите дедлайн приёма ставок' }), // ISO datetime
+  vatRate: z.enum(TENDER_VAT_RATES).default('vat20'),
+  place: z.string().max(500).nullish(),    // место поставки
   delivery: z.string().max(500).nullish(),
   payment: z.string().max(500).nullish(),
   deadline: z.string().max(500).nullish(), // срок поставки (текст)
@@ -71,6 +74,8 @@ export const tenderSchema = z.object({
   external_ref: z.string().nullish(),
   status: z.enum(TENDER_STATUSES),
   url: z.string().nullish(),
+  revision: z.number().int().nullish(),      // монотонная версия состояния тендера с портала
+  deadline_at: z.string().nullish(),         // актуальный дедлайн (может продлеваться антиснайпингом)
 });
 export type TenderDto = z.infer<typeof tenderSchema>;
 
@@ -80,9 +85,11 @@ export const tenderParticipantSchema = z.object({
   inn: z.string().nullish(),
 });
 
+// Суммы приходят decimal-строками (портал считает деньги в numeric) — НЕ преобразуем через JS Number.
 export const tenderBidSchema = z.object({
   participant_id: z.string(),
-  amount: z.number(),
+  bid_id: z.string().nullish(),
+  amount: z.string(),
   currency: z.string().nullish(),
   delivery_terms: z.string().nullish(),
   payment_terms: z.string().nullish(),
@@ -92,9 +99,17 @@ export const tenderBidSchema = z.object({
 export const tenderResultsSchema = z.object({
   tender_id: z.string(),
   status: z.enum(TENDER_STATUSES),
+  outcome: z.enum(TENDER_OUTCOMES).nullish(), // pending | awarded | no_award
   participants: z.array(tenderParticipantSchema).default([]),
   bids: z.array(tenderBidSchema).default([]),
-  winner: z.object({ participant_id: z.string(), bid_index: z.number().int().nonnegative().nullish() }).nullish(),
+  winner: z
+    .object({
+      participant_id: z.string(),
+      bid_id: z.string().nullish(),
+      bid_index: z.number().int().nonnegative().nullish(),
+    })
+    .nullish(),
   finished_at: z.string().nullish(),
+  revision: z.number().int().nullish(),
 });
 export type TenderResultsDto = z.infer<typeof tenderResultsSchema>;
