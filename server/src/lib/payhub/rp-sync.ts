@@ -9,6 +9,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { Readable } from 'node:stream';
 import type { Storage } from '../../plugins/s3.js';
+import { config } from '../../config.js';
 import { PayHubApiError, PayHubWaitingConfigError } from './errors.js';
 import type { PayHubClient } from './client.js';
 
@@ -80,11 +81,45 @@ export function buildLetterContent(input: {
   return [`${money} ₽`, input.supplierName, input.description || undefined].filter(Boolean).join(', ');
 }
 
-function validateShareUrl(url: string | undefined): string | null {
+/** Абсолютный ли http(s)-адрес пришёл от PayHub (иначе он относительный — /letter-share/<token>). */
+function isAbsoluteHttpUrl(url: string | undefined): boolean {
+  return !!url && /^https?:\/\//i.test(url.trim());
+}
+
+/**
+ * Нормализует share-ссылку письма до абсолютной: относительный /letter-share/<token> достраивается
+ * доменом из PAYHUB_PUBLIC_URL (fallback — baseUrl). Так ссылка «Открыть» и адрес в QR всегда полные,
+ * даже если PayHub отдал относительный URL. Возвращает null для пустого/битого/недостроимого URL.
+ */
+function resolveShareUrl(url: string | undefined): string | null {
   if (!url || url.length > 2048) return null;
+  const base = config.payhub.publicUrl || config.payhub.baseUrl || undefined;
   try {
-    const p = new URL(url);
+    const p = new URL(url, base);
     return p.protocol === 'https:' || p.protocol === 'http:' ? p.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * QR из ответа PayHub. Берём его ТОЛЬКО если share_url пришёл абсолютным — тогда PayHub построил QR из
+ * полного адреса. Если адрес обрезан (относительный) — QR тоже обрезан, не сохраняем (fail-safe:
+ * лучше без QR, чем битый; нужно задать PAYHUB_PUBLIC_URL на стороне PayHub).
+ */
+function pickQr(share: { share_url?: string; qr_svg_data_url?: string } | undefined): string | null {
+  return isAbsoluteHttpUrl(share?.share_url) ? (share?.qr_svg_data_url ?? null) : null;
+}
+
+/** Имя+ИНН контрагента-получателя PayHub по id (best-effort; для формы и снимка). null при ошибке. */
+export async function resolveRecipient(
+  client: PayHubClient,
+  recipientId: number,
+): Promise<{ name: string; inn: string | null } | null> {
+  try {
+    const list = await client.listContractors();
+    const c = list.find((x) => x.id === recipientId);
+    return c ? { name: c.name, inn: c.inn ?? null } : null;
   } catch {
     return null;
   }
@@ -106,17 +141,21 @@ export interface EnsuredLetter {
   letterId: string;
   regNumber: string | null;
   url: string | null;
+  qr: string | null;
 }
 
 /** Идемпотентно находит (lookup/adopt) либо создаёт письмо PayHub. */
 export async function ensureRpLetter(client: PayHubClient, input: EnsureLetterInput): Promise<EnsuredLetter> {
   if (input.existingLetterId) {
     const letter = await client.getLetter(input.existingLetterId);
-    return { letterId: letter.id, regNumber: letter.reg_number ?? null, url: null };
+    return { letterId: letter.id, regNumber: letter.reg_number ?? null, url: null, qr: null };
   }
   const found = await client.lookupByRef(input.externalRef);
   if (found) {
-    return { letterId: found.letter.id, regNumber: found.letter.reg_number ?? null, url: validateShareUrl(found.share?.share_url) };
+    return {
+      letterId: found.letter.id, regNumber: found.letter.reg_number ?? null,
+      url: resolveShareUrl(found.share?.share_url), qr: pickQr(found.share),
+    };
   }
   try {
     const created = await client.createLetter({
@@ -133,13 +172,19 @@ export async function ensureRpLetter(client: PayHubClient, input: EnsureLetterIn
       external_ref: input.externalRef,
       ensure_share: true,
     });
-    return { letterId: created.letter.id, regNumber: created.letter.reg_number ?? null, url: validateShareUrl(created.share?.share_url) };
+    return {
+      letterId: created.letter.id, regNumber: created.letter.reg_number ?? null,
+      url: resolveShareUrl(created.share?.share_url), qr: pickQr(created.share),
+    };
   } catch (e) {
     // Гонка/повтор: письмо с этим external_ref уже создано — усыновляем.
     if (e instanceof PayHubApiError && e.httpStatus === 409) {
       const existing = await client.lookupByRef(input.externalRef);
       if (existing) {
-        return { letterId: existing.letter.id, regNumber: existing.letter.reg_number ?? null, url: validateShareUrl(existing.share?.share_url) };
+        return {
+          letterId: existing.letter.id, regNumber: existing.letter.reg_number ?? null,
+          url: resolveShareUrl(existing.share?.share_url), qr: pickQr(existing.share),
+        };
       }
     }
     throw e;

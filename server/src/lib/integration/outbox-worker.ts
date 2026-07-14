@@ -204,11 +204,12 @@ export function createOutboxWorker(fastify: FastifyInstance): OutboxWorker {
     if (!client) throw new PayHubNotConfiguredError();
     if (!fastify.storage) throw new PayHubApiError('S3-хранилище EstiMat не сконфигурировано', 0, 'no_storage', false);
     const { rows } = await fastify.pool.query(
-      `SELECT id, payhub_letter_id FROM rp_letters WHERE id = $1`,
+      `SELECT id, payhub_letter_id, sync_status FROM rp_letters WHERE id = $1`,
       [p.rpLetterId],
     );
     const rl = rows[0];
-    if (!rl || !rl.payhub_letter_id) return; // письмо ещё не создано — грузить нечего
+    // Нет письма / письмо аннулировано (удалено в PayHub) — грузить нечего, статус не трогаем.
+    if (!rl || !rl.payhub_letter_id || rl.sync_status === 'annulled') return;
     try {
       await syncRpLetterAttachments(fastify.pool, fastify.storage, client, {
         id: rl.id,

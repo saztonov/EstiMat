@@ -41,6 +41,13 @@ export interface CreateLetterInput {
   ensure_share?: boolean;
 }
 
+export interface UpdateLetterInput {
+  subject?: string | null;
+  content?: string | null;
+  responsible_person_name?: string | null;
+  letter_date?: string | null;
+}
+
 export interface UploadFileInput {
   name: string;
   bytes: Buffer;
@@ -194,6 +201,11 @@ export class PayHubClient {
   async shareLetter(id: string): Promise<PayHubShare> {
     const payload = await this.call<Record<string, unknown>>('POST', `/letters/${encodeURIComponent(id)}/share`);
     return (payload.share ?? payload) as PayHubShare;
+  }
+
+  /** Правка текста письма (тема/содержание/ответственный/дата). reg_number/участники не меняются. */
+  async updateLetter(id: string, patch: UpdateLetterInput): Promise<void> {
+    await this.call<void>('PATCH', `/letters/${encodeURIComponent(id)}`, { body: patch });
   }
 
   async deleteLetter(id: string): Promise<void> {

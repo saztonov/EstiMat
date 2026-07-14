@@ -145,6 +145,9 @@ export const config = {
   payhub: {
     baseUrl: (process.env.PAYHUB_BASE_URL || '').replace(/\/+$/, ''),
     apiToken: process.env.PAYHUB_API_TOKEN || '',
+    // Публичный origin PayHub для достройки относительных share-ссылок письма (/letter-share/<token>)
+    // до абсолютного адреса. Если PayHub отдаёт абсолютный share_url — не влияет. Пусто → fallback на baseUrl.
+    publicUrl: (process.env.PAYHUB_PUBLIC_URL || '').replace(/\/+$/, ''),
     timeoutMs: Number(process.env.PAYHUB_TIMEOUT_MS || '15000'),
     get configured(): boolean {
       return Boolean(this.baseUrl && this.apiToken);

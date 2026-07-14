@@ -113,14 +113,31 @@ export const setFileRejectionSchema = z.object({
 });
 export type SetFileRejectionInput = z.infer<typeof setFileRejectionSchema>;
 
-// «Отправить РП» (инженер): дата и описание письма; номер присваивает PayHub.
+// «Отправить РП» (инженер): реквизиты письма; рег.номер присваивает PayHub.
 export const rpSendSchema = z.object({
-  rpDate: z.string(), // ISO date
+  rpDate: z.string(), // ISO date (дата письма)
   subject: z.string().max(500).nullish(),
   content: z.string().max(4000).nullish(),
+  invoiceNumber: z.string().max(100).nullish(),
+  responsibleName: z.string().max(200).nullish(),
   expectedVersion: z.number().int().nonnegative(),
 });
 export type RpSendInput = z.infer<typeof rpSendSchema>;
+
+// Правка текста письма РП из реестра (тема/содержание/ответственный/дата письма).
+export const rpLetterTextSchema = z.object({
+  letterDate: z.string().nullish(), // ISO date
+  subject: z.string().min(1).max(500),
+  content: z.string().max(4000).nullish(),
+  responsibleName: z.string().max(200).nullish(),
+});
+export type RpLetterTextInput = z.infer<typeof rpLetterTextSchema>;
+
+// Ручная дата отправки письма (inline-редактирование в реестре); null — очистить.
+export const rpSentDateSchema = z.object({
+  sentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата в формате YYYY-MM-DD').nullable(),
+});
+export type RpSentDateInput = z.infer<typeof rpSentDateSchema>;
 
 // Отмена заявки до отправки РП.
 export const cancelRequestSchema = z.object({

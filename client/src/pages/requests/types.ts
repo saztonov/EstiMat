@@ -87,14 +87,36 @@ export interface RequestRow {
   supplier_name: string | null;
   supplier_inn: string | null;
   order_amount: string | number | null;
+  order_paid_amount: string | number | null;
   rp_number: string | null;
   rp_date: string | null;
   payhub_reg_number: string | null;
   payhub_url: string | null;
+  payhub_letter_id: string | null;
   rp_sync_status: string | null;
+  rp_subject: string | null;
+  rp_content: string | null;
+  rp_responsible_name: string | null;
+  rp_invoice_number: string | null;
+  rp_sent_date: string | null;
+  rp_letter_date: string | null;
+  rp_created_at: string | null;
+  rp_author: string | null;
+  recipient_name: string | null;
   files_count: number | string;
   items_count: number | string;
   revision_reason: string | null;
+}
+
+// Данные для формы «Отправить РП» (GET /requests/:id/rp-config).
+export interface RpConfig {
+  project: { code: string | null; name: string | null } | null;
+  sender: { name: string | null; inn: string | null } | null;
+  recipient: { name: string | null; inn: string | null } | null;
+  mapped: boolean;
+  defaultSubject: string;
+  defaultContent: string;
+  responsibleName: string | null;
 }
 
 export interface RequestDetail extends RequestRow {

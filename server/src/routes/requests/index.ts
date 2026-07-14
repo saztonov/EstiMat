@@ -13,6 +13,8 @@ import {
   requestFileMetaSchema,
   rpApplicationSchema,
   rpSendSchema,
+  rpLetterTextSchema,
+  rpSentDateSchema,
   cancelRequestSchema,
   orderEditSchema,
   setFileRejectionSchema,
@@ -35,6 +37,8 @@ import {
   buildLetterContent,
   ensureRpLetter,
   syncRpLetterAttachments,
+  getRpSender,
+  resolveRecipient,
 } from '../../lib/payhub/rp-sync.js';
 import { registerRequestCommentRoutes } from './comments.js';
 
@@ -153,6 +157,12 @@ export default async function requestRoutes(fastify: FastifyInstance) {
               p.code AS project_code,
               so.supplier_name, so.supplier_inn, so.amount AS order_amount, so.rp_number, so.rp_date,
               rl.payhub_reg_number, rl.payhub_url, rl.sync_status AS rp_sync_status,
+              rl.payhub_letter_id, rl.subject AS rp_subject, rl.content AS rp_content,
+              rl.invoice_number AS rp_invoice_number, rl.sent_date AS rp_sent_date,
+              rl.letter_date AS rp_letter_date, rl.responsible_name AS rp_responsible_name,
+              rl.created_at AS rp_created_at, rl.recipient_name, cu.full_name AS rp_author,
+              (SELECT COALESCE(SUM(sop.amount), 0) FROM supplier_order_payments sop
+                WHERE sop.order_id = so.id AND NOT sop.reversed) AS order_paid_amount,
               (SELECT count(*) FROM material_request_files f
                 WHERE f.request_id = mr.id AND NOT f.superseded) AS files_count,
               (SELECT count(*) FROM material_request_items i WHERE i.request_id = mr.id) AS items_count,
@@ -164,6 +174,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
          LEFT JOIN projects p ON p.id = mr.project_id
          LEFT JOIN supplier_orders so ON so.request_id = mr.id AND so.kind = 'direct'
          LEFT JOIN rp_letters rl ON rl.request_id = mr.id AND rl.sync_status <> 'annulled'
+         LEFT JOIN users cu ON cu.id = rl.created_by
          ${whereSql}
         ORDER BY mr.created_at DESC
         LIMIT $${values.length - 1} OFFSET $${values.length}`,
@@ -1020,6 +1031,13 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         throw e;
       }
 
+      // Значения письма (снимок сохраняется в rp_letters для реестра/правки).
+      const subjectVal = body.subject ?? 'РП';
+      const contentVal = body.content ?? buildLetterContent({
+        amount: order.amount, supplierName: order.supplier_name, description: mr.project_name,
+      });
+      const responsibleVal = body.responsibleName ?? user.fullName ?? null;
+
       // Синхронное создание письма PayHub (получить рег.номер) — вне транзакции БД.
       let ensured;
       try {
@@ -1029,11 +1047,9 @@ export default async function requestRoutes(fastify: FastifyInstance) {
           senderId: cfg.senderId,
           recipientId: cfg.recipientId,
           letterDate: body.rpDate,
-          subject: body.subject ?? 'РП',
-          content: body.content ?? buildLetterContent({
-            amount: order.amount, supplierName: order.supplier_name, description: mr.project_name,
-          }),
-          responsibleName: user.fullName ?? null,
+          subject: subjectVal,
+          content: contentVal,
+          responsibleName: responsibleVal,
         });
       } catch (e) {
         if (e instanceof PayHubApiError) {
@@ -1041,6 +1057,9 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         }
         throw e;
       }
+
+      // Снимок имени получателя PayHub для реестра/формы (best-effort; при недоступности — null).
+      const recipient = await resolveRecipient(payhub, cfg.recipientId);
 
       // Исходящий набор вложений письма (счёт/КП/спецификация/договор/прочее; платёжки НЕ входят;
       // вычеркнутые документы не отправляются).
@@ -1068,16 +1087,23 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         const rlRes = await client.query(
           `INSERT INTO rp_letters
              (request_id, external_ref, payhub_letter_id, payhub_reg_number, payhub_url,
-              sent_at, sync_status, created_by)
-           VALUES ($1,$2,$3,$4,$5, now(), $6, $7)
+              sent_at, sync_status, created_by,
+              subject, content, responsible_name, letter_date, invoice_number, payhub_qr_svg, recipient_name)
+           VALUES ($1,$2,$3,$4,$5, now(), $6, $7, $8,$9,$10,$11,$12,$13,$14)
            ON CONFLICT (external_ref) DO UPDATE SET
              payhub_letter_id = EXCLUDED.payhub_letter_id, payhub_reg_number = EXCLUDED.payhub_reg_number,
              payhub_url = EXCLUDED.payhub_url,
              sent_at = COALESCE(rp_letters.sent_at, EXCLUDED.sent_at),
-             sync_status = EXCLUDED.sync_status
+             sync_status = EXCLUDED.sync_status, last_error = NULL,
+             subject = EXCLUDED.subject, content = EXCLUDED.content,
+             responsible_name = EXCLUDED.responsible_name, letter_date = EXCLUDED.letter_date,
+             invoice_number = EXCLUDED.invoice_number, payhub_qr_svg = EXCLUDED.payhub_qr_svg,
+             recipient_name = EXCLUDED.recipient_name
            RETURNING id`,
           [mr.id, rpExternalRef(mr.id), ensured.letterId, ensured.regNumber, ensured.url,
-           hasFiles ? 'pending' : 'synced', user.id],
+           hasFiles ? 'pending' : 'synced', user.id,
+           subjectVal, contentVal, responsibleVal, body.rpDate, body.invoiceNumber ?? null,
+           ensured.qr, recipient?.name ?? null],
         );
         const rpLetterId = rlRes.rows[0].id as string;
         for (const f of outFiles.rows) {
@@ -1109,7 +1135,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       }
 
       if (hasFiles) fastify.outbox.kick();
-      return { data: { id: mr.id, status: 'rp_sent', regNumber: ensured.regNumber, url: ensured.url } };
+      return { data: { id: mr.id, status: 'rp_sent', regNumber: ensured.regNumber, url: ensured.url, qr: ensured.qr } };
     },
   );
 
@@ -1140,6 +1166,224 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         [rpLetterId],
       );
       fastify.outbox.kick();
+      return { data: { ok: true } };
+    },
+  );
+
+  // ============================================================
+  // GET /:id/rp-config — данные для формы «Отправить РП» (проект/отправитель/получатель + дефолты)
+  // ============================================================
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/rp-config',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const res = await loadScoped(request.params.id, request.currentUser);
+      if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+      const mr = res.row;
+
+      const { rows: prj } = await fastify.pool.query(
+        `SELECT p.code, p.name, p.payhub_project_id, p.payhub_contractor_id
+           FROM projects p WHERE p.id = $1`,
+        [mr.project_id],
+      );
+      const project = prj[0] ?? null;
+      const { rows: ord } = await fastify.pool.query(
+        `SELECT amount, supplier_name FROM supplier_orders WHERE request_id = $1 AND kind = 'direct' LIMIT 1`,
+        [mr.id],
+      );
+      const order = ord[0] ?? null;
+
+      const sender = await getRpSender(fastify.pool);
+      const mapped = !!(project && project.payhub_project_id != null && project.payhub_contractor_id != null);
+
+      let recipient: { name: string; inn: string | null } | null = null;
+      const payhub = getPayHubClient();
+      if (payhub && project?.payhub_contractor_id != null) {
+        recipient = await resolveRecipient(payhub, Number(project.payhub_contractor_id));
+      }
+
+      const defaultContent = order
+        ? buildLetterContent({ amount: order.amount, supplierName: order.supplier_name, description: mr.project_name })
+        : '';
+
+      return {
+        data: {
+          project: project ? { code: project.code ?? null, name: project.name ?? null } : null,
+          sender: sender ? { name: sender.name, inn: sender.inn } : null,
+          recipient,
+          mapped,
+          defaultSubject: 'РП',
+          defaultContent,
+          responsibleName: request.currentUser.fullName ?? null,
+        },
+      };
+    },
+  );
+
+  // ============================================================
+  // POST /:id/rp-annul — аннулировать РП (чистый откат): удалить письмо в PayHub, вернуть заявку
+  //   в «Оформление РП». Только полностью неоплаченную (сумма незасторнированных оплат = 0).
+  // ============================================================
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/rp-annul',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const user = request.currentUser;
+      const res = await loadScoped(request.params.id, user);
+      if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+      const mr = res.row;
+      if (mr.request_type !== 'own_supplier') {
+        return reply.status(400).send({ error: 'Аннулирование доступно только для заявки «Оплата по РП»' });
+      }
+      if (mr.status !== 'rp_sent') {
+        return reply.status(409).send({ error: 'Аннулировать можно только отправленную неоплаченную РП' });
+      }
+      // Полностью неоплаченная: сумма незасторнированных оплат = 0.
+      const { rows: payRows } = await fastify.pool.query(
+        `SELECT COALESCE(SUM(sop.amount), 0) AS paid
+           FROM supplier_order_payments sop
+           JOIN supplier_orders so ON so.id = sop.order_id AND so.kind = 'direct'
+          WHERE so.request_id = $1 AND NOT sop.reversed`,
+        [mr.id],
+      );
+      if (Number(payRows[0]?.paid ?? 0) > 0) {
+        return reply.status(409).send({ error: 'Аннулировать можно только полностью неоплаченную РП' });
+      }
+      const { rows: rlRows } = await fastify.pool.query(
+        `SELECT id, payhub_letter_id FROM rp_letters WHERE request_id = $1 AND sync_status <> 'annulled' LIMIT 1`,
+        [mr.id],
+      );
+      const rl = rlRows[0];
+      if (!rl) return reply.status(404).send({ error: 'Письмо РП не найдено' });
+
+      // Инвариант: сначала строго удаляем письмо в PayHub, только потом меняем БД.
+      if (rl.payhub_letter_id) {
+        const payhub = getPayHubClient();
+        if (!payhub) return reply.status(400).send({ error: 'Интеграция PayHub не настроена' });
+        try {
+          await payhub.deleteLetter(rl.payhub_letter_id);
+        } catch (e) {
+          if (e instanceof PayHubApiError) {
+            // 404 — письмо уже удалено, продолжаем; прочие ошибки — не трогаем БД.
+            if (e.httpStatus !== 404) {
+              return reply.status(e.retryable ? 503 : 502).send({ error: `Не удалось удалить письмо в PayHub: ${e.message}` });
+            }
+          } else {
+            throw e;
+          }
+        }
+      }
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        // Гасим незавершённые команды синхронизации письма (воркер их больше не подхватит).
+        await client.query(
+          `UPDATE integration_outbox SET status = 'dead_letter', updated_at = now()
+            WHERE aggregate_type = 'rp_letter' AND aggregate_id = $1
+              AND command_type = 'rp_letter.sync' AND status IN ('queued', 'retry_wait', 'waiting_config')`,
+          [mr.id],
+        );
+        // Вложения удаляем — переотправка наберёт их заново (иначе payhub_attachment_id заблокирует догрузку).
+        await client.query(`DELETE FROM rp_letter_attachments WHERE rp_letter_id = $1`, [rl.id]);
+        // Письмо → annulled, PayHub-поля и QR обнуляем.
+        await client.query(
+          `UPDATE rp_letters SET sync_status = 'annulled', payhub_letter_id = NULL,
+             payhub_reg_number = NULL, payhub_url = NULL, payhub_qr_svg = NULL,
+             sent_date = NULL, last_error = NULL, updated_at = now()
+           WHERE id = $1`,
+          [rl.id],
+        );
+        // Заявка возвращается в «Оформление РП» (можно переотправить).
+        const ok = await atomicSetStatus(client, mr.id, mr.row_version, 'rp_forming', user.id);
+        if (!ok) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
+        }
+        await client.query(
+          `UPDATE supplier_orders SET rp_number = NULL, rp_date = NULL, updated_at = now()
+            WHERE request_id = $1 AND kind = 'direct'`,
+          [mr.id],
+        );
+        await appendRequestAudit(client, {
+          requestId: mr.id, action: 'rp_annulled', userId: user.id,
+          estimateId: mr.estimate_id, projectId: mr.project_id,
+        });
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+      return { data: { id: mr.id, status: 'rp_forming' } };
+    },
+  );
+
+  // ============================================================
+  // PATCH /:id/rp-letter-text — правка текста письма из реестра (PayHub-first)
+  // ============================================================
+  fastify.patch<{ Params: { id: string } }>(
+    '/:id/rp-letter-text',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const body = rpLetterTextSchema.parse(request.body);
+      const res = await loadScoped(request.params.id, request.currentUser);
+      if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+      const mr = res.row;
+      const { rows } = await fastify.pool.query(
+        `SELECT id, payhub_letter_id FROM rp_letters
+          WHERE request_id = $1 AND sync_status <> 'annulled' LIMIT 1`,
+        [mr.id],
+      );
+      const rl = rows[0];
+      if (!rl) return reply.status(404).send({ error: 'Письмо РП не найдено' });
+
+      // PayHub-first: если письмо уже создано — сначала правим его; БД пишем только при успехе.
+      if (rl.payhub_letter_id) {
+        const payhub = getPayHubClient();
+        if (!payhub) return reply.status(400).send({ error: 'Интеграция PayHub не настроена' });
+        try {
+          await payhub.updateLetter(rl.payhub_letter_id, {
+            subject: body.subject,
+            content: body.content ?? '',
+            responsible_person_name: body.responsibleName ?? undefined,
+            letter_date: body.letterDate ?? undefined,
+          });
+        } catch (e) {
+          if (e instanceof PayHubApiError) {
+            return reply.status(e.retryable ? 503 : 502).send({ error: `Не удалось обновить письмо в PayHub: ${e.message}` });
+          }
+          throw e;
+        }
+      }
+      await fastify.pool.query(
+        `UPDATE rp_letters SET subject = $2, content = $3, responsible_name = $4,
+           letter_date = COALESCE($5::date, letter_date), updated_at = now()
+         WHERE id = $1`,
+        [rl.id, body.subject, body.content ?? null, body.responsibleName ?? null, body.letterDate ?? null],
+      );
+      return { data: { ok: true } };
+    },
+  );
+
+  // ============================================================
+  // PATCH /:id/rp-sent-date — ручная дата отправки письма (inline в реестре)
+  // ============================================================
+  fastify.patch<{ Params: { id: string } }>(
+    '/:id/rp-sent-date',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const body = rpSentDateSchema.parse(request.body);
+      const res = await loadScoped(request.params.id, request.currentUser);
+      if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+      const mr = res.row;
+      const { rowCount } = await fastify.pool.query(
+        `UPDATE rp_letters SET sent_date = $2, updated_at = now()
+          WHERE request_id = $1 AND sync_status <> 'annulled'`,
+        [mr.id, body.sentDate],
+      );
+      if (rowCount === 0) return reply.status(404).send({ error: 'Письмо РП не найдено' });
       return { data: { ok: true } };
     },
   );

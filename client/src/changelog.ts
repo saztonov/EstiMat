@@ -10,6 +10,13 @@ export interface ChangelogEntry {
 /** Новые версии добавляются В НАЧАЛО массива. Текущая версия = CHANGELOG[0]. */
 export const CHANGELOG: readonly [ChangelogEntry, ...ChangelogEntry[]] = [
   {
+    version: '0.66',
+    date: '2026-07-14',
+    changes: [
+      'Изменения в разделе «Заявки», вкладка «Реестр РП» и окно «Отправить РП»: приведены к виду PayHub/BillHub',
+    ],
+  },
+  {
     version: '0.65',
     date: '2026-07-14',
     changes: [

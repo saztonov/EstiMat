@@ -20,6 +20,7 @@ import { modalWidth } from '../../lib/modalWidth';
 import { formatSize } from '../../lib/files';
 import { RequestStatusTag, RequestTypeTag, money, round4 } from './requestConstants';
 import { RpFormModal } from './RpFormModal';
+import { RpSendModal } from './RpSendModal';
 import { OrderEditModal } from './OrderEditModal';
 import { RequestLotsSection } from './RequestLotsSection';
 import { CommentsChat } from './CommentsChat';
@@ -38,6 +39,7 @@ const ACTION_LABELS: Record<string, string> = {
   revision_completed: 'Доработка завершена',
   rp_application_submitted: 'Оформление РП',
   rp_sent: 'РП отправлено',
+  rp_annulled: 'РП аннулирована',
   cancelled: 'Заявка отменена',
   order_updated: 'Изменены реквизиты',
   file_added: 'Добавлен файл',
@@ -71,7 +73,6 @@ export function RequestDetailContent(
   const [supForm] = Form.useForm();
   const [payForm] = Form.useForm();
   const [revForm] = Form.useForm();
-  const [rpSendForm] = Form.useForm();
 
   const { data, isLoading } = useQuery({
     queryKey: ['requests', 'detail', id],
@@ -127,20 +128,6 @@ export function RequestDetailContent(
       'Отправлено на доработку',
     )();
     if (ok) { setRevisionOpen(false); revForm.resetFields(); }
-  }
-
-  async function submitRpSend() {
-    const v = await rpSendForm.validateFields();
-    const ok = await mut(
-      () => api.post(`/requests/${id}/rp-send`, {
-        rpDate: v.rpDate.format('YYYY-MM-DD'),
-        subject: v.subject || null,
-        content: v.content || null,
-        expectedVersion: r?.row_version,
-      }),
-      'РП отправлено, письмо создано в PayHub',
-    )();
-    if (ok) { setRpSendOpen(false); rpSendForm.resetFields(); }
   }
 
   const completeRevision = mut(() => api.post(`/requests/${id}/revision-complete`, {}), 'Отправлено на проверку');
@@ -477,19 +464,14 @@ export function RequestDetailContent(
         </Form>
       </Modal>
 
-      {/* Модалка: отправить РП */}
-      <Modal title="Отправить РП" open={rpSendOpen} onCancel={() => setRpSendOpen(false)}
-        onOk={submitRpSend} confirmLoading={busy} okText="Отправить в PayHub" width={modalWidth(520)}>
-        <Alert type="info" showIcon style={{ marginBottom: 12 }}
-          message="Будет создано распределительное письмо в PayHub; номер РП присвоит PayHub." />
-        <Form form={rpSendForm} layout="vertical">
-          <Form.Item name="rpDate" label="Дата РП" rules={[{ required: true, message: 'Укажите дату' }]}>
-            <DatePicker style={{ width: 220 }} format="DD.MM.YYYY" />
-          </Form.Item>
-          <Form.Item name="subject" label="Тема письма"><Input maxLength={500} placeholder="РП" /></Form.Item>
-          <Form.Item name="content" label="Описание"><Input.TextArea rows={3} maxLength={4000} placeholder="По умолчанию: сумма, поставщик, объект" /></Form.Item>
-        </Form>
-      </Modal>
+      {/* Модалка: отправить РП (форма письма PayHub + QR) */}
+      <RpSendModal
+        open={rpSendOpen}
+        requestId={id}
+        expectedVersion={r.row_version}
+        onClose={() => setRpSendOpen(false)}
+        onDone={invalidate}
+      />
 
       <RpFormModal open={rpFormOpen} requestId={id} requestNumber={r.number} onClose={() => setRpFormOpen(false)} />
 
