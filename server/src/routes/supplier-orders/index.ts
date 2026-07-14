@@ -73,7 +73,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
               mri.cost_type_id, ct.name AS cost_type_name,
               cc.id AS category_id, cc.name AS category_name,
               cc.sort_order AS category_sort, ct.sort_order AS cost_type_sort,
-              mri.material_id, mri.material_name, mri.unit, mri.agg_key,
+              mri.material_id, mri.material_name, mri.unit, mri.agg_key, mri.delivery_date,
               mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS placed,
               mr.contractor_id, mr.contractor_name,
               COUNT(*) OVER() AS total_count
@@ -89,7 +89,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
             GROUP BY soi.request_item_id
          ) placed ON placed.request_item_id = mri.id
         WHERE ${whereSql}
-        ORDER BY mr.project_name NULLS LAST, cc.sort_order NULLS LAST, ct.sort_order NULLS LAST, mri.material_name
+        ORDER BY mr.project_name NULLS LAST, cc.sort_order NULLS LAST, ct.sort_order NULLS LAST,
+                 mri.material_name, mri.delivery_date NULLS LAST
         LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
       dataValues,
     );
@@ -212,8 +213,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       // --- Блокировка исходных строк (И1, стабильный порядок по id) + снимки для позиций лота ---
       const { rows: src } = await client.query(
         `SELECT mri.id, mri.request_id, mri.cost_type_id, mri.agg_key, mri.material_id, mri.material_name,
-                mri.unit, mr.contractor_id, mr.contractor_name, mr.request_no, mr.project_id, mr.request_type,
-                mr.status, ct.category_id, ct.name AS cost_type_name, cc.name AS cost_category_name
+                mri.unit, mri.delivery_date, mr.contractor_id, mr.contractor_name, mr.request_no, mr.project_id,
+                mr.request_type, mr.status, ct.category_id, ct.name AS cost_type_name, cc.name AS cost_category_name
            FROM material_request_items mri
            JOIN material_requests mr ON mr.id = mri.request_id
            LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
@@ -295,12 +296,14 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         await client.query(
           `INSERT INTO supplier_order_items
              (order_id, request_id, request_item_id, cost_type_id, material_id, material_name, unit, agg_key,
-              quantity, contractor_id, contractor_name, request_no, cost_type_name, cost_category_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-           ON CONFLICT (order_id, request_item_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
+              quantity, contractor_id, contractor_name, request_no, cost_type_name, cost_category_name, delivery_date)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           ON CONFLICT (order_id, request_item_id) DO UPDATE SET quantity = EXCLUDED.quantity,
+             delivery_date = EXCLUDED.delivery_date`,
           [
             orderId, r.request_id, r.id, r.cost_type_id, r.material_id, r.material_name, r.unit, r.agg_key,
             it.quantity, r.contractor_id, r.contractor_name, r.request_no, r.cost_type_name, r.cost_category_name,
+            r.delivery_date,
           ],
         );
       }
@@ -571,8 +574,14 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       // agg_key (каноническая идентичность материала+ед.), чтобы разные материалы с одинаковым
       // названием не сливались. Количество — decimal-строка из SQL (не через JS Number).
       const { rows: items } = await client.query(
-        `SELECT MIN(material_name) AS material_name, unit, SUM(quantity)::numeric AS quantity
-           FROM supplier_order_items WHERE order_id = $1
+        `SELECT MIN(material_name) AS material_name, unit, SUM(qty)::numeric AS quantity,
+                json_agg(json_build_object('date', delivery_date, 'qty', qty) ORDER BY delivery_date)
+                  FILTER (WHERE delivery_date IS NOT NULL) AS schedule
+           FROM (
+             SELECT agg_key, unit, MIN(material_name) AS material_name, delivery_date, SUM(quantity) AS qty
+               FROM supplier_order_items WHERE order_id = $1
+              GROUP BY agg_key, unit, delivery_date
+           ) s
           GROUP BY agg_key, unit ORDER BY MIN(material_name)`,
         [lot.id],
       );
@@ -591,6 +600,14 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         return reply.status(400).send({ error: `Количество «${badQty.material_name}» имеет более 3 знаков после запятой — недопустимо для тендера` });
       }
 
+      // График поставки материала → человекочитаемая спецификация позиции тендера.
+      const fmtDate = (d: string) => { const [y, m, dd] = d.split('-'); return `${dd}.${m}.${y}`; };
+      const scheduleSpec = (schedule: { date: string; qty: number | string }[] | null): string | null =>
+        schedule?.length
+          ? 'График поставки: ' + schedule.map((s) => `к ${fmtDate(s.date)} — ${s.qty}`).join('; ')
+          : null;
+      const hasSchedule = items.some((it) => (it.schedule?.length ?? 0) > 0);
+
       const externalRef = `estimat:lot:${lot.id}`;
       const input = {
         title: lot.title ?? `Заказ поставщику № З-${String(lot.order_no ?? 0).padStart(3, '0')}`,
@@ -602,12 +619,12 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           material: it.material_name,
           quantity: String(it.quantity),
           unit: mapTenderUnit(it.unit),
-          spec: null,
+          spec: scheduleSpec(it.schedule),
         })),
         conditions: {
           delivery: tc.delivery ?? null,
           payment: tc.payment ?? null,
-          deadline: tc.deadline ?? null,
+          deadline: tc.deadline ?? (hasSchedule ? 'По графику поставки (см. спецификацию позиций)' : null),
           place: tc.place ?? null,
         },
       };
@@ -1190,8 +1207,9 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     const [items, aggItems, sources, offers, priceLines] = await Promise.all([
       fastify.pool.query(
         `SELECT id, request_id, request_item_id, material_id, material_name, unit, quantity, agg_key,
-                contractor_id, contractor_name, request_no, cost_type_name, cost_category_name
-           FROM supplier_order_items WHERE order_id = $1 ORDER BY cost_category_name, cost_type_name, material_name`,
+                contractor_id, contractor_name, request_no, cost_type_name, cost_category_name, delivery_date
+           FROM supplier_order_items WHERE order_id = $1
+          ORDER BY cost_category_name, cost_type_name, material_name, delivery_date NULLS LAST`,
         [lot.id],
       ),
       // Агрегаты материалов по agg_key — финансовые строки оформления (как в Excel КП и тендере).

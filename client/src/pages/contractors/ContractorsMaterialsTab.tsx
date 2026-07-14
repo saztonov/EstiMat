@@ -12,6 +12,7 @@ import { api } from '../../services/api';
 import { buildMaterialGroups, type AggregatedMaterial } from '../estimates/materials/aggregateMaterials';
 import { formatMoney, type EstimateItem } from '../estimates/components/types';
 import { RpNextStepModal } from './RpNextStepModal';
+import { DeliveryScheduleModal, type ScheduleLineInput, type ScheduledLine } from './DeliveryScheduleModal';
 
 interface Props {
   estimateId: string;
@@ -53,6 +54,8 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
   const [draft, setDraft] = useState<Map<string, number>>(new Map());
   // Развилка после создания заявки «Оплата по РП» (Excel / Оформить РП / ОК).
   const [created, setCreated] = useState<{ id: string; number: string } | null>(null);
+  // Окно графика поставки для «Закупка через СУ-10» (открывается перед созданием заявки).
+  const [scheduleModal, setScheduleModal] = useState<{ lines: ScheduleLineInput[]; createRequestId: string } | null>(null);
   const { message } = App.useApp();
   const queryClient = useQueryClient();
 
@@ -115,6 +118,7 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
       setEditing(false);
       setRequestType(null);
       setDraft(new Map());
+      setScheduleModal(null);
       queryClient.invalidateQueries({ queryKey: ['material-ordered', estimateId] });
       queryClient.invalidateQueries({ queryKey: ['material-requests', estimateId] });
       queryClient.invalidateQueries({ queryKey: ['requests', 'list'] });
@@ -173,7 +177,21 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
       message.warning('Выберите тип заявки');
       return;
     }
+    // «Закупка через СУ-10» — сперва указать график поставки (окно), заявка создаётся после него.
+    if (requestType === 'su10') {
+      setScheduleModal({ lines, createRequestId: crypto.randomUUID() });
+      return;
+    }
     submitMutation.mutate({ requestType, lines, createRequestId: crypto.randomUUID() });
+  }
+
+  function confirmSchedule(scheduledLines: ScheduledLine[]) {
+    if (!scheduleModal) return;
+    submitMutation.mutate({
+      requestType: 'su10',
+      lines: scheduledLines,
+      createRequestId: scheduleModal.createRequestId,
+    });
   }
 
   // Колонки строятся на группу (нужен costTypeId группы для ключа заказа/заявки).
@@ -331,6 +349,15 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
           requestId={created.id}
           requestNumber={created.number}
           onClose={() => setCreated(null)}
+        />
+      )}
+      {scheduleModal && (
+        <DeliveryScheduleModal
+          open
+          lines={scheduleModal.lines}
+          loading={submitMutation.isPending}
+          onCancel={() => setScheduleModal(null)}
+          onConfirm={confirmSchedule}
         />
       )}
     </div>

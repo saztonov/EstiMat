@@ -23,6 +23,7 @@ import { RpFormModal } from './RpFormModal';
 import { RpSendModal } from './RpSendModal';
 import { OrderEditModal } from './OrderEditModal';
 import { RequestLotsSection } from './RequestLotsSection';
+import { DeliveryGantt, type GanttMaterial } from '../contractors/DeliveryGantt';
 import { CommentsChat } from './CommentsChat';
 import { FileUploadList, type UploadItem } from '../../components/files/FileUploadList';
 import { FilePreviewModal } from '../../components/files/FilePreview';
@@ -213,6 +214,37 @@ export function RequestDetailContent(
     { title: 'Вид работ', dataIndex: 'cost_type_name', key: 'cost_type_name', render: (v: string | null) => v || '—' },
   ];
 
+  // График поставки (СУ-10): свёртка позиций по материалу — общее кол-во + строки дат.
+  const fmtRuDate = (d: string) => { const [y, m, dd] = d.split('-'); return `${dd}.${m}.${y}`; };
+  const hasSchedule = r.request_type === 'su10' && r.items.some((it) => !!it.delivery_date);
+  const scheduleGroups = (() => {
+    const map = new Map<string, { name: string; unit: string; cost_type_name: string | null; totalQty: number; entries: { date: string | null; qty: number }[] }>();
+    for (const it of r.items) {
+      const key = it.agg_key || `${it.name}|${it.unit}`;
+      let g = map.get(key);
+      if (!g) { g = { name: it.name, unit: it.unit, cost_type_name: it.cost_type_name, totalQty: 0, entries: [] }; map.set(key, g); }
+      g.totalQty += Number(it.quantity);
+      g.entries.push({ date: it.delivery_date, qty: Number(it.quantity) });
+    }
+    return [...map.values()];
+  })();
+  const scheduleRows = scheduleGroups.flatMap((g, gi) =>
+    g.entries.map((e, ei) => ({ rowId: `${gi}#${ei}`, gi, idx: ei, count: g.entries.length, group: g, entry: e })),
+  );
+  const spanCell = (row: { idx: number; count: number }) => ({ rowSpan: row.idx === 0 ? row.count : 0 });
+  const scheduleItemCols: ColumnsType<(typeof scheduleRows)[number]> = [
+    { title: 'Наименование', key: 'name', onCell: spanCell, render: (_, row) => row.group.name },
+    { title: 'Ед.изм.', key: 'unit', width: 90, onCell: spanCell, render: (_, row) => row.group.unit },
+    { title: 'Общее кол-во', key: 'total', width: 120, align: 'right', onCell: spanCell, render: (_, row) => round4(row.group.totalQty) },
+    { title: 'Дата поставки', key: 'date', width: 140, render: (_, row) => (row.entry.date ? fmtRuDate(row.entry.date) : '—') },
+    { title: 'Кол-во', key: 'qty', width: 110, align: 'right', render: (_, row) => round4(row.entry.qty) },
+    { title: 'Вид работ', key: 'cost_type_name', onCell: spanCell, render: (_, row) => row.group.cost_type_name || '—' },
+  ];
+  const ganttMaterials: GanttMaterial[] = scheduleGroups.map((g, i) => ({
+    key: String(i), name: g.name, unit: g.unit, totalQty: g.totalQty,
+    schedule: g.entries.filter((e) => e.date).map((e) => ({ date: e.date as string, qty: e.qty })),
+  }));
+
   const payCols: ColumnsType<RequestPayment> = [
     { title: 'Сумма', dataIndex: 'amount', key: 'amount', align: 'right', render: (v, p) => (p.reversed ? <Text delete>{money(v)}</Text> : money(v)) },
     { title: 'Дата', dataIndex: 'paid_at', key: 'paid_at', render: (v: string | null) => v ? new Date(v).toLocaleDateString('ru-RU') : '—' },
@@ -268,12 +300,20 @@ export function RequestDetailContent(
   const sections = [
     {
       key: 'items',
-      label: `Состав заявки (${r.items.length})`,
-      children: (
+      label: `Состав заявки (${hasSchedule ? scheduleGroups.length : r.items.length})`,
+      children: hasSchedule ? (
+        <Table rowKey="rowId" size="small" pagination={false} bordered
+          columns={scheduleItemCols} dataSource={scheduleRows} scroll={{ x: 700 }} />
+      ) : (
         <Table<RequestItem> rowKey={(_, i) => String(i)} size="small" pagination={false}
           columns={itemCols} dataSource={r.items} scroll={{ x: 600 }} />
       ),
     },
+    ...(hasSchedule ? [{
+      key: 'schedule',
+      label: 'График поставки',
+      children: <DeliveryGantt materials={ganttMaterials} />,
+    }] : []),
     ...(r.request_type === 'su10' && isSupply ? [{
       key: 'lots',
       label: 'Закупки',

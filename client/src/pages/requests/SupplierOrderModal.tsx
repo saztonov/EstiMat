@@ -340,6 +340,10 @@ function ItemsTable({ order, onRemove }: { order: SupplierOrderDetail; onRemove?
     { title: 'Материал', dataIndex: 'material_name', key: 'name' },
     { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
     { title: 'Кол-во', dataIndex: 'quantity', key: 'qty', width: 100, align: 'right', render: (v) => round4(v) },
+    {
+      title: 'Дата поставки', dataIndex: 'delivery_date', key: 'dd', width: 120,
+      render: (v: string | null) => { if (!v) return '—'; const [y, m, d] = v.split('-'); return `${d}.${m}.${y}`; },
+    },
     { title: 'Подрядчик', dataIndex: 'contractor_name', key: 'c', width: 150, render: (v) => v ?? '—' },
     { title: 'Заявка', dataIndex: 'request_no', key: 'r', width: 80, render: (v) => (v ? `№ ${v}` : '—') },
     ...(onRemove ? [{

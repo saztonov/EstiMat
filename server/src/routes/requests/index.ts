@@ -199,11 +199,12 @@ export default async function requestRoutes(fastify: FastifyInstance) {
 
     const [items, files, order, revisions, history] = await Promise.all([
       fastify.pool.query(
-        `SELECT mri.material_name AS name, mri.unit, mri.quantity, ct.name AS cost_type_name
+        `SELECT mri.material_name AS name, mri.unit, mri.quantity, mri.agg_key, mri.delivery_date,
+                ct.name AS cost_type_name
            FROM material_request_items mri
            LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
           WHERE mri.request_id = $1
-          ORDER BY ct.name NULLS LAST, mri.material_name`,
+          ORDER BY ct.name NULLS LAST, mri.material_name, mri.delivery_date NULLS LAST`,
         [mr.id],
       ),
       fastify.pool.query(
@@ -342,12 +343,20 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       const requestId = reqRows[0].id as string;
 
       for (const l of lines) {
-        await client.query(
-          `INSERT INTO material_request_items
-             (request_id, cost_type_id, agg_key, material_id, material_name, unit, quantity)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [requestId, l.costTypeId, l.aggKey, l.materialId, l.name, l.unit, l.quantity],
-        );
+        // Для «Закупка через СУ-10» — разворачиваем график поставки в строки по датам
+        // (одна строка на дату). Для прочих типов — одна строка на материал без даты.
+        const schedule =
+          body.requestType === 'su10' && l.deliverySchedule?.length
+            ? l.deliverySchedule.map((s) => ({ quantity: s.quantity, deliveryDate: s.deliveryDate }))
+            : [{ quantity: l.quantity, deliveryDate: null as string | null }];
+        for (const s of schedule) {
+          await client.query(
+            `INSERT INTO material_request_items
+               (request_id, cost_type_id, agg_key, material_id, material_name, unit, quantity, delivery_date)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [requestId, l.costTypeId, l.aggKey, l.materialId, l.name, l.unit, s.quantity, s.deliveryDate],
+          );
+        }
       }
 
       // Прямой заказ при создании — только для собственной закупки (own_supply).
@@ -581,12 +590,19 @@ export default async function requestRoutes(fastify: FastifyInstance) {
           }
           await client.query('DELETE FROM material_request_items WHERE request_id = $1', [mr.id]);
           for (const l of lines) {
-            await client.query(
-              `INSERT INTO material_request_items
-                 (request_id, cost_type_id, agg_key, material_id, material_name, unit, quantity)
-               VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-              [mr.id, l.costTypeId, l.aggKey, l.materialId, l.name, l.unit, l.quantity],
-            );
+            // su10 с графиком поставки — разворачиваем по датам, иначе одна строка без даты.
+            const schedule =
+              mr.request_type === 'su10' && l.deliverySchedule?.length
+                ? l.deliverySchedule.map((s) => ({ quantity: s.quantity, deliveryDate: s.deliveryDate }))
+                : [{ quantity: l.quantity, deliveryDate: null as string | null }];
+            for (const s of schedule) {
+              await client.query(
+                `INSERT INTO material_request_items
+                   (request_id, cost_type_id, agg_key, material_id, material_name, unit, quantity, delivery_date)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                [mr.id, l.costTypeId, l.aggKey, l.materialId, l.name, l.unit, s.quantity, s.deliveryDate],
+              );
+            }
           }
         }
 

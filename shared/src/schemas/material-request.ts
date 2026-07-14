@@ -1,9 +1,19 @@
 import { z } from 'zod';
 import { MATERIAL_REQUEST_TYPES, REQUEST_DOC_TYPES } from '../constants/statuses.js';
 
+// Одна запись графика поставки материала: сколько материала нужно к конкретной дате.
+// Сервер разворачивает график в строки material_request_items (по одной на дату).
+export const deliveryScheduleEntrySchema = z.object({
+  deliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата в формате YYYY-MM-DD'),
+  quantity: z.number().positive(),
+});
+export type DeliveryScheduleEntry = z.infer<typeof deliveryScheduleEntrySchema>;
+
 // Одна строка заявки на материал. Идентификация материала — тем же ключом свёртки,
 // что клиент строит в aggregateMaterials (id:<material_id>|<ед> либо txt:<name>|<ед>),
 // плюс cost_type_id вида работ (один материал в разных видах работ = разные строки свода).
+// deliverySchedule — график поставки (только «Закупка через СУ-10»); quantity остаётся общим
+// итогом по материалу, сумма графика должна ему равняться (проверка — в createRequestSchema).
 export const materialRequestLineSchema = z.object({
   costTypeId: z.string().uuid().nullable(),
   aggKey: z.string().min(1),
@@ -11,6 +21,7 @@ export const materialRequestLineSchema = z.object({
   name: z.string().min(1),
   unit: z.string(),
   quantity: z.number().positive(),
+  deliverySchedule: z.array(deliveryScheduleEntrySchema).optional(),
 });
 
 // Legacy-схема (старый POST /api/material-requests). Оставлена для обратной совместимости.
@@ -20,19 +31,55 @@ export const createMaterialRequestSchema = z.object({
   lines: z.array(materialRequestLineSchema).min(1, 'Пустая заявка'),
 });
 
+// Допуск при сверке суммы графика с общим количеством материала.
+const DELIVERY_SCHEDULE_EPS = 1e-6;
+
 // Создание заявки (единый раздел «Заявки»). Для «Оплата по РП» подрядчик может сразу
 // указать поставщика и сумму (прямой заказ). Файлы прикрепляются отдельными запросами.
-export const createRequestSchema = z.object({
-  estimateId: z.string().uuid(),
-  requestType: z.enum(MATERIAL_REQUEST_TYPES),
-  lines: z.array(materialRequestLineSchema).min(1, 'Пустая заявка'),
-  // Клиентский ключ идемпотентности (защита от двойного POST).
-  createRequestId: z.string().min(8),
-  // Реквизиты прямого заказа (только own_supplier / own_supply): опциональны при создании.
-  supplierName: z.string().min(1).max(300).nullish(),
-  supplierInn: z.string().regex(/^\d{10}(\d{2})?$/, 'ИНН 10 или 12 цифр').nullish(),
-  resultAmount: z.number().positive().nullish(),
-});
+export const createRequestSchema = z
+  .object({
+    estimateId: z.string().uuid(),
+    requestType: z.enum(MATERIAL_REQUEST_TYPES),
+    lines: z.array(materialRequestLineSchema).min(1, 'Пустая заявка'),
+    // Клиентский ключ идемпотентности (защита от двойного POST).
+    createRequestId: z.string().min(8),
+    // Реквизиты прямого заказа (только own_supplier / own_supply): опциональны при создании.
+    supplierName: z.string().min(1).max(300).nullish(),
+    supplierInn: z.string().regex(/^\d{10}(\d{2})?$/, 'ИНН 10 или 12 цифр').nullish(),
+    resultAmount: z.number().positive().nullish(),
+  })
+  // Для «Закупка через СУ-10» график поставки обязателен: у каждой строки непустой график,
+  // даты уникальны, сумма по датам равна общему количеству материала.
+  .superRefine((v, ctx) => {
+    if (v.requestType !== 'su10') return;
+    v.lines.forEach((line, i) => {
+      const sched = line.deliverySchedule ?? [];
+      if (sched.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['lines', i, 'deliverySchedule'],
+          message: 'Укажите график поставки материала',
+        });
+        return;
+      }
+      const dates = sched.map((s) => s.deliveryDate);
+      if (new Set(dates).size !== dates.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['lines', i, 'deliverySchedule'],
+          message: 'Даты поставки материала не должны повторяться',
+        });
+      }
+      const sum = sched.reduce((s, e) => s + e.quantity, 0);
+      if (Math.abs(sum - line.quantity) > DELIVERY_SCHEDULE_EPS) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['lines', i, 'deliverySchedule'],
+          message: 'Сумма по датам должна равняться общему количеству материала',
+        });
+      }
+    });
+  });
 export type CreateRequestInput = z.infer<typeof createRequestSchema>;
 
 // Отправка заявки на доработку (внутренние роли; комментарий обязателен).

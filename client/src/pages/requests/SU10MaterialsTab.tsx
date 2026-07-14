@@ -16,6 +16,7 @@ import type { Su10MaterialRow, MaterialsFacets, CategoryResponsibles } from './t
 
 const EPS = 1e-6;
 const KEY = 'estimat:requests-materials:';
+const fmtRuDate = (d: string) => { const [y, m, dd] = d.split('-'); return `${dd}.${m}.${y}`; };
 
 // Второй уровень группировки: по категории работ или по заявке (взаимоисключающие).
 type GroupSecond = 'category' | 'request' | null;
@@ -294,6 +295,10 @@ export function SU10MaterialsTab() {
         const names = r.category_id ? respByCategory.get(r.category_id) ?? [] : [];
         return names.length ? names.join(', ') : <span style={{ color: '#bfbfbf' }}>—</span>;
       },
+    },
+    {
+      title: 'Дата поставки', dataIndex: 'delivery_date', key: 'delivery', width: 120, ...hideForGroup,
+      render: (v: string | null) => (v ? fmtRuDate(v) : <span style={{ color: '#bfbfbf' }}>—</span>),
     },
     { title: 'Запрошено', dataIndex: 'requested', key: 'requested', width: 100, align: 'right', ...hideForGroup, render: (v) => round4(v) },
     {

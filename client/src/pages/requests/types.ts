@@ -5,6 +5,9 @@ export interface RequestItem {
   unit: string;
   quantity: number | string;
   cost_type_name: string | null;
+  agg_key: string;
+  /** Дата поставки строки (график СУ-10); null — материал без графика. */
+  delivery_date: string | null;
 }
 
 export interface RequestFile {
@@ -153,6 +156,8 @@ export interface Su10MaterialRow {
   material_name: string;
   unit: string;
   agg_key: string;
+  /** Дата поставки строки (график СУ-10); null — без графика. */
+  delivery_date: string | null;
   requested: string | number;
   ordered: number | null;
   remaining: number | null;
@@ -211,6 +216,8 @@ export interface SupplierLotItem {
   request_no: number | null;
   cost_type_name: string | null;
   cost_category_name: string | null;
+  /** Дата поставки (снимок из графика заявки); null — без графика. */
+  delivery_date: string | null;
 }
 
 export interface SupplierLotSource {
