@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Table, Space, Button, Tooltip, Empty, Modal, Badge, Select, Input, App } from 'antd';
+import { Table, Space, Button, Tooltip, Empty, Badge, Select, Input, App } from 'antd';
 import { FileExcelOutlined, MessageOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
@@ -10,10 +10,9 @@ import {
   REQUEST_STATUS_LABELS,
 } from '@estimat/shared';
 import { api } from '../../services/api';
-import { modalWidth } from '../../lib/modalWidth';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { RequestStatusTag, RequestTypeTag, money } from '../requests/requestConstants';
-import { RequestDetailContent } from '../requests/RequestDetailContent';
+import { RequestDetailModal } from '../requests/RequestDetailModal';
 import { useUnreadCounts } from '../requests/useUnreadCounts';
 import type { RequestRow } from '../requests/types';
 
@@ -163,17 +162,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
         locale={{ emptyText: <Empty description="Заявок по объекту пока нет" /> }}
       />
 
-      <Modal
-        open={!!openId}
-        onCancel={() => setOpenId(null)}
-        footer={null}
-        width={modalWidth(1000)}
-        style={{ top: 20 }}
-        styles={{ body: { height: 'calc(90vh - 56px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12 } }}
-        destroyOnClose
-      >
-        {openId && <RequestDetailContent id={openId} onBack={() => setOpenId(null)} />}
-      </Modal>
+      <RequestDetailModal id={openId} onClose={() => setOpenId(null)} />
     </div>
   );
 }

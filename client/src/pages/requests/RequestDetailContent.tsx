@@ -379,8 +379,9 @@ export function RequestDetailContent(
         </Space>
       }
       extra={<Button icon={<FileExcelOutlined />} onClick={exportExcel}>Экспорт в Excel</Button>}
+      variant="borderless"
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-      styles={{ header: { paddingLeft: 16 }, body: { flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: 0 } }}
+      styles={{ header: { paddingLeft: 16, paddingRight: 44 }, body: { flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: 0 } }}
     >
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
