@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Select, Table, Button, Space, Empty, Tag, Tooltip, Popover, Checkbox, Badge, Alert, Dropdown } from 'antd';
 import { ShoppingCartOutlined, ReloadOutlined, FilterOutlined, DownOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { MATERIAL_REQUEST_TYPES, MATERIAL_REQUEST_TYPE_LABELS } from '@estimat/shared';
 import { api } from '../../services/api';
@@ -12,6 +11,7 @@ import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { round4 } from './requestConstants';
 import { SupplierOrderModal } from './SupplierOrderModal';
 import { TenderCreateModal } from './TenderCreateModal';
+import { RequestDetailModal } from './RequestDetailModal';
 import type { Su10MaterialRow, MaterialsFacets, CategoryResponsibles } from './types';
 
 const EPS = 1e-6;
@@ -126,6 +126,7 @@ export function SU10MaterialsTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [action, setAction] = useState<'order' | 'tender' | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+  const [openRequestId, setOpenRequestId] = useState<string | null>(null);
 
   const grouped = groupContractor || groupSecond !== null;
 
@@ -284,7 +285,7 @@ export function SU10MaterialsTab() {
     { title: 'Подрядчик', dataIndex: 'contractor_name', key: 'contractor', width: 160, ...hideForGroup, render: (v: string | null) => v ?? '—' },
     {
       title: 'Заявка', dataIndex: 'request_no', key: 'req', width: 90, ...hideForGroup,
-      render: (v: number | null, r) => (isGroupRow(r) ? null : v ? <Link to={`/requests/${r.request_id}`}>№ {v}</Link> : '—'),
+      render: (v: number | null, r) => (isGroupRow(r) ? null : v ? <a onClick={() => setOpenRequestId(r.request_id)}>№ {v}</a> : '—'),
     },
     {
       title: 'Ответственный', key: 'resp', width: 170, ...hideForGroup,
@@ -451,6 +452,7 @@ export function SU10MaterialsTab() {
           onDone={() => { setAction(null); resetSelection(); materialsQ.refetch(); }}
         />
       )}
+      <RequestDetailModal id={openRequestId} onClose={() => setOpenRequestId(null)} />
     </div>
   );
 }

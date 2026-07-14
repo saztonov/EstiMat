@@ -1,18 +1,19 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router';
-import { Table, Select, Space, Empty, Tag, Button } from 'antd';
-import { LinkOutlined } from '@ant-design/icons';
+import { Table, Select, Space, Empty, Tag, Button, Popconfirm, Tooltip, App } from 'antd';
+import { LinkOutlined, DeleteOutlined, StopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   PURCHASE_KINDS, PURCHASE_KIND_LABELS,
   SOURCING_STATUS_LABELS, REQUEST_STATUS_LABELS,
   type PurchaseKind, type SourcingStatus, type RequestStatus,
 } from '@estimat/shared';
 import { api } from '../../services/api';
+import { useAuthStore } from '../../store/authStore';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { money } from './requestConstants';
 import { SupplierOrderModal } from './SupplierOrderModal';
+import { RequestDetailModal } from './RequestDetailModal';
 import type { RegistryRow } from './types';
 
 interface ProjectOpt { id: string; code: string | null; name: string }
@@ -28,14 +29,35 @@ function statusLabel(r: RegistryRow): string {
 
 /** Единый реестр закупок: заказ поставщику / тендер / заказ по РП / заказ поставщиком. */
 export function PurchasesRegistryTab() {
-  const navigate = useNavigate();
+  const { message } = App.useApp();
+  const qc = useQueryClient();
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.role === 'admin';
   const [projectId, setProjectId] = useState<string | undefined>();
   const [types, setTypes] = useState<PurchaseKind[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [openOrderId, setOpenOrderId] = useState<string | undefined>();
+  const [openRequestId, setOpenRequestId] = useState<string | null>(null);
 
   const projectsQ = useQuery({ queryKey: ['projects'], queryFn: () => api.get<{ data: ProjectOpt[] }>('/projects') });
+
+  const invalidateRegistry = () => {
+    qc.invalidateQueries({ queryKey: ['purchases-registry'] });
+    qc.invalidateQueries({ queryKey: ['su10-materials'] });
+    qc.invalidateQueries({ queryKey: ['supplier-lots'] });
+    qc.invalidateQueries({ queryKey: ['requests'] });
+  };
+  const delMut = useMutation({
+    mutationFn: (id: string) => api.delete(`/supplier-orders/${id}`),
+    onSuccess: () => { message.success('Заказ удалён'); invalidateRegistry(); },
+    onError: (e: Error) => message.error(e.message),
+  });
+  const cancelMut = useMutation({
+    mutationFn: (id: string) => api.post(`/supplier-orders/${id}/cancel`, {}),
+    onSuccess: () => { message.success('Закупка отменена, остаток возвращён в свод'); invalidateRegistry(); },
+    onError: (e: Error) => message.error(e.message),
+  });
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -55,7 +77,7 @@ export function PurchasesRegistryTab() {
 
   function openRow(r: RegistryRow) {
     if (r.link_kind === 'order') setOpenOrderId(r.id);
-    else navigate(`/requests/${r.id}`);
+    else setOpenRequestId(r.id);
   }
 
   const columns: ColumnsType<RegistryRow> = [
@@ -66,8 +88,37 @@ export function PurchasesRegistryTab() {
     { title: 'Сумма', dataIndex: 'amount', key: 'amount', width: 130, align: 'right', render: (v) => money(v) },
     { title: 'Статус', key: 'status', width: 160, render: (_, r) => <Tag>{statusLabel(r)}</Tag> },
     {
-      title: '', key: 'act', width: 60, align: 'right',
-      render: (_, r) => (r.tender_url ? <a href={r.tender_url} target="_blank" rel="noopener noreferrer"><LinkOutlined /></a> : null),
+      title: 'Действие', key: 'act', width: 120, align: 'right',
+      render: (_, r) => {
+        const isManualOrder = r.link_kind === 'order' && r.kind_tag === 'supplier_order';
+        const canDelete = isManualOrder && r.status === 'forming' && (isAdmin || r.created_by === user?.id);
+        const canCancel = isManualOrder && r.status === 'sourcing';
+        return (
+          <Space size={4} onClick={(e) => e.stopPropagation()}>
+            {r.tender_url && (
+              <a href={r.tender_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}><LinkOutlined /></a>
+            )}
+            {canCancel && (
+              <Popconfirm
+                title="Отменить закупку?" description="Остаток материалов вернётся в свод."
+                okText="Отменить" okButtonProps={{ danger: true }} cancelText="Отмена"
+                onConfirm={() => cancelMut.mutate(r.id)}
+              >
+                <Tooltip title="Отменить закупку"><Button type="text" size="small" icon={<StopOutlined />} /></Tooltip>
+              </Popconfirm>
+            )}
+            {canDelete && (
+              <Popconfirm
+                title="Удалить заказ?" description="Позиции вернутся в свод материалов."
+                okText="Удалить" okButtonProps={{ danger: true }} cancelText="Отмена"
+                onConfirm={() => delMut.mutate(r.id)}
+              >
+                <Tooltip title="Удалить заказ"><Button danger type="text" size="small" icon={<DeleteOutlined />} /></Tooltip>
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -100,6 +151,7 @@ export function PurchasesRegistryTab() {
       {openOrderId && (
         <SupplierOrderModal orderId={openOrderId} onClose={() => setOpenOrderId(undefined)} />
       )}
+      <RequestDetailModal id={openRequestId} onClose={() => setOpenRequestId(null)} />
     </>
   );
 }

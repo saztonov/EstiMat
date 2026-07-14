@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, Popconfirm, Modal, App } from 'antd';
+import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, Popconfirm, App } from 'antd';
 import { SearchOutlined, PaperClipOutlined, FileExcelOutlined, MessageOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,10 +12,9 @@ import {
 } from '@estimat/shared';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
-import { modalWidth } from '../../lib/modalWidth';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { RequestStatusTag, RequestTypeTag, money } from './requestConstants';
-import { RequestDetailContent } from './RequestDetailContent';
+import { RequestDetailModal } from './RequestDetailModal';
 import type { RequestRow } from './types';
 
 interface Filters {
@@ -206,17 +205,7 @@ export function RequestsListTab() {
         locale={{ emptyText: <Empty description="Заявок нет" /> }}
       />
 
-      <Modal
-        open={!!openId}
-        onCancel={() => setOpenId(null)}
-        footer={null}
-        width={modalWidth(1000)}
-        style={{ top: 20 }}
-        styles={{ body: { height: 'calc(90vh - 56px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12 } }}
-        destroyOnClose
-      >
-        {openId && <RequestDetailContent id={openId} onBack={() => setOpenId(null)} />}
-      </Modal>
+      <RequestDetailModal id={openId} onClose={() => setOpenId(null)} />
     </>
   );
 }

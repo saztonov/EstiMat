@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router';
 import { Table, Space, Segmented, Empty, Tag, Tooltip, Badge, Button, Typography, DatePicker, App } from 'antd';
 import {
   LinkOutlined, SyncOutlined, WarningOutlined, MessageOutlined,
@@ -12,6 +11,7 @@ import { api } from '../../services/api';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { useUnreadCounts } from './useUnreadCounts';
 import { EditRpLetterModal } from './EditRpLetterModal';
+import { RequestDetailModal } from './RequestDetailModal';
 import type { RequestRow } from './types';
 
 const { Text } = Typography;
@@ -107,14 +107,17 @@ function StatusCell({ row }: { row: RequestRow }) {
 
 /** Реестр РП: заявки со статусами «РП отправлено» и «РП оплачено» в виде распределительных писем. */
 export function RpRegistryTab() {
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const { message, modal } = App.useApp();
   const [flt, setFlt] = useState<RegFilter>('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [editRow, setEditRow] = useState<RequestRow | null>(null);
+  const [openRequestId, setOpenRequestId] = useState<string | null>(null);
   const unread = useUnreadCounts();
+
+  // Клик по интерактивной ячейке не должен открывать карточку заявки (row-click).
+  const stopCell = { onCell: () => ({ onClick: (e: { stopPropagation: () => void }) => e.stopPropagation() }) };
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -218,6 +221,7 @@ export function RpRegistryTab() {
       ),
       key: 'dates',
       width: 100,
+      ...stopCell,
       render: (_, r) => (
         <div style={{ lineHeight: 1.3 }}>
           <div>{fmtDate(r.rp_created_at)}</div>
@@ -246,8 +250,9 @@ export function RpRegistryTab() {
       title: 'Заявка',
       key: 'request',
       width: 90,
+      ...stopCell,
       render: (_, r) => (
-        <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => navigate(`/requests/${r.id}`)}>
+        <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={(e) => { e.stopPropagation(); setOpenRequestId(r.id); }}>
           {r.number}
         </Button>
       ),
@@ -290,6 +295,7 @@ export function RpRegistryTab() {
       title: 'Письмо',
       key: 'letter',
       width: 120,
+      ...stopCell,
       render: (_, r) => <LetterCell row={r} onRetry={retry} />,
     },
     {
@@ -303,20 +309,21 @@ export function RpRegistryTab() {
       key: 'actions',
       width: 130,
       fixed: 'right',
+      ...stopCell,
       render: (_, r) => {
         const canAnnul = r.status === 'rp_sent' && payStatus(r) === 'unpaid';
         return (
           <Space size={0}>
             <Tooltip title="Файлы (в карточке заявки)">
               <Badge count={Number(r.files_count) || 0} size="small" color="blue" offset={[-4, 4]}>
-                <Button type="text" size="small" icon={<PaperClipOutlined />} onClick={() => navigate(`/requests/${r.id}`)} />
+                <Button type="text" size="small" icon={<PaperClipOutlined />} onClick={(e) => { e.stopPropagation(); setOpenRequestId(r.id); }} />
               </Badge>
             </Tooltip>
             <Tooltip title="Редактировать письмо">
-              <Button type="text" size="small" icon={<EditOutlined />} onClick={() => setEditRow(r)} />
+              <Button type="text" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); setEditRow(r); }} />
             </Tooltip>
             <Tooltip title={canAnnul ? 'Аннулировать' : 'Аннулировать можно только отправленную неоплаченную РП'}>
-              <Button type="text" size="small" icon={<StopOutlined />} disabled={!canAnnul} onClick={() => annul(r)} />
+              <Button type="text" size="small" icon={<StopOutlined />} disabled={!canAnnul} onClick={(e) => { e.stopPropagation(); annul(r); }} />
             </Tooltip>
           </Space>
         );
@@ -357,9 +364,11 @@ export function RpRegistryTab() {
           },
         }}
         scroll={{ x: 1500 }}
+        onRow={(r) => ({ onClick: () => setOpenRequestId(r.id), style: { cursor: 'pointer' } })}
         locale={{ emptyText: <Empty description="В реестре пока нет РП" /> }}
       />
       <EditRpLetterModal open={!!editRow} letter={editRow} onClose={() => setEditRow(null)} onSaved={invalidate} />
+      <RequestDetailModal id={openRequestId} onClose={() => setOpenRequestId(null)} />
     </>
   );
 }

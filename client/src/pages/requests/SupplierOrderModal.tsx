@@ -54,7 +54,7 @@ export function SupplierOrderModal({ create, orderId, onClose, onChanged }: Prop
       />
     );
   }
-  return <OrderStep orderId={id} onClose={onClose} onChanged={invalidateOutside} />;
+  return <OrderStep orderId={id} onClose={onClose} onChanged={invalidateOutside} fromMaterials={!!create} />;
 }
 
 // ============================================================
@@ -152,7 +152,7 @@ function CreateStep({
 // ============================================================
 // Шаг заказа: этапы Состав → Поставщики → Оформление (по sourcing_status).
 // ============================================================
-function OrderStep({ orderId, onClose, onChanged }: { orderId: string; onClose: () => void; onChanged: () => void }) {
+function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: string; onClose: () => void; onChanged: () => void; fromMaterials: boolean }) {
   const { message } = App.useApp();
   const [winnerLocal, setWinnerLocal] = useState<string | undefined>();
   const [vatRate, setVatRate] = useState<ManualVatRate>('vat22');
@@ -240,21 +240,14 @@ function OrderStep({ orderId, onClose, onChanged }: { orderId: string; onClose: 
           onAward={(pid) => run.mutate({ method: 'post', url: `/supplier-orders/${orderId}/award`, body: { source: 'tender', winnerParticipantId: pid, expectedVersion: order.row_version } })} />
       )}
 
-      {/* ===== Этап «Состав» (forming) ===== */}
+      {/* ===== Этап «Состав» (forming): состав + запрос КП + поставщики (без приёма КП/победителя) ===== */}
       {!isTender && status === 'forming' && (
-        <>
-          <ItemsTable order={order} onRemove={(itemId) => run.mutate({ method: 'delete', url: `/supplier-orders/${orderId}/items/${itemId}` })} />
-          <Divider />
-          <Space>
-            <Button type="primary" icon={<FileExcelOutlined />} onClick={freezeAndExport}>
-              Зафиксировать состав и скачать Excel
-            </Button>
-            <Dropdown menu={moreMenu}><Button icon={<MoreOutlined />}>Ещё</Button></Dropdown>
-          </Space>
-          <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
-            После фиксации состав заморожен и запрос КП можно разослать поставщикам.
-          </div>
-        </>
+        <FormingStage
+          order={order} fromMaterials={fromMaterials}
+          onFreezeExport={freezeAndExport} onReExport={reExport} moreMenu={moreMenu}
+          onRemoveItem={(itemId) => run.mutate({ method: 'delete', url: `/supplier-orders/${orderId}/items/${itemId}` })}
+          refetch={refetch}
+        />
       )}
 
       {/* ===== Этапы «Поставщики» + «Оформление» (sourcing) ===== */}
@@ -276,6 +269,68 @@ function OrderStep({ orderId, onClose, onChanged }: { orderId: string; onClose: 
         <Alert type="warning" showIcon message="Закупка завершена без поставщика — материалы возвращены в свод" />
       )}
     </Modal>
+  );
+}
+
+// ---- Этап «Состав» (forming): состав + запрос КП + добавление поставщиков ----
+// Приём счетов/КП и выбор победителя здесь недоступны — только после начала сбора
+// предложений (sourcing), т.е. при открытии заказа из вкладки «Закупки».
+function FormingStage({
+  order, fromMaterials, onFreezeExport, onReExport, moreMenu, onRemoveItem, refetch,
+}: {
+  order: SupplierOrderDetail; fromMaterials: boolean;
+  onFreezeExport: () => void; onReExport: () => void;
+  moreMenu: { items: unknown[]; onClick: (e: { key: string }) => void };
+  onRemoveItem: (itemId: string) => void; refetch: () => void;
+}) {
+  const { message } = App.useApp();
+  const [addOpen, setAddOpen] = useState(false);
+
+  const offerMut = useMutation({
+    mutationFn: (v: { method: 'post' | 'delete'; url: string; body?: unknown }) =>
+      v.method === 'delete' ? api.delete(v.url) : api.post(v.url, v.body),
+    onSuccess: () => refetch(),
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const offerCols: ColumnsType<OrderOffer> = [
+    {
+      title: 'Поставщик', dataIndex: 'supplier_name', key: 'sn',
+      render: (v, o) => <Space>{v}{o.supplier_inn ? <span style={{ color: '#8c8c8c' }}>ИНН {o.supplier_inn}</span> : null}</Space>,
+    },
+    { title: 'Ответ', dataIndex: 'response_status', key: 'rs', width: 170, render: (v) => <Tag color={RESP_COLOR[v]}>{OFFER_RESPONSE_STATUS_LABELS[v as keyof typeof OFFER_RESPONSE_STATUS_LABELS]}</Tag> },
+    {
+      title: '', key: 'act', width: 60, align: 'right',
+      render: (_, o) => (
+        <Popconfirm title="Убрать поставщика?" onConfirm={() => offerMut.mutate({ method: 'delete', url: `/supplier-orders/${order.id}/offers/${o.id}` })}>
+          <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+        </Popconfirm>
+      ),
+    },
+  ];
+
+  return (
+    <>
+      <ItemsTable order={order} onRemove={onRemoveItem} />
+      <Divider />
+      <Space wrap>
+        <Button icon={<DownloadOutlined />} onClick={onReExport}>Скачать запрос КП</Button>
+        <Button icon={<ShoppingCartOutlined />} onClick={() => setAddOpen(true)}>Добавить поставщика</Button>
+        {!fromMaterials && (
+          <Button type="primary" icon={<FileExcelOutlined />} onClick={onFreezeExport}>Зафиксировать состав</Button>
+        )}
+        <Dropdown menu={moreMenu as never}><Button icon={<MoreOutlined />}>Ещё</Button></Dropdown>
+      </Space>
+      <Table rowKey="id" size="small" pagination={false} dataSource={order.offers} columns={offerCols} style={{ marginTop: 8 }}
+        locale={{ emptyText: <Empty description="Добавьте поставщиков, которым отправлен запрос КП" /> }} scroll={{ x: 500 }} />
+      <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
+        Приём счетов/КП и выбор победителя — после начала сбора предложений (открыть заказ на вкладке «Закупки»).
+      </div>
+      <AddSupplierModal
+        open={addOpen} onClose={() => setAddOpen(false)}
+        onSubmit={(body) => offerMut.mutate({ method: 'post', url: `/supplier-orders/${order.id}/offers`, body }, { onSuccess: () => { setAddOpen(false); refetch(); } })}
+      />
+    </>
   );
 }
 
@@ -488,24 +543,56 @@ function OfferUpload({ orderId, offerId, onDone }: { orderId: string; offerId: s
   );
 }
 
-// ---- Модалка добавления поставщика ----
-function AddSupplierModal({ open, onClose, onSubmit }: { open: boolean; onClose: () => void; onSubmit: (b: unknown) => void }) {
+// ---- Выбор поставщика из справочника (поиск по названию/ИНН, ИНН подставляется автоматически) ----
+interface SupplierSel { id: string; name: string; inn: string | null }
+
+function SupplierPicker({ value, onChange }: { value?: SupplierSel; onChange: (s?: SupplierSel) => void }) {
+  const [search, setSearch] = useState('');
+  const suppliersQ = useQuery({
+    queryKey: ['suppliers', search],
+    queryFn: () => api.get<{ data: SupplierSel[] }>(`/suppliers?q=${encodeURIComponent(search)}`),
+  });
+  const options = useMemo(() => {
+    const list = suppliersQ.data?.data ?? [];
+    const opts = list.map((s) => ({ value: s.id, label: s.inn ? `${s.name} (ИНН ${s.inn})` : s.name, supplier: s }));
+    // Текущий выбор может не попасть в выдачу (лимит) — подмешиваем, чтобы не показывать UUID.
+    if (value?.id && !opts.some((o) => o.value === value.id)) {
+      opts.unshift({ value: value.id, label: value.inn ? `${value.name} (ИНН ${value.inn})` : value.name, supplier: value });
+    }
+    return opts;
+  }, [suppliersQ.data, value]);
+  return (
+    <Select
+      showSearch filterOption={false} onSearch={setSearch} loading={suppliersQ.isLoading}
+      value={value?.id} options={options.map((o) => ({ value: o.value, label: o.label }))}
+      placeholder="Поиск по названию или ИНН" style={{ width: '100%' }}
+      onChange={(val) => onChange(options.find((o) => o.value === val)?.supplier)}
+    />
+  );
+}
+
+// ---- Модалка добавления поставщика (из справочника) ----
+function AddSupplierModal({
+  open, onClose, onSubmit,
+}: {
+  open: boolean; onClose: () => void;
+  onSubmit: (b: { supplierId: string; supplierName: string; supplierInn?: string }) => void;
+}) {
   const { message } = App.useApp();
-  const [name, setName] = useState('');
-  const [inn, setInn] = useState('');
+  const [sel, setSel] = useState<SupplierSel>();
   return (
     <Modal
-      open={open} title="Поставщик" onCancel={onClose} destroyOnClose
+      open={open} title="Поставщик" onCancel={onClose} destroyOnClose afterClose={() => setSel(undefined)}
       onOk={() => {
-        if (!name.trim()) return message.warning('Укажите поставщика');
-        onSubmit({ supplierName: name.trim(), supplierInn: inn.trim() || undefined });
-        setName(''); setInn('');
+        if (!sel) return message.warning('Выберите поставщика из справочника');
+        onSubmit({ supplierId: sel.id, supplierName: sel.name, supplierInn: sel.inn ?? undefined });
+        setSel(undefined);
       }}
       okText="Добавить"
     >
       <Space direction="vertical" style={{ width: '100%' }}>
-        <Input placeholder="Наименование поставщика" value={name} onChange={(e) => setName(e.target.value)} />
-        <Input placeholder="ИНН (необязательно)" value={inn} onChange={(e) => setInn(e.target.value)} maxLength={12} />
+        <SupplierPicker value={sel} onChange={setSel} />
+        <Input placeholder="ИНН" value={sel?.inn ?? ''} disabled />
       </Space>
     </Modal>
   );

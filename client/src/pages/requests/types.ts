@@ -320,4 +320,5 @@ export interface RegistryRow {
   tender_status: string | null;
   tender_url: string | null;
   created_at: string;
+  created_by: string | null;
 }

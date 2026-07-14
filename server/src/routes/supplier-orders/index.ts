@@ -698,8 +698,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     const body = upsertOfferSchema.parse(request.body);
     const order = await loadOfferableOrder(request.params.id);
     if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
-    if (order.sourcing_status !== 'sourcing' || order.procurement_method === 'tender') {
-      return reply.status(409).send({ error: 'Поставщиков можно добавлять только по заказу в стадии сбора предложений' });
+    if (!['forming', 'sourcing'].includes(order.sourcing_status) || order.procurement_method === 'tender') {
+      return reply.status(409).send({ error: 'Поставщиков можно добавлять только по формируемому заказу или заказу в стадии сбора предложений' });
     }
     const { rows: ins } = await fastify.pool.query(
       `INSERT INTO supplier_order_offers
@@ -718,8 +718,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     const body = upsertOfferSchema.parse(request.body);
     const order = await loadOfferableOrder(request.params.id);
     if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
-    if (order.sourcing_status !== 'sourcing' || order.procurement_method === 'tender') {
-      return reply.status(409).send({ error: 'Поставщиков можно менять только по заказу в стадии сбора предложений' });
+    if (!['forming', 'sourcing'].includes(order.sourcing_status) || order.procurement_method === 'tender') {
+      return reply.status(409).send({ error: 'Поставщиков можно менять только по формируемому заказу или заказу в стадии сбора предложений' });
     }
     const { rowCount } = await fastify.pool.query(
       `UPDATE supplier_order_offers
@@ -736,11 +736,13 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   // DELETE /:id/offers/:offerId — убрать поставщика (пока заказ не оформлен); S3-объект чистим.
   fastify.delete<{ Params: { id: string; offerId: string } }>('/:id/offers/:offerId', async (request, reply) => {
     const { rows } = await fastify.pool.query(
-      `SELECT sourcing_status FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
+      `SELECT sourcing_status, procurement_method FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
       [request.params.id],
     );
     if (!rows[0]) return reply.status(404).send({ error: 'Заказ не найден' });
-    if (rows[0].sourcing_status === 'awarded') return reply.status(409).send({ error: 'Заказ уже оформлен' });
+    if (!['forming', 'sourcing'].includes(rows[0].sourcing_status) || rows[0].procurement_method === 'tender') {
+      return reply.status(409).send({ error: 'Убрать поставщика можно только по формируемому заказу или заказу в стадии сбора предложений' });
+    }
     const { rows: del } = await fastify.pool.query(
       `DELETE FROM supplier_order_offers WHERE id = $1 AND order_id = $2 RETURNING file_key`,
       [request.params.offerId, request.params.id],
@@ -1050,7 +1052,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
            so.id, 'order'::text AS link_kind, so.project_id, so.project_name,
            'З-' || lpad(COALESCE(so.order_no, 0)::text, 3, '0') AS number,
            so.supplier_name, so.amount, so.sourcing_status AS status,
-           so.tender_status, so.tender_url, so.created_at
+           so.tender_status, so.tender_url, so.created_at, so.created_by
            FROM supplier_orders so
           WHERE so.kind = 'sourcing'
          UNION ALL
@@ -1059,7 +1061,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
            mr.id, 'request'::text AS link_kind, mr.project_id, mr.project_name,
            COALESCE(p.code, '') || '-' || lpad(COALESCE(mr.request_no, 0)::text, 2, '0') AS number,
            so.supplier_name, so.amount, mr.status,
-           NULL::text AS tender_status, NULL::text AS tender_url, so.created_at
+           NULL::text AS tender_status, NULL::text AS tender_url, so.created_at, NULL::uuid AS created_by
            FROM supplier_orders so
            JOIN material_requests mr ON mr.id = so.request_id
            LEFT JOIN projects p ON p.id = mr.project_id
