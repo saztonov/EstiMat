@@ -110,11 +110,17 @@ export interface RequestDetail extends RequestRow {
 
 // ===== Закупочные лоты СУ-10 =====
 
-// Строка свода материалов (исходная позиция su10-заявки; 1:1 с формированием лота).
+// Строка свода материалов (исходная позиция заявки). Для su10 — 1:1 с формированием лота;
+// у прочих видов размещение не применяется (ordered/remaining = null).
 export interface Su10MaterialRow {
   request_item_id: string;
   request_id: string;
   request_no: number | null;
+  request_type: string;
+  status: string;
+  project_id: string | null;
+  project_name: string | null;
+  project_code: string | null;
   cost_type_id: string | null;
   cost_type_name: string | null;
   category_id: string | null;
@@ -126,10 +132,27 @@ export interface Su10MaterialRow {
   unit: string;
   agg_key: string;
   requested: string | number;
-  ordered: string | number;
-  remaining: number;
+  ordered: number | null;
+  remaining: number | null;
   contractor_id: string | null;
   contractor_name: string | null;
+}
+
+// Опции фильтров свода материалов (facets — по всему набору, независимо от текущих фильтров).
+export interface MaterialsFacets {
+  projects: { id: string; name: string | null; code: string | null }[];
+  contractors: { id: string; name: string | null }[];
+  categories: { id: string; name: string | null }[];
+}
+
+// Ответственный за категорию работ (справочник «Закупки»).
+export interface CategoryResponsibles {
+  id: string; // category_id
+  name: string;
+  code: string | null;
+  sort_order: number;
+  is_active: boolean;
+  responsibles: { id: string; full_name: string; role: string; is_active: boolean }[];
 }
 
 export interface SupplierLotRow {

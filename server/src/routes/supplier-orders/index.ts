@@ -6,6 +6,7 @@ import { formLotSchema, startProcurementSchema, addOfferSchema, awardSchema } fr
 import { config } from '../../config.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
+import { assertCategoryAccess } from '../../lib/procurement/access.js';
 import { exportSupplierOrderXlsx, SupplierOrderExportError } from '../../lib/supplier-order-export/index.js';
 import { getTenderClient } from '../../lib/tender/client.js';
 import { refreshTenderLot } from '../../lib/tender/sync.js';
@@ -25,30 +26,49 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', requireRole('admin', 'engineer', 'manager'));
 
   // ============================================================
-  // GET /materials — свод материалов su10-заявок объекта (обязателен projectId).
-  //   Строки = исходные позиции заявок (1:1 с формированием лота), с вычетом размещённого
-  //   в активные лоты. Клиент группирует визуально и выбирает строки с remaining>0.
+  // GET /materials — свод материалов заявок (все виды) с фильтрами и серверной пагинацией.
+  //   Строки = исходные позиции заявок. Для su10 «ordered/remaining» = размещённое/остаток по
+  //   активным лотам (заказ поставщику формируется только из su10). Для прочих видов размещение
+  //   не применяется → ordered/remaining = null. Опции фильтров (facets) считаются по всему
+  //   доступному набору, без учёта текущих фильтров (иначе фильтры «схлопнули» бы сами себя).
   // ============================================================
-  fastify.get<{ Querystring: { projectId?: string; contractorId?: string } }>('/materials', async (request) => {
+  fastify.get<{
+    Querystring: {
+      projectId?: string;
+      contractorId?: string;
+      requestType?: string;
+      categoryId?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>('/materials', async (request) => {
     const q = request.query;
-    if (!q.projectId) return { data: [] };
-    const values: unknown[] = [q.projectId];
-    let contractorFilter = '';
-    if (q.contractorId) {
-      values.push(q.contractorId);
-      contractorFilter = ` AND mr.contractor_id = $${values.length}`;
-    }
+    const limit = Math.min(Math.max(Number(q.limit) || 100, 1), 500);
+    const offset = Math.max(Number(q.offset) || 0, 0);
+
+    // Динамические фильтры (базовый инвариант — не отменённые заявки).
+    const where: string[] = [`mr.status <> 'cancelled'`];
+    const values: unknown[] = [];
+    if (q.projectId) { values.push(q.projectId); where.push(`mr.project_id = $${values.length}`); }
+    if (q.contractorId) { values.push(q.contractorId); where.push(`mr.contractor_id = $${values.length}`); }
+    if (q.requestType) { values.push(q.requestType); where.push(`mr.request_type = $${values.length}`); }
+    if (q.categoryId) { values.push(q.categoryId); where.push(`cc.id = $${values.length}`); }
+    const whereSql = where.join(' AND ');
+
+    const dataValues = [...values, limit, offset];
     const { rows } = await fastify.pool.query(
-      `SELECT mri.id AS request_item_id, mri.request_id, mr.request_no,
+      `SELECT mri.id AS request_item_id, mri.request_id, mr.request_no, mr.request_type, mr.status,
+              mr.project_id, mr.project_name, p.code AS project_code,
               mri.cost_type_id, ct.name AS cost_type_name,
               cc.id AS category_id, cc.name AS category_name,
               cc.sort_order AS category_sort, ct.sort_order AS cost_type_sort,
               mri.material_id, mri.material_name, mri.unit, mri.agg_key,
-              mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS ordered,
-              mr.contractor_id, mr.contractor_name
+              mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS placed,
+              mr.contractor_id, mr.contractor_name,
+              COUNT(*) OVER() AS total_count
          FROM material_request_items mri
          JOIN material_requests mr ON mr.id = mri.request_id
-              AND mr.request_type = 'su10' AND mr.status <> 'cancelled'
+         LEFT JOIN projects p ON p.id = mr.project_id
          LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
          LEFT JOIN cost_categories cc ON cc.id = ct.category_id
          LEFT JOIN (
@@ -57,12 +77,47 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
              JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status <> 'cancelled'
             GROUP BY soi.request_item_id
          ) placed ON placed.request_item_id = mri.id
-        WHERE mr.project_id = $1${contractorFilter}
-        ORDER BY cc.sort_order NULLS LAST, ct.sort_order NULLS LAST, mri.material_name`,
-      values,
+        WHERE ${whereSql}
+        ORDER BY mr.project_name NULLS LAST, cc.sort_order NULLS LAST, ct.sort_order NULLS LAST, mri.material_name
+        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      dataValues,
     );
+
+    // Facets — по всему доступному набору (только базовый инвариант, без текущих фильтров).
+    const { rows: facetRows } = await fastify.pool.query(
+      `SELECT
+         COALESCE((SELECT json_agg(row_to_json(t)) FROM (
+           SELECT DISTINCT mr.project_id AS id, mr.project_name AS name, p.code
+             FROM material_request_items mri JOIN material_requests mr ON mr.id = mri.request_id
+             LEFT JOIN projects p ON p.id = mr.project_id
+            WHERE mr.status <> 'cancelled' AND mr.project_id IS NOT NULL
+            ORDER BY mr.project_name
+         ) t), '[]') AS projects,
+         COALESCE((SELECT json_agg(row_to_json(t)) FROM (
+           SELECT DISTINCT mr.contractor_id AS id, mr.contractor_name AS name
+             FROM material_request_items mri JOIN material_requests mr ON mr.id = mri.request_id
+            WHERE mr.status <> 'cancelled' AND mr.contractor_id IS NOT NULL
+            ORDER BY mr.contractor_name
+         ) t), '[]') AS contractors,
+         COALESCE((SELECT json_agg(row_to_json(t)) FROM (
+           SELECT DISTINCT cc.id, cc.name
+             FROM material_request_items mri JOIN material_requests mr ON mr.id = mri.request_id
+             JOIN cost_types ct ON ct.id = mri.cost_type_id
+             JOIN cost_categories cc ON cc.id = ct.category_id
+            WHERE mr.status <> 'cancelled'
+            ORDER BY cc.name
+         ) t), '[]') AS categories`,
+    );
+
+    const total = rows.length ? Number(rows[0].total_count) : 0;
     return {
-      data: rows.map((r) => ({ ...r, remaining: Number(r.requested) - Number(r.ordered) })),
+      data: rows.map(({ total_count, placed, ...r }) => {
+        const isSu10 = r.request_type === 'su10';
+        const ordered = isSu10 ? Number(placed) : null;
+        const remaining = isSu10 ? Number(r.requested) - Number(placed) : null;
+        return { ...r, ordered, remaining };
+      }),
+      meta: { total, limit, offset, facets: facetRows[0] },
     };
   });
 
@@ -107,11 +162,20 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         orderId = lot.id;
       } else {
         const dup = await client.query(
-          `SELECT id FROM supplier_orders WHERE created_by = $1 AND client_request_id = $2`,
+          `SELECT id, project_id, sourcing_status FROM supplier_orders
+            WHERE created_by = $1 AND client_request_id = $2 FOR UPDATE`,
           [user.id, body.clientRequestId],
         );
         if (dup.rows[0]) {
-          orderId = dup.rows[0].id; // повтор запроса — тот же лот (позиции UPSERT'ятся идемпотентно)
+          // Повтор запроса — тот же лот (позиции UPSERT'ятся идемпотентно), но только пока он
+          // формируется и относится к тому же объекту (иначе повтором нельзя дописать в лот,
+          // ушедший в закупку/отменённый).
+          const d = dup.rows[0];
+          if (d.sourcing_status !== 'forming' || d.project_id !== body.projectId) {
+            await client.query('ROLLBACK');
+            return reply.status(409).send({ error: 'Повторный запрос по изменённому лоту, обновите страницу' });
+          }
+          orderId = d.id;
         } else {
           await client.query('SELECT id FROM projects WHERE id = $1 FOR UPDATE', [body.projectId]);
           const { rows: pRows } = await client.query('SELECT name FROM projects WHERE id = $1', [body.projectId]);
@@ -138,7 +202,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       const { rows: src } = await client.query(
         `SELECT mri.id, mri.request_id, mri.cost_type_id, mri.agg_key, mri.material_id, mri.material_name,
                 mri.unit, mr.contractor_id, mr.contractor_name, mr.request_no, mr.project_id, mr.request_type,
-                ct.name AS cost_type_name, cc.name AS cost_category_name
+                mr.status, ct.category_id, ct.name AS cost_type_name, cc.name AS cost_category_name
            FROM material_request_items mri
            JOIN material_requests mr ON mr.id = mri.request_id
            LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
@@ -163,6 +227,23 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           await client.query('ROLLBACK');
           return reply.status(400).send({ error: 'Материал относится к другому объекту' });
         }
+        if (r.status === 'cancelled' || r.status === 'revision') {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({ error: 'Заявка отменена или на доработке — материалы недоступны' });
+        }
+      }
+
+      // Разграничение по зонам ответственности (справочник «Закупки»): формировать заказ по
+      // категории может только её ответственный или админ (fallback — категория без ответственных).
+      const access = await assertCategoryAccess(
+        client,
+        user.id,
+        user.role,
+        body.items.map((it) => srcMap.get(it.requestItemId)!.category_id ?? null),
+      );
+      if (!access.ok) {
+        await client.query('ROLLBACK');
+        return reply.status(403).send({ error: access.reason });
       }
 
       // --- Проверка остатка в SQL (numeric): want > requested − размещённое в ДРУГИХ активных лотах ---
@@ -242,11 +323,15 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        `SELECT id, project_id, sourcing_status FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        `SELECT id, project_id, sourcing_status, created_by FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
         [request.params.id],
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Лот не найден' }); }
+      if (user.role !== 'admin' && lot.created_by !== user.id) {
+        await client.query('ROLLBACK');
+        return reply.status(403).send({ error: 'Изменять состав лота может только его создатель или администратор' });
+      }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Лот заморожен — состав менять нельзя' });
@@ -278,11 +363,15 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        `SELECT id, project_id, sourcing_status FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        `SELECT id, project_id, sourcing_status, created_by FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
         [request.params.id],
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Лот не найден' }); }
+      if (user.role !== 'admin' && lot.created_by !== user.id) {
+        await client.query('ROLLBACK');
+        return reply.status(403).send({ error: 'Удалить лот может только его создатель или администратор' });
+      }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Удалить можно только формируемый лот' });
@@ -720,7 +809,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       ),
       // Позиции самой заявки в формате свода (для «Сформировать лот» прямо из карточки).
       fastify.pool.query(
-        `SELECT mri.id AS request_item_id, mri.request_id, mr.request_no,
+        `SELECT mri.id AS request_item_id, mri.request_id, mr.request_no, mr.request_type, mr.status,
+                mr.project_id, mr.project_name, p.code AS project_code,
                 mri.cost_type_id, ct.name AS cost_type_name,
                 cc.id AS category_id, cc.name AS category_name,
                 cc.sort_order AS category_sort, ct.sort_order AS cost_type_sort,
@@ -730,6 +820,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
            FROM material_request_items mri
            JOIN material_requests mr ON mr.id = mri.request_id
                 AND mr.request_type = 'su10' AND mr.status <> 'cancelled'
+           LEFT JOIN projects p ON p.id = mr.project_id
            LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
            LEFT JOIN cost_categories cc ON cc.id = ct.category_id
            LEFT JOIN (

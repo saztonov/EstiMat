@@ -41,15 +41,18 @@ export function SupplierLotFormModal({ open, projectId, rows, onClose, onDone }:
 
   const items = useMemo<DraftItem[]>(
     () =>
-      rows.map((r) => ({
-        requestItemId: r.request_item_id,
-        name: r.material_name,
-        unit: r.unit,
-        contractor: r.contractor_name ?? '—',
-        requestNo: r.request_no,
-        remaining: r.remaining,
-        quantity: draft.get(r.request_item_id) ?? r.remaining,
-      })),
+      rows.map((r) => {
+        const remaining = r.remaining ?? 0;
+        return {
+          requestItemId: r.request_item_id,
+          name: r.material_name,
+          unit: r.unit,
+          contractor: r.contractor_name ?? '—',
+          requestNo: r.request_no,
+          remaining,
+          quantity: draft.get(r.request_item_id) ?? remaining,
+        };
+      }),
     [rows, draft],
   );
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Table, Space, Typography, Empty, Button } from 'antd';
 import { ShoppingCartOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -9,9 +9,10 @@ import { money, round4 } from './requestConstants';
 import { SourcingStatusTag, ProcurementMethodTag, TenderStatusTag } from './supplierLotConstants';
 import { SupplierLotDetail } from './SupplierLotDetail';
 import { SupplierLotFormModal } from './SupplierLotFormModal';
-import type { Su10MaterialRow } from './types';
+import type { Su10MaterialRow, CategoryResponsibles } from './types';
 
 const { Text } = Typography;
+const EPS = 1e-6;
 
 interface LotBrief {
   id: string;
@@ -34,18 +35,47 @@ interface ByRequest { lots: LotBrief[]; coverage: Coverage; projectId: string | 
  */
 export function RequestLotsSection({ requestId }: { requestId: string }) {
   const qc = useQueryClient();
-  const role = useAuthStore((s) => s.user?.role);
+  const user = useAuthStore((s) => s.user);
+  const role = user?.role;
   const isSupply = role === 'engineer' || role === 'admin' || role === 'manager';
+  const isAdmin = role === 'admin';
   const [formOpen, setFormOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['request-lots', requestId],
     queryFn: () => api.get<{ data: ByRequest }>(`/supplier-orders/by-request/${requestId}`),
   });
+
+  // Зоны ответственности (справочник «Закупки») — какие категории может распределять пользователь.
+  const responsiblesQ = useQuery({
+    queryKey: ['procurement-responsibles'],
+    queryFn: () => api.get<{ data: CategoryResponsibles[] }>('/procurement/responsibles'),
+    enabled: isSupply,
+  });
+  const responsiblesReady = responsiblesQ.isSuccess;
+  const { myCategoryIds, categoriesWithResp } = useMemo(() => {
+    const mine = new Set<string>();
+    const withResp = new Set<string>();
+    for (const c of responsiblesQ.data?.data ?? []) {
+      if (c.responsibles.length > 0) withResp.add(c.id);
+      if (user && c.responsibles.some((r) => r.id === user.id)) mine.add(c.id);
+    }
+    return { myCategoryIds: mine, categoriesWithResp: withResp };
+  }, [responsiblesQ.data, user]);
+
   const lots = data?.data?.lots ?? [];
   const cov = data?.data?.coverage;
   const projectId = data?.data?.projectId ?? null;
-  const formableRows = (data?.data?.materials ?? []).filter((m) => m.remaining > 1e-6);
+  const allFormable = (data?.data?.materials ?? []).filter((m) => (m.remaining ?? 0) > EPS);
+  // Доступны для распределения только категории пользователя (или fallback без ответственных); admin — все.
+  function canDistribute(m: Su10MaterialRow): boolean {
+    if (!responsiblesReady) return false;
+    if (isAdmin) return true;
+    if (!m.category_id) return false;
+    return myCategoryIds.has(m.category_id) || !categoriesWithResp.has(m.category_id);
+  }
+  const formableRows = allFormable.filter(canDistribute);
+  const excludedCount = allFormable.length - formableRows.length;
 
   const columns: ColumnsType<LotBrief> = [
     { title: '№', dataIndex: 'order_no', key: 'no', width: 80, render: (v) => `Л-${String(v ?? 0).padStart(3, '0')}` },
@@ -66,9 +96,17 @@ export function RequestLotsSection({ requestId }: { requestId: string }) {
         </Text>
       )}
       {isSupply && projectId && formableRows.length > 0 && (
-        <Button type="primary" icon={<ShoppingCartOutlined />} onClick={() => setFormOpen(true)}>
-          Сформировать закупочный лот
-        </Button>
+        <Space>
+          <Button type="primary" icon={<ShoppingCartOutlined />} onClick={() => setFormOpen(true)}>
+            Сформировать закупочный лот
+          </Button>
+          {excludedCount > 0 && (
+            <Text type="secondary">{excludedCount} поз. вне вашей зоны ответственности — недоступны</Text>
+          )}
+        </Space>
+      )}
+      {isSupply && projectId && formableRows.length === 0 && excludedCount > 0 && (
+        <Text type="secondary">Материалы заявки вне вашей зоны ответственности — распределение недоступно</Text>
       )}
       {lots.length === 0 ? (
         <Empty description="Материалы заявки ещё не включены в закупочные лоты" />
