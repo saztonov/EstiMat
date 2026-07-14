@@ -27,8 +27,9 @@ export async function exportSupplierOrderXlsx(
   const header = hRes.rows[0];
   if (!header) throw new SupplierOrderExportError('Заказ не найден', 404);
 
-  // Агрегация одинаковых материалов (наименование+ед.) — без подрядчиков и номеров заявок.
-  // schedule — график поставки материала (даты + количество), если он задан в заявке.
+  // Агрегация материалов по agg_key (тот же ключ, что в тендере и оформлении) — без подрядчиков и
+  // номеров заявок. schedule — заданный снабжением график поставки заказа (по agg_key), с fallback
+  // на снимок дат заявки, если он не задан.
   const items = await pool.query<{
     material_name: string;
     unit: string;
@@ -36,18 +37,29 @@ export async function exportSupplierOrderXlsx(
     cost_category_name: string | null;
     schedule: { date: string; qty: number | string }[] | null;
   }>(
-    `SELECT material_name, unit, SUM(qty)::numeric AS quantity, MIN(cost_category_name) AS cost_category_name,
-            json_agg(json_build_object('date', delivery_date, 'qty', qty) ORDER BY delivery_date)
-              FILTER (WHERE delivery_date IS NOT NULL) AS schedule
-       FROM (
-         SELECT material_name, unit, delivery_date, SUM(quantity) AS qty,
-                MIN(cost_category_name) AS cost_category_name
-           FROM supplier_order_items
-          WHERE order_id = $1
-          GROUP BY material_name, unit, delivery_date
-       ) s
-      GROUP BY material_name, unit
-      ORDER BY MIN(cost_category_name) NULLS LAST, material_name`,
+    `WITH agg AS (
+       SELECT agg_key, unit, MIN(material_name) AS material_name, SUM(quantity)::numeric AS quantity,
+              MIN(cost_category_name) AS cost_category_name
+         FROM supplier_order_items WHERE order_id = $1
+        GROUP BY agg_key, unit
+     ), snap AS (
+       SELECT agg_key,
+              json_agg(json_build_object('date', delivery_date, 'qty', qty) ORDER BY delivery_date)
+                FILTER (WHERE delivery_date IS NOT NULL) AS schedule
+         FROM (SELECT agg_key, delivery_date, SUM(quantity) AS qty
+                 FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key, delivery_date) s
+        GROUP BY agg_key
+     ), newd AS (
+       SELECT agg_key,
+              json_agg(json_build_object('date', delivery_date, 'qty', quantity) ORDER BY delivery_date) AS schedule
+         FROM supplier_order_delivery_schedule WHERE order_id = $1 GROUP BY agg_key
+     )
+     SELECT a.material_name, a.unit, a.quantity, a.cost_category_name,
+            COALESCE(n.schedule, s.schedule) AS schedule
+       FROM agg a
+       LEFT JOIN newd n ON n.agg_key = a.agg_key
+       LEFT JOIN snap s ON s.agg_key = a.agg_key
+      ORDER BY a.cost_category_name NULLS LAST, a.material_name`,
     [orderId],
   );
 

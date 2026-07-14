@@ -34,6 +34,11 @@ export function round4(v: number | string | null | undefined): number {
   return Math.round(Number(v ?? 0) * 1e4) / 1e4;
 }
 
+// Полный номер заявки: «<код объекта>-NN» (совпадает с серверным requestNumber).
+export function requestNumber(projectCode: string | null, no: number | null): string {
+  return `${projectCode ?? 'ЗМ'}-${String(no ?? 0).padStart(2, '0')}`;
+}
+
 export function RequestStatusTag({ status, comment }: { status: RequestStatus; comment?: string | null }) {
   const label = REQUEST_STATUS_LABELS[status] ?? status;
   const tag = <Tag color={STATUS_COLOR[status] ?? 'default'}>{label}</Tag>;

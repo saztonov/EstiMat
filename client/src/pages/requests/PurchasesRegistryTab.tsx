@@ -123,8 +123,8 @@ export function PurchasesRegistryTab() {
   ];
 
   return (
-    <>
-      <Space style={{ marginBottom: 12 }} wrap>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+      <Space style={{ marginBottom: 12, flexShrink: 0, paddingTop: 4 }} wrap>
         <Select
           allowClear showSearch placeholder="Все объекты" style={{ width: 300 }}
           value={projectId} onChange={(v) => { setProjectId(v); setPage(1); }} loading={projectsQ.isLoading}
@@ -146,12 +146,12 @@ export function PurchasesRegistryTab() {
         onRow={(r) => ({ onClick: () => openRow(r), style: { cursor: 'pointer' } })}
         locale={{ emptyText: <Empty description="Закупок пока нет. Заказ формируется из материалов заявок СУ-10 на вкладке «Материалы»." /> }}
         pagination={{ ...DEFAULT_PAGINATION, current: page, pageSize, total, onChange: (p, ps) => { setPage(p); setPageSize(ps); } }}
-        scroll={{ x: 900 }}
+        scroll={{ x: 900, y: 'flex' }}
       />
       {openOrderId && (
         <SupplierOrderModal orderId={openOrderId} onClose={() => setOpenOrderId(undefined)} />
       )}
       <RequestDetailModal id={openRequestId} onClose={() => setOpenRequestId(null)} />
-    </>
+    </div>
   );
 }

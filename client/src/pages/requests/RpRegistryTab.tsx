@@ -332,8 +332,8 @@ export function RpRegistryTab() {
   ];
 
   return (
-    <>
-      <Space style={{ marginBottom: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+      <Space style={{ marginBottom: 12, flexShrink: 0, paddingTop: 4 }}>
         <Segmented
           value={flt}
           onChange={(v) => {
@@ -363,12 +363,12 @@ export function RpRegistryTab() {
             setPageSize(ps);
           },
         }}
-        scroll={{ x: 1500 }}
+        scroll={{ x: 1500, y: 'flex' }}
         onRow={(r) => ({ onClick: () => setOpenRequestId(r.id), style: { cursor: 'pointer' } })}
         locale={{ emptyText: <Empty description="В реестре пока нет РП" /> }}
       />
       <EditRpLetterModal open={!!editRow} letter={editRow} onClose={() => setEditRow(null)} onSaved={invalidate} />
       <RequestDetailModal id={openRequestId} onClose={() => setOpenRequestId(null)} />
-    </>
+    </div>
   );
 }

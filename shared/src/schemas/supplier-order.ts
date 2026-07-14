@@ -3,6 +3,7 @@ import {
   PROCUREMENT_METHODS, TENDER_STATUSES, TENDER_OUTCOMES, TENDER_VAT_RATES,
   MANUAL_VAT_RATES, PAYMENT_TYPES, OFFER_RESPONSE_STATUSES, OFFER_DOC_TYPES,
 } from '../constants/statuses.js';
+import { deliveryScheduleEntrySchema } from './material-request.js';
 
 // Деньги — десятичной строкой (без float): до 13 знаков целой части и ≤2 дробной. Считаем в SQL numeric.
 const money2 = z.string().regex(/^\d{1,13}(\.\d{1,2})?$/, 'Некорректная сумма');
@@ -17,14 +18,34 @@ export const lotItemSchema = z.object({
 });
 export type LotItemInput = z.infer<typeof lotItemSchema>;
 
+// График поставки заказа/тендера по АГРЕГАТУ материала (agg_key) — тот же ключ, что в позициях
+// заказа и оформлении победителя (в agg_key закодирована единица). Сумма entries по agg_key должна
+// равняться суммарному количеству позиций этого agg_key в заказе (проверка — на сервере).
+export const orderDeliveryScheduleSchema = z.array(
+  z.object({
+    aggKey: z.string().min(1),
+    entries: z.array(deliveryScheduleEntrySchema).min(1),
+  }),
+);
+export type OrderDeliveryScheduleInput = z.infer<typeof orderDeliveryScheduleSchema>;
+
+// Правка графика поставки заказа снабжением (только стадия forming).
+export const putOrderDeliveryScheduleSchema = z.object({
+  schedule: orderDeliveryScheduleSchema,
+  expectedVersion: z.number().int().nonnegative().optional(),
+});
+export type PutOrderDeliveryScheduleInput = z.infer<typeof putOrderDeliveryScheduleSchema>;
+
 // Формирование/дополнение закупочного лота (снабженец). orderId пуст → создать новый лот;
 // задан → добавить позиции в существующий формируемый лот. clientRequestId — идемпотентность.
+// deliverySchedule (опц.) — заданный снабжением график заказа; не задан → предзаполнится снимком заявки.
 export const formLotSchema = z.object({
   projectId: z.string().uuid(),
   orderId: z.string().uuid().nullish(),
   title: z.string().max(300).nullish(),
   clientRequestId: z.string().min(8),
   items: z.array(lotItemSchema).min(1, 'Не выбраны материалы'),
+  deliverySchedule: orderDeliveryScheduleSchema.optional(),
   expectedVersion: z.number().int().nonnegative().optional(),
 });
 export type FormLotInput = z.infer<typeof formLotSchema>;

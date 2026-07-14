@@ -295,6 +295,13 @@ export interface OrderPriceLine {
   warranty_months: number | null;
 }
 
+// Строка графика поставки заказа (по агрегату материала). delivery_date — YYYY-MM-DD.
+export interface OrderDeliveryEntry {
+  agg_key: string;
+  delivery_date: string;
+  quantity: string | number;
+}
+
 // Карточка заказа поставщику (GET /supplier-orders/:id).
 export interface SupplierOrderDetail extends SupplierLotRow {
   vat_rate: string | null;
@@ -311,6 +318,7 @@ export interface SupplierOrderDetail extends SupplierLotRow {
   sources: SupplierLotSource[];
   offers: OrderOffer[];
   priceLines: OrderPriceLine[];
+  deliverySchedule: OrderDeliveryEntry[];
 }
 
 // Строка единого реестра «Закупки».

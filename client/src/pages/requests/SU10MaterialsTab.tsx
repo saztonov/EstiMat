@@ -8,7 +8,7 @@ import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { usePersistedState } from '../../hooks/usePersistedState';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
-import { round4 } from './requestConstants';
+import { round4, requestNumber } from './requestConstants';
 import { SupplierOrderModal } from './SupplierOrderModal';
 import { TenderCreateModal } from './TenderCreateModal';
 import { RequestDetailModal } from './RequestDetailModal';
@@ -250,7 +250,7 @@ export function SU10MaterialsTab() {
 
   const columns: ColumnsType<MaterialTableRow> = [
     {
-      title: 'Материал', dataIndex: 'material_name', key: 'name',
+      title: 'Материал', dataIndex: 'material_name', key: 'name', width: 360,
       onCell: (r) => (isGroupRow(r) ? { colSpan: columns.length } : {}),
       render: (_v, r) => {
         if (isGroupRow(r)) {
@@ -266,7 +266,7 @@ export function SU10MaterialsTab() {
         return (
           <Space size={4}>
             {r.material_name}
-            {r.request_type === 'su10' && r.remaining != null && r.remaining <= EPS && <Tag color="default">в заказах</Tag>}
+            <Tag>{MATERIAL_REQUEST_TYPE_LABELS[r.request_type as keyof typeof MATERIAL_REQUEST_TYPE_LABELS] ?? r.request_type}</Tag>
           </Space>
         );
       },
@@ -277,16 +277,11 @@ export function SU10MaterialsTab() {
         isGroupRow(r) ? null : v ? `${r.project_code ? `${r.project_code} · ` : ''}${v}` : '—',
     },
     { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 64, ...hideForGroup },
-    { title: 'Категория', dataIndex: 'category_name', key: 'cat', width: 150, ...hideForGroup, render: (v: string | null) => v ?? '—' },
-    { title: 'Вид работ', dataIndex: 'cost_type_name', key: 'ct', width: 150, ...hideForGroup, render: (v: string | null) => v ?? '—' },
-    {
-      title: 'Вид заявки', dataIndex: 'request_type', key: 'rtype', width: 150, ...hideForGroup,
-      render: (v: string) => <Tag>{MATERIAL_REQUEST_TYPE_LABELS[v as keyof typeof MATERIAL_REQUEST_TYPE_LABELS] ?? v}</Tag>,
-    },
     { title: 'Подрядчик', dataIndex: 'contractor_name', key: 'contractor', width: 160, ...hideForGroup, render: (v: string | null) => v ?? '—' },
     {
-      title: 'Заявка', dataIndex: 'request_no', key: 'req', width: 90, ...hideForGroup,
-      render: (v: number | null, r) => (isGroupRow(r) ? null : v ? <a onClick={() => setOpenRequestId(r.request_id)}>№ {v}</a> : '—'),
+      title: 'Заявка', dataIndex: 'request_no', key: 'req', width: 110, ...hideForGroup,
+      render: (v: number | null, r) =>
+        isGroupRow(r) ? null : v ? <a onClick={() => setOpenRequestId(r.request_id)}>{requestNumber(r.project_code, v)}</a> : '—',
     },
     {
       title: 'Ответственный', key: 'resp', width: 170, ...hideForGroup,
@@ -302,11 +297,7 @@ export function SU10MaterialsTab() {
     },
     { title: 'Запрошено', dataIndex: 'requested', key: 'requested', width: 100, align: 'right', ...hideForGroup, render: (v) => round4(v) },
     {
-      title: 'В заказах', dataIndex: 'ordered', key: 'ordered', width: 110, align: 'right', ...hideForGroup,
-      render: (v: number | null) => (v == null ? <span style={{ color: '#bfbfbf' }}>—</span> : Number(v) > 0 ? round4(v) : <span style={{ color: '#bfbfbf' }}>0</span>),
-    },
-    {
-      title: 'Осталось распределить', dataIndex: 'remaining', key: 'remaining', width: 130, align: 'right', ...hideForGroup,
+      title: 'Осталось заказать', dataIndex: 'remaining', key: 'remaining', width: 130, align: 'right', ...hideForGroup,
       render: (v: number | null) =>
         v == null ? <span style={{ color: '#bfbfbf' }}>не применяется</span>
           : <strong style={{ color: v > EPS ? '#1677ff' : '#bfbfbf' }}>{round4(v)}</strong>,
@@ -333,7 +324,7 @@ export function SU10MaterialsTab() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
       {/* Строка 1 — основные фильтры и действия */}
-      <div style={{ flexShrink: 0, marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ flexShrink: 0, paddingTop: 4, marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <Select
           allowClear showSearch placeholder="Все объекты" style={{ width: 260 }}
           value={projectId} onChange={(v) => changeFilter(setProjectId, v)}
@@ -347,7 +338,7 @@ export function SU10MaterialsTab() {
           options={(facets?.contractors ?? []).map((c) => ({ value: c.id, label: c.name ?? '—' }))}
         />
         <Button icon={<ReloadOutlined />} onClick={() => materialsQ.refetch()} loading={materialsQ.isFetching}>Обновить</Button>
-        <Badge count={filtersOpen ? 0 : hiddenActiveCount} size="small">
+        <Badge count={filtersOpen ? 0 : hiddenActiveCount} size="small" offset={[-2, 2]}>
           <Button
             icon={<FilterOutlined />}
             type={filtersOpen ? 'primary' : 'default'}
@@ -404,7 +395,7 @@ export function SU10MaterialsTab() {
         />
       )}
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <Table<MaterialTableRow>
           rowKey={(r) => (isGroupRow(r) ? r.key : r.request_item_id)}
           size="small"
@@ -438,7 +429,7 @@ export function SU10MaterialsTab() {
                   resetSelection();
                 },
               }}
-          scroll={{ x: 1500 }}
+          scroll={{ x: 1400, y: 'flex' }}
         />
       </div>
 

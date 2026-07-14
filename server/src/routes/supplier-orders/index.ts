@@ -5,6 +5,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import {
   formLotSchema, startProcurementSchema, awardSchema, mapTenderUnit,
   upsertOfferSchema, offerFileMetaSchema, finalizeOrderSchema,
+  putOrderDeliveryScheduleSchema,
   MANUAL_VAT_RATE_VALUE, type ManualVatRate,
 } from '@estimat/shared';
 import { config } from '../../config.js';
@@ -309,6 +310,63 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         );
       }
 
+      // --- График поставки заказа (по agg_key) ---
+      // Если снабжение прислало свой график — валидируем (сумма == количеству agg_key в заказе,
+      // даты уникальны) и REPLACE'им по переданным agg_key. Затем предзаполняем снимком дат заявки
+      // только те agg_key, у которых графика ещё нет (не затирая ручные правки/только что заданное).
+      if (body.deliverySchedule?.length) {
+        const SCHED_EPS = 1e-6;
+        const { rows: aggRows } = await client.query(
+          `SELECT agg_key, SUM(quantity)::numeric AS qty FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key`,
+          [orderId],
+        );
+        const aggQty = new Map<string, number>(aggRows.map((a) => [a.agg_key as string, Number(a.qty)]));
+        for (const line of body.deliverySchedule) {
+          if (!aggQty.has(line.aggKey)) {
+            await client.query('ROLLBACK');
+            return reply.status(400).send({ error: 'График задан по материалу вне состава заказа' });
+          }
+          const dates = line.entries.map((e) => e.deliveryDate);
+          if (new Set(dates).size !== dates.length) {
+            await client.query('ROLLBACK');
+            return reply.status(400).send({ error: 'Даты поставки в графике не должны повторяться' });
+          }
+          const sum = line.entries.reduce((s, e) => s + e.quantity, 0);
+          if (Math.abs(sum - (aggQty.get(line.aggKey) ?? 0)) > SCHED_EPS) {
+            await client.query('ROLLBACK');
+            return reply.status(400).send({ error: 'Сумма графика не совпадает с количеством материала в заказе' });
+          }
+        }
+        await client.query(
+          `DELETE FROM supplier_order_delivery_schedule WHERE order_id = $1 AND agg_key = ANY($2::text[])`,
+          [orderId, body.deliverySchedule.map((l) => l.aggKey)],
+        );
+        for (const line of body.deliverySchedule) {
+          for (const e of line.entries) {
+            await client.query(
+              `INSERT INTO supplier_order_delivery_schedule (order_id, agg_key, delivery_date, quantity)
+               VALUES ($1,$2,$3,$4)
+               ON CONFLICT (order_id, agg_key, delivery_date) DO UPDATE SET quantity = EXCLUDED.quantity`,
+              [orderId, line.aggKey, e.deliveryDate, e.quantity],
+            );
+          }
+        }
+      }
+      // Авто-prefill снимком дат заявки — только для agg_key, у которых графика ещё нет.
+      await client.query(
+        `INSERT INTO supplier_order_delivery_schedule (order_id, agg_key, delivery_date, quantity)
+         SELECT soi.order_id, soi.agg_key, soi.delivery_date, SUM(soi.quantity)
+           FROM supplier_order_items soi
+          WHERE soi.order_id = $1 AND soi.delivery_date IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM supplier_order_delivery_schedule s
+               WHERE s.order_id = soi.order_id AND s.agg_key = soi.agg_key
+            )
+          GROUP BY soi.order_id, soi.agg_key, soi.delivery_date
+         ON CONFLICT (order_id, agg_key, delivery_date) DO NOTHING`,
+        [orderId],
+      );
+
       await client.query('UPDATE supplier_orders SET row_version = row_version + 1, updated_at = now() WHERE id = $1', [orderId]);
       await appendOrderAudit(client, {
         orderId, action: 'items_added', userId: user.id,
@@ -361,6 +419,88 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       if (delRows[0].request_id) await recalcRequestStatus(client, delRows[0].request_id, user.id);
       await client.query('COMMIT');
       return { data: { ok: true } };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  });
+
+  // ============================================================
+  // PUT /:id/delivery-schedule — задать/изменить график поставки заказа (стадия forming)
+  //   График ключуется по agg_key; сумма по каждому agg_key должна равняться количеству этого
+  //   материала в заказе. График заявки при этом не трогается. REPLACE по переданным agg_key.
+  // ============================================================
+  fastify.put<{ Params: { id: string } }>('/:id/delivery-schedule', async (request, reply) => {
+    const user = request.currentUser;
+    const body = putOrderDeliveryScheduleSchema.parse(request.body);
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT id, project_id, sourcing_status, created_by, row_version
+           FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        [request.params.id],
+      );
+      const lot = rows[0];
+      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      if (user.role !== 'admin' && lot.created_by !== user.id) {
+        await client.query('ROLLBACK');
+        return reply.status(403).send({ error: 'Изменять график заказа может только его создатель или администратор' });
+      }
+      if (lot.sourcing_status !== 'forming') {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Заказ зафиксирован — график менять нельзя' });
+      }
+      if (body.expectedVersion != null && body.expectedVersion !== lot.row_version) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: lot.row_version });
+      }
+
+      const SCHED_EPS = 1e-6;
+      const { rows: aggRows } = await client.query(
+        `SELECT agg_key, SUM(quantity)::numeric AS qty FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key`,
+        [lot.id],
+      );
+      const aggQty = new Map<string, number>(aggRows.map((a) => [a.agg_key as string, Number(a.qty)]));
+      for (const line of body.schedule) {
+        if (!aggQty.has(line.aggKey)) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'График задан по материалу вне состава заказа' });
+        }
+        const dates = line.entries.map((e) => e.deliveryDate);
+        if (new Set(dates).size !== dates.length) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Даты поставки в графике не должны повторяться' });
+        }
+        const sum = line.entries.reduce((s, e) => s + e.quantity, 0);
+        if (Math.abs(sum - (aggQty.get(line.aggKey) ?? 0)) > SCHED_EPS) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Сумма графика не совпадает с количеством материала в заказе' });
+        }
+      }
+
+      await client.query(
+        `DELETE FROM supplier_order_delivery_schedule WHERE order_id = $1 AND agg_key = ANY($2::text[])`,
+        [lot.id, body.schedule.map((l) => l.aggKey)],
+      );
+      for (const line of body.schedule) {
+        for (const e of line.entries) {
+          await client.query(
+            `INSERT INTO supplier_order_delivery_schedule (order_id, agg_key, delivery_date, quantity)
+             VALUES ($1,$2,$3,$4)
+             ON CONFLICT (order_id, agg_key, delivery_date) DO UPDATE SET quantity = EXCLUDED.quantity`,
+            [lot.id, line.aggKey, e.deliveryDate, e.quantity],
+          );
+        }
+      }
+
+      await client.query('UPDATE supplier_orders SET row_version = row_version + 1, updated_at = now() WHERE id = $1', [lot.id]);
+      await appendOrderAudit(client, { orderId: lot.id, action: 'delivery_schedule_updated', userId: user.id, projectId: lot.project_id });
+      const { rows: fin } = await client.query('SELECT row_version FROM supplier_orders WHERE id = $1', [lot.id]);
+      await client.query('COMMIT');
+      return { data: { ok: true, rowVersion: fin[0].row_version } };
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -574,16 +714,31 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       // Агрегированные позиции лота (без подрядчиков/№ заявок) — предмет тендера. Группировка по
       // agg_key (каноническая идентичность материала+ед.), чтобы разные материалы с одинаковым
       // названием не сливались. Количество — decimal-строка из SQL (не через JS Number).
+      // Источник графика для спецификации — заданный снабжением график заказа (по agg_key),
+      // с fallback на снимок дат заявки, если график по материалу не задан.
       const { rows: items } = await client.query(
-        `SELECT MIN(material_name) AS material_name, unit, SUM(qty)::numeric AS quantity,
-                json_agg(json_build_object('date', delivery_date, 'qty', qty) ORDER BY delivery_date)
-                  FILTER (WHERE delivery_date IS NOT NULL) AS schedule
-           FROM (
-             SELECT agg_key, unit, MIN(material_name) AS material_name, delivery_date, SUM(quantity) AS qty
-               FROM supplier_order_items WHERE order_id = $1
-              GROUP BY agg_key, unit, delivery_date
-           ) s
-          GROUP BY agg_key, unit ORDER BY MIN(material_name)`,
+        `WITH agg AS (
+           SELECT agg_key, unit, MIN(material_name) AS material_name, SUM(quantity)::numeric AS quantity
+             FROM supplier_order_items WHERE order_id = $1
+            GROUP BY agg_key, unit
+         ), snap AS (
+           SELECT agg_key,
+                  json_agg(json_build_object('date', delivery_date, 'qty', qty) ORDER BY delivery_date)
+                    FILTER (WHERE delivery_date IS NOT NULL) AS schedule
+             FROM (SELECT agg_key, delivery_date, SUM(quantity) AS qty
+                     FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key, delivery_date) s
+            GROUP BY agg_key
+         ), newd AS (
+           SELECT agg_key,
+                  json_agg(json_build_object('date', delivery_date, 'qty', quantity) ORDER BY delivery_date) AS schedule
+             FROM supplier_order_delivery_schedule WHERE order_id = $1 GROUP BY agg_key
+         )
+         SELECT a.material_name, a.unit, a.quantity,
+                COALESCE(n.schedule, s.schedule) AS schedule
+           FROM agg a
+           LEFT JOIN newd n ON n.agg_key = a.agg_key
+           LEFT JOIN snap s ON s.agg_key = a.agg_key
+          ORDER BY a.material_name`,
         [lot.id],
       );
       if (items.length === 0) { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Заказ пуст' }); }
@@ -1205,7 +1360,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     const lot = rows[0];
     if (!lot) return reply.status(404).send({ error: 'Заказ не найден' });
 
-    const [items, aggItems, sources, offers, priceLines] = await Promise.all([
+    const [items, aggItems, sources, offers, priceLines, deliverySchedule] = await Promise.all([
       fastify.pool.query(
         `SELECT id, request_id, request_item_id, material_id, material_name, unit, quantity, agg_key,
                 contractor_id, contractor_name, request_no, cost_type_name, cost_category_name,
@@ -1238,6 +1393,12 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         `SELECT agg_key, unit_price, warranty_months FROM supplier_order_price_lines WHERE order_id = $1`,
         [lot.id],
       ),
+      fastify.pool.query(
+        `SELECT agg_key, to_char(delivery_date, 'YYYY-MM-DD') AS delivery_date, quantity::numeric AS quantity
+           FROM supplier_order_delivery_schedule WHERE order_id = $1
+          ORDER BY agg_key, delivery_date`,
+        [lot.id],
+      ),
     ]);
     return {
       data: {
@@ -1247,6 +1408,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         sources: sources.rows,
         offers: offers.rows,
         priceLines: priceLines.rows,
+        deliverySchedule: deliverySchedule.rows,
       },
     };
   });

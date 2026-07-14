@@ -161,8 +161,8 @@ export function RequestsListTab() {
   ];
 
   return (
-    <>
-      <Space wrap style={{ marginBottom: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+      <Space wrap style={{ marginBottom: 12, flexShrink: 0, paddingTop: 4 }}>
         <Input
           allowClear
           prefix={<SearchOutlined />}
@@ -200,12 +200,12 @@ export function RequestsListTab() {
           total,
           onChange: (p, ps) => { setPage(p); setPageSize(ps); },
         }}
-        scroll={{ x: 1000 }}
+        scroll={{ x: 1000, y: 'flex' }}
         onRow={(r) => ({ onClick: () => setOpenId(r.id), style: { cursor: 'pointer' } })}
         locale={{ emptyText: <Empty description="Заявок нет" /> }}
       />
 
       <RequestDetailModal id={openId} onClose={() => setOpenId(null)} />
-    </>
+    </div>
   );
 }

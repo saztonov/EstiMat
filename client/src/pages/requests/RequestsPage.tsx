@@ -18,13 +18,18 @@ export function RequestsPage() {
   return (
     <Card
       title="Заявки"
+      className="estimat-tabs-card"
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-      styles={{ header: { paddingLeft: 48 }, body: { flex: 1, minHeight: 0, overflow: 'auto' } }}
+      styles={{
+        header: { paddingLeft: 48 },
+        body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '0 12px 12px' },
+      }}
     >
       {isSupply ? (
         <Tabs
           activeKey={tab}
           onChange={setTab}
+          style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
           items={[
             { key: 'requests', label: 'Заявки', children: <RequestsListTab /> },
             { key: 'materials', label: 'Материалы', children: <SU10MaterialsTab /> },
