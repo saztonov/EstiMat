@@ -3,7 +3,6 @@ import { Modal, Tabs, Table, InputNumber, DatePicker, Checkbox, Button, Space, T
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { type Dayjs } from 'dayjs';
-import { modalWidth } from '../../lib/modalWidth';
 import { DeliveryGantt, type GanttMaterial } from './DeliveryGantt';
 
 const { Text } = Typography;
@@ -103,12 +102,12 @@ export function DeliveryScheduleModal({ open, lines, loading, onCancel, onConfir
     {
       title: 'Общее кол-во', key: 'total', width: 120, align: 'right', onCell: spanCell,
       render: (_, r) => {
-        const sum = sumOf(r.line);
-        const ok = singleDate || Math.abs(sum - r.line.quantity) <= EPS;
+        const diff = singleDate ? 0 : r.line.quantity - sumOf(r.line);
         return (
           <Space direction="vertical" size={0} style={{ alignItems: 'flex-end' }}>
             <span>{num(r.line.quantity)}</span>
-            {!ok && <Text type="danger" style={{ fontSize: 11 }}>сумма: {num(sum)}</Text>}
+            {diff > EPS && <Text style={{ fontSize: 11, color: '#fa8c16' }}>остаток: {num(diff)}</Text>}
+            {diff < -EPS && <Text type="danger" style={{ fontSize: 11 }}>лишнее: {num(-diff)}</Text>}
           </Space>
         );
       },
@@ -156,12 +155,10 @@ export function DeliveryScheduleModal({ open, lines, loading, onCancel, onConfir
         const key = rowKey(r.line.costTypeId, r.line.aggKey);
         return (
           <Space size={0}>
-            {r.idx === 0 && (
-              <Button
-                type="text" size="small" icon={<PlusOutlined />} title="Добавить дату"
-                onClick={() => mutate(key, (es) => [...es, { date: null, qty: null }])}
-              />
-            )}
+            <Button
+              type="text" size="small" icon={<PlusOutlined />} title="Добавить дату"
+              onClick={() => mutate(key, (es) => [...es, { date: null, qty: null }])}
+            />
             {r.count > 1 && (
               <Button
                 type="text" size="small" danger icon={<DeleteOutlined />} title="Удалить дату"
@@ -220,7 +217,7 @@ export function DeliveryScheduleModal({ open, lines, loading, onCancel, onConfir
     <Modal
       open={open}
       title="График поставки материалов"
-      width={modalWidth(920)}
+      width="80vw"
       onCancel={onCancel}
       onOk={onOk}
       okText="Подтвердить заявку"

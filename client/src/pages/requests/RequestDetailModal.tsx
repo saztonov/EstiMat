@@ -1,5 +1,4 @@
 import { Modal } from 'antd';
-import { modalWidth } from '../../lib/modalWidth';
 import { RequestDetailContent } from './RequestDetailContent';
 
 /**
@@ -13,7 +12,7 @@ export function RequestDetailModal({ id, onClose }: { id: string | null; onClose
       open={!!id}
       onCancel={onClose}
       footer={null}
-      width={modalWidth(1000)}
+      width="80vw"
       style={{ top: 20 }}
       styles={{ body: { height: 'calc(90vh - 56px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 12 } }}
       destroyOnClose

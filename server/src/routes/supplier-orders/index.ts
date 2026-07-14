@@ -73,7 +73,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
               mri.cost_type_id, ct.name AS cost_type_name,
               cc.id AS category_id, cc.name AS category_name,
               cc.sort_order AS category_sort, ct.sort_order AS cost_type_sort,
-              mri.material_id, mri.material_name, mri.unit, mri.agg_key, mri.delivery_date,
+              mri.material_id, mri.material_name, mri.unit, mri.agg_key,
+              to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
               mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS placed,
               mr.contractor_id, mr.contractor_name,
               COUNT(*) OVER() AS total_count
@@ -1207,7 +1208,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     const [items, aggItems, sources, offers, priceLines] = await Promise.all([
       fastify.pool.query(
         `SELECT id, request_id, request_item_id, material_id, material_name, unit, quantity, agg_key,
-                contractor_id, contractor_name, request_no, cost_type_name, cost_category_name, delivery_date
+                contractor_id, contractor_name, request_no, cost_type_name, cost_category_name,
+                to_char(delivery_date, 'YYYY-MM-DD') AS delivery_date
            FROM supplier_order_items WHERE order_id = $1
           ORDER BY cost_category_name, cost_type_name, material_name, delivery_date NULLS LAST`,
         [lot.id],

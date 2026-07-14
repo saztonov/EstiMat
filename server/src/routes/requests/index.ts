@@ -199,7 +199,8 @@ export default async function requestRoutes(fastify: FastifyInstance) {
 
     const [items, files, order, revisions, history] = await Promise.all([
       fastify.pool.query(
-        `SELECT mri.material_name AS name, mri.unit, mri.quantity, mri.agg_key, mri.delivery_date,
+        `SELECT mri.material_name AS name, mri.unit, mri.quantity, mri.agg_key,
+                to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
                 ct.name AS cost_type_name
            FROM material_request_items mri
            LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
