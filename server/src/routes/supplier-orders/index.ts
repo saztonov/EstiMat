@@ -40,11 +40,16 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       categoryId?: string;
       limit?: string;
       offset?: string;
+      all?: string;
     };
   }>('/materials', async (request) => {
     const q = request.query;
-    const limit = Math.min(Math.max(Number(q.limit) || 100, 1), 500);
-    const offset = Math.max(Number(q.offset) || 0, 0);
+    // Режим группировки на клиенте (all=1) требует весь набор, а не одну страницу. Полностью
+    // снимать лимит опасно → жёсткий потолок; клиент по meta.truncated честно предупредит.
+    const MATERIALS_GROUP_CAP = 5000;
+    const groupAll = q.all === '1';
+    const limit = groupAll ? MATERIALS_GROUP_CAP : Math.min(Math.max(Number(q.limit) || 100, 1), 500);
+    const offset = groupAll ? 0 : Math.max(Number(q.offset) || 0, 0);
 
     // Динамические фильтры (базовый инвариант — не отменённые заявки).
     const where: string[] = [`mr.status <> 'cancelled'`];
@@ -117,7 +122,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         const remaining = isSu10 ? Number(r.requested) - Number(placed) : null;
         return { ...r, ordered, remaining };
       }),
-      meta: { total, limit, offset, facets: facetRows[0] },
+      meta: { total, limit, offset, truncated: total > rows.length, facets: facetRows[0] },
     };
   });
 

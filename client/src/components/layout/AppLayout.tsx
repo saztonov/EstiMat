@@ -82,7 +82,10 @@ export function AppLayout() {
     /^\/estimates\/[^/]+$/.test(location.pathname) || /^\/projects\/[^/]+$/.test(location.pathname);
   // Раздел «Подрядчики» (список и карточка объекта) — тот же компактный вид, что и у сметы.
   const isContractors = location.pathname.startsWith('/contractors');
-  const isCompactLayout = isEstimateWorkspace || isContractors;
+  // Список «Заявки» — тоже прижат к верху. Только точный путь: у карточки заявки
+  // (/requests/:id) шапка с paddingLeft:16, компакт наложил бы гамбургер на заголовок.
+  const isRequestsList = location.pathname === '/requests';
+  const isCompactLayout = isEstimateWorkspace || isContractors || isRequestsList;
 
   const userMenuItems: MenuProps['items'] = [
     {
