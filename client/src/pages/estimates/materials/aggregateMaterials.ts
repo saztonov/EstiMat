@@ -4,6 +4,7 @@
 // что кэшируется под ['estimate', id]; никаких отдельных запросов.
 import type { EstimateContractor, EstimateItem } from '../components/types';
 import { buildCostTypeGroups } from '../components/types';
+import { toLocationSnapshot, type LocationSnapshot } from '../components/location';
 
 // Одно вхождение материала в конкретную работу (строка estimate_materials).
 export interface MaterialOccurrence {
@@ -17,6 +18,9 @@ export interface MaterialOccurrence {
   source?: 'manual' | 'ai' | 'catalog';
   needsReview: boolean;
   status: 'suggested' | 'confirmed';
+  /** Локация работы-источника: свод сворачивает материалы по виду работ, и без снимка
+   *  привязка к корпусу/этажу/типу теряется (нужна для бейджей и разбивки). */
+  location: LocationSnapshot;
 }
 
 // Свёрнутая строка свода: один материал в пределах вида работ.
@@ -81,6 +85,7 @@ export function buildMaterialGroups(
             source: m.source,
             needsReview: !!m.needs_review,
             status: m.status,
+            location: toLocationSnapshot(work),
           };
 
           let agg = byKey.get(key);

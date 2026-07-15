@@ -159,6 +159,7 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
                 z.name  AS zone_name,
                 z.kind  AS zone_kind,
                 rt.name AS room_type_name,
+                lt.name AS location_type_name,
                 eic.contractor_id   AS my_contractor_id,
                 eic.assigned_qty    AS my_assigned_qty,
                 eic.assigned_percent AS my_assigned_percent,
@@ -170,6 +171,7 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
            LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
            LEFT JOIN project_zones z    ON ei.zone_id = z.id
            LEFT JOIN room_types rt      ON ei.room_type_id = rt.id
+           LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
           WHERE ${where}
           ORDER BY ${ITEMS_CANONICAL_ORDER_BY}`,
         values,

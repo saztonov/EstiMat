@@ -1,19 +1,18 @@
-import { useState } from 'react';
-import { Tag, Popover, Button, Space, AutoComplete, Typography, Flex } from 'antd';
-import { EnvironmentOutlined } from '@ant-design/icons';
+import { useMemo, useState } from 'react';
+import { Popover, Button, Space, AutoComplete, Typography, Flex } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { MultiLocationPicker, type MultiLocationDraft } from './MultiLocationPicker';
 import {
   type ZoneNode,
   type LocationEntry,
-  findZone,
   formatFloors,
   parseFloors,
   isValidFloorsInput,
   countLocationCells,
   distributePerCell,
 } from './location';
+import { LocationBadges, buildZoneIndex, locationParts, toLocationSnapshot } from './LocationBadges';
 import type { EstimateItem } from './types';
 
 interface Props {
@@ -85,38 +84,11 @@ export function LocationCell({ work, editable, zones, projectId, onChange }: Pro
   const typeOptions = (typeData?.data ?? []).map((t) => ({ value: t.name }));
 
   // Раздельные бейджи: каждая зона своим тегом + тег этажей + тег типа.
-  const locs = work.locations ?? [];
-  const zoneNames = [
-    ...new Set(
-      locs.map((l) => (l.zoneId ? findZone(zones, l.zoneId)?.name ?? null : null)).filter((n): n is string => !!n),
-    ),
-  ];
-  const floorsLabel = formatFloors(locs.flatMap((l) => l.floors ?? []));
-  const typeLabel = work.location_type_name ?? '';
-  const empty = zoneNames.length === 0 && !floorsLabel && !typeLabel;
+  const zoneIndex = useMemo(() => buildZoneIndex(zones), [zones]);
+  const { zoneNames, floorsLabel, typeLabel } = locationParts(toLocationSnapshot(work), zoneIndex);
 
-  const badges = empty ? (
-    <Tag style={{ margin: 0, cursor: editable ? 'pointer' : 'default', color: '#bfbfbf' }}>
-      <EnvironmentOutlined /> —
-    </Tag>
-  ) : (
-    <>
-      {zoneNames.map((n) => (
-        <Tag key={n} color="geekblue" style={{ margin: 0, whiteSpace: 'normal' }}>
-          {n}
-        </Tag>
-      ))}
-      {floorsLabel && (
-        <Tag color="cyan" style={{ margin: 0 }}>
-          эт. {floorsLabel}
-        </Tag>
-      )}
-      {typeLabel && (
-        <Tag color="gold" style={{ margin: 0 }}>
-          {typeLabel}
-        </Tag>
-      )}
-    </>
+  const badges = (
+    <LocationBadges zoneNames={zoneNames} floorsLabel={floorsLabel} typeLabels={typeLabel ? [typeLabel] : []} />
   );
 
   const trigger = (

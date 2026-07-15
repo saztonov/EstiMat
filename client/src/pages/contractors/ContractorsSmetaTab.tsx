@@ -31,7 +31,15 @@ import {
   type EstimateItem,
   type ItemContractor,
 } from '../estimates/components/types';
-import { formatLocationLabel } from '../estimates/components/location';
+import type { ZoneNode } from '../estimates/components/location';
+import {
+  LocationBadgesRow,
+  locationParts,
+  toLocationSnapshot,
+  type ZoneIndex,
+} from '../estimates/components/LocationBadges';
+import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
+import { useContractorLocationFilter } from './useContractorLocationFilter';
 
 interface Props {
   estimateId: string;
@@ -39,6 +47,10 @@ interface Props {
   /** Инженер/админ — может назначать; подрядчик — только просмотр своих строк. */
   canAssign: boolean;
   viewerIsContractor: boolean;
+  /** Объект строк — для справочника типов в поповере локации (вид инженера). */
+  projectId: string;
+  zones: ZoneNode[];
+  zoneIndex: ZoneIndex;
   onChanged: () => void;
 }
 
@@ -150,7 +162,16 @@ function AssignPopover({
   );
 }
 
-export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsContractor, onChanged }: Props) {
+export function ContractorsSmetaTab({
+  estimateId,
+  items,
+  canAssign,
+  viewerIsContractor,
+  projectId,
+  zones,
+  zoneIndex,
+  onChanged,
+}: Props) {
   void estimateId; // estimateId сервер выводит из itemIds — здесь не нужен
   const { message } = App.useApp();
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
@@ -187,6 +208,15 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
       .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
   }, [items]);
 
+  // Локационный отбор раздела (корпус/этажи/тип) — своё состояние, не связано со страницей «Смета».
+  const {
+    value: locFilter,
+    onChange: onLocFilterChange,
+    clear: clearLocFilter,
+    typeOptions: locTypeOptions,
+    filterItems: filterByLocation,
+  } = useContractorLocationFilter(items);
+
   const visibleItems = useMemo(() => {
     let res = onlyUnassigned
       ? items.filter((it) => num(it.remaining_qty ?? it.quantity) > 1e-6)
@@ -195,8 +225,8 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
       res = res.filter((it) =>
         (it.item_contractors ?? []).some((c) => filterContractorIds.includes(c.contractor_id)),
       );
-    return res;
-  }, [items, onlyUnassigned, filterContractorIds]);
+    return filterByLocation(res);
+  }, [items, onlyUnassigned, filterContractorIds, filterByLocation]);
   const groups = useMemo(() => buildCostTypeGroups(visibleItems, []), [visibleItems]);
 
   // Секции категорий (категория → виды работ), как на странице «Смета».
@@ -332,18 +362,35 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
     { title: 'Исполнитель', key: 'executor', width: 260, render: (_, it) => renderExecutor(it) },
   ];
 
-  if (groups.length === 0) {
-    return <Empty description="Строк нет" />;
-  }
+  // Отбор по местоположению — общий для обоих видов (состояние своё у раздела).
+  const locationFilterPopover = (
+    <LocationFilterPopover
+      zones={zones}
+      typeOptions={locTypeOptions}
+      value={locFilter}
+      onChange={onLocFilterChange}
+      onClear={clearLocFilter}
+      showVolumeType={false}
+    />
+  );
 
-  // ── Вид подрядчика: только его строки с его объёмом (без изменений) ──
+  // ── Вид подрядчика: только его строки с его объёмом ──
   if (viewerIsContractor) {
     const myColumns: ColumnsType<EstimateItem> = [
       {
         title: 'Местоположение',
         key: 'location',
-        width: 200,
-        render: (_, it) => formatLocationLabel(it) || <span style={{ color: '#bfbfbf' }}>—</span>,
+        width: 237,
+        render: (_, it) => {
+          const { zoneNames, floorsLabel, typeLabel } = locationParts(toLocationSnapshot(it), zoneIndex);
+          return (
+            <LocationBadgesRow
+              zoneNames={zoneNames}
+              floorsLabel={floorsLabel}
+              typeLabels={typeLabel ? [typeLabel] : []}
+            />
+          );
+        },
       },
       {
         title: 'Работа',
@@ -363,20 +410,32 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
       { title: 'Кол-во', key: 'quantity', width: 110, align: 'right', render: (_, it) => num(it.my_effective_qty) },
     ];
     return (
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-        {groups.map((g) => (
-          <div key={g.costTypeId ?? '__none__'}>
-            <Space style={{ marginBottom: 8 }}>
-              <strong>
-                {g.costCategoryName ? `${g.costCategoryName} · ` : ''}
-                {g.costTypeName ?? 'Без вида работ'}
-              </strong>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* Тулбар вне области результатов: иначе отбор «до нуля строк» убрал бы кнопку сброса. */}
+        <div style={{ flexShrink: 0, marginBottom: 12 }}>
+          <Space wrap className="estimat-toolbar">
+            {locationFilterPopover}
+          </Space>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          {groups.length === 0 ? (
+            <Empty description="Строк нет" />
+          ) : (
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              {groups.map((g) => (
+                <div key={g.costTypeId ?? '__none__'}>
+                  <Space style={{ marginBottom: 8 }}>
+                    <strong>
+                      {g.costCategoryName ? `${g.costCategoryName} · ` : ''}
+                      {g.costTypeName ?? 'Без вида работ'}
+                    </strong>
+                  </Space>
+                  <Table<EstimateItem> rowKey="id" size="small" pagination={false} dataSource={g.works} columns={myColumns} scroll={{ x: 700 }} />
+                </div>
+              ))}
             </Space>
-            <Table<EstimateItem> rowKey="id" size="small" pagination={false} dataSource={g.works} columns={myColumns} scroll={{ x: 640 }} />
-          </div>
-        ))}
-        </Space>
+          )}
+        </div>
       </div>
     );
   }
@@ -401,6 +460,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
             optionFilterProp="label"
             maxTagCount={1}
           />
+          {locationFilterPopover}
           <Tooltip title="Развернуть всё">
             <Button type="text" size="small" icon={<DownOutlined />} onClick={expandAll} />
           </Tooltip>
@@ -411,6 +471,7 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        {sections.length === 0 && <Empty description="Строк нет" />}
         {sections.map((sec) => {
         const collapsed = collapsedCats.has(sec.id);
         return (
@@ -456,6 +517,8 @@ export function ContractorsSmetaTab({ estimateId, items, canAssign, viewerIsCont
                     onToggleCollapsed={() => toggleType(group.costTypeId)}
                     showCategoryInTitle={false}
                     showLocationColumn
+                    zones={zones}
+                    projectId={projectId}
                     showPrices={showPrices}
                     leadingColumns={executorColumn}
                     headerExtra={

@@ -270,6 +270,113 @@ export function distributePerCell(
   return quantity / cells;
 }
 
+// ---------- Снимок локации строки: единый контракт для смет, свода материалов и модалок ----------
+
+// Канонический снимок локации работы (выдача сервера — snake_case, клиентские модели — camelCase;
+// снимок снимает этот разнобой и переносится в свод материалов, где привязка к работе теряется).
+export interface LocationSnapshot {
+  locations: LocationEntry[] | null;
+  zoneId: string | null;
+  zoneName: string | null;
+  floorFrom: number | null;
+  floorTo: number | null;
+  locationTypeId: string | null;
+  locationTypeName: string | null;
+}
+
+// Поля выдачи, из которых снимается локация (подмножество EstimateItem).
+export interface LocationSource {
+  locations?: LocationEntry[] | null;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  floor_from?: number | null;
+  floor_to?: number | null;
+  location_type_id?: string | null;
+  location_type_name?: string | null;
+}
+
+export function toLocationSnapshot(item: LocationSource): LocationSnapshot {
+  return {
+    locations: item.locations ?? null,
+    zoneId: item.zone_id ?? null,
+    zoneName: item.zone_name ?? null,
+    floorFrom: item.floor_from ?? null,
+    floorTo: item.floor_to ?? null,
+    locationTypeId: item.location_type_id ?? null,
+    locationTypeName: item.location_type_name ?? null,
+  };
+}
+
+export type ZoneIndex = Map<string, string>;
+
+// Индекс «id зоны → имя». Строить ОДИН раз на дерево: findZone разворачивает всё дерево на
+// каждый вызов, а в своде материалов вызовов будет строки × вхождения.
+export function buildZoneIndex(roots: ZoneNode[]): ZoneIndex {
+  return new Map(flattenZones(roots).map((z) => [z.id, z.name]));
+}
+
+export interface LocationParts {
+  zoneNames: string[];
+  /** Сырой набор этажей — чтобы объединять локации нескольких работ и форматировать один раз. */
+  floors: number[];
+  floorsLabel: string;
+  typeLabel: string;
+}
+
+// Разложить снимок на подписи бейджей.
+// Фолбэк на legacy — только когда locations пуст: legacy-зеркало хранит ПЕРВУЮ зону и сплошной
+// диапазон этажей, поэтому подставлять его вместо неразрешённой второй зоны нельзя — исказит
+// мультизону. Единственное исключение — ни одна зона не разрешилась (дерево ещё грузится):
+// тогда лучше показать легаси-имя, чем пустую ячейку.
+export function locationParts(snap: LocationSnapshot, zoneIndex: ZoneIndex): LocationParts {
+  const typeLabel = snap.locationTypeName ?? '';
+  const locs = snap.locations ?? [];
+
+  if (locs.length > 0) {
+    const zoneNames = [
+      ...new Set(
+        locs.map((l) => (l.zoneId ? zoneIndex.get(l.zoneId) ?? null : null)).filter((n): n is string => !!n),
+      ),
+    ];
+    const floors = locs.flatMap((l) => l.floors ?? []);
+    return {
+      zoneNames: zoneNames.length === 0 && snap.zoneName ? [snap.zoneName] : zoneNames,
+      floors,
+      floorsLabel: formatFloors(floors),
+      typeLabel,
+    };
+  }
+
+  // locations пуст — строка целиком в legacy-модели (до бэкфилла).
+  const floors: number[] = [];
+  const { floorFrom: from, floorTo: to } = snap;
+  if (from != null && to != null) {
+    for (let f = from; f <= to; f++) if (f !== 0) floors.push(f);
+  } else if (from != null) floors.push(from);
+  else if (to != null) floors.push(to);
+
+  return {
+    zoneNames: snap.zoneName ? [snap.zoneName] : [],
+    floors,
+    floorsLabel: formatFloors(floors),
+    typeLabel,
+  };
+}
+
+// Канонический ключ локации работы — для группировки вхождений материала.
+// Зоны сортируются, этажи дедуплицируются и сортируются, тип входит в ключ.
+// «Весь корпус» (floors: []) и «локации нет» дают разные ключи.
+export function locationKey(snap: LocationSnapshot): string {
+  const locs = snap.locations ?? [];
+  const base = locs.length
+    ? locs
+        .map((l) => `${l.zoneId ?? ''}:${[...new Set(l.floors ?? [])].sort((a, b) => a - b).join(',')}`)
+        .sort()
+        .join(';')
+    : `legacy:${snap.zoneId ?? ''}:${snap.floorFrom ?? ''}-${snap.floorTo ?? ''}`;
+  return `${base}|t:${snap.locationTypeId ?? ''}`;
+}
+
 // Подпись мультилокации строки: «Корпус 1, Корпус 2 · эт. -1-4, 6». Имена зон — из дерева.
 export function formatLocationsLabel(
   locations: LocationEntry[] | null | undefined,

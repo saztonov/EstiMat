@@ -312,6 +312,7 @@ export function SmetaPanel({
   // Экспорт в ВОР (Excel-шаблон «КП»): каждый экспорт создаёт запись ВОР с файлом-снимком.
   const { exporting, runExport } = useEstimateExport({ estimateId });
   const setLocationFilter = useLocationContextStore((s) => s.setFilter);
+  const clearLocationFilter = useLocationContextStore((s) => s.clearFilter);
 
   // Модалка экспорта: заморожённый вход (набор строк + снимок фильтров) на момент открытия.
   const [exportOpen, setExportOpen] = useState(false);
@@ -507,6 +508,21 @@ export function SmetaPanel({
             <LocationFilterPopover
               zones={zonesData?.data.roots ?? []}
               typeOptions={locationTypeOptions}
+              value={{
+                zoneIds: filterZoneIds,
+                floorsText: filterFloorsText,
+                locationTypeIds: filterLocationTypeIds,
+                volumeType: filterVolumeType,
+              }}
+              onChange={(patch) =>
+                setLocationFilter({
+                  ...(patch.zoneIds !== undefined ? { filterZoneIds: patch.zoneIds } : {}),
+                  ...(patch.floorsText !== undefined ? { filterFloorsText: patch.floorsText } : {}),
+                  ...(patch.locationTypeIds !== undefined ? { filterLocationTypeIds: patch.locationTypeIds } : {}),
+                  ...(patch.volumeType !== undefined ? { filterVolumeType: patch.volumeType } : {}),
+                })
+              }
+              onClear={clearLocationFilter}
               onlyUnreconciled={onlyUnreconciled}
               onUnreconciledChange={setOnlyUnreconciled}
             />

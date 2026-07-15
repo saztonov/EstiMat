@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Card, Row, Col, Tag, Empty, Spin, Space, Button, Tabs } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
@@ -6,6 +7,8 @@ import { api, assetUrl } from '../../services/api';
 import { placeholderCover } from '../../components/shared/placeholderCover';
 import { useAuthStore } from '../../store/authStore';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
+import { useProjectZones } from '../../hooks/useProjectLocations';
+import { buildZoneIndex } from '../estimates/components/LocationBadges';
 import { formatMoney, type EstimateDetail, type EstimateItem } from '../estimates/components/types';
 import { ContractorsSmetaTab } from './ContractorsSmetaTab';
 import { ContractorsMaterialsTab } from './ContractorsMaterialsTab';
@@ -113,6 +116,20 @@ export function ContractorsPage() {
     refetchOnWindowFocus: true,
   });
 
+  const items: EstimateItem[] = viewerIsContractor
+    ? contractorQ.data?.data.items ?? []
+    : engineerQ.data?.data.items ?? [];
+
+  // Объект строк: у инженера — из сметы, у подрядчика — из его первой строки (project_id есть в
+  // выдаче my-items). Пока строк нет — projectId undefined, и зоны не запрашиваются.
+  const projectId = viewerIsContractor ? items[0]?.project_id ?? undefined : engineerQ.data?.data.project_id;
+
+  // Дерево зон объекта — для бейджей местоположения и отбора по корпусам (обе вкладки).
+  const { data: zonesData } = useProjectZones(projectId ?? undefined);
+  const zones = useMemo(() => zonesData?.data.roots ?? [], [zonesData]);
+  // Индекс имён зон строим один раз на дерево: в своде материалов он нужен на каждое вхождение.
+  const zoneIndex = useMemo(() => buildZoneIndex(zones), [zones]);
+
   // Список объектов
   if (!estimateId) {
     return (
@@ -127,9 +144,6 @@ export function ContractorsPage() {
   }
 
   const isLoading = viewerIsContractor ? contractorQ.isLoading : engineerQ.isLoading;
-  const items: EstimateItem[] = viewerIsContractor
-    ? contractorQ.data?.data.items ?? []
-    : engineerQ.data?.data.items ?? [];
   const refetch = viewerIsContractor ? contractorQ.refetch : engineerQ.refetch;
   const title = viewerIsContractor
     ? 'Назначенные мне работы'
@@ -164,6 +178,9 @@ export function ContractorsPage() {
                   items={items}
                   canAssign={canAssign}
                   viewerIsContractor={viewerIsContractor}
+                  projectId={projectId ?? ''}
+                  zones={zones}
+                  zoneIndex={zoneIndex}
                   onChanged={() => refetch()}
                 />
               ),
@@ -171,7 +188,15 @@ export function ContractorsPage() {
             {
               key: 'materials',
               label: 'Материалы',
-              children: <ContractorsMaterialsTab estimateId={estimateId} items={items} viewerIsContractor={viewerIsContractor} />,
+              children: (
+                <ContractorsMaterialsTab
+                  estimateId={estimateId}
+                  items={items}
+                  viewerIsContractor={viewerIsContractor}
+                  zones={zones}
+                  zoneIndex={zoneIndex}
+                />
+              ),
             },
             {
               key: 'requests',

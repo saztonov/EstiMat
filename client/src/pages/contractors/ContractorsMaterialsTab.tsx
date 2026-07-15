@@ -11,6 +11,11 @@ import {
 import { api } from '../../services/api';
 import { buildMaterialGroups, type AggregatedMaterial } from '../estimates/materials/aggregateMaterials';
 import { formatMoney, type EstimateItem } from '../estimates/components/types';
+import { formatFloors, type ZoneNode } from '../estimates/components/location';
+import { LocationBadgesRow, locationParts, type ZoneIndex } from '../estimates/components/LocationBadges';
+import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
+import { useContractorLocationFilter } from './useContractorLocationFilter';
+import { MaterialLocationsModal } from './MaterialLocationsModal';
 import { RpNextStepModal } from './RpNextStepModal';
 import { DeliveryScheduleModal, type ScheduleLineInput, type ScheduledLine } from './DeliveryScheduleModal';
 
@@ -19,6 +24,8 @@ interface Props {
   items: EstimateItem[];
   /** Подрядчик: материалы масштабируются по его доле строки (effective_qty / quantity). */
   viewerIsContractor: boolean;
+  zones: ZoneNode[];
+  zoneIndex: ZoneIndex;
 }
 
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
@@ -45,8 +52,10 @@ function scaleForContractor(items: EstimateItem[]): EstimateItem[] {
   });
 }
 
-export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor }: Props) {
+export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor, zones, zoneIndex }: Props) {
   const [filterContractorIds, setFilterContractorIds] = useState<string[]>([]);
+  // Разбивка сводной строки по локациям (клик по названию материала).
+  const [breakdown, setBreakdown] = useState<AggregatedMaterial | null>(null);
   // Режим заявки на материалы (только подрядчик).
   const [editing, setEditing] = useState(false);
   // Тип заявки выбирается осознанно (без значения по умолчанию).
@@ -71,15 +80,39 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
       .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
   }, [items]);
 
+  // Локационный отбор раздела (корпус/этажи/тип) — своё состояние, не связано со страницей «Смета».
+  const {
+    value: locFilter,
+    onChange: onLocFilterChange,
+    clear: clearLocFilter,
+    typeOptions: locTypeOptions,
+    active: locFilterActive,
+    filterItems: filterByLocation,
+  } = useContractorLocationFilter(items);
+
+  // Строки, доступные подрядчику по отборам, НЕ зависящим от местоположения.
+  const baseItems = useMemo(() => {
+    if (!filterContractorIds.length) return items;
+    return items.filter((it) =>
+      (it.item_contractors ?? []).some((c) => filterContractorIds.includes(c.contractor_id)),
+    );
+  }, [items, filterContractorIds]);
+
+  // Свод для показа: локационный отбор применяется ДО свёртки, поэтому «По смете» само
+  // пересчитывается под выбранный корпус/этаж/тип.
   const groups = useMemo(() => {
-    let src = items;
-    if (filterContractorIds.length)
-      src = src.filter((it) =>
-        (it.item_contractors ?? []).some((c) => filterContractorIds.includes(c.contractor_id)),
-      );
+    let src = filterByLocation(baseItems);
     if (viewerIsContractor) src = scaleForContractor(src);
     return buildMaterialGroups(src, []);
-  }, [items, viewerIsContractor, filterContractorIds]);
+  }, [baseItems, viewerIsContractor, filterByLocation]);
+
+  // Свод для заявки: полный объём, без локационного отбора. submit() обходит именно его, иначе
+  // введённые количества у скрытых отбором строк молча не попали бы в заявку (у заявок нет
+  // локационного измерения: ключ — вид работ + свёртка материала).
+  const requestGroups = useMemo(() => {
+    const src = viewerIsContractor ? scaleForContractor(baseItems) : baseItems;
+    return buildMaterialGroups(src, []);
+  }, [baseItems, viewerIsContractor]);
 
   // Заказано ранее: подрядчику — по своей организации; сотруднику — по фильтру/суммарно.
   const orderedQ = useQuery({
@@ -156,7 +189,9 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
       unit: string;
       quantity: number;
     }[] = [];
-    for (const g of groups)
+    // Обходим полный свод, а не отображаемый: черновик живёт по ключу (вид работ + материал)
+    // и не должен теряться, если строка скрыта локационным отбором.
+    for (const g of requestGroups)
       for (const m of g.materials) {
         const q = draft.get(rowKey(g.costTypeId, m.key));
         if (q && q > 0)
@@ -208,11 +243,41 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
           const over = viewerIsContractor ? ordered + req > m.quantity + EPS : ordered > m.quantity + EPS;
           return (
             <Space size={4}>
-              {m.name}
+              <Button type="link" style={{ padding: 0, height: 'auto' }} onClick={() => setBreakdown(m)}>
+                {m.name}
+              </Button>
               {m.hasSuggested && <Tag color="orange">предложение</Tag>}
               {m.hasAi && <Tag color="blue">ИИ</Tag>}
-              {over && <Tag color="red">Сверх сметы</Tag>}
+              {/* При активном отборе «По смете» урезано, а «Заказано» — по всей смете:
+                  сравнивать их нельзя, иначе тег сработает ложно. */}
+              {over && !locFilterActive && <Tag color="red">Сверх сметы</Tag>}
             </Space>
+          );
+        },
+      },
+      {
+        title: 'Местоположение',
+        key: 'location',
+        width: 237,
+        render: (_, m) => {
+          // Союз локаций всех работ-источников: свод сворачивает материал по виду работ.
+          // Этажи объединяем числами и форматируем один раз — склейка готовых подписей
+          // дала бы «1-4, 2-3» вместо нормализованного набора.
+          const zoneNames = new Set<string>();
+          const floors: number[] = [];
+          const types = new Set<string>();
+          for (const occ of m.occurrences) {
+            const parts = locationParts(occ.location, zoneIndex);
+            for (const z of parts.zoneNames) zoneNames.add(z);
+            floors.push(...parts.floors);
+            if (parts.typeLabel) types.add(parts.typeLabel);
+          }
+          return (
+            <LocationBadgesRow
+              zoneNames={[...zoneNames]}
+              floorsLabel={formatFloors(floors)}
+              typeLabels={[...types]}
+            />
           );
         },
       },
@@ -227,7 +292,17 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
       },
       { title: 'Сумма', dataIndex: 'total', key: 'total', width: 140, align: 'right', render: (v: number) => formatMoney(v) },
       {
-        title: 'Заказано',
+        title: (
+          <Tooltip
+            title={
+              viewerIsContractor
+                ? 'Заказано по всей смете — без учёта отбора по местоположению'
+                : 'Заказано по всей смете (с учётом отбора по подрядчикам) — без учёта отбора по местоположению'
+            }
+          >
+            Заказано
+          </Tooltip>
+        ),
         key: 'ordered',
         width: 100,
         align: 'right',
@@ -287,6 +362,17 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
             maxTagCount={1}
           />
         )}
+        {/* В режиме заявки отбор заблокирован: количества вводятся от полного объёма
+            («Заказано» и «Сверх сметы» считаются по всей смете). */}
+        <LocationFilterPopover
+          zones={zones}
+          typeOptions={locTypeOptions}
+          value={locFilter}
+          onChange={onLocFilterChange}
+          onClear={clearLocFilter}
+          showVolumeType={false}
+          disabled={editing}
+        />
         {viewerIsContractor &&
           (editing ? (
             <>
@@ -306,6 +392,9 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
                 })),
                 onClick: ({ key }) => {
                   setRequestType(key as MaterialRequestType);
+                  // Заявка оформляется от полного объёма: локационный отбор снимаем,
+                  // иначе «По смете» осталось бы урезанным и вводить было бы не от чего.
+                  clearLocFilter();
                   setEditing(true);
                 },
               }}
@@ -336,13 +425,16 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor 
                 pagination={false}
                 dataSource={g.materials}
                 columns={buildColumns(g.costTypeId)}
-                scroll={{ x: 860 }}
+                scroll={{ x: 1100 }}
               />
             </div>
           ))}
           </Space>
         )}
       </div>
+      {breakdown && (
+        <MaterialLocationsModal material={breakdown} zoneIndex={zoneIndex} onClose={() => setBreakdown(null)} />
+      )}
       {created && (
         <RpNextStepModal
           open
