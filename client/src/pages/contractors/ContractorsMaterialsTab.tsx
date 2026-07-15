@@ -1,23 +1,30 @@
-import { useMemo, useState } from 'react';
-import { Table, Tag, Space, Empty, Tooltip, Select, Button, InputNumber, Dropdown, App } from 'antd';
+import { useCallback, useMemo, useState } from 'react';
+import { Empty, Select, Button, Dropdown, App, Tabs, Tag } from 'antd';
 import { PlusOutlined, DownOutlined } from '@ant-design/icons';
-import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MATERIAL_REQUEST_TYPES,
   MATERIAL_REQUEST_TYPE_LABELS,
+  lineKey,
   type MaterialRequestType,
 } from '@estimat/shared';
 import { api } from '../../services/api';
-import { buildMaterialGroups, type AggregatedMaterial } from '../estimates/materials/aggregateMaterials';
-import { formatMoney, type EstimateItem } from '../estimates/components/types';
-import { formatFloors, type ZoneNode } from '../estimates/components/location';
-import { LocationBadgesRow, locationParts, type ZoneIndex } from '../estimates/components/LocationBadges';
+import { usePersistedTab } from '../../hooks/usePersistedTab';
+import { buildMaterialGroups } from '../estimates/materials/aggregateMaterials';
+import { type EstimateItem } from '../estimates/components/types';
+import { type ZoneNode } from '../estimates/components/location';
+import { type ZoneIndex } from '../estimates/components/LocationBadges';
 import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
 import { useContractorLocationFilter } from './useContractorLocationFilter';
 import { MaterialLocationsModal } from './MaterialLocationsModal';
 import { RpNextStepModal } from './RpNextStepModal';
 import { DeliveryScheduleModal, type ScheduleLineInput, type ScheduledLine } from './DeliveryScheduleModal';
+import { buildCategoryIndex, buildOrderRows, type OrderMaterialRow } from './materials/orderRow';
+import { assertTreeConserves, buildMaterialTree } from './materials/materialTree';
+import { useMaterialLevels } from './materials/useMaterialLevels';
+import { MaterialGroupingPopover } from './materials/MaterialGroupingPopover';
+import { buildMaterialColumns } from './materials/materialColumns';
+import { MaterialTreeView, collectNodeKeys } from './materials/MaterialTreeView';
 
 interface Props {
   estimateId: string;
@@ -29,10 +36,6 @@ interface Props {
 }
 
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
-const EPS = 1e-6;
-
-// Ключ строки заказа/заявки: (вид работ, свёртка материала). agg_key = m.key из свода.
-const rowKey = (costTypeId: string | null, aggKey: string) => `${costTypeId ?? ''}|${aggKey}`;
 
 // Для подрядчика — масштабировать материалы строки по его доле объёма (нельзя показывать 100%).
 function scaleForContractor(items: EstimateItem[]): EstimateItem[] {
@@ -55,7 +58,9 @@ function scaleForContractor(items: EstimateItem[]): EstimateItem[] {
 export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor, zones, zoneIndex }: Props) {
   const [filterContractorIds, setFilterContractorIds] = useState<string[]>([]);
   // Разбивка сводной строки по локациям (клик по названию материала).
-  const [breakdown, setBreakdown] = useState<AggregatedMaterial | null>(null);
+  const [breakdown, setBreakdown] = useState<OrderMaterialRow | null>(null);
+  const [viewMode, setViewMode] = usePersistedTab('estimat:contractors-materials-view', 'standard');
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Режим заявки на материалы (только подрядчик).
   const [editing, setEditing] = useState(false);
   // Тип заявки выбирается осознанно (без значения по умолчанию).
@@ -114,6 +119,25 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
     return buildMaterialGroups(src, []);
   }, [baseItems, viewerIsContractor]);
 
+  // Уровни группировки — свои для каждого представления (требование задачи).
+  const { levels, toggle, applyPreset, reset, activePreset, changedFromDefault } = useMaterialLevels(
+    viewMode === 'smart' ? 'smart' : 'standard',
+  );
+
+  const categoryIndex = useMemo(() => buildCategoryIndex(items), [items]);
+
+  // Плоский список атомарных строк: одна строка ↔ один ключ заказа при любых уровнях.
+  const rows = useMemo(
+    () => buildOrderRows(groups, categoryIndex, zoneIndex),
+    [groups, categoryIndex, zoneIndex],
+  );
+
+  const tree = useMemo(() => {
+    const next = buildMaterialTree(rows, levels);
+    assertTreeConserves(rows, next);
+    return next;
+  }, [rows, levels]);
+
   // Заказано ранее: подрядчику — по своей организации; сотруднику — по фильтру/суммарно.
   const orderedQ = useQuery({
     queryKey: ['material-ordered', estimateId, viewerIsContractor ? 'me' : filterContractorIds.join(',')],
@@ -134,7 +158,7 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
 
   const orderedMap = useMemo(() => {
     const m = new Map<string, number>();
-    for (const r of orderedQ.data?.data ?? []) m.set(rowKey(r.cost_type_id, r.agg_key), num(r.ordered_qty));
+    for (const r of orderedQ.data?.data ?? []) m.set(lineKey(r.cost_type_id, r.agg_key), num(r.ordered_qty));
     return m;
   }, [orderedQ.data]);
 
@@ -193,7 +217,7 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
     // и не должен теряться, если строка скрыта локационным отбором.
     for (const g of requestGroups)
       for (const m of g.materials) {
-        const q = draft.get(rowKey(g.costTypeId, m.key));
+        const q = draft.get(lineKey(g.costTypeId, m.key));
         if (q && q > 0)
           lines.push({
             costTypeId: g.costTypeId,
@@ -229,121 +253,32 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
     });
   }
 
-  // Колонки строятся на группу (нужен costTypeId группы для ключа заказа/заявки).
-  function buildColumns(costTypeId: string | null): ColumnsType<AggregatedMaterial> {
-    const cols: ColumnsType<AggregatedMaterial> = [
-      {
-        title: 'Материал',
-        dataIndex: 'name',
-        key: 'name',
-        render: (_, m) => {
-          const key = rowKey(costTypeId, m.key);
-          const ordered = orderedMap.get(key) ?? 0;
-          const req = draft.get(key) ?? 0;
-          const over = viewerIsContractor ? ordered + req > m.quantity + EPS : ordered > m.quantity + EPS;
-          return (
-            <Space size={4}>
-              <Button type="link" style={{ padding: 0, height: 'auto' }} onClick={() => setBreakdown(m)}>
-                {m.name}
-              </Button>
-              {m.hasSuggested && <Tag color="orange">предложение</Tag>}
-              {m.hasAi && <Tag color="blue">ИИ</Tag>}
-              {/* При активном отборе «По смете» урезано, а «Заказано» — по всей смете:
-                  сравнивать их нельзя, иначе тег сработает ложно. */}
-              {over && !locFilterActive && <Tag color="red">Сверх сметы</Tag>}
-            </Space>
-          );
-        },
-      },
-      {
-        title: 'Местоположение',
-        key: 'location',
-        width: 237,
-        render: (_, m) => {
-          // Союз локаций всех работ-источников: свод сворачивает материал по виду работ.
-          // Этажи объединяем числами и форматируем один раз — склейка готовых подписей
-          // дала бы «1-4, 2-3» вместо нормализованного набора.
-          const zoneNames = new Set<string>();
-          const floors: number[] = [];
-          const types = new Set<string>();
-          for (const occ of m.occurrences) {
-            const parts = locationParts(occ.location, zoneIndex);
-            for (const z of parts.zoneNames) zoneNames.add(z);
-            floors.push(...parts.floors);
-            if (parts.typeLabel) types.add(parts.typeLabel);
-          }
-          return (
-            <LocationBadgesRow
-              zoneNames={[...zoneNames]}
-              floorsLabel={formatFloors(floors)}
-              typeLabels={[...types]}
-            />
-          );
-        },
-      },
-      { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
-      {
-        title: 'По смете',
-        dataIndex: 'quantity',
-        key: 'quantity',
-        width: 110,
-        align: 'right',
-        render: (v: number) => Math.round(v * 1e4) / 1e4,
-      },
-      { title: 'Сумма', dataIndex: 'total', key: 'total', width: 140, align: 'right', render: (v: number) => formatMoney(v) },
-      {
-        title: (
-          <Tooltip
-            title={
-              viewerIsContractor
-                ? 'Заказано по всей смете — без учёта отбора по местоположению'
-                : 'Заказано по всей смете (с учётом отбора по подрядчикам) — без учёта отбора по местоположению'
-            }
-          >
-            Заказано
-          </Tooltip>
-        ),
-        key: 'ordered',
-        width: 100,
-        align: 'right',
-        render: (_, m) => {
-          const v = orderedMap.get(rowKey(costTypeId, m.key)) ?? 0;
-          return v > 0 ? Math.round(v * 1e4) / 1e4 : <span style={{ color: '#bfbfbf' }}>—</span>;
-        },
-      },
-    ];
+  const columns = useMemo(
+    () =>
+      buildMaterialColumns({
+        // Вид работ выключен как уровень → материалы разных видов работ стоят рядом.
+        showCostType: !levels.costType,
+        locFilterActive,
+        editing,
+        viewerIsContractor,
+        orderedMap,
+        draft,
+        onDraftChange: updateDraft,
+        onBreakdown: setBreakdown,
+      }),
+    [levels.costType, locFilterActive, editing, viewerIsContractor, orderedMap, draft],
+  );
 
-    // Колонка «Заявка» — только в режиме заявки (подрядчик).
-    if (editing && viewerIsContractor) {
-      cols.push({
-        title: 'Заявка',
-        key: 'request',
-        width: 120,
-        align: 'right',
-        render: (_, m) => {
-          const key = rowKey(costTypeId, m.key);
-          return (
-            <InputNumber
-              min={0}
-              style={{ width: 100 }}
-              value={draft.get(key)}
-              onChange={(v) => updateDraft(key, v as number | null)}
-            />
-          );
-        },
-      });
-    }
-
-    cols.push({
-      title: <Tooltip title="Поставки — следующая итерация">Поставлено</Tooltip>,
-      key: 'delivered',
-      width: 100,
-      align: 'right',
-      render: () => <span style={{ color: '#bfbfbf' }}>—</span>,
+  const toggleNode = useCallback((key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
     });
+  }, []);
 
-    return cols;
-  }
+  const allCollapsed = tree.length > 0 && collectNodeKeys(tree).every((k) => collapsed.has(k));
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -373,6 +308,23 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
           showVolumeType={false}
           disabled={editing}
         />
+        {/* В режиме заявки не блокируется: уровни меняют только расположение строк, а черновик
+            живёт по ключу заказа — введённые количества переживают перестройку дерева. */}
+        <MaterialGroupingPopover
+          value={levels}
+          onToggle={toggle}
+          onApplyPreset={applyPreset}
+          onReset={reset}
+          activePreset={activePreset}
+          changedCount={changedFromDefault}
+        />
+        <Button
+          size="small"
+          type="text"
+          onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(collectNodeKeys(tree)))}
+        >
+          {allCollapsed ? 'Развернуть всё' : 'Свернуть всё'}
+        </Button>
         {viewerIsContractor &&
           (editing ? (
             <>
@@ -405,31 +357,23 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
             </Dropdown>
           ))}
       </div>
+      <Tabs
+        size="small"
+        activeKey={viewMode}
+        onChange={setViewMode}
+        style={{ flexShrink: 0 }}
+        items={[
+          { key: 'standard', label: 'Стандартная группировка' },
+          { key: 'smart', label: 'Умная группировка' },
+        ]}
+      />
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {groups.length === 0 ? (
+        {viewMode === 'smart' ? (
+          <Empty description="Умная группировка появится в следующем обновлении" />
+        ) : tree.length === 0 ? (
           <Empty description="Материалов нет" />
         ) : (
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          {groups.map((g) => (
-            <div key={g.costTypeId ?? '__none__'}>
-              <Space style={{ marginBottom: 8 }}>
-                <strong>
-                  {g.costCategoryName ? `${g.costCategoryName} · ` : ''}
-                  {g.costTypeName ?? 'Без вида работ'}
-                </strong>
-                <span style={{ color: '#1677ff' }}>{formatMoney(g.total)}</span>
-              </Space>
-              <Table<AggregatedMaterial>
-                rowKey="key"
-                size="small"
-                pagination={false}
-                dataSource={g.materials}
-                columns={buildColumns(g.costTypeId)}
-                scroll={{ x: 1100 }}
-              />
-            </div>
-          ))}
-          </Space>
+          <MaterialTreeView nodes={tree} columns={columns} collapsed={collapsed} onToggle={toggleNode} />
         )}
       </div>
       {breakdown && (

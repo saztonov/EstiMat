@@ -2,21 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { isContractor } from '../../lib/chat/access.js';
-import { createMaterialRequestSchema, type CreateMaterialRequestInput } from '@estimat/shared';
+import {
+  aggKey,
+  lineKey,
+  createMaterialRequestSchema,
+  type CreateMaterialRequestInput,
+} from '@estimat/shared';
 import {
   exportMaterialRequestXlsx,
   MaterialRequestExportError,
 } from '../../lib/material-request-export/index.js';
-
-// Ключ свёртки материала — ДОЛЖЕН совпадать с клиентским aggKey (aggregateMaterials.ts):
-//   справочный материал → id:<material_id>|<ед>, текстовый → txt:<name>|<ед> (нормализовано).
-function aggKey(materialId: string | null, name: string, unit: string): string {
-  const u = (unit ?? '').trim().toLowerCase();
-  return materialId ? `id:${materialId}|${u}` : `txt:${name.trim().toLowerCase()}|${u}`;
-}
-
-// Ключ строки заявки для сверки с видимой сводкой: (вид работ, свёртка материала).
-const lineKey = (costTypeId: string | null, key: string): string => `${costTypeId ?? ''}|${key}`;
 
 export default async function materialRequestRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);

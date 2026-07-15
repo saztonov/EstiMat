@@ -3,19 +3,14 @@
  * запись в журнал (audit_log). Переиспользуются старым estimate-scoped модулем и новым
  * разделом «Заявки».
  */
+import { aggKey, lineKey } from '@estimat/shared';
 import type { Pool, PoolClient } from 'pg';
 
 type Db = Pool | PoolClient;
 
-// Ключ свёртки материала — ДОЛЖЕН совпадать с клиентским aggKey (aggregateMaterials.ts):
-//   справочный материал → id:<material_id>|<ед>, текстовый → txt:<name>|<ед> (нормализовано).
-export function aggKey(materialId: string | null, name: string, unit: string): string {
-  const u = (unit ?? '').trim().toLowerCase();
-  return materialId ? `id:${materialId}|${u}` : `txt:${name.trim().toLowerCase()}|${u}`;
-}
-
-// Ключ строки заявки для сверки с видимой сводкой: (вид работ, свёртка материала).
-export const lineKey = (costTypeId: string | null, key: string): string => `${costTypeId ?? ''}|${key}`;
+// Ключи свёртки и заявки живут в @estimat/shared — один формат на клиент и сервер.
+// Реэкспорт сохранён: на него уже импортируются routes/requests.
+export { aggKey, lineKey };
 
 // Доступ подрядчика к смете объекта (проект назначен его организации).
 export async function assertContractorEstimateAccess(

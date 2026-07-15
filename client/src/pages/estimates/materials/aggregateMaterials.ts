@@ -2,6 +2,7 @@
 // свёртка материалов по справочной позиции (material_id) или нормализованному
 // названию для текстовых материалов. Источник данных — тот же EstimateDetail,
 // что кэшируется под ['estimate', id]; никаких отдельных запросов.
+import { aggKey } from '@estimat/shared';
 import type { EstimateContractor, EstimateItem } from '../components/types';
 import { buildCostTypeGroups } from '../components/types';
 import { toLocationSnapshot, type LocationSnapshot } from '../components/location';
@@ -49,15 +50,6 @@ export interface MaterialGroup {
 }
 
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
-
-// Ключ свёртки: справочный материал — по material_id+ед.; текстовый — по
-// нормализованному названию+ед. (разные единицы не суммируем — дадут 2 строки).
-function aggKey(materialId: string | null, name: string, unit: string): string {
-  const u = (unit ?? '').trim().toLowerCase();
-  return materialId
-    ? `id:${materialId}|${u}`
-    : `txt:${name.trim().toLowerCase()}|${u}`;
-}
 
 // Построить свод материалов, сгруппированный по виду работ.
 export function buildMaterialGroups(
