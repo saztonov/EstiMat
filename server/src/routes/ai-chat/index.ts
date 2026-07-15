@@ -14,6 +14,7 @@ import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js'
 import { runAgentTurn } from '../../lib/chat/agent.js';
 import { loadLlmRuntime, resolveLlmEndpoint, type ResolvedEndpoint } from '../../lib/llm/endpoint.js';
 import { withLmStudioSlot } from '../../lib/llm/limiter.js';
+import { resolveChatModel, resolveQwenNoThink } from '../../lib/llm/settings.js';
 import { CHAT_SCOPE_NOTE } from '../../lib/chat/prompt.js';
 import { applySelected, applySection, type ApplyContext } from '../../lib/chat/apply.js';
 import { hasPgTrgm, searchCatalogWorks, isScopeActive, CHAT_CATALOG_MODE } from '../../lib/chat/search.js';
@@ -29,25 +30,6 @@ function chatUser(u: { id: string; orgId: string | null; role: ChatUser['role'] 
   return { id: u.id, orgId: u.orgId, role: u.role };
 }
 
-/** Модель чата (квалифицирована провайдером): ai_chat_model_default → ai_model_default → env. */
-async function resolveChatModel(fastify: FastifyInstance): Promise<string> {
-  const r = await fastify.pool.query(
-    `SELECT key, value FROM app_settings WHERE key IN ('ai_chat_model_default', 'ai_model_default')`,
-  );
-  const byKey = new Map<string, unknown>(r.rows.map((x) => [x.key, x.value]));
-  const chat = byKey.get('ai_chat_model_default');
-  if (typeof chat === 'string' && chat.trim()) return chat.trim();
-  const rd = byKey.get('ai_model_default');
-  if (typeof rd === 'string' && rd.trim()) return rd.trim();
-  return config.ai.model;
-}
-
-/** Режим Qwen без рассуждений (ai_qwen_no_think, по умолчанию включён). */
-async function resolveQwenNoThink(fastify: FastifyInstance): Promise<boolean> {
-  const r = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_qwen_no_think'`);
-  const v = r.rows[0]?.value;
-  return typeof v === 'boolean' ? v : true;
-}
 
 function mapSession(r: any): ChatSession {
   return {
@@ -264,10 +246,10 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
       }
 
       // Выбранная модель и её эндпоинт (OpenRouter/прокси или собственный сервер LM Studio).
-      const qualifiedModel = await resolveChatModel(fastify);
+      const qualifiedModel = await resolveChatModel(fastify.pool);
       const rt = await loadLlmRuntime(fastify.pool);
       const endpoint = resolveLlmEndpoint(qualifiedModel, rt);
-      const noThink = endpoint.isLmStudio && (await resolveQwenNoThink(fastify));
+      const noThink = endpoint.isLmStudio && (await resolveQwenNoThink(fastify.pool));
 
       // user-сообщение
       const userRow = (
@@ -363,7 +345,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
       throw err;
     }
 
-    const model = await resolveChatModel(fastify);
+    const model = await resolveChatModel(fastify.pool);
     const correlationId = randomUUID();
     const applyCtx: ApplyContext = {
       estimateId: chat.estimateId,
@@ -407,7 +389,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
       throw err;
     }
 
-    const model = await resolveChatModel(fastify);
+    const model = await resolveChatModel(fastify.pool);
     const correlationId = randomUUID();
     const applyCtx: ApplyContext = {
       estimateId: chat.estimateId, projectId: chat.projectId, chatId: chat.id, userId: request.currentUser.id, model,

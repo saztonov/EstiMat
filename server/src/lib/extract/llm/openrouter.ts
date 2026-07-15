@@ -7,6 +7,7 @@
  * остаётся провайдеро-независимым.
  */
 import { randomUUID } from 'node:crypto';
+import { extractJson } from '../../llm/json.js';
 import type {
   LlmPort,
   LlmExtractContext,
@@ -58,27 +59,6 @@ const BASE_BACKOFF_MS = 1500;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-/** Вырезать JSON (объект или массив) из текста ответа модели. */
-function extractJson(text: string): unknown {
-  const trimmed = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const start = trimmed.search(/[[{]/);
-    const endArr = trimmed.lastIndexOf(']');
-    const endObj = trimmed.lastIndexOf('}');
-    const end = Math.max(endArr, endObj);
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(trimmed.slice(start, end + 1));
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
 }
 
 export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {

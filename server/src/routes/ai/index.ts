@@ -14,6 +14,7 @@ import { createOpenRouterPort } from '../../lib/extract/llm/openrouter.js';
 import type { SectionScope, ExtractRules } from '../../lib/extract/types.js';
 import { loadLlmRuntime, resolveLlmEndpoint } from '../../lib/llm/endpoint.js';
 import { withLmStudioSlot } from '../../lib/llm/limiter.js';
+import { resolveAiModel, resolveQwenNoThink } from '../../lib/llm/settings.js';
 
 // Накопленные правила (sectionToWork/lessons/синонимы) — поверх вшитых дефолтов кода.
 // Best-effort: критичные алиасы уже в коде, файла может не быть в прод-образе.
@@ -43,20 +44,6 @@ function loadExtractRules(): ExtractRules {
 // запуск» дополнительно закрывают УСЛОВНЫЕ переходы статуса (WHERE status=...).
 const runningJobs = new Map<string, AbortController>();
 
-/** Модель LLM (квалифицирована провайдером): app_settings.ai_model_default, иначе env. */
-async function resolveAiModel(fastify: FastifyInstance): Promise<string> {
-  const r = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_model_default'`);
-  const v = r.rows[0]?.value;
-  return typeof v === 'string' && v.trim() ? v.trim() : config.ai.model;
-}
-
-/** Режим Qwen без рассуждений (ai_qwen_no_think, по умолчанию включён). */
-async function resolveQwenNoThink(fastify: FastifyInstance): Promise<boolean> {
-  const r = await fastify.pool.query(`SELECT value FROM app_settings WHERE key = 'ai_qwen_no_think'`);
-  const v = r.rows[0]?.value;
-  return typeof v === 'boolean' ? v : true;
-}
-
 // Фаза 2: фоновое извлечение встроенным движком (OpenRouter). Берёт markdown из
 // ai_jobs.input.markdown, прогоняет ядро, пишет результат и применяет позиции в смету.
 // Переходы статуса условные, чтобы отмена (cancel) не перетиралась раннером.
@@ -81,10 +68,10 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
     // Источник для AI-извлечения фиксирован: только legacy-справочник работ
     // (настройка ai_catalog_source AI-блок не управляет). Материалы — из РД.
     const catalog = await loadLegacyWorksSnapshot(fastify.pool, scope);
-    const qualifiedModel = await resolveAiModel(fastify);
+    const qualifiedModel = await resolveAiModel(fastify.pool);
     const rt = await loadLlmRuntime(fastify.pool);
     const ep = resolveLlmEndpoint(qualifiedModel, rt);
-    const noThink = ep.isLmStudio && (await resolveQwenNoThink(fastify));
+    const noThink = ep.isLmStudio && (await resolveQwenNoThink(fastify.pool));
     const port = createOpenRouterPort({
       apiKey: ep.apiKey,
       model: ep.model,
@@ -197,7 +184,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
       // Встроенный движок: при настроенном провайдере выбранной модели и markdown —
       // запускаем извлечение в фоне (OpenRouter/прокси или собственный сервер LM Studio).
       if (body.markdown) {
-        const ep = resolveLlmEndpoint(await resolveAiModel(fastify), await loadLlmRuntime(fastify.pool));
+        const ep = resolveLlmEndpoint(await resolveAiModel(fastify.pool), await loadLlmRuntime(fastify.pool));
         if (ep.enabled) void runJobInBackground(fastify, job.id);
       }
 

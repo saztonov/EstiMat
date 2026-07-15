@@ -6,6 +6,7 @@ export * from './unit.js';
 export * from './location.js';
 export * from './estimate.js';
 export * from './material-request.js';
+export * from './material-grouping.js';
 export * from './supplier-order.js';
 export * from './procurement.js';
 export * from './payment-request.js';
