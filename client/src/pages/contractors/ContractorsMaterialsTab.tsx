@@ -25,6 +25,7 @@ import { useMaterialLevels } from './materials/useMaterialLevels';
 import { MaterialGroupingPopover } from './materials/MaterialGroupingPopover';
 import { buildMaterialColumns } from './materials/materialColumns';
 import { MaterialTreeView, collectNodeKeys } from './materials/MaterialTreeView';
+import { SmartGroupingPanel } from './materials/SmartGroupingPanel';
 
 interface Props {
   estimateId: string;
@@ -318,13 +319,15 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
           activePreset={activePreset}
           changedCount={changedFromDefault}
         />
-        <Button
-          size="small"
-          type="text"
-          onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(collectNodeKeys(tree)))}
-        >
-          {allCollapsed ? 'Развернуть всё' : 'Свернуть всё'}
-        </Button>
+        {viewMode !== 'smart' && (
+          <Button
+            size="small"
+            type="text"
+            onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(collectNodeKeys(tree)))}
+          >
+            {allCollapsed ? 'Развернуть всё' : 'Свернуть всё'}
+          </Button>
+        )}
         {viewerIsContractor &&
           (editing ? (
             <>
@@ -369,7 +372,14 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
       />
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {viewMode === 'smart' ? (
-          <Empty description="Умная группировка появится в следующем обновлении" />
+          // Умный режим использует те же строки и те же колонки — черновик заявки общий.
+          <SmartGroupingPanel
+            estimateId={estimateId}
+            contractorIds={filterContractorIds}
+            levels={levels}
+            rows={rows}
+            columns={columns}
+          />
         ) : tree.length === 0 ? (
           <Empty description="Материалов нет" />
         ) : (
