@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  Card, Descriptions, Table, Space, Button, Tag, Empty, Timeline, Alert, Modal, Collapse,
+  Card, Descriptions, Table, Space, Button, Tag, Empty, Timeline, Alert, Modal, Collapse, Tabs,
   Form, Input, InputNumber, DatePicker, Typography, Spin, App, Popconfirm, Tooltip,
 } from 'antd';
 import {
@@ -299,21 +299,32 @@ export function RequestDetailContent(
 
   const sections = [
     {
-      key: 'items',
-      label: `Состав заявки (${hasSchedule ? scheduleGroups.length : r.items.length})`,
+      key: 'materials',
+      label: `Материалы (${hasSchedule ? scheduleGroups.length : r.items.length})`,
       children: hasSchedule ? (
-        <Table rowKey="rowId" size="small" pagination={false} bordered
-          columns={scheduleItemCols} dataSource={scheduleRows} scroll={{ x: 700 }} />
+        <Tabs
+          defaultActiveKey="materials"
+          items={[
+            {
+              key: 'materials',
+              label: 'Материалы',
+              children: (
+                <Table rowKey="rowId" size="small" pagination={false} bordered
+                  columns={scheduleItemCols} dataSource={scheduleRows} scroll={{ x: 700 }} />
+              ),
+            },
+            {
+              key: 'schedule',
+              label: 'График поставки',
+              children: <DeliveryGantt materials={ganttMaterials} />,
+            },
+          ]}
+        />
       ) : (
         <Table<RequestItem> rowKey={(_, i) => String(i)} size="small" pagination={false}
           columns={itemCols} dataSource={r.items} scroll={{ x: 600 }} />
       ),
     },
-    ...(hasSchedule ? [{
-      key: 'schedule',
-      label: 'График поставки',
-      children: <DeliveryGantt materials={ganttMaterials} />,
-    }] : []),
     ...(r.request_type === 'su10' && isSupply ? [{
       key: 'lots',
       label: 'Закупки',
