@@ -8,6 +8,7 @@ import type { OrderMaterialRow } from './orderRow';
 import { SmartGroupCard } from './SmartGroupCard';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupFillButton } from './GroupFillButton';
+import { indexDimensionIssues } from './dimensionChecks';
 import { useCancelSmartGrouping, useRunSmartGrouping, useSmartGroupingJob } from './useSmartGrouping';
 
 interface Props {
@@ -58,6 +59,9 @@ export function SmartGroupingPanel({
   const active = jobQuery.data?.active ?? null;
   const byKey = useMemo(() => new Map(rows.map((r) => [r.orderKey, r])), [rows]);
   const pick = (keys: string[]) => keys.map((k) => byKey.get(k)).filter((r): r is OrderMaterialRow => !!r);
+  // Считаем один раз по всему своду и раздаём картой: иначе каждая карточка проверяла бы свои
+  // строки заново.
+  const dimension = useMemo(() => indexDimensionIssues(rows), [rows]);
 
   if (jobQuery.isLoading) return <Spin style={{ margin: 24 }} />;
 
@@ -118,8 +122,12 @@ export function SmartGroupingPanel({
   const result = job.result;
   if (!result) return <Empty description="Результат пуст" />;
 
-  const isReview = (g: { completeness: string; compatibility: string }) =>
-    g.completeness !== 'complete' || g.compatibility !== 'no_issues';
+  // Требует проверки — это и модельные оси, и детерминированные замечания: без последнего условия
+  // отбор спрятал бы карточку, в которой найдено дробное количество штучного материала.
+  const isReview = (g: { completeness: string; compatibility: string; orderKeys: string[] }) =>
+    g.completeness !== 'complete' ||
+    g.compatibility !== 'no_issues' ||
+    g.orderKeys.some((k) => dimension.has(k));
   // Группа без единой видимой строки — не показываем: у подрядчика в общем результате есть
   // группы целиком из чужих материалов (сервер их и так вырезает, здесь — страховка).
   const visibleGroups = result.groups.filter((g) => pick(g.orderKeys).length > 0);
@@ -212,6 +220,7 @@ export function SmartGroupingPanel({
           onToggle={onToggle}
           bulk={bulk}
           rowClassName={rowClassName}
+          dimension={dimension}
         />
       ))}
       {groups.length === 0 && <Empty description="Групп по фильтру нет" />}

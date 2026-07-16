@@ -6,6 +6,7 @@ import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupFillButton } from './GroupFillButton';
+import type { DimensionFinding } from './dimensionChecks';
 
 interface Props {
   group: MaterialGroupDto;
@@ -15,6 +16,8 @@ interface Props {
   onToggle: (key: string) => void;
   bulk?: BulkFill;
   rowClassName?: (row: OrderMaterialRow) => string;
+  /** Детерминированные замечания по строкам свода (ключ заказа → находка). */
+  dimension?: Map<string, DimensionFinding>;
 }
 
 /**
@@ -40,12 +43,24 @@ const SEVERITY_LABEL: Record<string, string> = {
   recommendation: 'Рекомендация',
 };
 
-export function SmartGroupCard({ group, rows, columns, collapsed, onToggle, bulk, rowClassName }: Props) {
+export function SmartGroupCard({
+  group,
+  rows,
+  columns,
+  collapsed,
+  onToggle,
+  bulk,
+  rowClassName,
+  dimension,
+}: Props) {
   // Итог — только по строкам с ценой закупки: сметные цены материалов во вкладке не показываются.
   const priced = rows.filter((r) => r.materialCost != null);
   const total = priced.reduce((s, r) => s + (r.materialCost ?? 0), 0);
   const status = groupStatus(group);
-  const findings = group.issues.length + group.missing.length;
+  // Детерминированные замечания входят в счётчик наравне с модельными: иначе блок проверки у
+  // группы без замечаний ИИ просто не отрисуется, и находка останется невидимой.
+  const dimIssues = dimension ? rows.map((r) => dimension.get(r.orderKey)).filter((f) => !!f) : [];
+  const findings = group.issues.length + group.missing.length + dimIssues.length;
   // Вид работ группы: различает карточки-однофамильцы (одна операция в разных видах работ при
   // включённом виде работ не сливается — иначе на экране две одинаковые «Монтаж трубопровода»).
   const costTypes = [...new Set(rows.map((r) => r.costTypeName).filter((n): n is string => !!n))];
@@ -95,6 +110,24 @@ export function SmartGroupCard({ group, rows, columns, collapsed, onToggle, bulk
               label: `Результат проверки (${findings})`,
               children: (
                 <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {/* Детерминированная проверка — первой: это факт из сметы, а не мнение модели. */}
+                  {dimIssues.length > 0 && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="Дробное количество в штучной единице"
+                      description={
+                        <ul style={{ margin: 0, paddingLeft: 18 }}>
+                          {dimIssues.map((f) => (
+                            <li key={f.orderKey}>
+                              {f.name} — {f.quantity} {f.unit}; заказ возможен только целым числом,
+                              ближайшее целое — {f.suggested}
+                            </li>
+                          ))}
+                        </ul>
+                      }
+                    />
+                  )}
                   {group.issues.map((i, idx) => (
                     <Alert
                       key={`i${idx}`}

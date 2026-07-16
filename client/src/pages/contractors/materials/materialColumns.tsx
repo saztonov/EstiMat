@@ -1,6 +1,7 @@
 import { Button, InputNumber, Space, Tag, Tooltip } from 'antd';
 import { EditOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { checkDiscreteQuantity } from '@estimat/shared';
 import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
@@ -60,6 +61,9 @@ export function buildMaterialColumns({
         const ordered = orderedMap.get(m.orderKey) ?? 0;
         const req = draft.get(m.orderKey) ?? 0;
         const over = viewerIsContractor ? ordered + req > m.quantity + EPS : ordered > m.quantity + EPS;
+        // Дробное количество штучного материала — та же проверка, что в умной группировке. Здесь она
+        // закрывает и стандартное дерево, и секции «Общие расходные»/«Не удалось сгруппировать».
+        const discrete = checkDiscreteQuantity(m.unit, m.quantity);
         return (
           <Space size={4}>
             {/* Имя кликабельно (детализация по местоположениям), но не синее: на экране десятки
@@ -74,6 +78,13 @@ export function buildMaterialColumns({
             </Button>
             {m.hasSuggested && <Tag color="orange">предложение</Tag>}
             {m.hasAi && <Tag color="blue">ИИ</Tag>}
+            {discrete && (
+              <Tooltip
+                title={`Заказ возможен только целым числом, ближайшее целое — ${discrete.suggested} ${m.unit}`}
+              >
+                <Tag color="orange">Дробное количество</Tag>
+              </Tooltip>
+            )}
             {/* При активном отборе «По смете» урезано, а «Уже заявлено» — по всей смете:
                 сравнивать их нельзя, иначе тег сработает ложно. */}
             {over && !locFilterActive && <Tag color="red">Сверх сметы</Tag>}
@@ -183,6 +194,8 @@ export function buildMaterialColumns({
       align: 'right',
       render: (_, m) => {
         const isManual = manual?.has(m.orderKey) ?? false;
+        // Дробное количество проверяем и у заявляемого объёма, а не только у сметного.
+        const badQty = checkDiscreteQuantity(m.unit, draft.get(m.orderKey) ?? 0);
         return (
           <Space size={4}>
             {/* Ручные строки массовый набор не перезаписывает — метка объясняет, почему строка
@@ -192,14 +205,23 @@ export function buildMaterialColumns({
                 <EditOutlined style={{ color: '#1677ff', fontSize: 12 }} />
               </Tooltip>
             )}
-            <InputNumber
-              min={0}
-              style={{ width: 100 }}
-              // Подсказка — остаток: сразу видно, сколько ещё можно заявить.
-              placeholder={String(qty(remainingOf(m.quantity, orderedMap.get(m.orderKey) ?? 0)))}
-              value={draft.get(m.orderKey)}
-              onChange={(v) => onDraftChange(m.orderKey, v as number | null)}
-            />
+            <Tooltip
+              title={
+                badQty
+                  ? `Штучный материал: заказ возможен только целым числом (ближайшее — ${badQty.suggested})`
+                  : undefined
+              }
+            >
+              <InputNumber
+                min={0}
+                style={{ width: 100 }}
+                status={badQty ? 'warning' : undefined}
+                // Подсказка — остаток: сразу видно, сколько ещё можно заявить.
+                placeholder={String(qty(remainingOf(m.quantity, orderedMap.get(m.orderKey) ?? 0)))}
+                value={draft.get(m.orderKey)}
+                onChange={(v) => onDraftChange(m.orderKey, v as number | null)}
+              />
+            </Tooltip>
           </Space>
         );
       },
