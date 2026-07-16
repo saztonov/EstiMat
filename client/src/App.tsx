@@ -16,6 +16,7 @@ import { AdministrationPage } from './pages/administration/AdministrationPage';
 import { ContractorsPage } from './pages/contractors/ContractorsPage';
 import { ExecutionPage } from './pages/execution/ExecutionPage';
 import { RequestsPage } from './pages/requests/RequestsPage';
+import { NewRequestPage } from './pages/requests/NewRequestPage';
 import { RequestDetailPage } from './pages/requests/RequestDetailPage';
 import { ProfilePage } from './pages/profile/ProfilePage';
 
@@ -50,6 +51,8 @@ export default function App() {
                 заявки на вкладке «Заявки» внутри сметы объекта (раздел «Подрядчики»/«Сметы»). */}
             <Route element={<RoleRoute allow={['admin', 'engineer', 'manager']} redirect="/contractors" />}>
               <Route path="/requests" element={<RequestsPage />} />
+              {/* Строго до /requests/:id — иначе «new» будет разобран как идентификатор заявки. */}
+              <Route path="/requests/new" element={<NewRequestPage />} />
               <Route path="/requests/:id" element={<RequestDetailPage />} />
             </Route>
             {/* Доступно всем ролям */}

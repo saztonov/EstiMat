@@ -434,6 +434,11 @@ export function RequestDetailContent(
             </Descriptions.Item>
           ) : null}
           <Descriptions.Item label="Создана">{new Date(r.created_at).toLocaleString('ru-RU')}</Descriptions.Item>
+          {/* Кто завёл заявку. Владелец — всегда подрядчик в заголовке; автором может быть и
+              сотрудник, оформивший заявку от его имени. */}
+          {r.created_by_name && (
+            <Descriptions.Item label="Создал">{r.created_by_name}</Descriptions.Item>
+          )}
         </Descriptions>
 
         <Collapse defaultActiveKey={[]} items={sections} />

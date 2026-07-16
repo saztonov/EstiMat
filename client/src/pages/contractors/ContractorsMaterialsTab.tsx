@@ -46,12 +46,31 @@ interface Props {
 
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
 
-// Для подрядчика — масштабировать материалы строки по его доле объёма (нельзя показывать 100%).
-function scaleForContractor(items: EstimateItem[]): EstimateItem[] {
+/**
+ * Чьи объёмы показываем: 'me' — подрядчик (своя доля строки), список id — доли выбранных
+ * подрядчиков, пустой список — вся смета без масштабирования.
+ */
+type QtyScope = 'me' | string[];
+
+/**
+ * Свести объёмы материалов к доле выбранных подрядчиков.
+ *
+ * Подрядчику нельзя показывать 100% строки, назначенной ему на 40%. Сотруднику с отбором по
+ * подрядчику — тоже: рядом стоит «Уже заявлено», которое уже скоупится по подрядчику, и полный
+ * объём делал бы эти числа несопоставимыми.
+ */
+function scaleToScope(items: EstimateItem[], scope: QtyScope): EstimateItem[] {
+  if (Array.isArray(scope) && scope.length === 0) return items;
   return items.map((it) => {
     const q = num(it.quantity);
-    const eff = num(it.my_effective_qty);
-    const share = q > 0 ? eff / q : 1;
+    const eff =
+      scope === 'me'
+        ? num(it.my_effective_qty)
+        : (it.item_contractors ?? [])
+            .filter((c) => scope.includes(c.contractor_id))
+            .reduce((s, c) => s + num(c.effective_qty), 0);
+    // Доля больше единицы бессмысленна: суммарные назначения не должны превышать объём строки.
+    const share = q > 0 ? Math.min(eff / q, 1) : 1;
     if (share >= 1 - 1e-9) return it;
     return {
       ...it,
@@ -127,21 +146,32 @@ export function ContractorsMaterialsTab({
     );
   }, [items, filterContractorIds]);
 
+  // Чьи объёмы показываем. Один и тот же скоуп идёт и в свод для показа, и в свод для заявки —
+  // иначе «Кол-во по смете» на экране и база заявки разошлись бы.
+  const qtyScope: QtyScope = viewerIsContractor ? 'me' : filterContractorIds;
+  // Объёмы сведены к подрядчикам — «Кол-во по смете» и «Уже заявлено» сопоставимы.
+  const scoped = viewerIsContractor || filterContractorIds.length > 0;
+  // Заявка всегда от имени одного подрядчика: сотруднику нужно выбрать ровно одного.
+  const targetContractorId = viewerIsContractor ? null : (filterContractorIds[0] ?? null);
+  const canCreateRequest = viewerIsContractor || filterContractorIds.length === 1;
+  const targetContractorName = targetContractorId
+    ? (assignedContractorOptions.find((o) => o.value === targetContractorId)?.label ?? null)
+    : null;
+
   // Свод для показа: локационный отбор применяется ДО свёртки, поэтому «По смете» само
   // пересчитывается под выбранный корпус/этаж/тип.
-  const groups = useMemo(() => {
-    let src = filterByLocation(baseItems);
-    if (viewerIsContractor) src = scaleForContractor(src);
-    return buildMaterialGroups(src, []);
-  }, [baseItems, viewerIsContractor, filterByLocation]);
+  const groups = useMemo(
+    () => buildMaterialGroups(scaleToScope(filterByLocation(baseItems), qtyScope), []),
+    [baseItems, qtyScope, filterByLocation],
+  );
 
   // Свод для заявки: полный объём, без локационного отбора. submit() обходит именно его, иначе
   // введённые количества у скрытых отбором строк молча не попали бы в заявку (у заявок нет
   // локационного измерения: ключ — вид работ + свёртка материала).
-  const requestGroups = useMemo(() => {
-    const src = viewerIsContractor ? scaleForContractor(baseItems) : baseItems;
-    return buildMaterialGroups(src, []);
-  }, [baseItems, viewerIsContractor]);
+  const requestGroups = useMemo(
+    () => buildMaterialGroups(scaleToScope(baseItems, qtyScope), []),
+    [baseItems, qtyScope],
+  );
 
   // Уровни — только у стандартной группировки: у умной границы групп общие для всех и задаются
   // администратором (Администрирование → Нейросети → Промпты).
@@ -176,6 +206,9 @@ export function ContractorsMaterialsTab({
         requestType: vars.requestType,
         lines: vars.lines,
         createRequestId: vars.createRequestId,
+        // Сотрудник заявляет от имени выбранного подрядчика; у подрядчика организацию
+        // определяет сервер по профилю.
+        contractorId: targetContractorId ?? undefined,
       }),
     onSuccess: (res, vars) => {
       const number = res?.data?.number ?? '';
@@ -284,7 +317,7 @@ export function ContractorsMaterialsTab({
         showCostType: !levels.costType,
         locFilterActive,
         editing,
-        viewerIsContractor,
+        scoped,
         hasPrices: priceMap.size > 0,
         orderedMap,
         draft: draft.values,
@@ -292,7 +325,7 @@ export function ContractorsMaterialsTab({
         onDraftChange: setValue,
         onBreakdown: setBreakdown,
       }),
-    [levels.costType, locFilterActive, editing, viewerIsContractor, priceMap, orderedMap, draft, setValue],
+    [levels.costType, locFilterActive, editing, scoped, priceMap, orderedMap, draft, setValue],
   );
 
   // Массовое заполнение доли остатка. Итог показываем тостом: одно нажатие меняет десятки строк,
@@ -412,10 +445,13 @@ export function ContractorsMaterialsTab({
       {/* paddingTop: контейнер вкладки обрезает overflow'ом верх бейджей-счётчиков на кнопках. */}
       <div style={{ flexShrink: 0, paddingTop: 6, marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {!viewerIsContractor && (
+          // В режиме набора отбор заблокирован: черновик набран от долей выбранного подрядчика,
+          // и смена подрядчика на полпути молча отправила бы его чужие количества.
           <Select
             mode="multiple"
             allowClear
             showSearch
+            disabled={editing}
             placeholder="Фильтр по подрядчикам"
             style={{ width: 280 }}
             value={filterContractorIds}
@@ -466,39 +502,50 @@ export function ContractorsMaterialsTab({
             onClick={clearAll}
           />
         </Tooltip>
-        {viewerIsContractor &&
-          !editing && (
-            // Tooltip снаружи Dropdown — так уже сделано в разделе «Заявки»: внутри он перехватил
-            // бы триггер, и меню перестало бы открываться.
-            <Tooltip title="Создать заявку на материалы">
-              <Dropdown
-                trigger={['click']}
-                menu={{
-                  items: MATERIAL_REQUEST_TYPES.map((t) => ({
-                    key: t,
-                    label: MATERIAL_REQUEST_TYPE_LABELS[t],
-                  })),
-                  onClick: ({ key }) => {
-                    setRequestType(key as MaterialRequestType);
-                    // Заявка оформляется от полного объёма: локационный отбор снимаем,
-                    // иначе «По смете» осталось бы урезанным и вводить было бы не от чего.
-                    clearLocFilter();
-                    setEditing(true);
-                  },
+        {!editing && (
+          // Tooltip снаружи Dropdown — так уже сделано в разделе «Заявки»: внутри он перехватил
+          // бы триггер, и меню перестало бы открываться.
+          <Tooltip
+            title={
+              canCreateRequest
+                ? 'Создать заявку на материалы'
+                : 'Выберите одного подрядчика — заявка создаётся от его имени'
+            }
+          >
+            <Dropdown
+              trigger={['click']}
+              disabled={!canCreateRequest}
+              menu={{
+                items: MATERIAL_REQUEST_TYPES.map((t) => ({
+                  key: t,
+                  label: MATERIAL_REQUEST_TYPE_LABELS[t],
+                })),
+                onClick: ({ key }) => {
+                  setRequestType(key as MaterialRequestType);
+                  // Заявка оформляется от полного объёма: локационный отбор снимаем,
+                  // иначе «По смете» осталось бы урезанным и вводить было бы не от чего.
+                  clearLocFilter();
+                  setEditing(true);
+                },
+              }}
+            >
+              {/* Главное действие вкладки — у правого края и зелёное. antd здесь 5.22:
+                  color="green" появился в 5.23, поэтому цвет берём из токена темы.
+                  Кнопка отключена, а не скрыта: скрытая не объясняет, что нужно сделать. */}
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                disabled={!canCreateRequest}
+                style={{
+                  marginLeft: 'auto',
+                  background: canCreateRequest ? token.colorSuccess : undefined,
                 }}
               >
-                {/* Главное действие вкладки — у правого края и зелёное. antd здесь 5.22:
-                    color="green" появился в 5.23, поэтому цвет берём из токена темы. */}
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  style={{ marginLeft: 'auto', background: token.colorSuccess }}
-                >
-                  Заявка на материалы <DownOutlined />
-                </Button>
-              </Dropdown>
-            </Tooltip>
-          )}
+                Заявка на материалы <DownOutlined />
+              </Button>
+            </Dropdown>
+          </Tooltip>
+        )}
       </div>
       {/* Панель набора — отдельным блоком над таблицей: тулбар и так вне скроллера и виден всегда. */}
       {editing && requestType && (
@@ -512,6 +559,7 @@ export function ContractorsMaterialsTab({
           onCancel={cancelEditing}
           onSubmit={submit}
           submitting={submitMutation.isPending}
+          onBehalfOf={targetContractorName}
         />
       )}
       <Tabs

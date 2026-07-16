@@ -16,7 +16,12 @@ interface Options {
   /** Активен локационный отбор: «По смете» урезано, «Уже заявлено» — по всей смете. */
   locFilterActive: boolean;
   editing: boolean;
-  viewerIsContractor: boolean;
+  /**
+   * Объёмы сведены к конкретным подрядчикам (подрядчик смотрит своё либо включён отбор по
+   * подрядчикам). Тогда «Кол-во по смете» и «Уже заявлено» сопоставимы, и черновик можно
+   * складывать с заявленным. Это про скоуп данных, а не про роль смотрящего.
+   */
+  scoped: boolean;
   /** По смете есть хоть одна закупленная цена — иначе «Цена»/«Сумма» пусты и не нужны. */
   hasPrices: boolean;
   orderedMap: Map<string, number>;
@@ -37,7 +42,7 @@ export function buildMaterialColumns({
   showCostType,
   locFilterActive,
   editing,
-  viewerIsContractor,
+  scoped,
   hasPrices,
   orderedMap,
   draft,
@@ -60,7 +65,7 @@ export function buildMaterialColumns({
       render: (_, m) => {
         const ordered = orderedMap.get(m.orderKey) ?? 0;
         const req = draft.get(m.orderKey) ?? 0;
-        const over = viewerIsContractor ? ordered + req > m.quantity + EPS : ordered > m.quantity + EPS;
+        const over = scoped ? ordered + req > m.quantity + EPS : ordered > m.quantity + EPS;
         // Дробное количество штучного материала — та же проверка, что в умной группировке. Здесь она
         // закрывает и стандартное дерево, и секции «Общие расходные»/«Не удалось сгруппировать».
         const discrete = checkDiscreteQuantity(m.unit, m.quantity);
@@ -156,9 +161,9 @@ export function buildMaterialColumns({
         title: (
           <Tooltip
             title={
-              viewerIsContractor
+              scoped
                 ? 'Заявлено по всей смете — без учёта отбора по местоположению'
-                : 'Заявлено по всей смете (с учётом отбора по подрядчикам) — без учёта отбора по местоположению'
+                : 'Заявлено по всей смете всеми подрядчиками — без учёта отбора по местоположению'
             }
           >
             Уже заявлено
@@ -185,8 +190,8 @@ export function buildMaterialColumns({
     );
   }
 
-  // Колонка «Заявка» — только в режиме заявки (подрядчик).
-  if (editing && viewerIsContractor) {
+  // Колонка «Заявка» — только в режиме набора. В него не войти, если заявку создавать нельзя.
+  if (editing) {
     cols.push({
       title: 'Заявка',
       key: 'request',

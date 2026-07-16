@@ -85,6 +85,8 @@ export interface RequestRow {
   row_version: number;
   contractor_name: string | null;
   contractor_inn: string | null;
+  /** Кто завёл заявку: подрядчик или сотрудник от его имени. Владелец — всегда contractor_name. */
+  created_by_name: string | null;
   project_name: string | null;
   project_code: string | null;
   supplier_name: string | null;

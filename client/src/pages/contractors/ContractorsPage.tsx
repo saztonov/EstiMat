@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useEffect, useMemo, useRef } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { Card, Row, Col, Tag, Empty, Spin, Space, Button, Tabs } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
@@ -139,10 +139,21 @@ function MaterialsSummaryWidget({
 export function ContractorsPage() {
   const navigate = useNavigate();
   const { estimateId } = useParams<{ estimateId?: string }>();
+  const [searchParams] = useSearchParams();
   const role = useAuthStore((s) => s.user?.role);
   const viewerIsContractor = role === 'contractor';
   const canAssign = role === 'admin' || role === 'engineer';
   const [tab, setTab] = usePersistedTab('estimat:contractors-tab', 'smeta');
+
+  // Вкладка из ссылки (вход «Новая заявка» из раздела «Заявки») — один раз при открытии:
+  // дальше пользователь переключает вкладки сам, и запомненная вкладка снова главнее.
+  const tabParam = searchParams.get('tab');
+  const applied = useRef(false);
+  useEffect(() => {
+    if (applied.current || !tabParam) return;
+    applied.current = true;
+    setTab(tabParam);
+  }, [tabParam, setTab]);
 
   const engineerQ = useQuery({
     queryKey: ['estimate', estimateId],

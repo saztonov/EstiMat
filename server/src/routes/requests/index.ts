@@ -168,6 +168,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
               rl.invoice_number AS rp_invoice_number, rl.sent_date AS rp_sent_date,
               rl.letter_date AS rp_letter_date, rl.responsible_name AS rp_responsible_name,
               rl.created_at AS rp_created_at, rl.recipient_name, cu.full_name AS rp_author,
+              cb.full_name AS created_by_name,
               (SELECT COALESCE(SUM(sop.amount), 0) FROM supplier_order_payments sop
                 WHERE sop.order_id = so.id AND NOT sop.reversed) AS order_paid_amount,
               (SELECT count(*) FROM material_request_files f
@@ -186,6 +187,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
          LEFT JOIN supplier_orders so ON so.request_id = mr.id AND so.kind = 'direct'
          LEFT JOIN rp_letters rl ON rl.request_id = mr.id AND rl.sync_status <> 'annulled'
          LEFT JOIN users cu ON cu.id = rl.created_by
+         LEFT JOIN users cb ON cb.id = mr.created_by
          ${whereSql}
         ORDER BY mr.created_at DESC
         LIMIT $${values.length - 1} OFFSET $${values.length}`,
@@ -270,10 +272,18 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       [mr.id],
     );
 
+    // Автор заявки: в самой записи только uuid. Заявку мог завести и подрядчик, и сотрудник
+    // от его имени — владельцем остаётся contractor_id, а ФИО объясняет, кто её создал.
+    const author = await fastify.pool.query(
+      `SELECT full_name FROM users WHERE id = $1`,
+      [mr.created_by],
+    );
+
     return {
       data: {
         ...mr,
         number: requestNumber(null, mr.request_no),
+        created_by_name: author.rows[0]?.full_name ?? null,
         items: items.rows,
         files: files.rows,
         order: order.rows[0] ?? null,
@@ -286,13 +296,30 @@ export default async function requestRoutes(fastify: FastifyInstance) {
   });
 
   // ============================================================
-  // POST / — создание заявки (contractor), сразу в статусе in_work
+  // POST / — создание заявки, сразу в статусе in_work.
+  //   Подрядчик заявляет от своей организации; внутренние роли — от имени выбранного подрядчика
+  //   (contractorId в теле). Владелец заявки — contractor_id, автор — created_by.
   // ============================================================
-  fastify.post('/', { preHandler: [requireRole('contractor')] }, async (request, reply) => {
+  fastify.post(
+    '/',
+    { preHandler: [requireRole('contractor', 'engineer', 'admin', 'manager')] },
+    async (request, reply) => {
     const user = request.currentUser;
-    if (!user.orgId) return reply.status(400).send({ error: 'Пользователь не привязан к организации' });
     const body = createRequestSchema.parse(request.body);
-    const contractorId = user.orgId;
+
+    // За кого заявка. Подрядчику подменить организацию нельзя — иначе optional-поле само по себе
+    // стало бы дырой: заявка от чужого имени. Отказываем явно, а не игнорируем молча.
+    let contractorId: string;
+    if (isContractor(user)) {
+      if (!user.orgId) return reply.status(400).send({ error: 'Пользователь не привязан к организации' });
+      if (body.contractorId && body.contractorId !== user.orgId) {
+        return reply.status(403).send({ error: 'Заявка создаётся от своей организации' });
+      }
+      contractorId = user.orgId;
+    } else {
+      if (!body.contractorId) return reply.status(400).send({ error: 'Укажите подрядчика' });
+      contractorId = body.contractorId;
+    }
     const payloadHash = canonicalHash({
       contractorId,
       estimateId: body.estimateId,
@@ -325,7 +352,11 @@ export default async function requestRoutes(fastify: FastifyInstance) {
 
       if (!(await assertContractorEstimateAccess(client, body.estimateId, contractorId))) {
         await client.query('ROLLBACK');
-        return reply.status(403).send({ error: 'Объект не назначен вашей организации' });
+        return reply.status(403).send({
+          error: isContractor(user)
+            ? 'Объект не назначен вашей организации'
+            : 'Подрядчик не назначен на этот объект',
+        });
       }
 
       // Сверяем строки с канонической сводкой в той же транзакции. Устарела хоть одна —
@@ -417,7 +448,13 @@ export default async function requestRoutes(fastify: FastifyInstance) {
 
       await appendRequestAudit(client, {
         requestId, action: 'created', userId: user.id,
-        changes: { requestType: body.requestType, lines: canonLines.length, contractorId },
+        changes: {
+          requestType: body.requestType,
+          lines: canonLines.length,
+          contractorId,
+          // Заявку завёл сотрудник за подрядчика — это видно в ленте истории карточки.
+          onBehalf: !isContractor(user),
+        },
         estimateId: body.estimateId, projectId,
       });
       await recalcRequestStatus(client, requestId, user.id);
@@ -432,7 +469,8 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     } finally {
       client.release();
     }
-  });
+    },
+  );
 
   // ============================================================
   // POST /:id/supplier — прямой выбор поставщика/заказ (владелец-подрядчик или internal)

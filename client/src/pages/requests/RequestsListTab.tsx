@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, App } from 'antd';
-import { SearchOutlined, PaperClipOutlined, FileExcelOutlined, MessageOutlined, DeleteOutlined } from '@ant-design/icons';
+import { SearchOutlined, PaperClipOutlined, MessageOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useUnreadCounts } from './useUnreadCounts';
 import {
@@ -47,18 +48,17 @@ function deleteResultText(res?: { lotsDeleted: number; lotsKept: number }): stri
   return parts.join(', ');
 }
 
-/** Список заявок с серверными фильтрами и пагинацией. Для подрядчика — колонка «Excel». */
+/** Список заявок с серверными фильтрами и пагинацией (только внутренние роли — см. RequestsPage). */
 export function RequestsListTab() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const role = useAuthStore((s) => s.user?.role);
-  const isSupply = role === 'engineer' || role === 'admin' || role === 'manager';
   const isAdmin = role === 'admin';
   const [openId, setOpenId] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const unread = useUnreadCounts();
 
@@ -82,17 +82,6 @@ export function RequestsListTab() {
     setFilters((f) => ({ ...f, ...patch }));
     setPage(1);
   };
-
-  async function exportExcel(r: RequestRow) {
-    setDownloadingId(r.id);
-    try {
-      await api.download(`/requests/${r.id}/export`, {}, `Заявка_${r.number}.xlsx`);
-    } catch (e) {
-      message.error((e as Error).message);
-    } finally {
-      setDownloadingId(null);
-    }
-  }
 
   async function deleteRequest(r: RequestRow) {
     setDeletingId(r.id);
@@ -125,12 +114,10 @@ export function RequestsListTab() {
       render: (v: string) => new Date(v).toLocaleString('ru-RU'),
     },
     { title: 'Объект', dataIndex: 'project_name', key: 'project_name', render: (v: string | null) => v || '—' },
-    ...(isSupply
-      ? ([{
-          title: 'Подрядчик', dataIndex: 'contractor_name', key: 'contractor_name',
-          render: (v: string | null) => v || '—',
-        }] as ColumnsType<RequestRow>)
-      : []),
+    {
+      title: 'Подрядчик', dataIndex: 'contractor_name', key: 'contractor_name',
+      render: (v: string | null) => v || '—',
+    },
     {
       title: 'Вид', dataIndex: 'request_type', key: 'request_type', width: 170,
       render: (v: string) => <RequestTypeTag type={v} />,
@@ -148,23 +135,6 @@ export function RequestsListTab() {
       title: 'Файлы', dataIndex: 'files_count', key: 'files_count', width: 80, align: 'center',
       render: (v: number | string) => (Number(v) > 0 ? <span><PaperClipOutlined /> {v}</span> : '—'),
     },
-    ...(!isSupply
-      ? ([{
-          title: '', key: 'actions', width: 110,
-          render: (_: unknown, r: RequestRow) => (
-            <Tooltip title="Выгрузить заявку в Excel">
-              <Button
-                size="small"
-                icon={<FileExcelOutlined />}
-                loading={downloadingId === r.id}
-                onClick={(e) => { e.stopPropagation(); exportExcel(r); }}
-              >
-                Excel
-              </Button>
-            </Tooltip>
-          ),
-        }] as ColumnsType<RequestRow>)
-      : []),
     ...(isAdmin
       ? ([{
           title: 'Действие', key: 'admin_actions', width: 110, align: 'center',
@@ -209,6 +179,13 @@ export function RequestsListTab() {
         <DatePicker.RangePicker
           onChange={(_, ds) => setF({ dateFrom: ds?.[0] || undefined, dateTo: ds?.[1] || undefined })}
         />
+        {/* Набор идёт по смете — там же, где его ведёт подрядчик: свод материалов, группировки и
+            массовый набор. Здесь только вход в него. */}
+        <Tooltip title="Оформить заявку от имени подрядчика">
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/requests/new')}>
+            Новая заявка
+          </Button>
+        </Tooltip>
       </Space>
       <Table<RequestRow>
         rowKey="id"
