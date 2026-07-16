@@ -134,6 +134,8 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
     const batches = planBatches(lines, job.settings);
     const deadline = started + (ep.isLmStudio ? JOB_DEADLINE_LM_MS : JOB_DEADLINE_OR_MS);
     const batchTimeout = ep.isLmStudio ? BATCH_TIMEOUT_LM_MS : BATCH_TIMEOUT_OR_MS;
+    /** Суммарное ожидание слота LM Studio: очередь — не работа задания, в дедлайн не входит. */
+    let waitedForSlotMs = 0;
 
     // prompt_version уже записан при создании задания (эффективная версия с отпечатком). Здесь
     // только уточняем фактическую модель и план наборов.
@@ -156,7 +158,11 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
 
     const runBatch = async (batch: GroupingBatch): Promise<void> => {
       if (done[String(batch.index)]) return;
-      if (Date.now() > deadline) throw new Error('Превышено время выполнения задания');
+      // Дедлайн — на РАБОТУ задания, а не на его пребывание в очереди: ожидание слота вычитаем.
+      // Иначе несколько смет, открытых одновременно, встают в очередь к LM Studio (worker = 1),
+      // растягивают друг друга и упираются в дедлайн — при исчерпании попыток задание уходит в
+      // dead, откуда его поднимает только ручной «Пересчитать».
+      if (Date.now() - waitedForSlotMs > deadline) throw new Error('Превышено время выполнения задания');
       const call = () =>
         chatJsonOnce(
           { endpoint: ep, signal: controller.signal, timeoutMs: batchTimeout, noThink },
@@ -165,7 +171,17 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
         );
       // Слот берём на КАЖДЫЙ набор, а не на весь прогон: удержание слота на 20 минут
       // заблокировало бы ИИ-чат целиком (у LM Studio worker = 1).
-      const raw = ep.isLmStudio ? await withLmStudioSlot(call) : await call();
+      let raw: string;
+      if (ep.isLmStudio) {
+        const queuedAt = Date.now();
+        raw = await withLmStudioSlot(() => {
+          // Колбэк выполняется уже в слоте — разница и есть время ожидания в очереди.
+          waitedForSlotMs += Date.now() - queuedAt;
+          return call();
+        });
+      } else {
+        raw = await call();
+      }
       done[String(batch.index)] = parseBatchResponse(raw, batch);
       await heartbeat(fastify, jobId, Object.keys(done).length, { batches: done, merges: job.checkpoint?.merges ?? [] });
     };

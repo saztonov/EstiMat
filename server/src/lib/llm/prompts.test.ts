@@ -45,3 +45,16 @@ test('дефолт группировки содержит правило про
   assert.match(sys, /РАСХОДНИКИ И МЕЛОЧЬ/);
   assert.match(sys, /completeness = complete/);
 });
+
+test('дефолт группировки содержит правило про кратность поставки', () => {
+  const sys = PROMPT_DEFAULTS['grouping.system'];
+  assert.match(sys, /КРАТНОСТЬ ПОСТАВКИ/);
+  // Рекомендация, а не вывод: оси оценки правило менять не должно.
+  assert.match(sys, /severity = recommendation/);
+  assert.match(sys, /НЕ меняет ни состав групп, ни completeness/);
+  // Без справочника фасовки числа можно брать только из наименования.
+  assert.match(sys, /уточните кратность поставки при заказе/);
+  assert.match(sys, /выдумывать фасовку/);
+  // Промпт группировки не знает ни цен, ни поставщиков — это стережёт grouping.test.ts.
+  assert.doesNotMatch(sys, /поставщик/i);
+});
