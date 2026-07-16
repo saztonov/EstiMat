@@ -1,4 +1,4 @@
-import { Badge, Button, Popover, Select, Input, Segmented, Space, Switch, Typography, Divider } from 'antd';
+import { Badge, Button, Popover, Select, Input, Segmented, Space, Switch, Tooltip, Typography, Divider } from 'antd';
 import { FilterOutlined } from '@ant-design/icons';
 import { type ZoneNode, flattenZones, ZONE_KIND_LABEL, isValidFloorsInput } from '../components/location';
 
@@ -32,6 +32,8 @@ interface Props {
   onlyUnreconciled?: boolean;
   onUnreconciledChange?: (v: boolean) => void;
   disabled?: boolean;
+  /** Подсказка на кнопке при наведении. Без неё кнопка остаётся как была. */
+  tooltip?: string;
 }
 
 // Расширенный множественный фильтр локаций (срезы: «все корпуса 2,3 по этажам»),
@@ -46,6 +48,7 @@ export function LocationFilterPopover({
   onlyUnreconciled,
   onUnreconciledChange,
   disabled = false,
+  tooltip,
 }: Props) {
   const showUnreconciled = !!onUnreconciledChange;
 
@@ -147,9 +150,12 @@ export function LocationFilterPopover({
       {...(disabled ? { open: false } : {})}
     >
       <Badge count={activeCount} size="small">
-        <Button icon={<FilterOutlined />} disabled={disabled}>
-          Местоположение
-        </Button>
+        {/* Tooltip внутри Popover, а не снаружи: иначе конфликтуют триггеры click и hover. */}
+        <Tooltip title={tooltip}>
+          <Button icon={<FilterOutlined />} disabled={disabled}>
+            Местоположение
+          </Button>
+        </Tooltip>
       </Badge>
     </Popover>
   );

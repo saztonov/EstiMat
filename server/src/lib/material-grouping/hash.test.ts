@@ -75,19 +75,9 @@ test('правка текста промпта инвалидирует input_ha
   assert.notEqual(hash(base(), SETTINGS, MODEL, v1), hash(base(), SETTINGS, MODEL, v2));
 });
 
-test('хэш области различает подрядчика, сотрудника и отбор по подрядчикам', () => {
-  const est = 'e1';
-  const staff = computeScopeHash({ estimateId: est, orgId: null, contractorIds: [] });
-  const contractor = computeScopeHash({ estimateId: est, orgId: 'org1', contractorIds: [] });
-  const filtered = computeScopeHash({ estimateId: est, orgId: null, contractorIds: ['org1'] });
-
-  assert.notEqual(staff, contractor, 'у подрядчика свои цифры — кэш делить нельзя');
-  assert.notEqual(staff, filtered);
-  assert.notEqual(contractor, filtered);
-
-  // Порядок отбора не важен.
-  assert.equal(
-    computeScopeHash({ estimateId: est, orgId: null, contractorIds: ['a', 'b'] }),
-    computeScopeHash({ estimateId: est, orgId: null, contractorIds: ['b', 'a'] }),
-  );
+test('хэш области зависит только от сметы: результат общий для всех', () => {
+  // Раньше срез включал организацию и отбор по подрядчикам — у каждого была своя группировка.
+  // Теперь область = смета: один результат, одно активное задание (uq_mgj_active_scope).
+  assert.equal(computeScopeHash('e1'), computeScopeHash('e1'), 'детерминизм');
+  assert.notEqual(computeScopeHash('e1'), computeScopeHash('e2'), 'разные сметы не делят кэш');
 });

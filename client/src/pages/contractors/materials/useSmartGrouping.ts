@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App } from 'antd';
-import type { GroupingSettings } from '@estimat/shared';
 import { ApiError } from '../../../services/api';
 import {
   cancelGroupingJob,
@@ -8,44 +7,42 @@ import {
   getLatestGroupingJob,
 } from '../../../services/materialGrouping';
 
-const KEY = (estimateId: string, contractorIds: string[]) =>
-  ['material-grouping', estimateId, contractorIds.join(',')] as const;
+/** Ключ — только смета: результат общий, от отборов пользователя он не зависит. */
+const KEY = (estimateId: string) => ['material-grouping', estimateId] as const;
 
 /**
- * Последнее задание группировки в текущей области. Пока считается — поллинг (как в ИИ-чате):
- * задание фоновое, POST возвращает 202 сразу и клиентский таймаут запроса роли не играет.
+ * Группировка сметы. Пока считается — поллинг (как в ИИ-чате): задание фоновое, ставится само,
+ * и клиентский таймаут запроса роли не играет.
  */
-export function useSmartGroupingJob(estimateId: string, contractorIds: string[], enabled: boolean) {
+export function useSmartGroupingJob(estimateId: string, enabled: boolean) {
   return useQuery({
-    queryKey: KEY(estimateId, contractorIds),
-    queryFn: () => getLatestGroupingJob(estimateId, contractorIds),
+    queryKey: KEY(estimateId),
+    queryFn: () => getLatestGroupingJob(estimateId),
     enabled: enabled && !!estimateId,
-    refetchInterval: (q) => {
-      const s = q.state.data?.data?.status;
-      return s === 'running' || s === 'pending' ? 1500 : false;
-    },
+    // Поллим по active, а не по data: data — это последний готовый результат, и во время
+    // пересчёта он остаётся 'ready'.
+    refetchInterval: (q) => (q.state.data?.active ? 1500 : false),
   });
 }
 
-export function useRunSmartGrouping(estimateId: string, contractorIds: string[]) {
+/** Пересчёт (админ). Настройки и область не передаются — их определяет сервер. */
+export function useRunSmartGrouping(estimateId: string) {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
   return useMutation({
-    mutationFn: (vars: { settings: GroupingSettings; force?: boolean }) =>
+    mutationFn: (vars: { force?: boolean } = {}) =>
       createGroupingJob({
         estimateId,
-        contractorIds: contractorIds.length ? contractorIds : undefined,
-        settings: vars.settings,
         clientRequestId: crypto.randomUUID(),
         force: vars.force,
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY(estimateId, contractorIds) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY(estimateId) }),
     onError: (err: Error) => {
       // Понятный текст вместо «409»: занято другим прогоном либо ИИ не настроен.
       const code = err instanceof ApiError ? (err.data as { code?: string } | undefined)?.code : undefined;
       if (code === 'already_running') {
-        message.info('Группировка по этим материалам уже выполняется');
-        queryClient.invalidateQueries({ queryKey: KEY(estimateId, contractorIds) });
+        message.info('Группировка по этой смете уже выполняется');
+        queryClient.invalidateQueries({ queryKey: KEY(estimateId) });
         return;
       }
       message.error(err.message);
@@ -53,12 +50,12 @@ export function useRunSmartGrouping(estimateId: string, contractorIds: string[])
   });
 }
 
-export function useCancelSmartGrouping(estimateId: string, contractorIds: string[]) {
+export function useCancelSmartGrouping(estimateId: string) {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
   return useMutation({
     mutationFn: (id: string) => cancelGroupingJob(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY(estimateId, contractorIds) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY(estimateId) }),
     onError: (err: Error) => message.error(err.message),
   });
 }

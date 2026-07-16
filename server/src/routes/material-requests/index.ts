@@ -159,8 +159,13 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
 
   // ============================================================
   // GET /api/material-requests/ordered?estimateId=&contractorIds=
-  //   Заказанное количество по материалам (cost_type_id, agg_key).
+  //   Заказанное количество и цена по материалам (cost_type_id, agg_key) + число заявок.
   //   Подрядчик — только по своей организации; сотрудник — по фильтру или суммарно.
+  //
+  //   Цена берётся из оформленной закупки, а не из сметы: сметный unit_price материала заполнен
+  //   у единиц позиций, и показывать его как стоимость материалов нельзя. Связь с заявкой — через
+  //   supplier_order_items (у закупки supplier_orders.request_id не заполняется: один лот сводит
+  //   несколько заявок).
   // ============================================================
   fastify.get<{ Querystring: { estimateId?: string; contractorIds?: string } }>(
     '/ordered',
@@ -173,7 +178,7 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
       let where = 'mr.estimate_id = $1';
 
       if (isContractor(user)) {
-        if (!user.orgId) return { data: [] };
+        if (!user.orgId) return { data: [], meta: { requestCount: 0 } };
         values.push(user.orgId);
         where += ` AND mr.contractor_id = $${values.length}`;
       } else if (request.query.contractorIds) {
@@ -184,15 +189,44 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // priced_qty/priced_amount отдаём раздельно: цена по материалу — средневзвешенная по
+      // фактически заказанному количеству (закупок с разной ценой может быть несколько).
+      // Цена — без НДС, как она сохранена в строке заказа.
       const { rows } = await fastify.pool.query(
-        `SELECT mri.cost_type_id, mri.agg_key, SUM(mri.quantity)::numeric AS ordered_qty
-           FROM material_request_items mri
-           JOIN material_requests mr ON mr.id = mri.request_id
-          WHERE ${where}
-          GROUP BY mri.cost_type_id, mri.agg_key`,
+        `WITH ordered AS (
+           SELECT mri.cost_type_id, mri.agg_key, SUM(mri.quantity)::numeric AS ordered_qty
+             FROM material_request_items mri
+             JOIN material_requests mr ON mr.id = mri.request_id
+            WHERE ${where}
+            GROUP BY mri.cost_type_id, mri.agg_key
+         ), priced AS (
+           SELECT soi.cost_type_id,
+                  soi.agg_key,
+                  SUM(soi.quantity)::numeric                  AS priced_qty,
+                  SUM(soi.quantity * pl.unit_price)::numeric  AS priced_amount
+             FROM supplier_order_items soi
+             JOIN supplier_orders so
+               ON so.id = soi.order_id AND so.kind = 'sourcing' AND so.sourcing_status = 'awarded'
+             JOIN supplier_order_price_lines pl
+               ON pl.order_id = soi.order_id AND pl.agg_key = soi.agg_key
+             JOIN material_requests mr ON mr.id = soi.request_id
+            WHERE ${where} AND mr.status <> 'cancelled'
+            GROUP BY soi.cost_type_id, soi.agg_key
+         )
+         SELECT o.cost_type_id, o.agg_key, o.ordered_qty, p.priced_qty, p.priced_amount
+           FROM ordered o
+           LEFT JOIN priced p
+             ON p.agg_key = o.agg_key
+            AND p.cost_type_id IS NOT DISTINCT FROM o.cost_type_id`,
         values,
       );
-      return { data: rows };
+
+      // Счётчик для виджета в шапке — иначе клиент тянул бы ради одного числа список заявок.
+      const cnt = await fastify.pool.query(
+        `SELECT COUNT(*)::int AS n FROM material_requests mr WHERE ${where}`,
+        values,
+      );
+      return { data: rows, meta: { requestCount: cnt.rows[0]?.n ?? 0 } };
     },
   );
 

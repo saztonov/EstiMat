@@ -28,6 +28,24 @@ export function collectNodeKeys(nodes: MaterialTreeNode[]): string[] {
 
 const HEAD_FONT = [15, 14, 13, 13];
 
+/**
+ * Итог узла в ₽ — только по строкам с известной ценой закупки. Без единой цены суммы нет вовсе
+ * (не «0 ₽»), при неполном покрытии честно пишем, сколько позиций оценено.
+ */
+function NodeTotal({ node }: { node: MaterialTreeNode }) {
+  if (node.pricedRowCount === 0) return null;
+  return (
+    <>
+      <span style={{ color: '#1677ff' }}>{formatMoney(node.total)}</span>
+      {node.pricedRowCount < node.rowCount && (
+        <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+          оценено {node.pricedRowCount} из {node.rowCount}
+        </span>
+      )}
+    </>
+  );
+}
+
 // Дерево группировки. Ветки рендерятся лениво: содержимое свёрнутого узла не строится вовсе —
 // при всех включённых уровнях узлов сотни, и разом они дали бы сотни таблиц.
 export function MaterialTreeView({ nodes, columns, collapsed, onToggle }: Props) {
@@ -59,17 +77,24 @@ function TreeNodeView({
         onClick={() => onToggle(node.key)}
       >
         {isCollapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+        {/* Уровни «Локация» и «Тип работы» без подписи читались как случайные бейджи: из заголовка
+            не было видно, по какому признаку разделены материалы. */}
         {node.badges ? (
-          <LocationBadgesRow
-            zoneNames={node.badges.zoneNames}
-            floorsLabel={node.badges.floorsLabel}
-            typeLabels={[]}
-          />
+          <>
+            <span style={{ color: '#8c8c8c', fontSize: 13 }}>Местоположение:</span>
+            <LocationBadgesRow
+              zoneNames={node.badges.zoneNames}
+              floorsLabel={node.badges.floorsLabel}
+              typeLabels={[]}
+            />
+          </>
         ) : (
-          <strong style={{ fontSize: HEAD_FONT[Math.min(depth, HEAD_FONT.length - 1)] }}>{node.label}</strong>
+          <strong style={{ fontSize: HEAD_FONT[Math.min(depth, HEAD_FONT.length - 1)] }}>
+            {node.level === 'locationType' ? `Тип: ${node.label}` : node.label}
+          </strong>
         )}
         <span style={{ color: '#8c8c8c', fontSize: 12 }}>{node.rowCount} поз.</span>
-        <span style={{ color: '#1677ff' }}>{formatMoney(node.total)}</span>
+        <NodeTotal node={node} />
       </Space>
       {!isCollapsed && (
         <>

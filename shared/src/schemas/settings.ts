@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { aiCatalogSourceSchema, type AiCatalogSource } from './ai.js';
+import { groupingSettingsSchema, type GroupingSettings } from './material-grouping.js';
 
 // Глобальные настройки приложения (вкладка «Настройки» в администрировании).
 export interface AppSettings {
@@ -22,6 +23,12 @@ export interface AppSettings {
   aiChatModelDefault: string;
   /** Режим Qwen (LM Studio) без рассуждений: добавлять /no_think в промпт. */
   aiQwenNoThink: boolean;
+  /**
+   * Границы групп для умной группировки материалов. Настройка общая для всех: результат один
+   * на смету, поэтому уровни задаёт администратор, а не каждый пользователь у себя.
+   * Изменение делает готовые результаты устаревшими — они пересчитаются при следующем открытии.
+   */
+  materialGroupingLevels: GroupingSettings;
 }
 
 export const updateAppSettingsSchema = z.object({
@@ -31,6 +38,7 @@ export const updateAppSettingsSchema = z.object({
   aiModelDefault: z.string().optional(),
   aiChatModelDefault: z.string().optional(),
   aiQwenNoThink: z.boolean().optional(),
+  materialGroupingLevels: groupingSettingsSchema.optional(),
 });
 
 export type UpdateAppSettingsInput = z.infer<typeof updateAppSettingsSchema>;

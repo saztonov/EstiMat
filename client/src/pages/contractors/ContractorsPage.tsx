@@ -8,11 +8,12 @@ import { placeholderCover } from '../../components/shared/placeholderCover';
 import { useAuthStore } from '../../store/authStore';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { useProjectZones } from '../../hooks/useProjectLocations';
-import { buildZoneIndex } from '../estimates/components/LocationBadges';
+import { buildZoneIndex, type ZoneIndex } from '../estimates/components/LocationBadges';
 import { formatMoney, type EstimateDetail, type EstimateItem } from '../estimates/components/types';
 import { ContractorsSmetaTab } from './ContractorsSmetaTab';
 import { ContractorsMaterialsTab } from './ContractorsMaterialsTab';
 import { ContractorsRequestsTab } from './ContractorsRequestsTab';
+import { useMaterialsSummary } from './materials/useMaterialsSummary';
 
 // Строка списка объектов раздела (поля зависят от роли — см. /api/contractors/estimates).
 // Карточка = объект; у объекта одна смета (estimate_id = null, если смета не заведена).
@@ -95,6 +96,46 @@ function ObjectList() {
   );
 }
 
+/**
+ * Сводка по объекту в шапке: постоянный ориентир на всех вкладках. Считается по всей доступной
+ * пользователю смете и не зависит от отборов вкладки «Материалы».
+ */
+function MaterialsSummaryWidget({
+  estimateId,
+  items,
+  viewerIsContractor,
+  zoneIndex,
+}: {
+  estimateId: string;
+  items: EstimateItem[];
+  viewerIsContractor: boolean;
+  zoneIndex: ZoneIndex;
+}) {
+  const { positions, orderedPositions, requestCount } = useMaterialsSummary(
+    estimateId,
+    items,
+    viewerIsContractor,
+    zoneIndex,
+  );
+  if (positions === 0) return null;
+  return (
+    <Space size={12} style={{ fontWeight: 400, fontSize: 13 }}>
+      <span>
+        <span style={{ color: '#8c8c8c' }}>Итого: </span>
+        {positions} поз.
+      </span>
+      <span>
+        <span style={{ color: '#8c8c8c' }}>Заказано: </span>
+        {orderedPositions}
+      </span>
+      <span>
+        <span style={{ color: '#8c8c8c' }}>Заказов: </span>
+        {requestCount}
+      </span>
+    </Space>
+  );
+}
+
 export function ContractorsPage() {
   const navigate = useNavigate();
   const { estimateId } = useParams<{ estimateId?: string }>();
@@ -154,9 +195,15 @@ export function ContractorsPage() {
   return (
     <Card
       title={
-        <Space>
+        <Space size={16}>
           <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/contractors')} />
           {title}
+          <MaterialsSummaryWidget
+            estimateId={estimateId}
+            items={items}
+            viewerIsContractor={viewerIsContractor}
+            zoneIndex={zoneIndex}
+          />
         </Space>
       }
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
@@ -193,6 +240,7 @@ export function ContractorsPage() {
                   estimateId={estimateId}
                   items={items}
                   viewerIsContractor={viewerIsContractor}
+                  isAdmin={role === 'admin'}
                   zones={zones}
                   zoneIndex={zoneIndex}
                 />

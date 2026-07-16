@@ -79,15 +79,17 @@ export type MaterialRequestStatus = (typeof MATERIAL_REQUEST_STATUSES)[number];
 
 // Вид (маршрут) заявки. Подрядчик выбирает при создании:
 //   own_supplier — оплата через распределительное письмо (РП): свой поставщик;
-//   su10         — закупка через СУ-10 (снабжение выбирает поставщика, ведёт заказ);
-//   own_supply   — собственная закупка подрядчиком.
+//   su10         — материалы закупает СУ-10 и передаёт подрядчику как давальческие
+//                  (снабжение выбирает поставщика, ведёт заказ);
+//   own_supply   — подрядчик закупает сам.
+// Коды в БД историчны и не меняются — подписи ниже независимы от них.
 export const MATERIAL_REQUEST_TYPES = ['own_supplier', 'su10', 'own_supply'] as const;
 export type MaterialRequestType = (typeof MATERIAL_REQUEST_TYPES)[number];
 
 export const MATERIAL_REQUEST_TYPE_LABELS: Record<MaterialRequestType, string> = {
   own_supplier: 'Оплата по РП',
-  su10: 'Закупка через СУ-10',
-  own_supply: 'Собственная закупка',
+  su10: 'Давальческие материалы',
+  own_supply: 'Закупка подрядчиком',
 };
 
 // Типы прикрепляемых документов (снимок операционного справочника BillHub) + платёжный.

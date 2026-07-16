@@ -5,8 +5,13 @@ import { z } from 'zod';
  *
  * Модель возвращает только состав групп и признаки проверки. Количества, суммы и «Заказано»
  * клиент присоединяет из живого свода по ключу заказа — модель их не видит и менять не может.
+ *
+ * Результат один на смету и одинаков для всех: считается по полному объёму сметы, ставится
+ * автоматически (назначение подрядчика, изменение состава), пересчитывается только админом.
+ * Подрядчику ответ обрезается на сервере до его строк (lib/material-grouping/project.ts).
  */
 
+/** Границы групп для модели. Настройка глобальная (app_settings), задаётся администратором. */
 export const groupingSettingsSchema = z.object({
   /** true — материалы разных видов работ объединять нельзя. */
   costType: z.boolean(),
@@ -14,6 +19,13 @@ export const groupingSettingsSchema = z.object({
   locationType: z.boolean(),
 });
 export type GroupingSettings = z.infer<typeof groupingSettingsSchema>;
+
+/** Значение по умолчанию — то же, что привычный вид вкладки: разделять только по виду работ. */
+export const DEFAULT_GROUPING_SETTINGS: GroupingSettings = {
+  costType: true,
+  location: false,
+  locationType: false,
+};
 
 /**
  * Две независимые оси вместо одного статуса: «комплект неполон» и «есть возможная
@@ -93,16 +105,40 @@ export const groupingJobSchema = z.object({
 export type GroupingJob = z.infer<typeof groupingJobSchema>;
 
 /**
- * Клиент передаёт только область и настройки: состав строк, названия и количества сервер
- * собирает из БД сам — иначе содержимое запроса к модели стало бы управляемым из браузера.
+ * Клиент передаёт только смету: состав строк, количества и настройки сервер берёт сам —
+ * иначе содержимое запроса к модели стало бы управляемым из браузера, а результат перестал бы
+ * быть одинаковым для всех. Ручной запуск — это «Пересчитать» у администратора.
  */
 export const createGroupingJobSchema = z.object({
   estimateId: z.string().uuid(),
-  /** Отбор по подрядчикам (только для сотрудников). */
-  contractorIds: z.array(z.string().uuid()).optional(),
-  settings: groupingSettingsSchema,
   clientRequestId: z.string().uuid(),
   /** Пересчитать, даже если готовый результат с тем же входом уже есть. */
   force: z.boolean().optional(),
 });
 export type CreateGroupingJobInput = z.infer<typeof createGroupingJobSchema>;
+
+/** Идущий расчёт: только прогресс, результата у него ещё нет. */
+export interface GroupingProgress {
+  id: string;
+  status: 'pending' | 'running';
+  batchesDone: number;
+  batchesTotal: number;
+}
+
+/**
+ * Ответ GET /jobs/latest.
+ *
+ * `data` — последний ГОТОВЫЙ результат, если он есть (иначе последнее задание). Пересчёт идёт
+ * 10–25 минут, и на это время экран не должен пустеть: старый результат остаётся видимым, а о
+ * пересчёте сообщает `active`.
+ * `active` — идущий расчёт (может соседствовать с готовым `data`).
+ * `available` — настроен ли ИИ-провайдер (готовый результат отдаётся и без него).
+ * `stale` — вход сметы изменился после расчёта; считает сервер по input_hash (клиент сам этого
+ * знать не может: у подрядчика на руках только его часть строк).
+ */
+export interface LatestGroupingJobResponse {
+  data: GroupingJob | null;
+  active: GroupingProgress | null;
+  available: boolean;
+  stale: boolean;
+}

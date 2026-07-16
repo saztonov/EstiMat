@@ -33,6 +33,14 @@ export interface OrderMaterialRow extends AggregatedMaterial {
   costTypeId: string | null;
   costTypeName: string | null;
   category: CategoryRef;
+  /**
+   * Цена материала из оформленной закупки (без НДС); null — материал ещё не закупали.
+   * Отдельное поле, а не унаследованный unitPrice: тот сметный, заполнен у единиц позиций и
+   * во вкладке не показывается. Заполняется applyOrderPrices() — см. ./prices.
+   */
+  orderUnitPrice: number | null;
+  /** Стоимость материала = quantity × orderUnitPrice; null — цены нет (не 0 ₽). */
+  materialCost: number | null;
   /** Ключ уровня «Локация»: набор геометрий работ-источников, БЕЗ типа (тип — свой уровень). */
   locationSig: string;
   /** Ключ уровня «Тип работы»: набор типов работ-источников. */
@@ -102,6 +110,9 @@ function toOrderRow(
     costTypeId: g.costTypeId,
     costTypeName: g.costTypeName,
     category,
+    // Цены приходят отдельным запросом (заявки/закупки) — их подставляет applyOrderPrices.
+    orderUnitPrice: null,
+    materialCost: null,
     locationSig: [...geo].sort().join(';'),
     typeSig: [...types].sort().join(';'),
     zoneNames: [...zoneNames],

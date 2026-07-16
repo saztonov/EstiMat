@@ -15,7 +15,7 @@ import { withLmStudioSlot } from '../llm/limiter.js';
 import { resolveAiModel, resolveQwenNoThink } from '../llm/settings.js';
 import { resolvePrompt } from '../llm/prompts.js';
 import { chatJsonOnce } from '../llm/chat-json.js';
-import { loadGroupingLines, type LoadScope } from './input.js';
+import { loadGroupingLines } from './input.js';
 import { planBatches, partitionsNeedingMerge } from './batch.js';
 import { buildSystemPrompt, buildBatchUserPrompt, buildMergeUserPrompt } from './prompt.js';
 import { parseBatchResponse, parseMergeResponse } from './parse.js';
@@ -43,7 +43,7 @@ export function abortGroupingJob(jobId: string): void {
   runningJobs.get(jobId)?.abort();
 }
 
-/** Снимок промптов/режима, зафиксированный при создании задания (см. routes/material-grouping). */
+/** Снимок промптов/режима, зафиксированный при создании задания (см. lib/material-grouping/enqueue). */
 interface JobSnapshot {
   groupingSystem?: string;
   groupingMerge?: string;
@@ -54,8 +54,7 @@ interface JobSnapshot {
 interface JobRow {
   id: string;
   estimate_id: string;
-  scope_org_id: string | null;
-  payload: { contractorIds?: string[]; snapshot?: JobSnapshot };
+  payload: { snapshot?: JobSnapshot };
   settings: GroupingSettings;
   attempts: number;
   max_attempts: number;
@@ -83,7 +82,7 @@ async function claim(fastify: FastifyInstance, jobId: string): Promise<JobRow | 
         AND status IN ('pending', 'running')
         AND next_run_at <= now()
         AND (locked_until IS NULL OR locked_until < now())
-      RETURNING id, estimate_id, scope_org_id, payload, settings, attempts, max_attempts, checkpoint`,
+      RETURNING id, estimate_id, payload, settings, attempts, max_attempts, checkpoint`,
     [jobId, WORKER_ID, String(LOCK_TTL_MS)],
   );
   return rows[0] ?? null;
@@ -118,13 +117,8 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
   const started = Date.now();
 
   try {
-    const scope: LoadScope = {
-      estimateId: job.estimate_id,
-      orgId: job.scope_org_id,
-      contractorIds: job.payload?.contractorIds ?? [],
-    };
-    const lines = await loadGroupingLines(fastify.pool, scope);
-    if (lines.length === 0) throw new Error('В выбранной области нет материалов');
+    const lines = await loadGroupingLines(fastify.pool, job.estimate_id);
+    if (lines.length === 0) throw new Error('В смете нет материалов');
 
     // Промпты/модель/режим берём ИЗ СНИМКА задания — resume и retry обязаны идти на том же
     // тексте, что и первый прогон и что учтён в input_hash. Fallback (резолв из БД) — только для

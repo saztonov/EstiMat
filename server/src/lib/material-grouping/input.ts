@@ -1,25 +1,18 @@
 /**
  * Канонический вход для группировки — собирается ТОЛЬКО из БД.
  *
- * Клиент присылает область (смета, отбор по подрядчикам) и настройки; названия, количества и
- * контексты сервер читает сам. Иначе содержимое запроса к модели было бы управляемым из
- * браузера, а вход мог бы разъехаться с тем, что реально лежит в смете.
+ * Клиент присылает смету; названия, количества и контексты сервер читает сам. Иначе содержимое
+ * запроса к модели было бы управляемым из браузера, а вход мог бы разъехаться с тем, что реально
+ * лежит в смете.
+ *
+ * Вход — всегда ПОЛНЫЙ объём сметы, без масштабирования по долям подрядчиков: результат один на
+ * смету и одинаков для всех. Отбор под конкретного подрядчика — это проекция готового результата
+ * (project.ts), а не отдельный расчёт.
  */
 import { createHash } from 'node:crypto';
 import { aggKey, lineKey, type GroupingSettings } from '@estimat/shared';
 import type { Pool } from 'pg';
 import type { GroupingLine } from './types.js';
-
-/** Доля подрядчика в строке — та же формула, что в /contractors/my-items. */
-const EFFECTIVE = `COALESCE(eic.assigned_qty, ei.quantity * eic.assigned_percent / 100.0, ei.quantity)`;
-
-export interface LoadScope {
-  estimateId: string;
-  /** Подрядчик: только его назначенные работы, количества масштабируются по доле. */
-  orgId: string | null;
-  /** Сотрудник: отбор по подрядчикам (пусто — вся смета). */
-  contractorIds: string[];
-}
 
 interface RawRow {
   cost_type_id: string | null;
@@ -63,26 +56,10 @@ function locationLabel(r: RawRow): string {
 }
 
 /**
- * Собрать строки материалов, видимые в заданной области, свёрнутые по ключу заказа
- * (вид работ + материал) — ровно так же, как их видит вкладка.
+ * Собрать строки материалов сметы, свёрнутые по ключу заказа (вид работ + материал) —
+ * ровно так же, как их видит вкладка.
  */
-export async function loadGroupingLines(pool: Pool, scope: LoadScope): Promise<GroupingLine[]> {
-  const contractorScoped = scope.orgId !== null || scope.contractorIds.length > 0;
-  const qtyExpr = scope.orgId
-    // Подрядчику показываем его долю: материал масштабируется отношением его объёма к общему.
-    ? `em.quantity * (${EFFECTIVE} / NULLIF(ei.quantity, 0))`
-    : 'em.quantity';
-
-  const params: unknown[] = [scope.estimateId];
-  let contractorJoin = '';
-  if (scope.orgId) {
-    params.push(scope.orgId);
-    contractorJoin = `JOIN estimate_item_contractors eic ON eic.item_id = ei.id AND eic.contractor_id = $2`;
-  } else if (scope.contractorIds.length > 0) {
-    params.push(scope.contractorIds);
-    contractorJoin = `JOIN estimate_item_contractors eic ON eic.item_id = ei.id AND eic.contractor_id = ANY($2::uuid[])`;
-  }
-
+export async function loadGroupingLines(pool: Pool, estimateId: string): Promise<GroupingLine[]> {
   const { rows } = await pool.query<RawRow>(
     `SELECT ei.cost_type_id,
             ct.name  AS cost_type_name,
@@ -91,7 +68,7 @@ export async function loadGroupingLines(pool: Pool, scope: LoadScope): Promise<G
             em.material_id,
             COALESCE(mc.name, em.description, 'Материал') AS name,
             em.unit,
-            (${qtyExpr})::numeric AS quantity,
+            em.quantity::numeric AS quantity,
             mg.name  AS material_group_name,
             ei.id    AS work_id,
             ei.description AS work_name,
@@ -103,7 +80,6 @@ export async function loadGroupingLines(pool: Pool, scope: LoadScope): Promise<G
             ei.location_type_id,
             lt.name  AS location_type_name
        FROM estimate_items ei
-       ${contractorJoin}
        JOIN estimate_materials em ON em.item_id = ei.id
        LEFT JOIN material_catalog mc ON mc.id = em.material_id
        LEFT JOIN material_groups mg  ON mg.id = mc.group_id
@@ -112,9 +88,8 @@ export async function loadGroupingLines(pool: Pool, scope: LoadScope): Promise<G
        LEFT JOIN project_zones z     ON z.id = ei.zone_id
        LEFT JOIN project_location_types lt ON lt.id = ei.location_type_id
       WHERE ei.estimate_id = $1`,
-    params,
+    [estimateId],
   );
-  void contractorScoped;
 
   // Свёртка по ключу заказа: строка атомарна, вхождения дают только контекст.
   const byKey = new Map<string, GroupingLine & { geo: Set<string>; types: Set<string>; works: Set<string> }>();
@@ -221,12 +196,40 @@ export function computeEffectivePromptVersion(
   return `${version}:${createHash('sha256').update(canonical).digest('hex')}`;
 }
 
-/** Хэш области: смета + чей это срез. Разные срезы не делят кэш и активную блокировку. */
-export function computeScopeHash(scope: LoadScope): string {
-  const canonical = JSON.stringify({
-    estimateId: scope.estimateId,
-    orgId: scope.orgId ?? '',
-    contractorIds: [...scope.contractorIds].sort(),
-  });
-  return createHash('sha256').update(canonical).digest('hex');
+/**
+ * Хэш области. Область — только смета: результат общий, поэтому уникальный индекс
+ * uq_mgj_active_scope (estimate_id, scope_hash) даёт ровно одно активное задание на смету.
+ *
+ * Значение намеренно отличается от прежнего (смета + организация + отбор): старые персональные
+ * задания перестают находиться и уходят по retention, а не подмешиваются в общий результат.
+ */
+export function computeScopeHash(estimateId: string): string {
+  return createHash('sha256').update(JSON.stringify({ estimateId })).digest('hex');
+}
+
+/**
+ * Ключи заказа строк, назначенных подрядчику, — для проекции общего результата (project.ts).
+ * Только ключи: количества подрядчик и так считает у себя из своего свода.
+ *
+ * Доля подрядчика в строке — та же формула, что в /contractors/my-items; на состав ключей она не
+ * влияет (материал либо есть в его работе, либо нет), поэтому здесь важен сам факт назначения.
+ */
+export async function loadContractorOrderKeys(
+  pool: Pool,
+  estimateId: string,
+  orgId: string,
+): Promise<Set<string>> {
+  const { rows } = await pool.query<{ cost_type_id: string | null; material_id: string | null; name: string; unit: string }>(
+    `SELECT DISTINCT ei.cost_type_id,
+            em.material_id,
+            COALESCE(mc.name, em.description, 'Материал') AS name,
+            em.unit
+       FROM estimate_items ei
+       JOIN estimate_item_contractors eic ON eic.item_id = ei.id AND eic.contractor_id = $2
+       JOIN estimate_materials em ON em.item_id = ei.id
+       LEFT JOIN material_catalog mc ON mc.id = em.material_id
+      WHERE ei.estimate_id = $1`,
+    [estimateId, orgId],
+  );
+  return new Set(rows.map((r) => lineKey(r.cost_type_id, aggKey(r.material_id, r.name, r.unit))));
 }

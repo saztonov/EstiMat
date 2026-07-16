@@ -10,12 +10,18 @@ import type {
   MaterialOccurrence,
 } from '../../estimates/materials/aggregateMaterials';
 import { buildOrderRows, type CategoryIndex } from './orderRow';
-import {
-  LEVEL_PRESETS,
-  buildMaterialTree,
-  flattenTreeRows,
-  type MaterialLevelSettings,
-} from './materialTree';
+import { buildMaterialTree, flattenTreeRows, type MaterialLevelSettings } from './materialTree';
+
+// Все комбинации уровней. Раньше здесь был список готовых пресетов из UI; пресеты убраны
+// (переключатели остались), а инвариант обязан держаться при любом их сочетании.
+const ALL_LEVEL_COMBOS: { label: string; levels: MaterialLevelSettings }[] = [true, false].flatMap((costType) =>
+  [true, false].flatMap((location) =>
+    [true, false].map((locationType) => ({
+      label: `costType=${costType} location=${location} locationType=${locationType}`,
+      levels: { costType, location, locationType },
+    })),
+  ),
+);
 
 // ---------- фикстуры ----------
 
@@ -113,10 +119,10 @@ const sum = (xs: { quantity: number; total: number }[]) => ({
 
 // ---------- сходимость ----------
 
-test('дерево сохраняет количество и сумму при любом пресете', () => {
+test('дерево сохраняет количество и сумму при любом сочетании уровней', () => {
   const rows = rowsOf();
   const expected = sum(rows);
-  for (const preset of LEVEL_PRESETS) {
+  for (const preset of ALL_LEVEL_COMBOS) {
     const leaves = flattenTreeRows(buildMaterialTree(rows, preset.levels));
     const actual = sum(leaves);
     assert.equal(leaves.length, rows.length, `${preset.label}: строк в дереве`);
@@ -125,9 +131,9 @@ test('дерево сохраняет количество и сумму при 
   }
 });
 
-test('каждый ключ заказа встречается в дереве ровно один раз при любом пресете', () => {
+test('каждый ключ заказа встречается в дереве ровно один раз при любом сочетании уровней', () => {
   const rows = rowsOf();
-  for (const preset of LEVEL_PRESETS) {
+  for (const preset of ALL_LEVEL_COMBOS) {
     const leaves = flattenTreeRows(buildMaterialTree(rows, preset.levels));
     const keys = leaves.map((r) => r.orderKey);
     assert.equal(new Set(keys).size, keys.length, `${preset.label}: ключи задвоены`);

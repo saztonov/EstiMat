@@ -83,14 +83,31 @@ export function buildMaterialColumns({
     },
     { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
     {
-      title: 'По смете',
+      title: 'Кол-во по смете',
       dataIndex: 'quantity',
       key: 'quantity',
-      width: 110,
+      width: 130,
       align: 'right',
       render: (v: number) => qty(v),
     },
-    { title: 'Сумма', dataIndex: 'total', key: 'total', width: 140, align: 'right', render: (v: number) => formatMoney(v) },
+    // Цена и сумма — из оформленной закупки, а не из сметы. Пока материал не закупали, цены нет:
+    // показываем прочерк, а не 0 ₽ — иначе бесплатный материал не отличить от неизвестной цены.
+    {
+      title: <Tooltip title="Цена из заказа поставщику (без НДС). Здесь не заполняется">Цена</Tooltip>,
+      key: 'price',
+      width: 120,
+      align: 'right',
+      render: (_, m) =>
+        m.orderUnitPrice == null ? <span style={{ color: '#bfbfbf' }}>—</span> : formatMoney(m.orderUnitPrice),
+    },
+    {
+      title: <Tooltip title="Кол-во по смете × цена из заказа поставщику">Сумма</Tooltip>,
+      key: 'total',
+      width: 140,
+      align: 'right',
+      render: (_, m) =>
+        m.materialCost == null ? <span style={{ color: '#bfbfbf' }}>—</span> : formatMoney(m.materialCost),
+    },
     {
       title: (
         <Tooltip

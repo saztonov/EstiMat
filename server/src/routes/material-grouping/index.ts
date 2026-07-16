@@ -1,30 +1,37 @@
 /**
  * Умная группировка материалов сметы (ИИ).
  *
- * Доступ — по смете, а не по роли: представление доступно всем, кто видит вкладку «Материалы»,
- * включая подрядчика. Поэтому requireRole здесь не применяется; подрядчик проверяется через
- * назначение объекта его организации, сотрудник — общим слоем доступа к сметам.
+ * Результат ОДИН на смету и одинаков для всех: он не запускается пользователем и не зависит от
+ * его отборов. Постановка задания — автоматическая (lib/material-grouping/enqueue.ts), здесь
+ * только чтение и «Пересчитать» для администратора.
  *
- * Клиент передаёт только область и настройки. Состав строк, названия и количества сервер
- * собирает из БД сам (lib/material-grouping/input.ts).
+ * Доступ к чтению — по смете, а не по роли: вкладку видит и подрядчик. Ему ответ обрезается до
+ * его строк (lib/material-grouping/project.ts) — общий результат содержит названия материалов
+ * всей сметы.
  */
 import type { FastifyInstance } from 'fastify';
-import { createGroupingJobSchema, type GroupingJob, type GroupingSettings } from '@estimat/shared';
+import { createGroupingJobSchema, type GroupingJob, type GroupingResult } from '@estimat/shared';
 import { authenticate } from '../../middleware/authenticate.js';
+import { requireRole } from '../../middleware/requireRole.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import { assertContractorEstimateAccess } from '../../lib/material-requests/access.js';
 import { loadLlmRuntime, resolveLlmEndpoint } from '../../lib/llm/endpoint.js';
-import { resolveAiModel, resolveQwenNoThink } from '../../lib/llm/settings.js';
+import { resolveAiModel, resolveGroupingLevels, resolveQwenNoThink } from '../../lib/llm/settings.js';
 import { resolveAllPrompts } from '../../lib/llm/prompts.js';
 import {
   computeEffectivePromptVersion,
   computeInputHash,
-  computeScopeHash,
+  loadContractorOrderKeys,
   loadGroupingLines,
-  type LoadScope,
 } from '../../lib/material-grouping/input.js';
 import { PROMPT_VERSION } from '../../lib/material-grouping/prompt.js';
-import { abortGroupingJob, requeueStaleJobs, runGroupingJob } from '../../lib/material-grouping/run.js';
+import {
+  affectsGrouping,
+  ensureEstimateGrouping,
+  scheduleGroupingRefresh,
+} from '../../lib/material-grouping/enqueue.js';
+import { projectResultFor } from '../../lib/material-grouping/project.js';
+import { abortGroupingJob, requeueStaleJobs } from '../../lib/material-grouping/run.js';
 
 /** Задание живёт 30 дней: результат привязан к составу сметы и быстро устаревает. */
 const RETENTION_DAYS = 30;
@@ -36,7 +43,7 @@ interface CurrentUser {
   role: 'admin' | 'engineer' | 'contractor' | 'manager';
 }
 
-function mapJob(r: any): GroupingJob {
+function mapJob(r: any, result?: GroupingResult | null): GroupingJob {
   return {
     id: r.id,
     estimateId: r.estimate_id,
@@ -45,7 +52,7 @@ function mapJob(r: any): GroupingJob {
     inputHash: r.input_hash,
     batchesTotal: r.batches_total,
     batchesDone: r.batches_done,
-    result: r.result ?? null,
+    result: result !== undefined ? result : (r.result ?? null),
     warnings: r.warnings ?? [],
     error: r.last_error ?? null,
     model: r.model ?? null,
@@ -61,7 +68,18 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
   void requeueStaleJobs(fastify);
   const timer = setInterval(() => void requeueStaleJobs(fastify), REQUEUE_INTERVAL_MS);
   timer.unref();
-  fastify.addHook('onClose', async () => clearInterval(timer));
+
+  // Группировка безусловна: смету изменили — результат обновляется сам, без действий пользователя.
+  // Подписка одна на все сметы вместо вызова из каждого роута, который правит смету (их 11).
+  const unsubscribe = fastify.onEstimateChanged((event) => {
+    if (!affectsGrouping(event.reason)) return;
+    scheduleGroupingRefresh(fastify, event.estimateId);
+  });
+
+  fastify.addHook('onClose', async () => {
+    clearInterval(timer);
+    unsubscribe();
+  });
 
   fastify.pool
     .query(
@@ -71,17 +89,15 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     )
     .catch((err) => fastify.log.error({ err }, 'material grouping retention cleanup failed'));
 
-  /** Доступ к смете + область данных пользователя. */
-  async function resolveScope(estimateId: string, user: CurrentUser, contractorIds: string[]): Promise<LoadScope> {
+  /** Доступ к смете. Область больше не зависит от пользователя — результат общий. */
+  async function assertAccess(estimateId: string, user: CurrentUser): Promise<void> {
     if (user.role === 'contractor') {
       if (!user.orgId) throw new ChatAccessError('Пользователь не привязан к организации', 400);
       const ok = await assertContractorEstimateAccess(fastify.pool, estimateId, user.orgId);
       if (!ok) throw new ChatAccessError('Нет доступа к смете');
-      // Отбор по подрядчикам подрядчику недоступен: его область — только он сам.
-      return { estimateId, orgId: user.orgId, contractorIds: [] };
+      return;
     }
     await assertEstimateAccess(fastify.pool, estimateId, user);
-    return { estimateId, orgId: null, contractorIds };
   }
 
   function handleAccessError(err: unknown, reply: any): boolean {
@@ -92,131 +108,143 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     return false;
   }
 
-  // POST /jobs — создать задание (или отдать готовый результат с тем же входом).
-  fastify.post('/jobs', async (request, reply) => {
+  /** Актуален ли результат: сравниваем input_hash задания с хэшем текущего состава сметы. */
+  async function isStale(job: { estimate_id: string; input_hash: string }): Promise<boolean> {
+    const qualifiedModel = await resolveAiModel(fastify.pool);
+    const ep = resolveLlmEndpoint(qualifiedModel, await loadLlmRuntime(fastify.pool));
+    const lines = await loadGroupingLines(fastify.pool, job.estimate_id);
+    if (lines.length === 0) return false;
+    const settings = await resolveGroupingLevels(fastify.pool);
+    const prompts = await resolveAllPrompts(fastify.pool);
+    const noThink = ep.isLmStudio && (await resolveQwenNoThink(fastify.pool));
+    const promptVersion = computeEffectivePromptVersion(
+      PROMPT_VERSION,
+      prompts['grouping.system'],
+      prompts['grouping.merge'],
+      noThink,
+    );
+    return computeInputHash(lines, settings, qualifiedModel, promptVersion) !== job.input_hash;
+  }
+
+  /** Подрядчику — только его строки; сотруднику — полный результат. */
+  async function resultFor(job: any, user: CurrentUser): Promise<GroupingResult | null> {
+    const result = (job.result ?? null) as GroupingResult | null;
+    if (!result || user.role !== 'contractor' || !user.orgId) return result;
+    const visible = await loadContractorOrderKeys(fastify.pool, job.estimate_id, user.orgId);
+    return projectResultFor(result, visible);
+  }
+
+  // POST /jobs — «Пересчитать». Только админ: результат общий, и запуск затрагивает всех.
+  fastify.post('/jobs', { preHandler: [requireRole('admin')] }, async (request, reply) => {
     const body = createGroupingJobSchema.parse(request.body);
     const user = request.currentUser as CurrentUser;
 
-    let scope: LoadScope;
     try {
-      scope = await resolveScope(body.estimateId, user, body.contractorIds ?? []);
+      await assertAccess(body.estimateId, user);
     } catch (err) {
       if (handleAccessError(err, reply)) return;
       throw err;
     }
 
-    const qualifiedModel = await resolveAiModel(fastify.pool);
-    const ep = resolveLlmEndpoint(qualifiedModel, await loadLlmRuntime(fastify.pool));
-    // Задание не создаём вовсе: иначе останется вечный pending, который не подберёт даже
-    // watchdog (так устроены ai_jobs — здесь этот паттерн не повторяем).
-    if (!ep.enabled) {
+    const { job, reason } = await ensureEstimateGrouping(fastify, body.estimateId, {
+      actorUserId: user.id,
+      force: body.force ?? true,
+    });
+
+    if (reason === 'disabled') {
       return reply.status(409).send({ error: 'ИИ-провайдер не настроен', code: 'llm_disabled' });
     }
-
-    const lines = await loadGroupingLines(fastify.pool, scope);
-    if (lines.length === 0) return reply.status(422).send({ error: 'В выбранной области нет материалов' });
-    if (lines.length > 1600) {
-      return reply.status(422).send({ error: `Слишком много позиций (${lines.length}); лимит 1600` });
+    if (reason === 'empty') return reply.status(422).send({ error: 'В смете нет материалов' });
+    if (reason === 'too_many') return reply.status(422).send({ error: 'Слишком много позиций; лимит 1600' });
+    if (!job) {
+      return reply.status(409).send({ error: 'Группировка по этой смете уже выполняется', code: 'already_running' });
     }
-
-    const settings: GroupingSettings = body.settings;
-    const scopeHash = computeScopeHash(scope);
-
-    // Снимок промптов/режима — фиксируем на момент создания задания: input_hash, первый прогон и
-    // resume/retry обязаны работать на одном и том же тексте. Правка промпта из администрирования
-    // влияет только на новые задания.
-    const prompts = await resolveAllPrompts(fastify.pool);
-    const noThink = ep.isLmStudio && (await resolveQwenNoThink(fastify.pool));
-    const snapshot = {
-      groupingSystem: prompts['grouping.system'],
-      groupingMerge: prompts['grouping.merge'],
-      model: qualifiedModel,
-      noThink,
-    };
-    const effectiveVersion = computeEffectivePromptVersion(
-      PROMPT_VERSION,
-      snapshot.groupingSystem,
-      snapshot.groupingMerge,
-      noThink,
-    );
-    const inputHash = computeInputHash(lines, settings, qualifiedModel, effectiveVersion);
-
-    // Повтор того же запроса (двойной клик) — отдаём уже созданное задание.
-    const existing = await fastify.pool.query(
-      `SELECT * FROM material_grouping_jobs WHERE created_by = $1 AND client_request_id = $2`,
-      [user.id, body.clientRequestId],
-    );
-    if (existing.rows[0]) return reply.status(200).send({ data: mapJob(existing.rows[0]) });
-
-    if (!body.force) {
-      const cached = await fastify.pool.query(
-        `SELECT * FROM material_grouping_jobs
-          WHERE estimate_id = $1 AND scope_hash = $2 AND input_hash = $3 AND status = 'ready'
-          ORDER BY created_at DESC LIMIT 1`,
-        [scope.estimateId, scopeHash, inputHash],
-      );
-      if (cached.rows[0]) return reply.status(200).send({ data: mapJob(cached.rows[0]) });
-    }
-
-    try {
-      const { rows } = await fastify.pool.query(
-        `INSERT INTO material_grouping_jobs
-           (estimate_id, created_by, scope_org_id, scope_hash, input_hash, client_request_id,
-            settings, payload, input, model, prompt_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11)
-         RETURNING *`,
-        [
-          scope.estimateId,
-          user.id,
-          scope.orgId,
-          scopeHash,
-          inputHash,
-          body.clientRequestId,
-          JSON.stringify(settings),
-          JSON.stringify({ contractorIds: scope.contractorIds, snapshot }),
-          JSON.stringify({ lines: lines.length }),
-          `${ep.provider}:${ep.model}`,
-          effectiveVersion,
-        ],
-      );
-      const job = rows[0];
-      void runGroupingJob(fastify, job.id);
-      return reply.status(202).send({ data: mapJob(job) });
-    } catch (err: any) {
-      // uq_mgj_active_scope: по этой области уже что-то считается.
-      if (err?.code === '23505') {
-        return reply.status(409).send({
-          error: 'Группировка по этим материалам уже выполняется',
-          code: 'already_running',
-        });
-      }
-      throw err;
-    }
+    return reply.status(reason === 'created' ? 202 : 200).send({ data: mapJob(job, await resultFor(job, user)) });
   });
 
-  // GET /jobs/latest?estimateId= — последнее задание в области пользователя.
+  // GET /jobs/latest?estimateId= — общий результат сметы.
   fastify.get('/jobs/latest', async (request, reply) => {
-    const { estimateId, contractorIds } = request.query as { estimateId?: string; contractorIds?: string };
+    const { estimateId } = request.query as { estimateId?: string };
     if (!estimateId) return reply.status(400).send({ error: 'estimateId обязателен' });
     const user = request.currentUser as CurrentUser;
 
-    let scope: LoadScope;
     try {
-      scope = await resolveScope(estimateId, user, contractorIds ? contractorIds.split(',').filter(Boolean) : []);
+      await assertAccess(estimateId, user);
     } catch (err) {
       if (handleAccessError(err, reply)) return;
       throw err;
     }
 
     const ep = resolveLlmEndpoint(await resolveAiModel(fastify.pool), await loadLlmRuntime(fastify.pool));
-    const { rows } = await fastify.pool.query(
-      `SELECT * FROM material_grouping_jobs
-        WHERE estimate_id = $1 AND scope_hash = $2 AND created_by = $3
-        ORDER BY created_at DESC LIMIT 1`,
-      [scope.estimateId, computeScopeHash(scope), user.id],
-    );
+
+    // Готовый результат и идущий расчёт — разные задания: во время пересчёта (10–25 мин) экран
+    // не должен пустеть, поэтому показываем прежний результат и прогресс рядом.
+    const [readyRows, activeRows, lastRows] = await Promise.all([
+      fastify.pool.query(
+        `SELECT * FROM material_grouping_jobs
+          WHERE estimate_id = $1 AND status = 'ready' AND result IS NOT NULL
+          ORDER BY created_at DESC LIMIT 1`,
+        [estimateId],
+      ),
+      fastify.pool.query(
+        `SELECT id, status, batches_done, batches_total FROM material_grouping_jobs
+          WHERE estimate_id = $1 AND status IN ('pending', 'running')
+          ORDER BY created_at DESC LIMIT 1`,
+        [estimateId],
+      ),
+      fastify.pool.query(
+        `SELECT * FROM material_grouping_jobs WHERE estimate_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [estimateId],
+      ),
+    ]);
+
+    const ready = readyRows.rows[0] ?? null;
+    let activeRow = activeRows.rows[0] ?? null;
+    // Нет готового — показываем последнее задание: у него статус ошибки или отмены.
+    const job = ready ?? lastRows.rows[0] ?? null;
+
+    // Устаревание считает сервер: у подрядчика на руках лишь часть строк, сам он этого не увидит.
+    // Пока идёт расчёт — не считаем: и так известно, что результат обновляется, а проверка стоит
+    // полного чтения состава сметы (клиент в это время поллит раз в 1.5 с).
+    const stale = ready && !activeRow ? await isStale(ready) : false;
+
+    // Самовосстановление: группировка безусловна, поэтому отсутствие результата или устаревший
+    // результат — повод поставить задание. Событие с шины могло потеряться (reconnect LISTEN), а
+    // сметы, назначенные до этой версии, заданий не имеют вовсе.
+    // Ждём постановки, а не пускаем в фон: клиент включает поллинг по active, и без него экран
+    // «формируется» завис бы до ручного обновления страницы.
+    // failed/dead/cancelled не перезапускаем — иначе падающее задание крутилось бы в цикле.
+    if (!activeRow && (!job || stale)) {
+      try {
+        const ensured = await ensureEstimateGrouping(fastify, estimateId, { actorUserId: user.id });
+        if (ensured.job && (ensured.reason === 'created' || ensured.reason === 'active')) {
+          activeRow = {
+            id: ensured.job.id,
+            status: ensured.job.status,
+            batches_done: ensured.job.batches_done,
+            batches_total: ensured.job.batches_total,
+          };
+        }
+      } catch (err) {
+        // Не роняем чтение: показать имеющееся важнее, чем поставить пересчёт.
+        fastify.log.warn({ err, estimateId }, 'material grouping: lazy ensure failed');
+      }
+    }
+
     // Готовый результат остаётся доступен, даже если ИИ потом выключили.
-    return reply.send({ data: rows[0] ? mapJob(rows[0]) : null, available: ep.enabled });
+    return reply.send({
+      data: job ? mapJob(job, await resultFor(job, user)) : null,
+      active: activeRow
+        ? {
+            id: activeRow.id,
+            status: activeRow.status,
+            batchesDone: activeRow.batches_done,
+            batchesTotal: activeRow.batches_total,
+          }
+        : null,
+      available: ep.enabled,
+      stale,
+    });
   });
 
   // GET /jobs/:id
@@ -226,28 +254,27 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     const { rows } = await fastify.pool.query('SELECT * FROM material_grouping_jobs WHERE id = $1', [id]);
     const job = rows[0];
     if (!job) return reply.status(404).send({ error: 'Задание не найдено' });
-    // Чужое задание не отдаём: у подрядчика в срезе его цифры.
-    if (job.created_by !== user.id && user.role !== 'admin') {
-      return reply.status(403).send({ error: 'Нет доступа к заданию' });
-    }
     try {
-      await resolveScope(job.estimate_id, user, []);
+      await assertAccess(job.estimate_id, user);
     } catch (err) {
       if (handleAccessError(err, reply)) return;
       throw err;
     }
-    return reply.send({ data: mapJob(job) });
+    return reply.send({ data: mapJob(job, await resultFor(job, user)) });
   });
 
-  // POST /jobs/:id/cancel — идемпотентна.
-  fastify.post('/jobs/:id/cancel', async (request, reply) => {
+  // POST /jobs/:id/cancel — идемпотентна. Только админ: расчёт общий.
+  fastify.post('/jobs/:id/cancel', { preHandler: [requireRole('admin')] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const user = request.currentUser as CurrentUser;
     const { rows } = await fastify.pool.query('SELECT * FROM material_grouping_jobs WHERE id = $1', [id]);
     const job = rows[0];
     if (!job) return reply.status(404).send({ error: 'Задание не найдено' });
-    if (job.created_by !== user.id && user.role !== 'admin') {
-      return reply.status(403).send({ error: 'Нет доступа к заданию' });
+    try {
+      await assertAccess(job.estimate_id, user);
+    } catch (err) {
+      if (handleAccessError(err, reply)) return;
+      throw err;
     }
 
     abortGroupingJob(id);
@@ -258,6 +285,7 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
         RETURNING *`,
       [id],
     );
-    return reply.send({ data: mapJob(upd.rows[0] ?? job) });
+    const row = upd.rows[0] ?? job;
+    return reply.send({ data: mapJob(row, await resultFor(row, user)) });
   });
 }

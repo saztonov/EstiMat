@@ -50,6 +50,18 @@ type Sender = (event: EstimateChangedEvent) => void;
 // Реестр локальных подписчиков (WS-соединений) по estimateId.
 export class RealtimeRegistry {
   private readonly byEstimate = new Map<string, Set<Sender>>();
+  /** Серверные слушатели всех смет (не WS): фоновые реакции на изменение сметы. */
+  private readonly all = new Set<Sender>();
+
+  /**
+   * Подписка на события всех смет. В отличие от subscribe() это не клиентское соединение, а
+   * серверная реакция (например, пересчёт умной группировки), поэтому фильтрация по смете
+   * остаётся на стороне подписчика.
+   */
+  subscribeAll(send: Sender): () => void {
+    this.all.add(send);
+    return () => this.all.delete(send);
+  }
 
   subscribe(estimateId: string, send: Sender): () => void {
     let set = this.byEstimate.get(estimateId);
@@ -68,8 +80,7 @@ export class RealtimeRegistry {
 
   dispatch(event: EstimateChangedEvent): void {
     const set = this.byEstimate.get(event.estimateId);
-    if (!set) return;
-    for (const send of set) {
+    for (const send of [...(set ?? []), ...this.all]) {
       try {
         send(event);
       } catch {

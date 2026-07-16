@@ -34,6 +34,12 @@ export default fp(async (fastify) => {
     }
   });
 
+  // Серверная подписка на изменения любых смет — для фоновых реакций (умная группировка).
+  // Идёт через LISTEN, поэтому событие от другого процесса тоже дойдёт.
+  fastify.decorate('onEstimateChanged', (cb: (event: EstimateChangedEvent) => void) =>
+    registry.subscribeAll(cb),
+  );
+
   // --- Выделенное LISTEN-соединение (не из пула) с авто-reconnect ---
   let listenClient: pg.Client | null = null;
   let closed = false;

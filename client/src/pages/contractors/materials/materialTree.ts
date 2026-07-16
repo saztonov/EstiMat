@@ -18,16 +18,6 @@ export interface MaterialLevelSettings {
  */
 export const DEFAULT_LEVELS: MaterialLevelSettings = { costType: true, location: false, locationType: false };
 
-export type LevelPresetKey = 'all' | 'noLocation' | 'noType' | 'noCostType' | 'flat';
-
-export const LEVEL_PRESETS: { key: LevelPresetKey; label: string; levels: MaterialLevelSettings }[] = [
-  { key: 'all', label: 'Все параметры', levels: { costType: true, location: true, locationType: true } },
-  { key: 'noLocation', label: 'Без локации', levels: { costType: true, location: false, locationType: true } },
-  { key: 'noType', label: 'Без типа', levels: { costType: true, location: true, locationType: false } },
-  { key: 'noCostType', label: 'Без вида работ', levels: { costType: false, location: true, locationType: true } },
-  { key: 'flat', label: 'Без локации, типа и вида работ', levels: { costType: false, location: false, locationType: false } },
-];
-
 export type MaterialTreeLevel = 'category' | 'costType' | 'location' | 'locationType';
 
 export interface MaterialTreeNode {
@@ -37,9 +27,12 @@ export interface MaterialTreeNode {
   label: string;
   /** Бейджи вместо текстовой подписи (только у уровня 'location'). */
   badges: { zoneNames: string[]; floorsLabel: string } | null;
+  /** Стоимость материалов по ценам закупок: строки без цены в сумму не входят. */
   total: number;
   /** Число материальных строк во всём поддереве. */
   rowCount: number;
+  /** Сколько из них с известной ценой: 0 — сумму показывать нельзя (это не «0 ₽»). */
+  pricedRowCount: number;
   children: MaterialTreeNode[];
   /** Непусто только у листового узла (последний включённый уровень). */
   materials: OrderMaterialRow[];
@@ -132,8 +125,9 @@ function buildLevel(
       level: spec.level,
       label: spec.label(bucket.sample),
       badges: spec.badges?.(bucket.sample) ?? null,
-      total: bucket.rows.reduce((s, r) => s + r.total, 0),
+      total: bucket.rows.reduce((s, r) => s + (r.materialCost ?? 0), 0),
       rowCount: bucket.rows.length,
+      pricedRowCount: bucket.rows.filter((r) => r.materialCost != null).length,
       children: isLeafLevel ? [] : buildLevel(bucket.rows, specs, depth + 1, nodeKey),
       materials: isLeafLevel ? [...bucket.rows].sort(byName) : [],
     };
@@ -178,7 +172,7 @@ export function assertTreeConserves(rows: OrderMaterialRow[], nodes: MaterialTre
   if (leaves.length !== rows.length) problems.push(`строк в дереве ${leaves.length}, во входе ${rows.length}`);
   if (keys.size !== leaves.length) problems.push(`ключи задвоены: уникальных ${keys.size} из ${leaves.length}`);
   const dq = sum(leaves, (r) => r.quantity) - sum(rows, (r) => r.quantity);
-  const dt = sum(leaves, (r) => r.total) - sum(rows, (r) => r.total);
+  const dt = sum(leaves, (r) => r.materialCost ?? 0) - sum(rows, (r) => r.materialCost ?? 0);
   if (Math.abs(dq) > 1e-6) problems.push(`количество разошлось на ${dq}`);
   if (Math.abs(dt) > 1e-6) problems.push(`сумма разошлась на ${dt}`);
   if (problems.length) console.error('[materialTree] дерево не сохраняет свод:', problems.join('; '));

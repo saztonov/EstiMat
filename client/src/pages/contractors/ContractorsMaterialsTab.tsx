@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Empty, Select, Button, Dropdown, App, Tabs, Tag } from 'antd';
-import { PlusOutlined, DownOutlined } from '@ant-design/icons';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Empty, Select, Button, Dropdown, App, Tabs, Tag, Tooltip, theme } from 'antd';
+import { PlusOutlined, DownOutlined, UpOutlined, ClearOutlined } from '@ant-design/icons';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MATERIAL_REQUEST_TYPES,
   MATERIAL_REQUEST_TYPE_LABELS,
@@ -25,13 +25,17 @@ import { useMaterialLevels } from './materials/useMaterialLevels';
 import { MaterialGroupingPopover } from './materials/MaterialGroupingPopover';
 import { buildMaterialColumns } from './materials/materialColumns';
 import { MaterialTreeView, collectNodeKeys } from './materials/MaterialTreeView';
-import { SmartGroupingPanel } from './materials/SmartGroupingPanel';
+import { SmartGroupingPanel, SHARED_KEY, UNGROUPED_KEY } from './materials/SmartGroupingPanel';
+import { applyOrderPrices } from './materials/prices';
+import { useOrderedSummary } from './materials/useOrderedSummary';
+import { useSmartGroupingJob } from './materials/useSmartGrouping';
 
 interface Props {
   estimateId: string;
   items: EstimateItem[];
   /** Подрядчик: материалы масштабируются по его доле строки (effective_qty / quantity). */
   viewerIsContractor: boolean;
+  isAdmin: boolean;
   zones: ZoneNode[];
   zoneIndex: ZoneIndex;
 }
@@ -56,12 +60,24 @@ function scaleForContractor(items: EstimateItem[]): EstimateItem[] {
   });
 }
 
-export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor, zones, zoneIndex }: Props) {
+export function ContractorsMaterialsTab({
+  estimateId,
+  items,
+  viewerIsContractor,
+  isAdmin,
+  zones,
+  zoneIndex,
+}: Props) {
   const [filterContractorIds, setFilterContractorIds] = useState<string[]>([]);
   // Разбивка сводной строки по локациям (клик по названию материала).
   const [breakdown, setBreakdown] = useState<OrderMaterialRow | null>(null);
   const [viewMode, setViewMode] = usePersistedTab('estimat:contractors-materials-view', 'standard');
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Своё состояние свёрнутости на режим: ключи узлов дерева и ИИ-групп из разных пространств,
+  // общий Set смешал бы их (свернул узел — свернулась чужая карточка).
+  const [collapsedStandard, setCollapsedStandard] = useState<Set<string>>(new Set());
+  const [collapsedSmart, setCollapsedSmart] = useState<Set<string>>(new Set());
+  const [onlyReview, setOnlyReview] = useState(false);
+  const { token } = theme.useToken();
   // Режим заявки на материалы (только подрядчик).
   const [editing, setEditing] = useState(false);
   // Тип заявки выбирается осознанно (без значения по умолчанию).
@@ -120,21 +136,24 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
     return buildMaterialGroups(src, []);
   }, [baseItems, viewerIsContractor]);
 
-  // Уровни группировки — свои для каждого представления (требование задачи). Держим оба
-  // экземпляра со статическими ключами и выбираем активный по режиму: при переключении вкладок
-  // компонент не перемонтируется, а usePersistedState читает localStorage только на mount —
-  // один хук с меняющимся ключом протекал бы настройками между вкладками.
-  const standardLevels = useMaterialLevels('standard');
-  const smartLevels = useMaterialLevels('smart');
-  const { levels, toggle, applyPreset, reset, activePreset, changedFromDefault } =
-    viewMode === 'smart' ? smartLevels : standardLevels;
+  // Уровни — только у стандартной группировки: у умной границы групп общие для всех и задаются
+  // администратором (Администрирование → Нейросети → Промпты).
+  const { levels, toggle, reset, changedFromDefault } = useMaterialLevels();
 
   const categoryIndex = useMemo(() => buildCategoryIndex(items), [items]);
 
+  // Заказано и цены: подрядчику — по своей организации; сотруднику — по фильтру/суммарно.
+  const { ordered: orderedMap, price: priceMap } = useOrderedSummary(
+    estimateId,
+    viewerIsContractor,
+    filterContractorIds,
+  );
+
   // Плоский список атомарных строк: одна строка ↔ один ключ заказа при любых уровнях.
+  // Цены подставляем сразу — тогда таблица, дерево и карточки ИИ-групп считают из одного места.
   const rows = useMemo(
-    () => buildOrderRows(groups, categoryIndex, zoneIndex),
-    [groups, categoryIndex, zoneIndex],
+    () => applyOrderPrices(buildOrderRows(groups, categoryIndex, zoneIndex), priceMap),
+    [groups, categoryIndex, zoneIndex, priceMap],
   );
 
   const tree = useMemo(() => {
@@ -142,30 +161,6 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
     assertTreeConserves(rows, next);
     return next;
   }, [rows, levels]);
-
-  // Заказано ранее: подрядчику — по своей организации; сотруднику — по фильтру/суммарно.
-  const orderedQ = useQuery({
-    queryKey: ['material-ordered', estimateId, viewerIsContractor ? 'me' : filterContractorIds.join(',')],
-    queryFn: () => {
-      const params = new URLSearchParams({ estimateId });
-      if (!viewerIsContractor && filterContractorIds.length)
-        params.set('contractorIds', filterContractorIds.join(','));
-      return api.get<{ data: { cost_type_id: string | null; agg_key: string; ordered_qty: string }[] }>(
-        `/material-requests/ordered?${params.toString()}`,
-      );
-    },
-    enabled: !!estimateId,
-    // Согласуем обновление с материалами подрядчика (contractor-my-items тоже refetchOnWindowFocus):
-    // иначе после согласования материалы перейдут на id-ключи, а карта «Заказано» останется из
-    // старого кэша и колонка опустеет до ручного обновления.
-    refetchOnWindowFocus: true,
-  });
-
-  const orderedMap = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of orderedQ.data?.data ?? []) m.set(lineKey(r.cost_type_id, r.agg_key), num(r.ordered_qty));
-    return m;
-  }, [orderedQ.data]);
 
   const submitMutation = useMutation({
     mutationFn: (vars: { requestType: MaterialRequestType; lines: unknown[]; createRequestId: string }) =>
@@ -274,16 +269,54 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
     [levels.costType, locFilterActive, editing, viewerIsContractor, orderedMap, draft],
   );
 
-  const toggleNode = useCallback((key: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
+  const smart = viewMode === 'smart';
+  const collapsed = smart ? collapsedSmart : collapsedStandard;
+  const setCollapsed = smart ? setCollapsedSmart : setCollapsedStandard;
 
-  const allCollapsed = tree.length > 0 && collectNodeKeys(tree).every((k) => collapsed.has(k));
+  // Тот же ключ запроса, что и в панели, — TanStack отдаёт общий кэш, второго запроса нет.
+  // Нужен здесь только ради ключей «Свернуть всё».
+  const smartJob = useSmartGroupingJob(estimateId, smart);
+  const smartResult = smartJob.data?.data?.result ?? null;
+
+  const toggleNode = useCallback(
+    (key: string) => {
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+    },
+    [setCollapsed],
+  );
+
+  // Ключи для «Свернуть всё» — из активного режима: у дерева это узлы, у умной группировки
+  // карточки групп плюс две секции.
+  const collapsibleKeys = useMemo(() => {
+    if (!smart) return collectNodeKeys(tree);
+    const result = smartResult;
+    if (!result) return [];
+    return [...result.groups.map((g) => g.id), SHARED_KEY, UNGROUPED_KEY];
+  }, [smart, tree, smartResult]);
+
+  const allCollapsed = collapsibleKeys.length > 0 && collapsibleKeys.every((k) => collapsed.has(k));
+
+  // «Очистить» — вернуть вкладку к виду по умолчанию. Черновик заявки не трогаем: введённые
+  // количества сбросом фильтров не теряются.
+  const dirty =
+    filterContractorIds.length > 0 ||
+    locFilterActive ||
+    changedFromDefault > 0 ||
+    collapsed.size > 0 ||
+    onlyReview;
+
+  const clearAll = () => {
+    setFilterContractorIds([]);
+    clearLocFilter();
+    reset();
+    setCollapsed(new Set());
+    setOnlyReview(false);
+  };
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -313,26 +346,37 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
           onClear={clearLocFilter}
           showVolumeType={false}
           disabled={editing}
+          tooltip="Отбор материалов по корпусам, этажам и типу"
         />
-        {/* В режиме заявки не блокируется: уровни меняют только расположение строк, а черновик
+        {/* В умном режиме уровней нет: границы групп общие для всех и заданы администратором.
+            В режиме заявки не блокируется: уровни меняют только расположение строк, а черновик
             живёт по ключу заказа — введённые количества переживают перестройку дерева. */}
-        <MaterialGroupingPopover
-          value={levels}
-          onToggle={toggle}
-          onApplyPreset={applyPreset}
-          onReset={reset}
-          activePreset={activePreset}
-          changedCount={changedFromDefault}
-        />
-        {viewMode !== 'smart' && (
-          <Button
-            size="small"
-            type="text"
-            onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(collectNodeKeys(tree)))}
-          >
-            {allCollapsed ? 'Развернуть всё' : 'Свернуть всё'}
-          </Button>
+        {!smart && (
+          <MaterialGroupingPopover
+            value={levels}
+            onToggle={toggle}
+            onReset={reset}
+            changedCount={changedFromDefault}
+          />
         )}
+        <Tooltip title={allCollapsed ? 'Развернуть всё' : 'Свернуть всё'}>
+          <Button
+            type="text"
+            aria-label={allCollapsed ? 'Развернуть всё' : 'Свернуть всё'}
+            icon={allCollapsed ? <DownOutlined /> : <UpOutlined />}
+            disabled={collapsibleKeys.length === 0}
+            onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(collapsibleKeys))}
+          />
+        </Tooltip>
+        <Tooltip title="Сбросить отборы и группировку">
+          <Button
+            type="text"
+            aria-label="Очистить"
+            icon={<ClearOutlined />}
+            disabled={!dirty || editing}
+            onClick={clearAll}
+          />
+        </Tooltip>
         {viewerIsContractor &&
           (editing ? (
             <>
@@ -343,26 +387,36 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
               <Button onClick={cancelEditing}>Отмена</Button>
             </>
           ) : (
-            <Dropdown
-              trigger={['click']}
-              menu={{
-                items: MATERIAL_REQUEST_TYPES.map((t) => ({
-                  key: t,
-                  label: MATERIAL_REQUEST_TYPE_LABELS[t],
-                })),
-                onClick: ({ key }) => {
-                  setRequestType(key as MaterialRequestType);
-                  // Заявка оформляется от полного объёма: локационный отбор снимаем,
-                  // иначе «По смете» осталось бы урезанным и вводить было бы не от чего.
-                  clearLocFilter();
-                  setEditing(true);
-                },
-              }}
-            >
-              <Button icon={<PlusOutlined />}>
-                Заявка на материалы <DownOutlined />
-              </Button>
-            </Dropdown>
+            // Tooltip снаружи Dropdown — так уже сделано в разделе «Заявки»: внутри он перехватил
+            // бы триггер, и меню перестало бы открываться.
+            <Tooltip title="Создать заявку на материалы">
+              <Dropdown
+                trigger={['click']}
+                menu={{
+                  items: MATERIAL_REQUEST_TYPES.map((t) => ({
+                    key: t,
+                    label: MATERIAL_REQUEST_TYPE_LABELS[t],
+                  })),
+                  onClick: ({ key }) => {
+                    setRequestType(key as MaterialRequestType);
+                    // Заявка оформляется от полного объёма: локационный отбор снимаем,
+                    // иначе «По смете» осталось бы урезанным и вводить было бы не от чего.
+                    clearLocFilter();
+                    setEditing(true);
+                  },
+                }}
+              >
+                {/* Главное действие вкладки — у правого края и зелёное. antd здесь 5.22:
+                    color="green" появился в 5.23, поэтому цвет берём из токена темы. */}
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  style={{ marginLeft: 'auto', background: token.colorSuccess }}
+                >
+                  Заявка на материалы <DownOutlined />
+                </Button>
+              </Dropdown>
+            </Tooltip>
           ))}
       </div>
       <Tabs
@@ -378,19 +432,22 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
         ]}
       />
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {viewMode === 'smart' ? (
+        {smart ? (
           // Умный режим использует те же строки и те же колонки — черновик заявки общий.
           <SmartGroupingPanel
             estimateId={estimateId}
-            contractorIds={filterContractorIds}
-            levels={levels}
             rows={rows}
             columns={columns}
+            isAdmin={isAdmin}
+            collapsed={collapsedSmart}
+            onToggle={toggleNode}
+            onlyReview={onlyReview}
+            onOnlyReviewChange={setOnlyReview}
           />
         ) : tree.length === 0 ? (
           <Empty description="Материалов нет" />
         ) : (
-          <MaterialTreeView nodes={tree} columns={columns} collapsed={collapsed} onToggle={toggleNode} />
+          <MaterialTreeView nodes={tree} columns={columns} collapsed={collapsedStandard} onToggle={toggleNode} />
         )}
       </div>
       {breakdown && (

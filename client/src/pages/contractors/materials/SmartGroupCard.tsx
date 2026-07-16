@@ -1,4 +1,5 @@
 import { Alert, Collapse, Space, Table, Tag, Typography } from 'antd';
+import { DownOutlined, RightOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { MaterialGroupDto } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
@@ -8,6 +9,8 @@ interface Props {
   group: MaterialGroupDto;
   rows: OrderMaterialRow[];
   columns: ColumnsType<OrderMaterialRow>;
+  collapsed: boolean;
+  onToggle: (key: string) => void;
 }
 
 /**
@@ -31,8 +34,10 @@ const SEVERITY_LABEL: Record<string, string> = {
   recommendation: 'Рекомендация',
 };
 
-export function SmartGroupCard({ group, rows, columns }: Props) {
-  const total = rows.reduce((s, r) => s + r.total, 0);
+export function SmartGroupCard({ group, rows, columns, collapsed, onToggle }: Props) {
+  // Итог — только по строкам с ценой закупки: сметные цены материалов во вкладке не показываются.
+  const priced = rows.filter((r) => r.materialCost != null);
+  const total = priced.reduce((s, r) => s + (r.materialCost ?? 0), 0);
   const status = groupStatus(group);
   const findings = group.issues.length + group.missing.length;
   // Вид работ группы: различает карточки-однофамильцы (одна операция в разных видах работ при
@@ -42,7 +47,12 @@ export function SmartGroupCard({ group, rows, columns }: Props) {
 
   return (
     <div style={{ marginBottom: 16 }}>
-      <Space size={8} style={{ marginBottom: 8, flexWrap: 'wrap' }}>
+      <Space
+        size={8}
+        style={{ marginBottom: 8, flexWrap: 'wrap', cursor: 'pointer' }}
+        onClick={() => onToggle(group.id)}
+      >
+        {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
         <strong style={{ fontSize: 14 }}>{group.name}</strong>
         {costTypeLabel && <Tag color="blue">{costTypeLabel}</Tag>}
         <Tag color={status.color}>{status.label}</Tag>
@@ -52,10 +62,10 @@ export function SmartGroupCard({ group, rows, columns }: Props) {
           </Typography.Text>
         )}
         <span style={{ color: '#8c8c8c', fontSize: 12 }}>{rows.length} поз.</span>
-        <span style={{ color: '#1677ff' }}>{formatMoney(total)}</span>
+        {priced.length > 0 && <span style={{ color: '#1677ff' }}>{formatMoney(total)}</span>}
       </Space>
 
-      {findings > 0 && (
+      {!collapsed && findings > 0 && (
         <Collapse
           size="small"
           style={{ marginBottom: 8 }}
@@ -104,14 +114,16 @@ export function SmartGroupCard({ group, rows, columns }: Props) {
         />
       )}
 
-      <Table<OrderMaterialRow>
-        rowKey="orderKey"
-        size="small"
-        pagination={false}
-        dataSource={rows}
-        columns={columns}
-        scroll={{ x: 1100 }}
-      />
+      {!collapsed && (
+        <Table<OrderMaterialRow>
+          rowKey="orderKey"
+          size="small"
+          pagination={false}
+          dataSource={rows}
+          columns={columns}
+          scroll={{ x: 1100 }}
+        />
+      )}
     </div>
   );
 }
