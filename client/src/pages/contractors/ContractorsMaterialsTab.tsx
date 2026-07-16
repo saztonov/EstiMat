@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Empty, Select, Button, Dropdown, App, Tabs, Tag, Tooltip, theme } from 'antd';
+import { Empty, Select, Button, Dropdown, App, Tabs, Tooltip, theme } from 'antd';
 import { PlusOutlined, DownOutlined, UpOutlined, ClearOutlined } from '@ant-design/icons';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -29,6 +29,10 @@ import { SmartGroupingPanel, SHARED_KEY, UNGROUPED_KEY } from './materials/Smart
 import { applyOrderPrices } from './materials/prices';
 import { useOrderedSummary } from './materials/useOrderedSummary';
 import { useSmartGroupingJob } from './materials/useSmartGrouping';
+import { useRequestDraft } from './materials/useRequestDraft';
+import { buildDraftIndex, draftStats } from './materials/draftFill';
+import { RequestDraftBar } from './materials/RequestDraftBar';
+import { RequestReviewModal, buildReviewLines } from './materials/RequestReviewModal';
 
 interface Props {
   estimateId: string;
@@ -82,7 +86,10 @@ export function ContractorsMaterialsTab({
   const [editing, setEditing] = useState(false);
   // Тип заявки выбирается осознанно (без значения по умолчанию).
   const [requestType, setRequestType] = useState<MaterialRequestType | null>(null);
-  const [draft, setDraft] = useState<Map<string, number>>(new Map());
+  const { draft, fill, clearFor, setValue, undo, reset: resetDraft, canUndo } = useRequestDraft();
+  // Доля остатка для массового набора: подпись кнопок в заголовках групп показывает её же.
+  const [percent, setPercent] = useState(100);
+  const [reviewOpen, setReviewOpen] = useState(false);
   // Развилка после создания заявки «Оплата по РП» (Excel / Оформить РП / ОК).
   const [created, setCreated] = useState<{ id: string; number: string } | null>(null);
   // Окно графика поставки для «Закупка через СУ-10» (открывается перед созданием заявки).
@@ -174,7 +181,8 @@ export function ContractorsMaterialsTab({
       const number = res?.data?.number ?? '';
       setEditing(false);
       setRequestType(null);
-      setDraft(new Map());
+      setReviewOpen(false);
+      resetDraft();
       setScheduleModal(null);
       queryClient.invalidateQueries({ queryKey: ['material-ordered', estimateId] });
       queryClient.invalidateQueries({ queryKey: ['material-requests', estimateId] });
@@ -201,22 +209,16 @@ export function ContractorsMaterialsTab({
     },
   });
 
-  function updateDraft(key: string, v: number | null) {
-    setDraft((prev) => {
-      const next = new Map(prev);
-      if (v == null || v <= 0) next.delete(key);
-      else next.set(key, v);
-      return next;
-    });
-  }
-
   function cancelEditing() {
     setEditing(false);
     setRequestType(null);
-    setDraft(new Map());
+    setReviewOpen(false);
+    resetDraft();
   }
 
-  function submit() {
+  /** Строки заявки из черновика. Обходим полный свод, а не отображаемый: черновик живёт по ключу
+   *  (вид работ + материал) и не должен теряться, если строка скрыта локационным отбором. */
+  function collectLines() {
     const lines: {
       costTypeId: string | null;
       aggKey: string;
@@ -225,11 +227,9 @@ export function ContractorsMaterialsTab({
       unit: string;
       quantity: number;
     }[] = [];
-    // Обходим полный свод, а не отображаемый: черновик живёт по ключу (вид работ + материал)
-    // и не должен теряться, если строка скрыта локационным отбором.
     for (const g of requestGroups)
       for (const m of g.materials) {
-        const q = draft.get(lineKey(g.costTypeId, m.key));
+        const q = draft.values.get(lineKey(g.costTypeId, m.key));
         if (q && q > 0)
           lines.push({
             costTypeId: g.costTypeId,
@@ -240,7 +240,11 @@ export function ContractorsMaterialsTab({
             quantity: q,
           });
       }
-    if (lines.length === 0) {
+    return lines;
+  }
+
+  function submit() {
+    if (draft.values.size === 0) {
       message.warning('Укажите количество хотя бы для одного материала');
       return;
     }
@@ -248,7 +252,15 @@ export function ContractorsMaterialsTab({
       message.warning('Выберите тип заявки');
       return;
     }
-    // «Закупка через СУ-10» — сперва указать график поставки (окно), заявка создаётся после него.
+    // Один клик по группе стоит десятков строк — сверяемся перед созданием.
+    setReviewOpen(true);
+  }
+
+  function confirmReview() {
+    const lines = collectLines();
+    if (lines.length === 0 || !requestType) return;
+    setReviewOpen(false);
+    // «Давальческие материалы» — сперва график поставки (окно), заявка создаётся после него.
     if (requestType === 'su10') {
       setScheduleModal({ lines, createRequestId: crypto.randomUUID() });
       return;
@@ -275,12 +287,76 @@ export function ContractorsMaterialsTab({
         viewerIsContractor,
         hasPrices: priceMap.size > 0,
         orderedMap,
-        draft,
-        onDraftChange: updateDraft,
+        draft: draft.values,
+        manual: draft.manual,
+        onDraftChange: setValue,
         onBreakdown: setBreakdown,
       }),
-    [levels.costType, locFilterActive, editing, viewerIsContractor, priceMap, orderedMap, draft],
+    [levels.costType, locFilterActive, editing, viewerIsContractor, priceMap, orderedMap, draft, setValue],
   );
+
+  // Массовое заполнение доли остатка. Итог показываем тостом: одно нажатие меняет десятки строк,
+  // и пользователь должен видеть, что именно произошло — вместе с отменой.
+  const onFill = useCallback(
+    (fillRows: OrderMaterialRow[], p: number, replaceManual = false) => {
+      const r = fill(fillRows, orderedMap, p, replaceManual);
+      const parts = [
+        r.added > 0 && `добавлено ${r.added}`,
+        r.updated > 0 && `обновлено ${r.updated}`,
+        r.manualKept > 0 && `ручных сохранено ${r.manualKept}`,
+        r.noRemainder > 0 && `без остатка ${r.noRemainder}`,
+      ].filter(Boolean);
+      if (r.added === 0 && r.updated === 0 && r.manualKept === 0) {
+        message.info('По этой группе всё уже заявлено');
+        return;
+      }
+      message.success({
+        content: (
+          <span>
+            {parts.join(' · ')}
+            <Button type="link" size="small" onClick={() => undo()}>
+              Отменить
+            </Button>
+            {r.manualKept > 0 && (
+              <Button type="link" size="small" onClick={() => onFill(fillRows, p, true)}>
+                Заменить ручные
+              </Button>
+            )}
+          </span>
+        ),
+      });
+    },
+    [fill, orderedMap, message, undo],
+  );
+
+  // Один обход дерева вместо подсчёта на каждом узле: иначе на 577 строках это O(узлы × строки)
+  // при каждом нажатии.
+  const draftIndex = useMemo(() => (editing ? buildDraftIndex(tree, draft) : new Map()), [editing, tree, draft]);
+
+  const bulk = useMemo(
+    () =>
+      editing ? { percent, draftIndex, draftValues: draft.values, onFill, onClear: clearFor } : undefined,
+    [editing, percent, draftIndex, draft, onFill, clearFor],
+  );
+
+  const rowClassName = useCallback(
+    (row: OrderMaterialRow) => (draft.values.has(row.orderKey) ? 'estimat-row-in-request' : ''),
+    [draft],
+  );
+
+  // Свод для сверки — полный, без локационного отбора (как и обход в collectLines).
+  const requestRows = useMemo(
+    () =>
+      editing
+        ? applyOrderPrices(buildOrderRows(requestGroups, categoryIndex, zoneIndex), priceMap)
+        : [],
+    [editing, requestGroups, categoryIndex, zoneIndex, priceMap],
+  );
+  const reviewLines = useMemo(
+    () => (reviewOpen ? buildReviewLines(requestRows, draft, orderedMap) : []),
+    [reviewOpen, requestRows, draft, orderedMap],
+  );
+  const stats = useMemo(() => draftStats(requestRows, draft), [requestRows, draft]);
 
   const smart = viewMode === 'smart';
   const collapsed = smart ? collapsedSmart : collapsedStandard;
@@ -391,15 +467,7 @@ export function ContractorsMaterialsTab({
           />
         </Tooltip>
         {viewerIsContractor &&
-          (editing ? (
-            <>
-              {requestType && <Tag color="blue">{MATERIAL_REQUEST_TYPE_LABELS[requestType]}</Tag>}
-              <Button type="primary" loading={submitMutation.isPending} onClick={submit}>
-                Подтвердить
-              </Button>
-              <Button onClick={cancelEditing}>Отмена</Button>
-            </>
-          ) : (
+          !editing && (
             // Tooltip снаружи Dropdown — так уже сделано в разделе «Заявки»: внутри он перехватил
             // бы триггер, и меню перестало бы открываться.
             <Tooltip title="Создать заявку на материалы">
@@ -430,8 +498,22 @@ export function ContractorsMaterialsTab({
                 </Button>
               </Dropdown>
             </Tooltip>
-          ))}
+          )}
       </div>
+      {/* Панель набора — отдельным блоком над таблицей: тулбар и так вне скроллера и виден всегда. */}
+      {editing && requestType && (
+        <RequestDraftBar
+          requestType={requestType}
+          percent={percent}
+          onPercentChange={setPercent}
+          stats={stats}
+          canUndo={canUndo}
+          onUndo={undo}
+          onCancel={cancelEditing}
+          onSubmit={submit}
+          submitting={submitMutation.isPending}
+        />
+      )}
       <Tabs
         size="small"
         activeKey={viewMode}
@@ -456,13 +538,30 @@ export function ContractorsMaterialsTab({
             onToggle={toggleNode}
             onlyReview={onlyReview}
             onOnlyReviewChange={setOnlyReview}
+            bulk={bulk}
+            rowClassName={rowClassName}
           />
         ) : tree.length === 0 ? (
           <Empty description="Материалов нет" />
         ) : (
-          <MaterialTreeView nodes={tree} columns={columns} collapsed={collapsedStandard} onToggle={toggleNode} />
+          <MaterialTreeView
+            nodes={tree}
+            columns={columns}
+            collapsed={collapsedStandard}
+            onToggle={toggleNode}
+            bulk={bulk}
+            rowClassName={rowClassName}
+          />
         )}
       </div>
+      <RequestReviewModal
+        open={reviewOpen}
+        lines={reviewLines}
+        submitting={submitMutation.isPending}
+        onChange={setValue}
+        onCancel={() => setReviewOpen(false)}
+        onConfirm={confirmReview}
+      />
       {breakdown && (
         <MaterialLocationsModal material={breakdown} zoneIndex={zoneIndex} onClose={() => setBreakdown(null)} />
       )}

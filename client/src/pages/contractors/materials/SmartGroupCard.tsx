@@ -4,6 +4,8 @@ import type { ColumnsType } from 'antd/es/table';
 import type { MaterialGroupDto } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
+import type { BulkFill } from './MaterialTreeView';
+import { GroupFillButton } from './GroupFillButton';
 
 interface Props {
   group: MaterialGroupDto;
@@ -11,6 +13,8 @@ interface Props {
   columns: ColumnsType<OrderMaterialRow>;
   collapsed: boolean;
   onToggle: (key: string) => void;
+  bulk?: BulkFill;
+  rowClassName?: (row: OrderMaterialRow) => string;
 }
 
 /**
@@ -36,7 +40,7 @@ const SEVERITY_LABEL: Record<string, string> = {
   recommendation: 'Рекомендация',
 };
 
-export function SmartGroupCard({ group, rows, columns, collapsed, onToggle }: Props) {
+export function SmartGroupCard({ group, rows, columns, collapsed, onToggle, bulk, rowClassName }: Props) {
   // Итог — только по строкам с ценой закупки: сметные цены материалов во вкладке не показываются.
   const priced = rows.filter((r) => r.materialCost != null);
   const total = priced.reduce((s, r) => s + (r.materialCost ?? 0), 0);
@@ -47,28 +51,39 @@ export function SmartGroupCard({ group, rows, columns, collapsed, onToggle }: Pr
   const costTypes = [...new Set(rows.map((r) => r.costTypeName).filter((n): n is string => !!n))];
   const costTypeLabel = costTypes.length === 1 ? costTypes[0] : null;
 
+  const draftCount = bulk ? rows.filter((r) => bulk.draftValues.has(r.orderKey)).length : 0;
+
   return (
     <div style={{ marginBottom: 16 }}>
-      <Space
-        size={8}
-        style={{ marginBottom: 8, flexWrap: 'wrap', cursor: 'pointer' }}
-        onClick={() => onToggle(group.id)}
-      >
-        {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
-        <strong style={{ fontSize: 14 }}>{group.name}</strong>
-        {costTypeLabel && <Tag color="blue">{costTypeLabel}</Tag>}
-        {status && <Tag color={status.color}>{status.label}</Tag>}
-        {/* Счётчик находок — в шапке: иначе он виден только у развёрнутой карточки, внутри
-            второго сворачивания. */}
-        {findings > 0 && <Tag>Проверить · {findings}</Tag>}
-        {group.purpose && (
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {group.purpose}
-          </Typography.Text>
+      {/* Кликабельная часть шапки и кнопка набора — сиблинги: клик по шапке сворачивает карточку,
+          клик по кнопке до неё не доходит без stopPropagation. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <Space size={8} style={{ flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => onToggle(group.id)}>
+          {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+          <strong style={{ fontSize: 14 }}>{group.name}</strong>
+          {costTypeLabel && <Tag color="blue">{costTypeLabel}</Tag>}
+          {status && <Tag color={status.color}>{status.label}</Tag>}
+          {/* Счётчик находок — в шапке: иначе он виден только у развёрнутой карточки, внутри
+              второго сворачивания. */}
+          {findings > 0 && <Tag>Проверить · {findings}</Tag>}
+          {group.purpose && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {group.purpose}
+            </Typography.Text>
+          )}
+          <span style={{ color: '#8c8c8c', fontSize: 12 }}>{rows.length} поз.</span>
+          {priced.length > 0 && <span style={{ color: '#1677ff' }}>{formatMoney(total)}</span>}
+        </Space>
+        {bulk && (
+          <GroupFillButton
+            rows={rows}
+            percent={bulk.percent}
+            draftCount={draftCount}
+            onFill={bulk.onFill}
+            onClear={bulk.onClear}
+          />
         )}
-        <span style={{ color: '#8c8c8c', fontSize: 12 }}>{rows.length} поз.</span>
-        {priced.length > 0 && <span style={{ color: '#1677ff' }}>{formatMoney(total)}</span>}
-      </Space>
+      </div>
 
       {!collapsed && findings > 0 && (
         <Collapse
@@ -126,6 +141,7 @@ export function SmartGroupCard({ group, rows, columns, collapsed, onToggle }: Pr
           pagination={false}
           dataSource={rows}
           columns={columns}
+          rowClassName={rowClassName}
           scroll={{ x: 1100 }}
         />
       )}

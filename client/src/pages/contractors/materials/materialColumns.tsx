@@ -1,4 +1,5 @@
 import { Button, InputNumber, Space, Tag, Tooltip } from 'antd';
+import { EditOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
@@ -19,6 +20,8 @@ interface Options {
   hasPrices: boolean;
   orderedMap: Map<string, number>;
   draft: Map<string, number>;
+  /** Строки, где количество введено вручную: массовые действия их не трогают — это надо видеть. */
+  manual?: Set<string>;
   onDraftChange: (orderKey: string, v: number | null) => void;
   onBreakdown: (m: OrderMaterialRow) => void;
 }
@@ -37,6 +40,7 @@ export function buildMaterialColumns({
   hasPrices,
   orderedMap,
   draft,
+  manual,
   onDraftChange,
   onBreakdown,
 }: Options): ColumnsType<OrderMaterialRow> {
@@ -175,16 +179,30 @@ export function buildMaterialColumns({
     cols.push({
       title: 'Заявка',
       key: 'request',
-      width: 120,
+      width: 140,
       align: 'right',
-      render: (_, m) => (
-        <InputNumber
-          min={0}
-          style={{ width: 100 }}
-          value={draft.get(m.orderKey)}
-          onChange={(v) => onDraftChange(m.orderKey, v as number | null)}
-        />
-      ),
+      render: (_, m) => {
+        const isManual = manual?.has(m.orderKey) ?? false;
+        return (
+          <Space size={4}>
+            {/* Ручные строки массовый набор не перезаписывает — метка объясняет, почему строка
+                не изменилась после нажатия «В заявку». */}
+            {isManual && (
+              <Tooltip title="Введено вручную: массовый набор эту строку не меняет">
+                <EditOutlined style={{ color: '#1677ff', fontSize: 12 }} />
+              </Tooltip>
+            )}
+            <InputNumber
+              min={0}
+              style={{ width: 100 }}
+              // Подсказка — остаток: сразу видно, сколько ещё можно заявить.
+              placeholder={String(qty(remainingOf(m.quantity, orderedMap.get(m.orderKey) ?? 0)))}
+              value={draft.get(m.orderKey)}
+              onChange={(v) => onDraftChange(m.orderKey, v as number | null)}
+            />
+          </Space>
+        );
+      },
     });
   }
 

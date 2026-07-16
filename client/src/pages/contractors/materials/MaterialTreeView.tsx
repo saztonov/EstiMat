@@ -5,12 +5,27 @@ import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
 import type { MaterialTreeNode } from './materialTree';
 import type { OrderMaterialRow } from './orderRow';
+import { subtreeRows } from './draftFill';
+import { GroupFillButton } from './GroupFillButton';
+
+/** Массовый набор: включён только в режиме заявки. */
+export interface BulkFill {
+  percent: number;
+  /** key узла дерева → сколько строк его поддерева уже в заявке (один обход, buildDraftIndex). */
+  draftIndex: Map<string, number>;
+  /** Количества черновика по ключу заказа — для ИИ-групп: узлов дерева у них нет. */
+  draftValues: Map<string, number>;
+  onFill: (rows: OrderMaterialRow[], percent: number) => void;
+  onClear: (rows: OrderMaterialRow[]) => void;
+}
 
 interface Props {
   nodes: MaterialTreeNode[];
   columns: ColumnsType<OrderMaterialRow>;
   collapsed: Set<string>;
   onToggle: (key: string) => void;
+  bulk?: BulkFill;
+  rowClassName?: (row: OrderMaterialRow) => string;
 }
 
 /** Ключи всех узлов дерева — для «Свернуть всё». */
@@ -48,11 +63,20 @@ function NodeTotal({ node }: { node: MaterialTreeNode }) {
 
 // Дерево группировки. Ветки рендерятся лениво: содержимое свёрнутого узла не строится вовсе —
 // при всех включённых уровнях узлов сотни, и разом они дали бы сотни таблиц.
-export function MaterialTreeView({ nodes, columns, collapsed, onToggle }: Props) {
+export function MaterialTreeView({ nodes, columns, collapsed, onToggle, bulk, rowClassName }: Props) {
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="middle">
       {nodes.map((n) => (
-        <TreeNodeView key={n.key} node={n} depth={0} columns={columns} collapsed={collapsed} onToggle={onToggle} />
+        <TreeNodeView
+          key={n.key}
+          node={n}
+          depth={0}
+          columns={columns}
+          collapsed={collapsed}
+          onToggle={onToggle}
+          bulk={bulk}
+          rowClassName={rowClassName}
+        />
       ))}
     </Space>
   );
@@ -64,6 +88,8 @@ function TreeNodeView({
   columns,
   collapsed,
   onToggle,
+  bulk,
+  rowClassName,
 }: {
   node: MaterialTreeNode;
   depth: number;
@@ -71,31 +97,40 @@ function TreeNodeView({
   const isCollapsed = collapsed.has(node.key);
   return (
     <div style={{ marginLeft: depth * 16, marginBottom: 8 }}>
-      <Space
-        size={6}
-        style={{ cursor: 'pointer', marginBottom: 8 }}
-        onClick={() => onToggle(node.key)}
-      >
-        {isCollapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
-        {/* Уровни «Локация» и «Тип работы» без подписи читались как случайные бейджи: из заголовка
-            не было видно, по какому признаку разделены материалы. */}
-        {node.badges ? (
-          <>
-            <span style={{ color: '#8c8c8c', fontSize: 13 }}>Местоположение:</span>
-            <LocationBadgesRow
-              zoneNames={node.badges.zoneNames}
-              floorsLabel={node.badges.floorsLabel}
-              typeLabels={[]}
-            />
-          </>
-        ) : (
-          <strong style={{ fontSize: HEAD_FONT[Math.min(depth, HEAD_FONT.length - 1)] }}>
-            {node.level === 'locationType' ? `Тип: ${node.label}` : node.label}
-          </strong>
+      {/* Кликабельная часть заголовка и кнопки — сиблинги: клик по заголовку сворачивает узел,
+          клик по кнопке набора до него не доходит без stopPropagation. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <Space size={6} style={{ cursor: 'pointer' }} onClick={() => onToggle(node.key)}>
+          {isCollapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+          {/* Уровни «Локация» и «Тип работы» без подписи читались как случайные бейджи: из заголовка
+              не было видно, по какому признаку разделены материалы. */}
+          {node.badges ? (
+            <>
+              <span style={{ color: '#8c8c8c', fontSize: 13 }}>Местоположение:</span>
+              <LocationBadgesRow
+                zoneNames={node.badges.zoneNames}
+                floorsLabel={node.badges.floorsLabel}
+                typeLabels={[]}
+              />
+            </>
+          ) : (
+            <strong style={{ fontSize: HEAD_FONT[Math.min(depth, HEAD_FONT.length - 1)] }}>
+              {node.level === 'locationType' ? `Тип: ${node.label}` : node.label}
+            </strong>
+          )}
+          <span style={{ color: '#8c8c8c', fontSize: 12 }}>{node.rowCount} поз.</span>
+          <NodeTotal node={node} />
+        </Space>
+        {bulk && (
+          <GroupFillButton
+            rows={subtreeRows(node)}
+            percent={bulk.percent}
+            draftCount={bulk.draftIndex.get(node.key) ?? 0}
+            onFill={bulk.onFill}
+            onClear={bulk.onClear}
+          />
         )}
-        <span style={{ color: '#8c8c8c', fontSize: 12 }}>{node.rowCount} поз.</span>
-        <NodeTotal node={node} />
-      </Space>
+      </div>
       {!isCollapsed && (
         <>
           {node.materials.length > 0 && (
@@ -105,6 +140,7 @@ function TreeNodeView({
               pagination={false}
               dataSource={node.materials}
               columns={columns}
+              rowClassName={rowClassName}
               scroll={{ x: 1100 }}
             />
           )}
@@ -116,6 +152,8 @@ function TreeNodeView({
               columns={columns}
               collapsed={collapsed}
               onToggle={onToggle}
+              bulk={bulk}
+              rowClassName={rowClassName}
             />
           ))}
         </>

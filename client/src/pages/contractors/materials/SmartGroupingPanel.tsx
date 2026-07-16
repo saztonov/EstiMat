@@ -6,6 +6,8 @@ import type { GroupingProgress } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
 import { SmartGroupCard } from './SmartGroupCard';
+import type { BulkFill } from './MaterialTreeView';
+import { GroupFillButton } from './GroupFillButton';
 import { useCancelSmartGrouping, useRunSmartGrouping, useSmartGroupingJob } from './useSmartGrouping';
 
 interface Props {
@@ -18,6 +20,9 @@ interface Props {
   onToggle: (key: string) => void;
   onlyReview: boolean;
   onOnlyReviewChange: (v: boolean) => void;
+  /** Массовый набор: включён только в режиме заявки. */
+  bulk?: BulkFill;
+  rowClassName?: (row: OrderMaterialRow) => string;
 }
 
 /** Ключи сворачивания секций — с префиксом режима, чтобы не пересекаться со стандартным деревом. */
@@ -37,6 +42,8 @@ export function SmartGroupingPanel({
   onToggle,
   onlyReview,
   onOnlyReviewChange,
+  bulk,
+  rowClassName,
 }: Props) {
   const jobQuery = useSmartGroupingJob(estimateId, true);
   const run = useRunSmartGrouping(estimateId);
@@ -203,6 +210,8 @@ export function SmartGroupingPanel({
           columns={columns}
           collapsed={collapsed.has(g.id)}
           onToggle={onToggle}
+          bulk={bulk}
+          rowClassName={rowClassName}
         />
       ))}
       {groups.length === 0 && <Empty description="Групп по фильтру нет" />}
@@ -215,6 +224,8 @@ export function SmartGroupingPanel({
           columns={columns}
           collapsed={collapsed.has(SHARED_KEY)}
           onToggle={onToggle}
+          bulk={bulk}
+          rowClassName={rowClassName}
         />
       )}
       {ungroupedRows.length > 0 && (
@@ -226,6 +237,8 @@ export function SmartGroupingPanel({
           columns={columns}
           collapsed={collapsed.has(UNGROUPED_KEY)}
           onToggle={onToggle}
+          bulk={bulk}
+          rowClassName={rowClassName}
         />
       )}
     </div>
@@ -284,6 +297,8 @@ function Section({
   columns,
   collapsed,
   onToggle,
+  bulk,
+  rowClassName,
 }: {
   nodeKey: string;
   title: string;
@@ -292,19 +307,33 @@ function Section({
   columns: ColumnsType<OrderMaterialRow>;
   collapsed: boolean;
   onToggle: (key: string) => void;
+  bulk?: BulkFill;
+  rowClassName?: (row: OrderMaterialRow) => string;
 }) {
+  const draftCount = bulk ? rows.filter((r) => bulk.draftValues.has(r.orderKey)).length : 0;
   return (
     <div style={{ marginTop: 16 }}>
-      <Space size={8} style={{ marginBottom: 8, cursor: 'pointer' }} onClick={() => onToggle(nodeKey)}>
-        {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
-        <strong style={{ fontSize: 14 }}>{title}</strong>
-        <span style={{ color: '#8c8c8c', fontSize: 12 }}>{rows.length} поз.</span>
-        {hint && (
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {hint}
-          </Typography.Text>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <Space size={8} style={{ cursor: 'pointer' }} onClick={() => onToggle(nodeKey)}>
+          {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+          <strong style={{ fontSize: 14 }}>{title}</strong>
+          <span style={{ color: '#8c8c8c', fontSize: 12 }}>{rows.length} поз.</span>
+          {hint && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {hint}
+            </Typography.Text>
+          )}
+        </Space>
+        {bulk && (
+          <GroupFillButton
+            rows={rows}
+            percent={bulk.percent}
+            draftCount={draftCount}
+            onFill={bulk.onFill}
+            onClear={bulk.onClear}
+          />
         )}
-      </Space>
+      </div>
       {!collapsed && (
         <Table<OrderMaterialRow>
           rowKey="orderKey"
@@ -312,6 +341,7 @@ function Section({
           pagination={false}
           dataSource={rows}
           columns={columns}
+          rowClassName={rowClassName}
           scroll={{ x: 1100 }}
         />
       )}
