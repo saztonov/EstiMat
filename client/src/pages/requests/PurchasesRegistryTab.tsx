@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Table, Select, Space, Empty, Tag, Button, Popconfirm, Tooltip, App } from 'antd';
+import { Table, Select, Space, Empty, Tag, App } from 'antd';
 import { LinkOutlined, DeleteOutlined, StopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -11,6 +11,7 @@ import {
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
+import { ConfirmIconButton } from '../../components/shared/ConfirmIconButton';
 import { money } from './requestConstants';
 import { SupplierOrderModal } from './SupplierOrderModal';
 import { RequestDetailModal } from './RequestDetailModal';
@@ -99,22 +100,24 @@ export function PurchasesRegistryTab() {
               <a href={r.tender_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}><LinkOutlined /></a>
             )}
             {canCancel && (
-              <Popconfirm
+              <ConfirmIconButton
+                tooltip="Отменить закупку"
                 title="Отменить закупку?" description="Остаток материалов вернётся в свод."
-                okText="Отменить" okButtonProps={{ danger: true }} cancelText="Отмена"
+                okText="Отменить"
                 onConfirm={() => cancelMut.mutate(r.id)}
-              >
-                <Tooltip title="Отменить закупку"><Button type="text" size="small" icon={<StopOutlined />} /></Tooltip>
-              </Popconfirm>
+                icon={<StopOutlined />}
+                type="text"
+              />
             )}
             {canDelete && (
-              <Popconfirm
+              <ConfirmIconButton
+                tooltip="Удалить заказ"
                 title="Удалить заказ?" description="Позиции вернутся в свод материалов."
-                okText="Удалить" okButtonProps={{ danger: true }} cancelText="Отмена"
                 onConfirm={() => delMut.mutate(r.id)}
-              >
-                <Tooltip title="Удалить заказ"><Button danger type="text" size="small" icon={<DeleteOutlined />} /></Tooltip>
-              </Popconfirm>
+                icon={<DeleteOutlined />}
+                type="text"
+                danger
+              />
             )}
           </Space>
         );

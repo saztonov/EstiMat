@@ -8,6 +8,14 @@ import type { Pool, PoolClient } from 'pg';
 
 type Db = Pool | PoolClient;
 
+// Стадии лота, где состав заморожен: лот ушёл в закупку или уже присуждён. Единое определение
+// «активной закупки» для запрета отмены/доработки заявки, признака в списке и удаления заявки.
+export const FROZEN_LOT_STATUSES = ['sourcing', 'awarded', 'cancel_pending'] as const;
+
+// Стадии, на которых опустевший лот можно удалить физически: черновик и терминальные. Лоты из
+// FROZEN_LOT_STATUSES не удаляем — за ними внешний тендер (см. outbox-worker) и/или финансы.
+export const DELETABLE_LOT_STATUSES = ['forming', 'cancelled', 'no_award'] as const;
+
 export async function appendOrderAudit(
   db: Db,
   params: {
@@ -53,9 +61,9 @@ export async function hasFrozenAllocations(db: Db, requestId: string): Promise<b
        SELECT 1 FROM supplier_order_items soi
         JOIN supplier_orders so ON so.id = soi.order_id
        WHERE soi.request_id = $1 AND so.kind = 'sourcing'
-         AND so.sourcing_status IN ('sourcing', 'awarded', 'cancel_pending')
+         AND so.sourcing_status = ANY($2::text[])
      ) AS frozen`,
-    [requestId],
+    [requestId, FROZEN_LOT_STATUSES],
   );
   return rows[0]?.frozen === true;
 }

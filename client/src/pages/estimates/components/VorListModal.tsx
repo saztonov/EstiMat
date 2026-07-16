@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Modal, Table, Button, Space, Popconfirm, Popover, Tag, Tooltip, Badge, App } from 'antd';
+import { Modal, Table, Button, Space, Popover, Tag, Tooltip, Badge, App } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   DownloadOutlined,
@@ -12,6 +12,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { DEFAULT_PAGINATION } from '../../../lib/tableConfig';
+import { ConfirmIconButton } from '../../../components/shared/ConfirmIconButton';
 import { useColumnSearch, uniqueFilters } from '../../../lib/tableColumnSearch';
 import type { EstimateVor, VorFilterSnapshot } from '@estimat/shared';
 import { VorPreviewModal } from './VorPreviewModal';
@@ -217,18 +218,15 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
             </Button>
           </Tooltip>
           {r.canDelete && (
-            <Popconfirm
+            <ConfirmIconButton
+              tooltip="Удалить"
               title="Удалить ВОР?"
               description="Файл-снимок будет удалён безвозвратно."
-              okText="Удалить"
-              cancelText="Отмена"
-              okButtonProps={{ danger: true }}
               onConfirm={() => deleteMutation.mutate(r.id)}
-            >
-              <Tooltip title="Удалить">
-                <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-              </Tooltip>
-            </Popconfirm>
+              icon={<DeleteOutlined />}
+              type="text"
+              danger
+            />
           )}
         </Space>
       ),

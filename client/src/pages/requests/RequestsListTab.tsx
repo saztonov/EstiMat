@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, Popconfirm, App } from 'antd';
+import { Table, Space, Select, Input, DatePicker, Empty, Button, Tooltip, Badge, App } from 'antd';
 import { SearchOutlined, PaperClipOutlined, FileExcelOutlined, MessageOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +13,7 @@ import {
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
+import { ConfirmIconButton } from '../../components/shared/ConfirmIconButton';
 import { RequestStatusTag, RequestTypeTag, money } from './requestConstants';
 import { RequestDetailModal } from './RequestDetailModal';
 import type { RequestRow } from './types';
@@ -23,6 +24,27 @@ interface Filters {
   q?: string;
   dateFrom?: string;
   dateTo?: string;
+}
+
+const DELETE_BASE_TEXT = 'Заявка, документы и позиции заказов будут удалены без возможности восстановления.';
+
+/** Материалы заявки в активной закупке — удалить можно, но админ должен видеть последствия. */
+function deleteDescription(r: RequestRow) {
+  if (!r.in_active_purchase) return DELETE_BASE_TEXT;
+  return (
+    <>
+      <strong>Материалы заявки участвуют в активной закупке</strong> — они будут из неё изъяты,
+      сама закупка сохранится. {DELETE_BASE_TEXT}
+    </>
+  );
+}
+
+/** Итог удаления: сколько закупок ушло вместе с заявкой, а сколько осталось (активные — не удаляем). */
+function deleteResultText(res?: { lotsDeleted: number; lotsKept: number }): string {
+  const parts = ['Заявка удалена'];
+  if (res?.lotsDeleted) parts.push(`закупок удалено: ${res.lotsDeleted}`);
+  if (res?.lotsKept) parts.push(`материалы изъяты из закупок: ${res.lotsKept}`);
+  return parts.join(', ');
 }
 
 /** Список заявок с серверными фильтрами и пагинацией. Для подрядчика — колонка «Excel». */
@@ -75,9 +97,16 @@ export function RequestsListTab() {
   async function deleteRequest(r: RequestRow) {
     setDeletingId(r.id);
     try {
-      await api.delete(`/requests/${r.id}`);
-      message.success('Заявка удалена');
-      queryClient.invalidateQueries({ queryKey: ['requests', 'list'] });
+      const res = await api.delete<{ data: { lotsDeleted: number; lotsKept: number } }>(`/requests/${r.id}`);
+      message.success(deleteResultText(res?.data));
+      // Карточку удалённой заявки не показываем: закрываем её и убираем ответ из кэша.
+      setOpenId((id) => (id === r.id ? null : id));
+      queryClient.removeQueries({ queryKey: ['requests', 'detail', r.id] });
+      // Удаление заявки меняет и реестр закупок, и свод материалов.
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+      queryClient.invalidateQueries({ queryKey: ['purchases-registry'] });
+      queryClient.invalidateQueries({ queryKey: ['su10-materials'] });
+      queryClient.invalidateQueries({ queryKey: ['supplier-lots'] });
     } catch (e) {
       message.error((e as Error).message);
     } finally {
@@ -140,21 +169,15 @@ export function RequestsListTab() {
       ? ([{
           title: 'Действие', key: 'admin_actions', width: 110, align: 'center',
           render: (_: unknown, r: RequestRow) => (
-            <Popconfirm
+            <ConfirmIconButton
+              tooltip="Удалить заявку"
               title="Удалить заявку?"
-              description="Заявка, документы и позиции заказов будут удалены без возможности восстановления."
-              okText="Удалить" okButtonProps={{ danger: true }} cancelText="Отмена"
+              description={deleteDescription(r)}
               onConfirm={() => deleteRequest(r)}
-            >
-              <Tooltip title="Удалить заявку">
-                <Button
-                  danger size="small"
-                  icon={<DeleteOutlined />}
-                  loading={deletingId === r.id}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </Tooltip>
-            </Popconfirm>
+              icon={<DeleteOutlined />}
+              danger
+              loading={deletingId === r.id}
+            />
           ),
         }] as ColumnsType<RequestRow>)
       : []),

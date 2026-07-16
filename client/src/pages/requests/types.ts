@@ -109,6 +109,8 @@ export interface RequestRow {
   files_count: number | string;
   items_count: number | string;
   revision_reason: string | null;
+  /** Материалы заявки в лоте, ушедшем в закупку (sourcing/awarded/cancel_pending). */
+  in_active_purchase: boolean;
 }
 
 // Данные для формы «Отправить РП» (GET /requests/:id/rp-config).

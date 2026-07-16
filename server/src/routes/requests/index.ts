@@ -26,7 +26,10 @@ import {
   appendRequestAudit,
 } from '../../lib/material-requests/access.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
-import { hasActiveAllocations, hasFrozenAllocations, releaseFormingAllocations, appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
+import {
+  hasActiveAllocations, hasFrozenAllocations, releaseFormingAllocations, appendOrderAudit,
+  FROZEN_LOT_STATUSES, DELETABLE_LOT_STATUSES,
+} from '../../lib/supplier-orders/helpers.js';
 import { guardedStreamUpload, FileGuardError } from '../../lib/uploads/file-guard.js';
 import { exportMaterialRequestXlsx, MaterialRequestExportError } from '../../lib/material-request-export/index.js';
 import { getPayHubClient } from '../../lib/payhub/client.js';
@@ -149,6 +152,8 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const limit = Math.min(Math.max(Number(q.limit) || 100, 1), 500);
     const offset = Math.max(Number(q.offset) || 0, 0);
+    values.push(FROZEN_LOT_STATUSES);
+    const frozenIdx = values.length;
     values.push(limit, offset);
 
     const { rows } = await fastify.pool.query(
@@ -169,6 +174,10 @@ export default async function requestRoutes(fastify: FastifyInstance) {
               (SELECT r.reason FROM material_request_revisions r
                 WHERE r.request_id = mr.id AND r.completed_at IS NULL
                 ORDER BY r.requested_at DESC LIMIT 1) AS revision_reason,
+              EXISTS (SELECT 1 FROM supplier_order_items soi
+                        JOIN supplier_orders so2 ON so2.id = soi.order_id
+                       WHERE soi.request_id = mr.id AND so2.kind = 'sourcing'
+                         AND so2.sourcing_status = ANY($${frozenIdx}::text[])) AS in_active_purchase,
               count(*) OVER() AS total
          FROM material_requests mr
          LEFT JOIN projects p ON p.id = mr.project_id
@@ -1452,7 +1461,8 @@ export default async function requestRoutes(fastify: FastifyInstance) {
 
   // ============================================================
   // DELETE /:id — полное удаление заявки администратором (необратимо).
-  //   Освобождает позиции из закупочных лотов, удаляет документы из S3, каскадно чистит связи.
+  //   Освобождает позиции из закупочных лотов, удаляет опустевшие лоты (там, где это безопасно),
+  //   удаляет документы из S3, каскадно чистит связи.
   // ============================================================
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin')] }, async (request, reply) => {
     const user = request.currentUser;
@@ -1464,9 +1474,35 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     if (!mr) return reply.status(404).send({ error: 'Заявка не найдена' });
 
     const fileKeys: string[] = [];
+    let lotsDeleted = 0;
+    let lotsKept = 0;
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
+      // Порядок блокировок — как при формировании лота (лот, затем строки заявки): иначе
+      // взаимная блокировка. Параллельно лот может уйти в закупку/на тендер или собраться
+      // новый лот из материалов этой заявки.
+      const lockLots = async () => {
+        const { rows } = await client.query(
+          `SELECT so.id, so.sourcing_status, so.project_id, so.tender_portal_id
+             FROM supplier_orders so
+            WHERE so.kind = 'sourcing'
+              AND so.id IN (SELECT order_id FROM supplier_order_items WHERE request_id = $1)
+            ORDER BY so.id
+              FOR UPDATE`,
+          [mr.id],
+        );
+        return rows;
+      };
+      await lockLots();
+      await client.query(
+        'SELECT id FROM material_request_items WHERE request_id = $1 ORDER BY id FOR UPDATE',
+        [mr.id],
+      );
+      // Строки заявки заблокированы — новые лоты из её материалов больше не появятся, но один
+      // мог собраться, пока мы их брали: перечитываем список уже окончательно.
+      const lockRows = await lockLots();
+
       // Ключи файлов — удалим объекты из S3 после COMMIT (best-effort).
       const { rows: files } = await client.query(
         `SELECT file_key FROM material_request_files WHERE request_id = $1`,
@@ -1476,26 +1512,76 @@ export default async function requestRoutes(fastify: FastifyInstance) {
 
       // Освобождаем материалы из ВСЕХ лотов (админ-оверрайд): иначе request_id→SET NULL оставит
       // осиротевшие позиции, продолжающие резервировать материал.
-      const { rows: soi } = await client.query(
-        `DELETE FROM supplier_order_items WHERE request_id = $1 RETURNING order_id`,
-        [mr.id],
-      );
-      const orderIds = [...new Set(soi.map((r) => r.order_id as string))];
-      for (const orderId of orderIds) {
-        const { rows: lotRows } = await client.query(
-          `UPDATE supplier_orders SET row_version = row_version + 1, updated_at = now()
-            WHERE id = $1 RETURNING project_id`,
+      await client.query(`DELETE FROM supplier_order_items WHERE request_id = $1`, [mr.id]);
+
+      for (const lot of lockRows) {
+        const orderId = lot.id as string;
+        const { rows: cnt } = await client.query(
+          `SELECT EXISTS (SELECT 1 FROM supplier_order_items WHERE order_id = $1) AS has_items`,
           [orderId],
         );
+        // Опустевший лот удаляем, только если за ним нет внешнего тендера и незавершённых команд
+        // (у integration_outbox нет FK на лот: воркер не найдёт лот и сочтёт команду доставленной,
+        // оставив тендер жить на портале) и он не в закупке/не присуждён (там цены и платежи).
+        const canDelete =
+          !cnt[0].has_items
+          && (DELETABLE_LOT_STATUSES as readonly string[]).includes(lot.sourcing_status as string)
+          && !lot.tender_portal_id;
+        if (canDelete) {
+          const { rows: pending } = await client.query(
+            `SELECT EXISTS (
+               SELECT 1 FROM integration_outbox o
+                WHERE o.aggregate_type = 'supplier_order' AND o.aggregate_id = $1
+                  AND o.status IN ('queued', 'retry_wait', 'waiting_config')
+             ) AS pending`,
+            [orderId],
+          );
+          if (!pending[0].pending) {
+            // Файлы предложений — до каскадного удаления (БД каскад объекты в S3 не чистит).
+            const { rows: offerFiles } = await client.query(
+              `SELECT file_key FROM supplier_order_offers WHERE order_id = $1 AND file_key IS NOT NULL`,
+              [orderId],
+            );
+            for (const o of offerFiles) fileKeys.push(o.file_key as string);
+            await client.query('DELETE FROM supplier_orders WHERE id = $1', [orderId]);
+            await appendOrderAudit(client, {
+              orderId, action: 'deleted', userId: user.id,
+              changes: { reason: 'request_deleted' }, projectId: lot.project_id ?? null,
+            });
+            lotsDeleted += 1;
+            continue;
+          }
+        }
+
+        // Лот остаётся: бампаем версию и пишем изъятие позиций в журнал.
+        await client.query(
+          `UPDATE supplier_orders SET row_version = row_version + 1, updated_at = now() WHERE id = $1`,
+          [orderId],
+        );
+        // Формируемому лоту чистим собственный график по материалам, которых в нём больше нет
+        // (график привязан к agg_key и редактируется до фиксации состава).
+        if (lot.sourcing_status === 'forming') {
+          await client.query(
+            `DELETE FROM supplier_order_delivery_schedule d
+              WHERE d.order_id = $1
+                AND NOT EXISTS (
+                  SELECT 1 FROM supplier_order_items soi
+                   WHERE soi.order_id = d.order_id AND soi.agg_key = d.agg_key
+                )`,
+            [orderId],
+          );
+        }
         await appendOrderAudit(client, {
           orderId, action: 'item_removed', userId: user.id,
-          changes: { reason: 'request_deleted' }, projectId: lotRows[0]?.project_id ?? null,
+          changes: { reason: 'request_deleted' }, projectId: lot.project_id ?? null,
         });
+        lotsKept += 1;
       }
 
       // Журнал (audit_log без FK на заявку — запись переживёт каскадное удаление).
       await appendRequestAudit(client, {
         requestId: mr.id, action: 'deleted', userId: user.id,
+        changes: { lotsDeleted, lotsKept },
         estimateId: mr.estimate_id, projectId: mr.project_id,
       });
 
@@ -1515,6 +1601,6 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         catch (err) { fastify.log.warn({ err, key }, 'request delete: не удалось удалить объект из S3'); }
       }
     }
-    return { data: { ok: true } };
+    return { data: { ok: true, lotsDeleted, lotsKept } };
   });
 }
