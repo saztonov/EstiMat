@@ -15,7 +15,7 @@ import { runAgentTurn } from '../../lib/chat/agent.js';
 import { loadLlmRuntime, resolveLlmEndpoint, type ResolvedEndpoint } from '../../lib/llm/endpoint.js';
 import { withLmStudioSlot } from '../../lib/llm/limiter.js';
 import { resolveChatModel, resolveQwenNoThink } from '../../lib/llm/settings.js';
-import { CHAT_SCOPE_NOTE } from '../../lib/chat/prompt.js';
+import { resolvePrompt } from '../../lib/llm/prompts.js';
 import { applySelected, applySection, type ApplyContext } from '../../lib/chat/apply.js';
 import { hasPgTrgm, searchCatalogWorks, isScopeActive, CHAT_CATALOG_MODE } from '../../lib/chat/search.js';
 import type { AgentContext, ChatUser } from '../../lib/chat/types.js';
@@ -107,6 +107,12 @@ async function runChatTurn(
       .filter((m) => typeof m.content === 'string' && m.content)
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content as string }));
 
+    // Промпты чата резолвим из БД (редактируются в администрировании), с fallback на дефолт.
+    const [chatSystem, chatScopeNote] = await Promise.all([
+      resolvePrompt(fastify.pool, 'chat.system'),
+      resolvePrompt(fastify.pool, 'chat.scopeNote'),
+    ]);
+
     const runTurn = () =>
       runAgentTurn({
         llm: {
@@ -120,7 +126,8 @@ async function runChatTurn(
         userText,
         ctx,
         noThink,
-        scopeNote: isScopeActive(sectionScope) ? CHAT_SCOPE_NOTE : undefined,
+        systemPrompt: chatSystem,
+        scopeNote: isScopeActive(sectionScope) ? chatScopeNote : undefined,
         onStep: async (steps, cards) => {
           await fastify.pool
             .query(

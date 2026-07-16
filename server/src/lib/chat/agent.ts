@@ -18,6 +18,8 @@ export interface RunAgentArgs {
   history: { role: 'user' | 'assistant'; content: string }[];
   userText: string;
   ctx: AgentContext;
+  /** Базовый системный промпт (резолвится из БД). По умолчанию — CHAT_SYSTEM_PROMPT. */
+  systemPrompt?: string;
   /** Доп. строка к системному промпту (напр. подсказка об активной области подбора). */
   scopeNote?: string;
   /** Режим без рассуждений (Qwen/LM Studio): добавить /no_think в промпт. */
@@ -29,7 +31,8 @@ export async function runAgentTurn(args: RunAgentArgs): Promise<AgentTurnResult>
   const { llm, ctx, userText } = args;
   const history = args.history.slice(-HISTORY_LIMIT);
 
-  let systemContent = args.scopeNote ? `${CHAT_SYSTEM_PROMPT}\n\n${args.scopeNote}` : CHAT_SYSTEM_PROMPT;
+  const base = args.systemPrompt ?? CHAT_SYSTEM_PROMPT;
+  let systemContent = args.scopeNote ? `${base}\n\n${args.scopeNote}` : base;
   // /no_think гасит «рассуждения» у Qwen — кладём и в system, и в текущее сообщение
   // (у Qwen директива чувствительна к позиции в чат-шаблоне).
   if (args.noThink) systemContent += '\n\n/no_think';

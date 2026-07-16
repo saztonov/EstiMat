@@ -14,8 +14,15 @@ import { authenticate } from '../../middleware/authenticate.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import { assertContractorEstimateAccess } from '../../lib/material-requests/access.js';
 import { loadLlmRuntime, resolveLlmEndpoint } from '../../lib/llm/endpoint.js';
-import { resolveAiModel } from '../../lib/llm/settings.js';
-import { computeInputHash, computeScopeHash, loadGroupingLines, type LoadScope } from '../../lib/material-grouping/input.js';
+import { resolveAiModel, resolveQwenNoThink } from '../../lib/llm/settings.js';
+import { resolveAllPrompts } from '../../lib/llm/prompts.js';
+import {
+  computeEffectivePromptVersion,
+  computeInputHash,
+  computeScopeHash,
+  loadGroupingLines,
+  type LoadScope,
+} from '../../lib/material-grouping/input.js';
 import { PROMPT_VERSION } from '../../lib/material-grouping/prompt.js';
 import { abortGroupingJob, requeueStaleJobs, runGroupingJob } from '../../lib/material-grouping/run.js';
 
@@ -114,7 +121,25 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
 
     const settings: GroupingSettings = body.settings;
     const scopeHash = computeScopeHash(scope);
-    const inputHash = computeInputHash(lines, settings, qualifiedModel, PROMPT_VERSION);
+
+    // Снимок промптов/режима — фиксируем на момент создания задания: input_hash, первый прогон и
+    // resume/retry обязаны работать на одном и том же тексте. Правка промпта из администрирования
+    // влияет только на новые задания.
+    const prompts = await resolveAllPrompts(fastify.pool);
+    const noThink = ep.isLmStudio && (await resolveQwenNoThink(fastify.pool));
+    const snapshot = {
+      groupingSystem: prompts['grouping.system'],
+      groupingMerge: prompts['grouping.merge'],
+      model: qualifiedModel,
+      noThink,
+    };
+    const effectiveVersion = computeEffectivePromptVersion(
+      PROMPT_VERSION,
+      snapshot.groupingSystem,
+      snapshot.groupingMerge,
+      noThink,
+    );
+    const inputHash = computeInputHash(lines, settings, qualifiedModel, effectiveVersion);
 
     // Повтор того же запроса (двойной клик) — отдаём уже созданное задание.
     const existing = await fastify.pool.query(
@@ -148,10 +173,10 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
           inputHash,
           body.clientRequestId,
           JSON.stringify(settings),
-          JSON.stringify({ contractorIds: scope.contractorIds }),
+          JSON.stringify({ contractorIds: scope.contractorIds, snapshot }),
           JSON.stringify({ lines: lines.length }),
           `${ep.provider}:${ep.model}`,
-          PROMPT_VERSION,
+          effectiveVersion,
         ],
       );
       const job = rows[0];

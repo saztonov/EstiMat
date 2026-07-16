@@ -188,6 +188,7 @@ export async function buildApp() {
   await app.register(import('./routes/uploads/index.js'), { prefix: '/api/uploads' });
   await app.register(import('./routes/rd/index.js'), { prefix: '/api/rd' });
   await app.register(import('./routes/settings/index.js'), { prefix: '/api/settings' });
+  await app.register(import('./routes/ai-prompts/index.js'), { prefix: '/api/settings/ai-prompts' });
   await app.register(import('./routes/llm/index.js'), { prefix: '/api/llm' });
   await app.register(import('./routes/ai/index.js'), { prefix: '/api/ai' });
   await app.register(import('./routes/ai-chat/index.js'), { prefix: '/api/ai-chat' });

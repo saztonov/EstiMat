@@ -8,6 +8,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { extractJson } from '../../llm/json.js';
+import { PROMPT_DEFAULTS } from '../../llm/prompts.js';
 import type {
   LlmPort,
   LlmExtractContext,
@@ -26,19 +27,12 @@ const SUGGEST_CONFIDENCE_FLOOR = 0.45;
 /** Предел материалов в одном вызове распределения по работам. */
 const ASSIGN_MATERIAL_LIMIT = 300;
 
-// Роль и общие запреты сметчика — префикс ко всем промптам извлечения.
-const SMETCHIK_ROLE =
-  'Ты — ведущий инженер-сметчик с 20-летним опытом. Ты безошибочно отличаешь реальные ' +
-  'строительные материалы/оборудование и работы от служебного содержания чертежей. ' +
-  'НИКОГДА не считай позицией: обозначения осей/секций/корпусов (К1, П.1, 6.А, 3.Л), ' +
-  'этажность (48эт.), зоны (Лобби, Подземная автостоянка, Пристройка), экспликации помещений, ' +
-  'ведомости отделки, маркировочные планы и их легенды, общие указания, штампы/рамки, ' +
-  'номера листов и страниц, ссылки на ГОСТ/СП без конкретного изделия, реквизиты организаций.';
-
 export interface OpenRouterOptions {
   apiKey: string;
   model: string;
   baseUrl: string;
+  /** Роль/префикс сметчика ко всем промптам извлечения (резолвится из БД). Дефолт — extract.role. */
+  rolePrompt?: string;
   /** Сигнал отмены: прерывает in-flight запрос при остановке задания. */
   signal?: AbortSignal;
   /** Лимит токенов ответа (LM Studio/Qwen). */
@@ -62,6 +56,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
+  // Роль сметчика — префикс ко всем промптам извлечения (из БД либо дефолт extract.role).
+  const SMETCHIK_ROLE = opts.rolePrompt ?? PROMPT_DEFAULTS['extract.role'];
   async function chat(messages: ChatMessage[]): Promise<string> {
     // Режим Qwen без рассуждений: /no_think в системный промпт (чувствительно к позиции).
     const outMessages = opts.noThink

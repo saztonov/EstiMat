@@ -6,6 +6,7 @@ import { planBatches, partitionKeyOf, partitionsNeedingMerge, MAX_LINES_PER_BATC
 import { parseBatchResponse } from './parse.js';
 import { assembleResult } from './assemble.js';
 import { buildBatchUserPrompt, buildSystemPrompt } from './prompt.js';
+import { PROMPT_DEFAULTS } from '../llm/prompts.js';
 import type { GroupingLine, GroupingSettings } from './types.js';
 
 const ALL: GroupingSettings = { costType: true, location: true, locationType: true };
@@ -120,7 +121,7 @@ test('в промпт не попадают цены и поставщики, а
   assert.ok(!withNone.includes('тип:'));
 
   // Границы слов обязательны: «трубопровод» содержит «руб», и наивный поиск ловит сам себя.
-  for (const text of [withAll, withNone, buildSystemPrompt(ALL)]) {
+  for (const text of [withAll, withNone, buildSystemPrompt(ALL, PROMPT_DEFAULTS['grouping.system'])]) {
     assert.ok(!/\bцен[аыу]\b|стоимост|поставщик|₽|\bруб\b/i.test(text), 'цены и поставщики модели не передаются');
   }
 });

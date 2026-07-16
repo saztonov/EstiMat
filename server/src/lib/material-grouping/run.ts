@@ -13,16 +13,11 @@ import type { GroupingSettings } from '@estimat/shared';
 import { loadLlmRuntime, resolveLlmEndpoint } from '../llm/endpoint.js';
 import { withLmStudioSlot } from '../llm/limiter.js';
 import { resolveAiModel, resolveQwenNoThink } from '../llm/settings.js';
+import { resolvePrompt } from '../llm/prompts.js';
 import { chatJsonOnce } from '../llm/chat-json.js';
 import { loadGroupingLines, type LoadScope } from './input.js';
 import { planBatches, partitionsNeedingMerge } from './batch.js';
-import {
-  buildSystemPrompt,
-  buildBatchUserPrompt,
-  buildMergeUserPrompt,
-  MERGE_SYSTEM_PROMPT,
-  PROMPT_VERSION,
-} from './prompt.js';
+import { buildSystemPrompt, buildBatchUserPrompt, buildMergeUserPrompt } from './prompt.js';
 import { parseBatchResponse, parseMergeResponse } from './parse.js';
 import { assembleResult, type MergeOp } from './assemble.js';
 import type { DraftBatch, GroupingBatch } from './types.js';
@@ -48,11 +43,19 @@ export function abortGroupingJob(jobId: string): void {
   runningJobs.get(jobId)?.abort();
 }
 
+/** Снимок промптов/режима, зафиксированный при создании задания (см. routes/material-grouping). */
+interface JobSnapshot {
+  groupingSystem?: string;
+  groupingMerge?: string;
+  model?: string;
+  noThink?: boolean;
+}
+
 interface JobRow {
   id: string;
   estimate_id: string;
   scope_org_id: string | null;
-  payload: { contractorIds?: string[] };
+  payload: { contractorIds?: string[]; snapshot?: JobSnapshot };
   settings: GroupingSettings;
   attempts: number;
   max_attempts: number;
@@ -123,32 +126,39 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
     const lines = await loadGroupingLines(fastify.pool, scope);
     if (lines.length === 0) throw new Error('В выбранной области нет материалов');
 
-    const qualifiedModel = await resolveAiModel(fastify.pool);
+    // Промпты/модель/режим берём ИЗ СНИМКА задания — resume и retry обязаны идти на том же
+    // тексте, что и первый прогон и что учтён в input_hash. Fallback (резолв из БД) — только для
+    // заданий, созданных до появления снимка (переживших деплой).
+    const snap = job.payload?.snapshot ?? {};
+    const qualifiedModel = snap.model ?? (await resolveAiModel(fastify.pool));
     const ep = resolveLlmEndpoint(qualifiedModel, await loadLlmRuntime(fastify.pool));
     if (!ep.enabled) throw new Error('ИИ-провайдер не настроен');
-    const noThink = ep.isLmStudio && (await resolveQwenNoThink(fastify.pool));
+    const noThink = snap.noThink ?? (ep.isLmStudio && (await resolveQwenNoThink(fastify.pool)));
+    const systemBase = snap.groupingSystem ?? (await resolvePrompt(fastify.pool, 'grouping.system'));
+    const mergeSystem = snap.groupingMerge ?? (await resolvePrompt(fastify.pool, 'grouping.merge'));
 
     const batches = planBatches(lines, job.settings);
     const deadline = started + (ep.isLmStudio ? JOB_DEADLINE_LM_MS : JOB_DEADLINE_OR_MS);
     const batchTimeout = ep.isLmStudio ? BATCH_TIMEOUT_LM_MS : BATCH_TIMEOUT_OR_MS;
 
+    // prompt_version уже записан при создании задания (эффективная версия с отпечатком). Здесь
+    // только уточняем фактическую модель и план наборов.
     await fastify.pool.query(
       `UPDATE material_grouping_jobs
-          SET batches_total = $2, batch_plan = $3::jsonb, model = $4, prompt_version = $5
+          SET batches_total = $2, batch_plan = $3::jsonb, model = $4
         WHERE id = $1`,
       [
         jobId,
         batches.length,
         JSON.stringify(batches.map((b) => ({ index: b.index, partitionKey: b.partitionKey, lines: b.lines.length }))),
         `${ep.provider}:${ep.model}`,
-        PROMPT_VERSION,
       ],
     );
 
     // Resume: наборы из checkpoint не пересчитываем. План детерминирован, поэтому индексы
     // после рестарта означают ровно те же строки.
     const done: Record<string, DraftBatch> = { ...(job.checkpoint?.batches ?? {}) };
-    const system = buildSystemPrompt(job.settings);
+    const system = buildSystemPrompt(job.settings, systemBase);
 
     const runBatch = async (batch: GroupingBatch): Promise<void> => {
       if (done[String(batch.index)]) return;
@@ -193,7 +203,7 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
           const call = () =>
             chatJsonOnce(
               { endpoint: ep, signal: controller.signal, timeoutMs: MERGE_TIMEOUT_MS, noThink },
-              MERGE_SYSTEM_PROMPT,
+              mergeSystem,
               buildMergeUserPrompt(groups),
             );
           const raw = ep.isLmStudio ? await withLmStudioSlot(call) : await call();

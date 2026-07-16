@@ -35,11 +35,16 @@ export function SmartGroupCard({ group, rows, columns }: Props) {
   const total = rows.reduce((s, r) => s + r.total, 0);
   const status = groupStatus(group);
   const findings = group.issues.length + group.missing.length;
+  // Вид работ группы: различает карточки-однофамильцы (одна операция в разных видах работ при
+  // включённом виде работ не сливается — иначе на экране две одинаковые «Монтаж трубопровода»).
+  const costTypes = [...new Set(rows.map((r) => r.costTypeName).filter((n): n is string => !!n))];
+  const costTypeLabel = costTypes.length === 1 ? costTypes[0] : null;
 
   return (
     <div style={{ marginBottom: 16 }}>
       <Space size={8} style={{ marginBottom: 8, flexWrap: 'wrap' }}>
         <strong style={{ fontSize: 14 }}>{group.name}</strong>
+        {costTypeLabel && <Tag color="blue">{costTypeLabel}</Tag>}
         <Tag color={status.color}>{status.label}</Tag>
         {group.purpose && (
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>

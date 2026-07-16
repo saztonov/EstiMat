@@ -15,6 +15,7 @@ import type { SectionScope, ExtractRules } from '../../lib/extract/types.js';
 import { loadLlmRuntime, resolveLlmEndpoint } from '../../lib/llm/endpoint.js';
 import { withLmStudioSlot } from '../../lib/llm/limiter.js';
 import { resolveAiModel, resolveQwenNoThink } from '../../lib/llm/settings.js';
+import { resolvePrompt } from '../../lib/llm/prompts.js';
 
 // Накопленные правила (sectionToWork/lessons/синонимы) — поверх вшитых дефолтов кода.
 // Best-effort: критичные алиасы уже в коде, файла может не быть в прод-образе.
@@ -72,10 +73,12 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
     const rt = await loadLlmRuntime(fastify.pool);
     const ep = resolveLlmEndpoint(qualifiedModel, rt);
     const noThink = ep.isLmStudio && (await resolveQwenNoThink(fastify.pool));
+    const rolePrompt = await resolvePrompt(fastify.pool, 'extract.role');
     const port = createOpenRouterPort({
       apiKey: ep.apiKey,
       model: ep.model,
       baseUrl: ep.baseUrl,
+      rolePrompt,
       signal: controller.signal,
       maxTokens: ep.isLmStudio ? ep.maxTokens : undefined,
       noThink,

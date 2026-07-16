@@ -206,6 +206,21 @@ export function computeInputHash(
   return createHash('sha256').update(canonical).digest('hex');
 }
 
+/**
+ * Эффективная версия промпта = базовая версия + полный SHA-256 от канонического JSON текстов и
+ * режима рассуждений. Передаётся в computeInputHash как promptVersion, поэтому правка любого из
+ * текстов промпта (system/merge) или переключение noThink инвалидируют кэш готовых результатов.
+ */
+export function computeEffectivePromptVersion(
+  version: string,
+  system: string,
+  merge: string,
+  noThink: boolean,
+): string {
+  const canonical = JSON.stringify({ version, system, merge, noThink });
+  return `${version}:${createHash('sha256').update(canonical).digest('hex')}`;
+}
+
 /** Хэш области: смета + чей это срез. Разные срезы не делят кэш и активную блокировку. */
 export function computeScopeHash(scope: LoadScope): string {
   const canonical = JSON.stringify({

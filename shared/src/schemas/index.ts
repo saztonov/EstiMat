@@ -17,6 +17,7 @@ export * from './rd.js';
 export * from './rd-cipher.js';
 export * from './vor.js';
 export * from './settings.js';
+export * from './prompts.js';
 export * from './llm.js';
 export * from './user.js';
 export * from './ai.js';

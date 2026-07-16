@@ -120,10 +120,14 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
     return buildMaterialGroups(src, []);
   }, [baseItems, viewerIsContractor]);
 
-  // Уровни группировки — свои для каждого представления (требование задачи).
-  const { levels, toggle, applyPreset, reset, activePreset, changedFromDefault } = useMaterialLevels(
-    viewMode === 'smart' ? 'smart' : 'standard',
-  );
+  // Уровни группировки — свои для каждого представления (требование задачи). Держим оба
+  // экземпляра со статическими ключами и выбираем активный по режиму: при переключении вкладок
+  // компонент не перемонтируется, а usePersistedState читает localStorage только на mount —
+  // один хук с меняющимся ключом протекал бы настройками между вкладками.
+  const standardLevels = useMaterialLevels('standard');
+  const smartLevels = useMaterialLevels('smart');
+  const { levels, toggle, applyPreset, reset, activePreset, changedFromDefault } =
+    viewMode === 'smart' ? smartLevels : standardLevels;
 
   const categoryIndex = useMemo(() => buildCategoryIndex(items), [items]);
 
@@ -283,7 +287,8 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ flexShrink: 0, marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      {/* paddingTop: контейнер вкладки обрезает overflow'ом верх бейджей-счётчиков на кнопках. */}
+      <div style={{ flexShrink: 0, paddingTop: 6, marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {!viewerIsContractor && (
           <Select
             mode="multiple"
@@ -364,7 +369,9 @@ export function ContractorsMaterialsTab({ estimateId, items, viewerIsContractor,
         size="small"
         activeKey={viewMode}
         onChange={setViewMode}
-        style={{ flexShrink: 0 }}
+        // flex:'0 0 auto' сбрасывает grow И basis, которые навязывает глобальное .ant-tabs{flex:1}
+        // (иначе пустой content-holder этого переключателя-без-children растягивается на пол-экрана).
+        style={{ flex: '0 0 auto' }}
         items={[
           { key: 'standard', label: 'Стандартная группировка' },
           { key: 'smart', label: 'Умная группировка' },
