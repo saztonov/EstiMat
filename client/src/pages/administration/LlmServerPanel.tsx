@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { App, Button, Input, Space, Spin, Switch, Table, Tag, Typography } from 'antd';
+import { App, Button, Input, Radio, Space, Spin, Switch, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,8 +15,18 @@ import { useAppSettings } from '../../hooks/useAppSettings';
 import { getLlmConnection, getLlmModels, refreshLlmModels, updateLlmConnection } from '../../services/llm';
 import { useColumnSearch, uniqueFilters } from '../../lib/tableColumnSearch';
 
+// Единая опция OpenRouter: конкретная модель на проде задаётся прокси, выбор её в UI не нужен.
+const OPENROUTER_VALUE = 'openrouter:';
+
+// Привести сохранённое значение к опции выбора: любой openrouter (или старое «голое»
+// значение / пусто) → единая опция «OpenRouter (прокси)»; lmstudio:<id> — как есть.
+function toOption(stored: string | undefined): string {
+  const v = (stored ?? '').trim();
+  return v.startsWith('lmstudio:') ? v : OPENROUTER_VALUE;
+}
+
 // Вкладка «Сервер моделей»: подключение к LM Studio (адрес — в БД, токен — в env),
-// живой каталог моделей и режим Qwen /no_think.
+// живой каталог моделей, режим Qwen /no_think и выбор моделей для РД и для чата.
 export function LlmServerPanel() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
@@ -79,6 +89,40 @@ export function LlmServerPanel() {
   const sourceLabel =
     conn?.baseUrlSource === 'db' ? 'из настроек' : conn?.baseUrlSource === 'env' ? 'из env (по умолчанию)' : 'не задан';
   const qwenNoThink = settingsData?.data.aiQwenNoThink ?? true;
+
+  // Опции выбора: OpenRouter (прокси) + модели LM Studio из каталога подключения.
+  const lmModels = conn?.models ?? [];
+  const modelOptions: { value: string; label: string; provider: 'OpenRouter' | 'LM Studio' }[] = [
+    { value: OPENROUTER_VALUE, label: 'OpenRouter (прокси)', provider: 'OpenRouter' },
+    ...lmModels.map((id) => ({ value: `lmstudio:${id}`, label: id, provider: 'LM Studio' as const })),
+  ];
+
+  const rdSelected = toOption(settingsData?.data.aiModelDefault);
+  const chatSelected = toOption(settingsData?.data.aiChatModelDefault);
+
+  const renderModelColumn = (title: string, selected: string, onPick: (value: string) => void) => (
+    <div style={{ minWidth: 240 }}>
+      <Typography.Title level={5}>{title}</Typography.Title>
+      <Radio.Group
+        value={selected}
+        disabled={settingsMutation.isPending}
+        onChange={(e) => onPick(e.target.value)}
+      >
+        <Space direction="vertical">
+          {modelOptions.map((o) => (
+            <Radio key={o.value} value={o.value}>
+              {o.label}
+              {o.provider === 'LM Studio' && (
+                <Tag color="geekblue" style={{ marginInlineStart: 6 }}>
+                  LM Studio
+                </Tag>
+              )}
+            </Radio>
+          ))}
+        </Space>
+      </Radio.Group>
+    </div>
+  );
 
   const models = modelsQuery.data?.data ?? [];
   const columns: ColumnsType<LlmModelInfo> = [
@@ -174,7 +218,7 @@ export function LlmServerPanel() {
       <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
           Список моделей, доступных на сервере. Обновите, чтобы получить актуальные данные и сделать модели выбираемыми
-          в разделе «Настройки».
+          ниже, в блоке «Модели ИИ».
         </Typography.Text>
         <Button
           icon={<ReloadOutlined />}
@@ -211,6 +255,24 @@ export function LlmServerPanel() {
         Для «думающих» моделей Qwen ускоряет ответ и снижает риск пустого ответа в чате/извлечении. Отключите, если
         нужны развёрнутые рассуждения.
       </Typography.Paragraph>
+
+      <Typography.Title level={5} style={{ marginTop: 24 }}>
+        Модели ИИ
+      </Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 8 }}>
+        Отдельно выбираются модель для ИИ-извлечения из РД и для ИИ-чата. «OpenRouter (прокси)» —
+        запросы идут через прокси, конкретную модель задаёт сам прокси.
+      </Typography.Paragraph>
+
+      {/* Колонки рядом, а не в переносе: суммарная ширина укладывается в maxWidth обёртки. */}
+      <div style={{ display: 'flex', gap: 56, flexWrap: 'wrap' }}>
+        {renderModelColumn('Модель для извлечения РД', rdSelected, (value) =>
+          settingsMutation.mutate({ aiModelDefault: value }),
+        )}
+        {renderModelColumn('Модель для ИИ-чата', chatSelected, (value) =>
+          settingsMutation.mutate({ aiChatModelDefault: value }),
+        )}
+      </div>
       </div>
     </div>
   );

@@ -235,6 +235,8 @@ export function UsersPanel() {
           <Form.Item name="orgId" label="Организация">
             <Select
               allowClear
+              showSearch
+              optionFilterProp="label"
               placeholder="Выберите организацию"
               options={orgsData?.data.map((o) => ({ value: o.id as string, label: o.name as string }))}
             />

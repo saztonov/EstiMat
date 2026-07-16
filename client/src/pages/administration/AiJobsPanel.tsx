@@ -149,8 +149,8 @@ export function AiJobsPanel() {
   ];
 
   return (
-    <div style={{ paddingTop: 8 }}>
-      <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'flex-end' }}>
+    <div className="table-page-wrapper" style={{ paddingTop: 8 }}>
+      <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
         <Button
           size="small"
           icon={<ReloadOutlined />}
