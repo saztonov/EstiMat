@@ -12,6 +12,7 @@ import {
   exportMaterialRequestXlsx,
   MaterialRequestExportError,
 } from '../../lib/material-request-export/index.js';
+import { lockEstimateRequests } from '../../lib/material-requests/access.js';
 
 export default async function materialRequestRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -79,10 +80,7 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
-      // Сериализуем создание заявки с согласованием материалов по одной смете: сводка видимых
-      // ключей и вставка строк должны быть атомарны относительно relink при согласовании
-      // (иначе новая txt-строка заявки может «проскочить» мимо переноса на id-ключ).
-      await client.query(`SELECT pg_advisory_xact_lock(hashtext('estimat:material_request'), hashtext($1))`, [body.estimateId]);
+      await lockEstimateRequests(client, body.estimateId);
 
       // Принять только строки по видимым подрядчику материалам (защита от заказа чужого).
       // Превышение объёма НЕ блокируем — это отражается статусом «Сверх сметы» на клиенте.
@@ -197,7 +195,7 @@ export default async function materialRequestRoutes(fastify: FastifyInstance) {
            SELECT mri.cost_type_id, mri.agg_key, SUM(mri.quantity)::numeric AS ordered_qty
              FROM material_request_items mri
              JOIN material_requests mr ON mr.id = mri.request_id
-            WHERE ${where}
+            WHERE ${where} AND mr.status <> 'cancelled'
             GROUP BY mri.cost_type_id, mri.agg_key
          ), priced AS (
            SELECT soi.cost_type_id,

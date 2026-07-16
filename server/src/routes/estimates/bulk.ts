@@ -7,6 +7,7 @@ import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { loadProjectId } from '../../lib/estimate-detail.js';
 import { legacyToLocations, deriveLegacyLocation, upsertLocationType } from '../../lib/location.js';
 import { mirrorMaterialsToCatalog, relinkMaterialRequestsToCatalog } from '../../lib/catalog.js';
+import { lockEstimateRequests } from '../../lib/material-requests/access.js';
 import {
   bulkDeleteEstimateItemsSchema,
   bulkConfirmEstimateItemsSchema,
@@ -25,7 +26,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
       await client.query('BEGIN');
       // Сериализуем согласование и создание заявок по одной смете, чтобы новая строка заявки
       // не появилась между relink и её пропуском (см. relinkMaterialRequestsToCatalog).
-      await client.query(`SELECT pg_advisory_xact_lock(hashtext('estimat:material_request'), hashtext($1))`, [request.params.id]);
+      await lockEstimateRequests(client, request.params.id);
       const works = await client.query(
         'UPDATE estimate_items SET needs_review = false, updated_by = $2 WHERE estimate_id = $1 AND needs_review = true RETURNING id, estimate_id, project_id',
         [request.params.id, request.currentUser.id],
@@ -89,7 +90,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
       try {
         await client.query('BEGIN');
         // Сериализуем согласование и создание заявок по одной смете (см. confirm-all).
-        await client.query(`SELECT pg_advisory_xact_lock(hashtext('estimat:material_request'), hashtext($1))`, [eid]);
+        await lockEstimateRequests(client, eid);
         const works = await client.query(
           `UPDATE estimate_items SET needs_review = false, updated_by = $3
             WHERE estimate_id = $1 AND id = ANY($2::uuid[]) AND needs_review = true

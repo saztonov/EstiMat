@@ -22,6 +22,8 @@ import {
 import {
   assertContractorEstimateAccess,
   visibleMaterialKeys,
+  loadVisibleMaterials,
+  lockEstimateRequests,
   lineKey,
   appendRequestAudit,
 } from '../../lib/material-requests/access.js';
@@ -290,46 +292,80 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     const user = request.currentUser;
     if (!user.orgId) return reply.status(400).send({ error: 'Пользователь не привязан к организации' });
     const body = createRequestSchema.parse(request.body);
-
-    // Идемпотентность по клиентскому ключу.
-    const dup = await fastify.pool.query(
-      `SELECT id, payload_hash, request_no FROM material_requests
-        WHERE contractor_id = $1 AND create_request_id = $2`,
-      [user.orgId, body.createRequestId],
-    );
-    const payloadHash = canonicalHash({ requestType: body.requestType, lines: body.lines });
-    if (dup.rows[0]) {
-      if (dup.rows[0].payload_hash && dup.rows[0].payload_hash !== payloadHash) {
-        return reply.status(409).send({ error: 'Повтор ключа заявки с другими данными' });
-      }
-      return reply.status(200).send({ data: { id: dup.rows[0].id, deduped: true } });
-    }
-
-    if (!(await assertContractorEstimateAccess(fastify.pool, body.estimateId, user.orgId))) {
-      return reply.status(403).send({ error: 'Объект не назначен вашей организации' });
-    }
-
-    const visible = await visibleMaterialKeys(fastify.pool, body.estimateId, user.orgId);
-    const lines = body.lines.filter(
-      (l) => l.quantity > 0 && visible.has(lineKey(l.costTypeId, l.aggKey)),
-    );
-    if (lines.length === 0) return reply.status(400).send({ error: 'Нет допустимых строк заявки' });
-
-    const ctx = await fastify.pool.query(
-      `SELECT e.project_id, e.work_type AS estimate_name, p.code AS project_code, p.name AS project_name,
-              org.name AS contractor_name, org.inn AS contractor_inn
-         FROM estimates e
-         LEFT JOIN projects p ON p.id = e.project_id
-         LEFT JOIN organizations org ON org.id = $2
-        WHERE e.id = $1`,
-      [body.estimateId, user.orgId],
-    );
-    const c = ctx.rows[0] ?? {};
-    const projectId = c.project_id ?? null;
+    const contractorId = user.orgId;
+    const payloadHash = canonicalHash({
+      contractorId,
+      estimateId: body.estimateId,
+      requestType: body.requestType,
+      lines: body.lines,
+    });
 
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
+      // Лок — первым, до row-lock на projects: одинаковый порядок захвата во всех путях.
+      await lockEstimateRequests(client, body.estimateId);
+
+      // Идемпотентность по клиентскому ключу. Проверка под локом: два параллельных POST с одним
+      // ключом по одной смете сериализуются, и второй увидит заявку первого.
+      const dup = await client.query(
+        `SELECT id, payload_hash FROM material_requests
+          WHERE contractor_id = $1 AND create_request_id = $2`,
+        [contractorId, body.createRequestId],
+      );
+      if (dup.rows[0]) {
+        await client.query('ROLLBACK');
+        if (dup.rows[0].payload_hash && dup.rows[0].payload_hash !== payloadHash) {
+          return reply
+            .status(409)
+            .send({ error: 'Повтор ключа заявки с другими данными', code: 'IDEMPOTENCY_CONFLICT' });
+        }
+        return reply.status(200).send({ data: { id: dup.rows[0].id, deduped: true } });
+      }
+
+      if (!(await assertContractorEstimateAccess(client, body.estimateId, contractorId))) {
+        await client.query('ROLLBACK');
+        return reply.status(403).send({ error: 'Объект не назначен вашей организации' });
+      }
+
+      // Сверяем строки с канонической сводкой в той же транзакции. Устарела хоть одна —
+      // откатываем всё: частично созданная заявка хуже отказа, пользователь уверен, что
+      // заказал группу целиком. Клиент сохраняет черновик и пересобирает по свежим данным.
+      const visible = await loadVisibleMaterials(client, body.estimateId, contractorId);
+      const stale: { lineKey: string; name: string; reason: string }[] = [];
+      const lines = body.lines.map((l) => {
+        const key = lineKey(l.costTypeId, l.aggKey);
+        const canon = visible.get(key);
+        if (!canon) {
+          stale.push({ lineKey: key, name: l.name, reason: 'not_visible' });
+          return null;
+        }
+        // Имя/единица/material_id — из сметы, а не из тела запроса.
+        return { ...l, name: canon.name, unit: canon.unit, materialId: canon.materialId };
+      });
+      if (stale.length > 0) {
+        await client.query('ROLLBACK');
+        // Тело кладём в data — оттуда его берёт ApiError на клиенте (см. services/api.ts).
+        return reply.status(409).send({
+          error: `Смета изменилась: ${stale.length} поз. больше не доступны`,
+          code: 'STALE_MATERIAL_SCOPE',
+          data: { lines: stale },
+        });
+      }
+      const canonLines = lines as NonNullable<(typeof lines)[number]>[];
+
+      const ctx = await client.query(
+        `SELECT e.project_id, e.work_type AS estimate_name, p.code AS project_code, p.name AS project_name,
+                org.name AS contractor_name, org.inn AS contractor_inn
+           FROM estimates e
+           LEFT JOIN projects p ON p.id = e.project_id
+           LEFT JOIN organizations org ON org.id = $2
+          WHERE e.id = $1`,
+        [body.estimateId, contractorId],
+      );
+      const c = ctx.rows[0] ?? {};
+      const projectId = c.project_id ?? null;
+
       if (projectId) await client.query('SELECT id FROM projects WHERE id = $1 FOR UPDATE', [projectId]);
       const { rows: noRows } = await client.query(
         'SELECT COALESCE(MAX(request_no), 0) + 1 AS next_no FROM material_requests WHERE project_id = $1',
@@ -345,14 +381,14 @@ export default async function requestRoutes(fastify: FastifyInstance) {
          VALUES ($1,$2,$3,'in_work',$4,$5,$6,$7,$8,$9,$10,$11, now(), $12, $12)
          RETURNING id`,
         [
-          body.estimateId, projectId, user.orgId, body.requestType, requestNo,
+          body.estimateId, projectId, contractorId, body.requestType, requestNo,
           body.createRequestId, payloadHash, c.project_name ?? null, c.estimate_name ?? null,
           c.contractor_name ?? null, c.contractor_inn ?? null, user.id,
         ],
       );
       const requestId = reqRows[0].id as string;
 
-      for (const l of lines) {
+      for (const l of canonLines) {
         // Для «Закупка через СУ-10» — разворачиваем график поставки в строки по датам
         // (одна строка на дату). Для прочих типов — одна строка на материал без даты.
         const schedule =
@@ -381,7 +417,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
 
       await appendRequestAudit(client, {
         requestId, action: 'created', userId: user.id,
-        changes: { requestType: body.requestType, lines: lines.length },
+        changes: { requestType: body.requestType, lines: canonLines.length, contractorId },
         estimateId: body.estimateId, projectId,
       });
       await recalcRequestStatus(client, requestId, user.id);

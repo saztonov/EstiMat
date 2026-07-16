@@ -6,6 +6,7 @@ import { recordAudit, recordAuditBatch, diffChanges, type AuditInput } from '../
 import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { loadProjectId } from '../../lib/estimate-detail.js';
 import { mirrorMaterialsToCatalog, relinkMaterialRequestsToCatalog } from '../../lib/catalog.js';
+import { lockEstimateRequests } from '../../lib/material-requests/access.js';
 import {
   createEstimateMaterialSchema,
   updateEstimateMaterialSchema,
@@ -148,7 +149,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         let catalogChanged = false;
         if ((body.status === 'confirmed' || body.needsReview === false) && rows[0].material_id === null) {
           // Сериализуем согласование и создание заявок по одной смете (см. estimates/bulk.ts).
-          await client.query(`SELECT pg_advisory_xact_lock(hashtext('estimat:material_request'), hashtext($1))`, [estimateId]);
+          await lockEstimateRequests(client, estimateId);
           catalogChanged = await mirrorMaterialsToCatalog(client, [rows[0].id as string], request.currentUser.id);
           // Привязка к каталогу сменила agg_key материала — переносим строки заявок с txt-ключа на id-ключ.
           await relinkMaterialRequestsToCatalog(client, estimateId);

@@ -8,7 +8,7 @@ import {
   lineKey,
   type MaterialRequestType,
 } from '@estimat/shared';
-import { api } from '../../services/api';
+import { api, ApiError } from '../../services/api';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { buildMaterialGroups } from '../estimates/materials/aggregateMaterials';
 import { type EstimateItem } from '../estimates/components/types';
@@ -186,7 +186,19 @@ export function ContractorsMaterialsTab({
         message.success(number ? `Заявка ${number} создана` : 'Заявка создана');
       }
     },
-    onError: (err: Error) => message.error(err.message),
+    onError: (err: Error) => {
+      // Смета изменилась во время набора — сервер не создал заявку частично, а отказал целиком.
+      // Черновик не трогаем (он живёт по ключу заказа): подтягиваем свежую смету и даём
+      // пересобрать. Иначе часть позиций молча не попала бы в заявку.
+      if (err instanceof ApiError && err.code === 'STALE_MATERIAL_SCOPE') {
+        queryClient.invalidateQueries({ queryKey: ['estimate', estimateId] });
+        queryClient.invalidateQueries({ queryKey: ['contractor-my-items', estimateId] });
+        queryClient.invalidateQueries({ queryKey: ['material-ordered', estimateId] });
+        message.warning(`${err.message}. Проверьте количества и отправьте заявку ещё раз.`);
+        return;
+      }
+      message.error(err.message);
+    },
   });
 
   function updateDraft(key: string, v: number | null) {

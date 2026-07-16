@@ -12,28 +12,41 @@ type Db = Pool | PoolClient;
 // Реэкспорт сохранён: на него уже импортируются routes/requests.
 export { aggKey, lineKey };
 
-// Доступ подрядчика к смете объекта (проект назначен его организации).
-export async function assertContractorEstimateAccess(
-  db: Db,
-  estimateId: string,
-  orgId: string,
-): Promise<boolean> {
-  const { rows } = await db.query(
-    `SELECT 1 FROM estimates e
-       JOIN project_contractors pc ON pc.project_id = e.project_id
-      WHERE e.id = $1 AND pc.contractor_id = $2`,
-    [estimateId, orgId],
-  );
-  return rows.length > 0;
+/**
+ * Сериализовать работу с заявками одной сметы. Берётся ПЕРВЫМ после BEGIN — до любых row-lock
+ * (projects FOR UPDATE и т.п.), чтобы порядок захвата был одинаков во всех путях и не давал
+ * дедлока.
+ *
+ * Синхронизирует создание заявки с согласованием материалов: сводка видимых ключей и вставка
+ * строк должны быть атомарны относительно relink (иначе новая txt-строка заявки «проскочит»
+ * мимо переноса на id-ключ). От ПРОЧИХ правок сметы лок не защищает — их ловит сверка строк
+ * с канонической сводкой внутри той же транзакции.
+ */
+export async function lockEstimateRequests(db: Db, estimateId: string): Promise<void> {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtext('estimat:material_request'), hashtext($1))`, [
+    estimateId,
+  ]);
 }
 
-// Видимая подрядчику сводка материалов сметы: множество ключей (cost_type_id, agg_key)
-// по его назначенным строкам. Заявка принимается только по этим материалам.
-export async function visibleMaterialKeys(
+/** Канонические данные материала сметы — источник истины для строк заявки. */
+export interface CanonicalMaterial {
+  costTypeId: string | null;
+  aggKey: string;
+  materialId: string | null;
+  name: string;
+  unit: string;
+}
+
+/**
+ * Видимая подрядчику сводка материалов сметы: ключ заявки → канонические данные материала
+ * по его назначенным строкам. Заявка принимается только по этим материалам, а имя/единица/
+ * material_id берутся отсюда, а не из тела запроса: клиент не источник истины о смете.
+ */
+export async function loadVisibleMaterials(
   db: Db,
   estimateId: string,
-  orgId: string,
-): Promise<Set<string>> {
+  contractorId: string,
+): Promise<Map<string, CanonicalMaterial>> {
   const { rows } = await db.query(
     `SELECT ei.cost_type_id, em.material_id, em.unit,
             COALESCE(mc.name, em.description, 'Материал') AS name
@@ -42,13 +55,48 @@ export async function visibleMaterialKeys(
        JOIN estimate_materials em ON em.item_id = ei.id
        LEFT JOIN material_catalog mc ON em.material_id = mc.id
       WHERE eic.estimate_id = $1 AND eic.contractor_id = $2`,
-    [estimateId, orgId],
+    [estimateId, contractorId],
   );
-  const set = new Set<string>();
+  const map = new Map<string, CanonicalMaterial>();
   for (const r of rows) {
-    set.add(lineKey(r.cost_type_id ?? null, aggKey(r.material_id ?? null, r.name, r.unit)));
+    const costTypeId = r.cost_type_id ?? null;
+    const key = aggKey(r.material_id ?? null, r.name, r.unit);
+    // Один ключ свёртки могут дать несколько строк сметы (разные работы одного вида).
+    // Данные у них совпадают по построению ключа — берём первую.
+    map.set(lineKey(costTypeId, key), {
+      costTypeId,
+      aggKey: key,
+      materialId: r.material_id ?? null,
+      name: r.name,
+      unit: r.unit,
+    });
   }
-  return set;
+  return map;
+}
+
+// Доступ подрядчика к смете объекта (проект назначен его организации). Для заявки от имени
+// подрядчика вызывается с выбранным contractorId, а не с организацией пользователя.
+export async function assertContractorEstimateAccess(
+  db: Db,
+  estimateId: string,
+  contractorId: string,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT 1 FROM estimates e
+       JOIN project_contractors pc ON pc.project_id = e.project_id
+      WHERE e.id = $1 AND pc.contractor_id = $2`,
+    [estimateId, contractorId],
+  );
+  return rows.length > 0;
+}
+
+/** Множество видимых ключей — обёртка над loadVisibleMaterials (один запрос, один источник). */
+export async function visibleMaterialKeys(
+  db: Db,
+  estimateId: string,
+  contractorId: string,
+): Promise<Set<string>> {
+  return new Set((await loadVisibleMaterials(db, estimateId, contractorId)).keys());
 }
 
 // Запись доменного события заявки в несгораемый журнал (лента истории карточки).
