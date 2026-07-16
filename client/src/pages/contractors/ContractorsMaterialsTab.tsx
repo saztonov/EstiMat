@@ -273,12 +273,13 @@ export function ContractorsMaterialsTab({
         locFilterActive,
         editing,
         viewerIsContractor,
+        hasPrices: priceMap.size > 0,
         orderedMap,
         draft,
         onDraftChange: updateDraft,
         onBreakdown: setBreakdown,
       }),
-    [levels.costType, locFilterActive, editing, viewerIsContractor, orderedMap, draft],
+    [levels.costType, locFilterActive, editing, viewerIsContractor, priceMap, orderedMap, draft],
   );
 
   const smart = viewMode === 'smart';

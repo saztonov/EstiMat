@@ -3,6 +3,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
+import { remainingOf } from './remaining';
 
 const EPS = 1e-6;
 const qty = (v: number) => Math.round(v * 1e4) / 1e4;
@@ -10,10 +11,12 @@ const qty = (v: number) => Math.round(v * 1e4) / 1e4;
 interface Options {
   /** Уровень «Вид работ» выключен → материалы разных видов работ стоят рядом: показываем чей. */
   showCostType: boolean;
-  /** Активен локационный отбор: «По смете» урезано, «Заказано» — по всей смете. */
+  /** Активен локационный отбор: «По смете» урезано, «Уже заявлено» — по всей смете. */
   locFilterActive: boolean;
   editing: boolean;
   viewerIsContractor: boolean;
+  /** По смете есть хоть одна закупленная цена — иначе «Цена»/«Сумма» пусты и не нужны. */
+  hasPrices: boolean;
   orderedMap: Map<string, number>;
   draft: Map<string, number>;
   onDraftChange: (orderKey: string, v: number | null) => void;
@@ -23,7 +26,7 @@ interface Options {
 /**
  * Колонки таблицы материалов — общие для стандартного и умного режима.
  *
- * Ключ заказа берётся из самой строки (row.orderKey): строка атомарна, поэтому «Заказано»
+ * Ключ заказа берётся из самой строки (row.orderKey): строка атомарна, поэтому «Уже заявлено»
  * и «Сверх сметы» считаются одинаково при любых уровнях группировки.
  */
 export function buildMaterialColumns({
@@ -31,11 +34,19 @@ export function buildMaterialColumns({
   locFilterActive,
   editing,
   viewerIsContractor,
+  hasPrices,
   orderedMap,
   draft,
   onDraftChange,
   onBreakdown,
 }: Options): ColumnsType<OrderMaterialRow> {
+  // Цена и сумма приходят из оформленной закупки. Пока по смете не закупали ничего, обе колонки —
+  // сплошные прочерки: не занимаем ими ширину. В режиме заявки деньги тоже ни к чему — там считают
+  // количества.
+  const showPrices = !editing && hasPrices;
+  // Заявок по смете нет — «Уже заявлено» пусто, а «Остаток» дублирует «Кол-во по смете».
+  const showOrdered = orderedMap.size > 0;
+
   const cols: ColumnsType<OrderMaterialRow> = [
     {
       title: 'Материал',
@@ -47,12 +58,19 @@ export function buildMaterialColumns({
         const over = viewerIsContractor ? ordered + req > m.quantity + EPS : ordered > m.quantity + EPS;
         return (
           <Space size={4}>
-            <Button type="link" style={{ padding: 0, height: 'auto' }} onClick={() => onBreakdown(m)}>
+            {/* Имя кликабельно (детализация по местоположениям), но не синее: на экране десятки
+                строк, и колонка из ссылок читается как стена, конкурируя с реальными действиями. */}
+            <Button
+              type="text"
+              className="estimat-material-name"
+              style={{ padding: 0, height: 'auto' }}
+              onClick={() => onBreakdown(m)}
+            >
               {m.name}
             </Button>
             {m.hasSuggested && <Tag color="orange">предложение</Tag>}
             {m.hasAi && <Tag color="blue">ИИ</Tag>}
-            {/* При активном отборе «По смете» урезано, а «Заказано» — по всей смете:
+            {/* При активном отборе «По смете» урезано, а «Уже заявлено» — по всей смете:
                 сравнивать их нельзя, иначе тег сработает ложно. */}
             {over && !locFilterActive && <Tag color="red">Сверх сметы</Tag>}
           </Space>
@@ -90,45 +108,67 @@ export function buildMaterialColumns({
       align: 'right',
       render: (v: number) => qty(v),
     },
-    // Цена и сумма — из оформленной закупки, а не из сметы. Пока материал не закупали, цены нет:
-    // показываем прочерк, а не 0 ₽ — иначе бесплатный материал не отличить от неизвестной цены.
-    {
-      title: <Tooltip title="Цена из заказа поставщику (без НДС). Здесь не заполняется">Цена</Tooltip>,
-      key: 'price',
-      width: 120,
-      align: 'right',
-      render: (_, m) =>
-        m.orderUnitPrice == null ? <span style={{ color: '#bfbfbf' }}>—</span> : formatMoney(m.orderUnitPrice),
-    },
-    {
-      title: <Tooltip title="Кол-во по смете × цена из заказа поставщику">Сумма</Tooltip>,
-      key: 'total',
-      width: 140,
-      align: 'right',
-      render: (_, m) =>
-        m.materialCost == null ? <span style={{ color: '#bfbfbf' }}>—</span> : formatMoney(m.materialCost),
-    },
-    {
-      title: (
-        <Tooltip
-          title={
-            viewerIsContractor
-              ? 'Заказано по всей смете — без учёта отбора по местоположению'
-              : 'Заказано по всей смете (с учётом отбора по подрядчикам) — без учёта отбора по местоположению'
-          }
-        >
-          Заказано
-        </Tooltip>
-      ),
-      key: 'ordered',
-      width: 100,
-      align: 'right',
-      render: (_, m) => {
-        const v = orderedMap.get(m.orderKey) ?? 0;
-        return v > 0 ? qty(v) : <span style={{ color: '#bfbfbf' }}>—</span>;
-      },
-    },
   );
+
+  // Цена и сумма — из оформленной закупки, а не из сметы. Пока материал не закупали, цены нет:
+  // показываем прочерк, а не 0 ₽ — иначе бесплатный материал не отличить от неизвестной цены.
+  if (showPrices) {
+    cols.push(
+      {
+        title: <Tooltip title="Цена из заказа поставщику (без НДС). Здесь не заполняется">Цена</Tooltip>,
+        key: 'price',
+        width: 120,
+        align: 'right',
+        render: (_, m) =>
+          m.orderUnitPrice == null ? <span style={{ color: '#bfbfbf' }}>—</span> : formatMoney(m.orderUnitPrice),
+      },
+      {
+        title: <Tooltip title="Кол-во по смете × цена из заказа поставщику">Сумма</Tooltip>,
+        key: 'total',
+        width: 140,
+        align: 'right',
+        render: (_, m) =>
+          m.materialCost == null ? <span style={{ color: '#bfbfbf' }}>—</span> : formatMoney(m.materialCost),
+      },
+    );
+  }
+
+  // «Уже заявлено», а не «Заказано»: это сумма строк заявок подрядчика, а не размещённое в заказах
+  // поставщику. Рядом — остаток: сколько ещё можно заявить (он же база для набора долей).
+  if (showOrdered) {
+    cols.push(
+      {
+        title: (
+          <Tooltip
+            title={
+              viewerIsContractor
+                ? 'Заявлено по всей смете — без учёта отбора по местоположению'
+                : 'Заявлено по всей смете (с учётом отбора по подрядчикам) — без учёта отбора по местоположению'
+            }
+          >
+            Уже заявлено
+          </Tooltip>
+        ),
+        key: 'ordered',
+        width: 120,
+        align: 'right',
+        render: (_, m) => {
+          const v = orderedMap.get(m.orderKey) ?? 0;
+          return v > 0 ? qty(v) : <span style={{ color: '#bfbfbf' }}>—</span>;
+        },
+      },
+      {
+        title: <Tooltip title="Кол-во по смете − уже заявлено">Остаток</Tooltip>,
+        key: 'remaining',
+        width: 110,
+        align: 'right',
+        render: (_, m) => {
+          const left = remainingOf(m.quantity, orderedMap.get(m.orderKey) ?? 0);
+          return left > 0 ? qty(left) : <span style={{ color: '#bfbfbf' }}>0</span>;
+        },
+      },
+    );
+  }
 
   // Колонка «Заявка» — только в режиме заявки (подрядчик).
   if (editing && viewerIsContractor) {
@@ -147,14 +187,6 @@ export function buildMaterialColumns({
       ),
     });
   }
-
-  cols.push({
-    title: <Tooltip title="Поставки — следующая итерация">Поставлено</Tooltip>,
-    key: 'delivered',
-    width: 100,
-    align: 'right',
-    render: () => <span style={{ color: '#bfbfbf' }}>—</span>,
-  });
 
   return cols;
 }

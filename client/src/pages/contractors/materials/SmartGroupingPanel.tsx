@@ -154,30 +154,30 @@ export function SmartGroupingPanel({
         />
       )}
 
-      {/* Сводка — доказательство, что ничего не потерялось: сумма частей равна своду. */}
-      {isAdmin && (
-        <Space style={{ marginBottom: 12, flexWrap: 'wrap' }} size={12}>
-          <span>
-            <strong>Итого:</strong> {result.stats.total} поз.
-            {pricedRows.length > 0 && ` · ${formatMoney(totalMoney)}`}
-          </span>
-          <span style={{ color: '#8c8c8c' }}>
-            в группах {result.stats.covered} · общие {result.stats.shared} · не сгруппировано{' '}
-            {result.stats.ungrouped}
-          </span>
-          {reviewCount > 0 && (
-            <Space size={6}>
-              <Switch size="small" checked={onlyReview} onChange={onOnlyReviewChange} />
-              <span style={{ fontSize: 13, color: '#595959' }}>Только требующие проверки ({reviewCount})</span>
-            </Space>
-          )}
-          {!stale && (
-            <Button size="small" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
-              Пересчитать
-            </Button>
-          )}
-        </Space>
-      )}
+      {/* Сводка — доказательство, что ничего не потерялось: сумма частей равна своду. Нужна всем:
+          заявку набирает подрядчик, и именно ему важны итог и отбор проблемных групп. Под ролью
+          админа — только пересчёт. */}
+      <Space style={{ marginBottom: 12, flexWrap: 'wrap' }} size={12}>
+        <span>
+          <strong>Итого:</strong> {result.stats.total} поз.
+          {pricedRows.length > 0 && ` · ${formatMoney(totalMoney)}`}
+        </span>
+        <span style={{ color: '#8c8c8c' }}>
+          в группах {result.stats.covered} · общие {result.stats.shared} · не сгруппировано{' '}
+          {result.stats.ungrouped}
+        </span>
+        {reviewCount > 0 && (
+          <Space size={6}>
+            <Switch size="small" checked={onlyReview} onChange={onOnlyReviewChange} />
+            <span style={{ fontSize: 13, color: '#595959' }}>Только требующие проверки ({reviewCount})</span>
+          </Space>
+        )}
+        {isAdmin && !stale && (
+          <Button size="small" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
+            Пересчитать
+          </Button>
+        )}
+      </Space>
 
       {job.warnings.length > 0 && isAdmin && (
         <Alert

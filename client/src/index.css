@@ -282,6 +282,19 @@ html, body, #root {
   background-color: #fafafa;
 }
 
+/* Имя материала во вкладке «Материалы»: остаётся кнопкой (клавиатура, детализация по
+   местоположениям), но не синей ссылкой — на экране десятки строк, и колонка из ссылок читается
+   как сплошная стена. Селектор с .ant-btn — чтобы перебить hover-фон antd без !important. */
+.ant-btn.estimat-material-name {
+  color: inherit;
+  text-align: left;
+  white-space: normal;
+}
+.ant-btn.estimat-material-name:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
 /* Навигационное меню-гамбургер: пункты — настоящие ссылки (<a href>),
    средний/Ctrl-клик открывает раздел в новой вкладке. Ссылка растянута
    на всю строку пункта, чтобы клик по любой её части вёл навигацию. */

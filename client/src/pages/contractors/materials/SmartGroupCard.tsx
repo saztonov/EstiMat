@@ -17,13 +17,15 @@ interface Props {
  * Подпись статуса — проекция двух независимых осей (комплектность × совместимость) на понятные
  * сметчику формулировки из ТЗ. Одним enum это не выразить: группа может быть полной, но с
  * возможной несостыковкой, и наоборот.
+ *
+ * У благополучной группы тега НЕТ: на смете из тридцати операций двадцать пять зелёных «Комплект
+ * выглядит полным» — шум, в котором теряется единственный красный. Отсутствие тега и есть «всё в
+ * порядке».
  */
-export function groupStatus(g: MaterialGroupDto): { label: string; color: string } {
+export function groupStatus(g: MaterialGroupDto): { label: string; color: string } | null {
   if (g.compatibility === 'possible_issue') return { label: 'Возможные несовместимости', color: 'red' };
   if (g.completeness === 'incomplete') return { label: 'Неполный комплект', color: 'orange' };
-  if (g.completeness === 'complete' && g.compatibility === 'no_issues') {
-    return { label: 'Комплект выглядит полным', color: 'green' };
-  }
+  if (g.completeness === 'complete' && g.compatibility === 'no_issues') return null;
   // Модель не смогла сделать вывод — это честный ответ, а не ошибка.
   return { label: 'Требует проверки', color: 'gold' };
 }
@@ -55,7 +57,10 @@ export function SmartGroupCard({ group, rows, columns, collapsed, onToggle }: Pr
         {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
         <strong style={{ fontSize: 14 }}>{group.name}</strong>
         {costTypeLabel && <Tag color="blue">{costTypeLabel}</Tag>}
-        <Tag color={status.color}>{status.label}</Tag>
+        {status && <Tag color={status.color}>{status.label}</Tag>}
+        {/* Счётчик находок — в шапке: иначе он виден только у развёрнутой карточки, внутри
+            второго сворачивания. */}
+        {findings > 0 && <Tag>Проверить · {findings}</Tag>}
         {group.purpose && (
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {group.purpose}
