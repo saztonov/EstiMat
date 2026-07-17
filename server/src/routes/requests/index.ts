@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 import { createHash } from 'node:crypto';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { isContractor } from '../../lib/chat/access.js';
+import { isContractor, assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import {
   createRequestSchema,
   requestRevisionSchema,
@@ -85,8 +85,16 @@ export default async function requestRoutes(fastify: FastifyInstance) {
   type LoadResult = { ok: true; row: MrRow } | { ok: false; code: number; msg: string };
 
   // Загрузка заявки со скоупом доступа: internal — любую; contractor — только свою.
+  // ФИО автора берём здесь же: в самой записи только uuid, а отдельный запрос ради одного поля —
+  // лишний круг к БД на каждое открытие карточки.
   async function loadScoped(id: string, user: { role: string; orgId?: string | null }): Promise<LoadResult> {
-    const { rows } = await fastify.pool.query(`SELECT * FROM material_requests WHERE id = $1`, [id]);
+    const { rows } = await fastify.pool.query(
+      `SELECT mr.*, cb.full_name AS created_by_name
+         FROM material_requests mr
+         LEFT JOIN users cb ON cb.id = mr.created_by
+        WHERE mr.id = $1`,
+      [id],
+    );
     const row = rows[0];
     if (!row) return { ok: false, code: 404, msg: 'Заявка не найдена' };
     if (isInternal(user.role)) return { ok: true, row };
@@ -272,18 +280,10 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       [mr.id],
     );
 
-    // Автор заявки: в самой записи только uuid. Заявку мог завести и подрядчик, и сотрудник
-    // от его имени — владельцем остаётся contractor_id, а ФИО объясняет, кто её создал.
-    const author = await fastify.pool.query(
-      `SELECT full_name FROM users WHERE id = $1`,
-      [mr.created_by],
-    );
-
     return {
       data: {
         ...mr,
         number: requestNumber(null, mr.request_no),
-        created_by_name: author.rows[0]?.full_name ?? null,
         items: items.rows,
         files: files.rows,
         order: order.rows[0] ?? null,
@@ -350,6 +350,22 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         return reply.status(200).send({ data: { id: dup.rows[0].id, deduped: true } });
       }
 
+      // Доступ САМОГО автора к смете. Для подрядчика он равен назначению его организации на
+      // объект (ниже), а внутренние роли различаются: admin и engineer видят любую смету, а
+      // manager — только объекты, в которых состоит (project_members). Без этой проверки
+      // руководитель мог бы завести заявку по смете, которую ему нельзя даже открыть.
+      if (!isContractor(user)) {
+        try {
+          await assertEstimateAccess(client, body.estimateId, user);
+        } catch (e) {
+          await client.query('ROLLBACK');
+          if (e instanceof ChatAccessError) return reply.status(e.status).send({ error: e.message });
+          throw e;
+        }
+      }
+
+      // Назначение подрядчика на объект: заявка идёт от его имени, и заказывать он может только
+      // по своим объектам — независимо от того, кто её оформляет.
       if (!(await assertContractorEstimateAccess(client, body.estimateId, contractorId))) {
         await client.query('ROLLBACK');
         return reply.status(403).send({
@@ -363,12 +379,14 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       // откатываем всё: частично созданная заявка хуже отказа, пользователь уверен, что
       // заказал группу целиком. Клиент сохраняет черновик и пересобирает по свежим данным.
       const visible = await loadVisibleMaterials(client, body.estimateId, contractorId);
-      const stale: { lineKey: string; name: string; reason: string }[] = [];
+      const stale: { lineKey: string; reason: string }[] = [];
       const lines = body.lines.map((l) => {
         const key = lineKey(l.costTypeId, l.aggKey);
         const canon = visible.get(key);
         if (!canon) {
-          stale.push({ lineKey: key, name: l.name, reason: 'not_visible' });
+          // Имя не отдаём: строки нет в смете, а клиентское название как раз и есть то, чему
+          // мы не доверяем. Клиент сопоставит позицию по lineKey — ключ у него уже есть.
+          stale.push({ lineKey: key, reason: 'not_visible' });
           return null;
         }
         // Имя/единица/material_id — из сметы, а не из тела запроса.
