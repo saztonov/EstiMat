@@ -12,11 +12,18 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { withLlmGatewaySlot } from './limiter.js';
 
 const MAX_RETRIES = 4;
 const BASE_BACKOFF_MS = 1500;
 /** Тело ошибки — для показа человеку, а не для разбора: длинный HTML прокси незачем хранить. */
 const MAX_ERROR_BODY_CHARS = 2000;
+/**
+ * Сколько тела попадает в ТЕКСТ ошибки. Он уходит в last_error задания и оттуда прямо в плашку на
+ * экране сметчика, поэтому целой HTML-страницы шлюза там быть не должно — полное тело лежит в
+ * журнале вызовов (поле errorBody).
+ */
+const MAX_ERROR_MESSAGE_CHARS = 200;
 
 /** Прерываемый сон: без этого отмена задания ждала бы весь backoff (до 24 с). */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -62,8 +69,16 @@ export class LlmHttpError extends Error {
     readonly requestId: string | null,
     readonly attempts: number,
   ) {
-    super(body ? `ИИ-шлюз вернул ${status}: ${body}` : `ИИ-шлюз вернул ${status}`);
+    super(LlmHttpError.describe(status, body));
     this.name = 'LlmHttpError';
+  }
+
+  /** Короткая причина в одну строку: этот текст читает сметчик, а не разработчик. */
+  private static describe(status: number, body: string): string {
+    const short = body.replace(/\s+/g, ' ').trim();
+    if (!short) return `ИИ-шлюз вернул ${status}`;
+    const cut = short.length > MAX_ERROR_MESSAGE_CHARS ? `${short.slice(0, MAX_ERROR_MESSAGE_CHARS)}…` : short;
+    return `ИИ-шлюз вернул ${status}: ${cut}`;
   }
 }
 
@@ -74,6 +89,8 @@ export interface HttpAttemptInfo {
   /** X-Request-Id этой попытки: у прокси он в журнале. */
   requestId: string;
   status: number | null;
+  /** Сколько ждали свободный слот шлюза. Отделено от времени запроса: это очередь, а не модель. */
+  waitedMs: number;
   durationMs: number;
   /** Пауза перед следующей попыткой; null — повтора не будет. */
   retryDelayMs: number | null;
@@ -180,25 +197,42 @@ export async function chatWithTools(
     // Трейсинг в журнале proxy_llm (если baseUrl указывает на прокси). Свежий id
     // на каждую попытку — прокси сам сгенерирует его при отсутствии заголовка.
     const requestId = randomUUID();
-    const startedAt = Date.now();
+    const queuedAt = Date.now();
+    let waitedMs = 0;
+    let startedAt = queuedAt;
     let res: Response;
+    let data: ChatCompletionResponse | null = null;
+    let errorBody: string | null = null;
+
     try {
-      res = await fetch(`${opts.baseUrl}/chat/completions`, {
-        method: 'POST',
-        signal: opts.signal,
-        headers: {
-          Authorization: `Bearer ${opts.apiKey}`,
-          'Content-Type': 'application/json',
-          'X-Request-Id': requestId,
-        },
-        body: JSON.stringify(body),
-      });
+      // Слот — на одну попытку, а не на весь вызов: во время паузы перед повтором держать его
+      // незачем, иначе четыре ждущих запроса заняли бы весь потолок на десятки секунд.
+      // Тело читаем здесь же: пока оно не прочитано, соединение со шлюзом ещё занято.
+      ({ res, data, errorBody } = await withLlmGatewaySlot(async () => {
+        waitedMs = Date.now() - queuedAt;
+        startedAt = Date.now();
+        const r = await fetch(`${opts.baseUrl}/chat/completions`, {
+          method: 'POST',
+          signal: opts.signal,
+          headers: {
+            Authorization: `Bearer ${opts.apiKey}`,
+            'Content-Type': 'application/json',
+            'X-Request-Id': requestId,
+          },
+          body: JSON.stringify(body),
+        });
+        if (r.ok) return { res: r, data: (await r.json()) as ChatCompletionResponse, errorBody: null };
+        // Без тела «503» не отличить от «503, потому что кончился баланс», а при работе через
+        // прокси — прокси это или сам OpenRouter.
+        return { res: r, data: null, errorBody: sanitizeErrorBody(await r.text().catch(() => '')) };
+      }));
     } catch (err) {
       // Сеть отвалилась или вызов отменили: попытка тоже часть истории.
       notify({
         no: attempt + 1,
         requestId,
         status: null,
+        waitedMs,
         durationMs: Date.now() - startedAt,
         retryDelayMs: null,
         errorBody: null,
@@ -207,12 +241,12 @@ export async function chatWithTools(
       throw err;
     }
 
-    if (res.ok) {
-      const data = (await res.json()) as ChatCompletionResponse;
+    if (res.ok && data) {
       notify({
         no: attempt + 1,
         requestId,
         status: res.status,
+        waitedMs,
         durationMs: Date.now() - startedAt,
         retryDelayMs: null,
         errorBody: null,
@@ -233,9 +267,6 @@ export async function chatWithTools(
       };
     }
 
-    // Тело читаем всегда: без него «503» не отличить от «503, потому что кончился баланс», а при
-    // работе через прокси — прокси это или сам OpenRouter.
-    const errorBody = sanitizeErrorBody(await res.text().catch(() => ''));
     const retryable = res.status === 429 || (res.status >= 500 && res.status <= 599);
     const isLast = attempt === MAX_RETRIES;
     // Спать после последней попытки бессмысленно: следующей не будет, а вызов задерживается.
@@ -245,13 +276,14 @@ export async function chatWithTools(
       no: attempt + 1,
       requestId,
       status: res.status,
+      waitedMs,
       durationMs: Date.now() - startedAt,
       retryDelayMs,
       errorBody,
       networkError: null,
     });
 
-    const err = new LlmHttpError(res.status, errorBody, requestId, attempt + 1);
+    const err = new LlmHttpError(res.status, errorBody ?? '', requestId, attempt + 1);
     // Ретраим только на 429 и 5xx.
     if (!retryable) throw err;
     lastErr = err;

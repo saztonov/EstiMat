@@ -85,6 +85,11 @@ export const config = {
     apiKey: process.env.AI_OPENROUTER_API_KEY || '',
     model: process.env.AI_OPENROUTER_MODEL || 'google/gemini-2.5-flash',
     baseUrl: process.env.AI_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+    // Потолок ОДНОВРЕМЕННЫХ запросов к шлюзу — на весь процесс, а не на задание.
+    // Группировка шлёт наборы пачками по 4, но заданий может считаться несколько сразу, и к ним
+    // добавляются ИИ-чат и извлечение РД: суммарный поток упирался в лимиты шлюза и возвращался
+    // отказами 5xx. Считается общий поток, а не потоки каждого контура по отдельности.
+    maxConcurrency: Number(process.env.AI_MAX_CONCURRENCY || '4'),
     get enabled(): boolean {
       return Boolean(this.apiKey);
     },

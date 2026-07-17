@@ -34,9 +34,11 @@ export function activityText(activity: GroupingActivity | null, now: number): st
 
   if (activity.stage === 'queued') return `${at} — готовим запрос`;
   if (activity.stage === 'waiting_slot') return `${at} — ждём очереди к серверу модели (${elapsed})`;
-  // Шлюз уже отвечал отказом: показываем это, иначе повторы выглядят простоем.
+  // Шлюз уже отвечал отказом: показываем это, иначе повторы выглядят простоем. Предел попыток не
+  // называем — он живёт в серверном клиенте (lib/llm/openrouter.ts) и на клиент не передаётся,
+  // а «из 5» здесь молча разъехалось бы с ним при первой же правке.
   if (activity.lastHttpStatus != null && activity.lastHttpStatus >= 400) {
-    return `${at} — ИИ-шлюз вернул ${activity.lastHttpStatus}, попытка ${activity.httpAttempt} из 5 (${elapsed})`;
+    return `${at} — ИИ-шлюз вернул ${activity.lastHttpStatus}, идёт попытка ${activity.httpAttempt} (${elapsed})`;
   }
   return `${at} — запрос отправлен, ждём ответ (${elapsed})`;
 }

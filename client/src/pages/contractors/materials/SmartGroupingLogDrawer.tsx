@@ -188,6 +188,8 @@ function CallDetail({ jobId, callId }: { jobId: string | null; callId: string })
             {d.attemptsLog.map((a) => (
               <li key={a.no}>
                 #{a.no} · {a.status ?? 'нет ответа'} · {formatElapsed(a.durationMs)}
+                {/* Очередь к шлюзу — не время модели: иначе «долго» читается как «модель тупит». */}
+                {!!a.waitedMs && a.waitedMs >= 1000 && ` · ждал очереди ${formatElapsed(a.waitedMs)}`}
                 {a.retryDelayMs != null && ` · повтор через ${formatElapsed(a.retryDelayMs)}`}
                 {/* Идентификатор нужен, чтобы найти этот же запрос в журнале шлюза. */}
                 <span style={{ color: '#8c8c8c' }}> · {a.requestId}</span>

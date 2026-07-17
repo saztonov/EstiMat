@@ -143,6 +143,9 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
     const systemBase = snap.groupingSystem ?? (await resolvePrompt(fastify.pool, 'grouping.system'));
     const mergeSystem = snap.groupingMerge ?? (await resolvePrompt(fastify.pool, 'grouping.merge'));
 
+    // Фактическая модель, а не строка из снимка: при варианте «OpenRouter (прокси)» снимок хранит
+    // 'openrouter:' без идентификатора, и журнал не отвечал бы на вопрос, чем считали.
+    const actualModel = `${ep.provider}:${ep.model}`;
     const batches = planBatches(lines, job.settings);
     const deadline = started + (ep.isLmStudio ? JOB_DEADLINE_LM_MS : JOB_DEADLINE_OR_MS);
     const batchTimeout = ep.isLmStudio ? BATCH_TIMEOUT_LM_MS : BATCH_TIMEOUT_OR_MS;
@@ -159,7 +162,7 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
         jobId,
         batches.length,
         JSON.stringify(batches.map((b) => ({ index: b.index, partitionKey: b.partitionKey, lines: b.lines.length }))),
-        `${ep.provider}:${ep.model}`,
+        actualModel,
       ],
     );
 
@@ -184,7 +187,7 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
         batchIndex: batch.index,
         partitionKey: batch.partitionKey,
         linesCount: batch.lines.length,
-        model: qualifiedModel,
+        model: actualModel,
       });
       const call = async () => {
         await markCall(fastify, callId, 'in_progress');

@@ -8,6 +8,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { extractJson } from '../../llm/json.js';
+import { withLlmGatewaySlot } from '../../llm/limiter.js';
 import { PROMPT_DEFAULTS } from '../../llm/prompts.js';
 import type {
   LlmPort,
@@ -65,46 +66,62 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
       : messages;
     let lastErr: unknown;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      const res = await fetch(`${opts.baseUrl}/chat/completions`, {
-        method: 'POST',
-        signal: opts.signal,
-        headers: {
-          Authorization: `Bearer ${opts.apiKey}`,
-          'Content-Type': 'application/json',
-          // Трейсинг в журнале proxy_llm (если baseUrl указывает на прокси). Свежий id
-          // на каждую попытку — прокси сам сгенерирует его при отсутствии заголовка.
-          'X-Request-Id': randomUUID(),
-        },
-        body: JSON.stringify({
-          model: opts.model,
-          temperature: 0.1,
-          messages: outMessages,
-          ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
-        }),
+      const isLast = attempt === MAX_RETRIES;
+      // Слот шлюза общий на процесс: извлечение РД бьёт в тот же адрес, что группировка и чат,
+      // и без общего потолка суммарный поток снова упрётся в лимиты шлюза. Тело читаем внутри
+      // слота — пока оно не прочитано, соединение занято.
+      const out = await withLlmGatewaySlot(async () => {
+        const res = await fetch(`${opts.baseUrl}/chat/completions`, {
+          method: 'POST',
+          signal: opts.signal,
+          headers: {
+            Authorization: `Bearer ${opts.apiKey}`,
+            'Content-Type': 'application/json',
+            // Трейсинг в журнале proxy_llm (если baseUrl указывает на прокси). Свежий id
+            // на каждую попытку — прокси сам сгенерирует его при отсутствии заголовка.
+            'X-Request-Id': randomUUID(),
+          },
+          body: JSON.stringify({
+            model: opts.model,
+            temperature: 0.1,
+            messages: outMessages,
+            ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+          return { status: res.status, content: data.choices?.[0]?.message?.content ?? '', body: '' };
+        }
+        // Тело отказа — в текст ошибки: «503» без него не объясняет ничего, а адрес может вести
+        // на прокси, и тогда неясно даже, чей это отказ.
+        return { status: res.status, content: null, body: await res.text().catch(() => '') };
       });
 
-      if (res.ok) {
-        const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-        const content = data.choices?.[0]?.message?.content ?? '';
+      if (out.content !== null) {
         // Пустой ответ (у Qwen бюджет мог уйти в reasoning) — для LM Studio это ошибка,
         // иначе JSON-парсер тихо получит '' и позиция потеряется. Ретраим с backoff.
-        if (!content.trim() && opts.failOnEmpty) {
+        if (!out.content.trim() && opts.failOnEmpty) {
           lastErr = new Error('LM Studio вернул пустой ответ');
+          if (isLast) break;
           await sleep(BASE_BACKOFF_MS * 2 ** attempt);
           continue;
         }
-        return content;
+        return out.content;
       }
 
+      const short = out.body.replace(/\s+/g, ' ').trim().slice(0, 200);
+      const text = short ? `ИИ-шлюз вернул ${out.status}: ${short}` : `ИИ-шлюз вернул ${out.status}`;
       // Ретраим только на 429 и 5xx.
-      if (res.status === 429 || (res.status >= 500 && res.status <= 599)) {
-        lastErr = new Error(`OpenRouter ${res.status}`);
+      if (out.status === 429 || (out.status >= 500 && out.status <= 599)) {
+        lastErr = new Error(text);
+        // Спать после последней попытки бессмысленно: следующей не будет.
+        if (isLast) break;
         await sleep(BASE_BACKOFF_MS * 2 ** attempt);
         continue;
       }
-      throw new Error(`OpenRouter ${res.status}: ${await res.text().catch(() => '')}`);
+      throw new Error(text);
     }
-    throw lastErr ?? new Error('OpenRouter: исчерпаны попытки');
+    throw lastErr ?? new Error('ИИ-шлюз: исчерпаны попытки');
   }
 
   const EXTRACT_SYSTEM =

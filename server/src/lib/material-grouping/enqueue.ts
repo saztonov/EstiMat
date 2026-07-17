@@ -165,9 +165,14 @@ export async function ensureEstimateGrouping(
       estimateId,
     ]);
     if (rowCount! > 0) {
+      // Тот же фильтр по scope_hash, что и в транзакции ниже: иначе сюда попадёт задание старого
+      // среза (до перехода на общий результат scope_hash считался от сметы+организации+отбора), и
+      // панель показала бы ошибку чужого прогона.
       const { rows } = await fastify.pool.query<GroupingJobRow>(
-        `SELECT * FROM material_grouping_jobs WHERE estimate_id = $1 ORDER BY created_at DESC LIMIT 1`,
-        [estimateId],
+        `SELECT * FROM material_grouping_jobs
+          WHERE estimate_id = $1 AND scope_hash = $2
+          ORDER BY created_at DESC LIMIT 1`,
+        [estimateId, computeScopeHash(estimateId)],
       );
       return { job: rows[0] ?? null, reason: 'suppressed', suppressedBy: 'manual_stop' };
     }

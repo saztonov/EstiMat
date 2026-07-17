@@ -187,6 +187,8 @@ export interface GroupingCallHttpAttempt {
   no: number;
   requestId: string;
   status: number | null;
+  /** Ожидание свободного слота шлюза. Отделено от времени запроса: это очередь, а не модель. */
+  waitedMs?: number;
   durationMs: number;
   retryDelayMs: number | null;
   errorBody: string | null;
