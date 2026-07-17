@@ -12,6 +12,8 @@ import { loadLegacyWorksSnapshot } from '../../lib/extract/catalog-source.js';
 import { runExtraction } from '../../lib/extract/pipeline.js';
 import { createOpenRouterPort } from '../../lib/extract/llm/openrouter.js';
 import type { SectionScope, ExtractRules } from '../../lib/extract/types.js';
+import { abortRun, registerRun, unregisterRun } from '../../lib/ai/run-registry.js';
+import { closeDanglingLlmCalls, finishLlmCall, markLlmCall, startLlmCall } from '../../lib/llm/call-log.js';
 import { loadLlmRuntime, resolveLlmEndpoint } from '../../lib/llm/endpoint.js';
 import { withLmStudioSlot } from '../../lib/llm/limiter.js';
 import { resolveAiModel, resolveQwenNoThink } from '../../lib/llm/settings.js';
@@ -40,10 +42,9 @@ function loadExtractRules(): ExtractRules {
   return cachedRules;
 }
 
-// Реестр выполняющихся заданий для остановки (AbortController на задание).
-// Корректно при одном инстансе API (текущий прод single-VPS). Гонку «отмена vs
-// запуск» дополнительно закрывают УСЛОВНЫЕ переходы статуса (WHERE status=...).
-const runningJobs = new Map<string, AbortController>();
+// Реестр выполняющихся заданий — общий для всех контуров ИИ (lib/ai/run-registry): останавливать
+// задачи умеет и административная вкладка «Задания ИИ», а до Map внутри этого модуля она бы не
+// дотянулась. Гонку «отмена vs запуск» по-прежнему закрывают УСЛОВНЫЕ переходы статуса.
 
 // Фаза 2: фоновое извлечение встроенным движком (OpenRouter). Берёт markdown из
 // ai_jobs.input.markdown, прогоняет ядро, пишет результат и применяет позиции в смету.
@@ -64,7 +65,7 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
   if (claim.rowCount === 0) return;
 
   const controller = new AbortController();
-  runningJobs.set(jobId, controller);
+  registerRun('md_extract', jobId, controller);
   try {
     // Источник для AI-извлечения фиксирован: только legacy-справочник работ
     // (настройка ai_catalog_source AI-блок не управляет). Материалы — из РД.
@@ -74,6 +75,9 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
     const ep = resolveLlmEndpoint(qualifiedModel, rt);
     const noThink = ep.isLmStudio && (await resolveQwenNoThink(fastify.pool));
     const rolePrompt = await resolvePrompt(fastify.pool, 'extract.role');
+    // Записи прошлого прогона могли остаться в статусе «отправляем запрос» (деплой, отмена) —
+    // иначе журнал врал бы о вечно идущем вызове.
+    await closeDanglingLlmCalls(fastify, { kind: 'md', aiJobId: jobId });
     const port = createOpenRouterPort({
       apiKey: ep.apiKey,
       model: ep.model,
@@ -83,6 +87,19 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
       maxTokens: ep.isLmStudio ? ep.maxTokens : undefined,
       noThink,
       failOnEmpty: ep.isLmStudio,
+      // Журнал обмена: извлечение делает вызов на каждый фрагмент РД, и без него не понять,
+      // на чём ушли токены и почему позиция не распозналась.
+      callLog: {
+        start: (kind) =>
+          startLlmCall(fastify, {
+            parent: { kind: 'md', aiJobId: jobId },
+            kind,
+            model: ep.model,
+            provider: ep.provider,
+          }),
+        mark: (callId, status) => markLlmCall(fastify, callId, status),
+        finish: (callId, f) => finishLlmCall(fastify, callId, f),
+      },
     });
     // У LM Studio (Qwen) worker=1 — сериализуем тяжёлый прогон извлечения через слот.
     const result = ep.isLmStudio
@@ -147,7 +164,7 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
         .catch(() => {});
     }
   } finally {
-    runningJobs.delete(jobId);
+    unregisterRun('md_extract', jobId);
   }
 }
 
@@ -247,7 +264,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
         `UPDATE ai_jobs SET status = 'cancelled' WHERE id = $1 AND status IN ('pending', 'running') RETURNING id`,
         [id],
       );
-      runningJobs.get(id)?.abort();
+      abortRun('md_extract', id);
       if (upd.rowCount === 0) return reply.status(409).send({ error: 'Задание уже завершено' });
       return { data: { id, status: 'cancelled' } };
     },

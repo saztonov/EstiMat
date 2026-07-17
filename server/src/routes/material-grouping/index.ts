@@ -45,8 +45,12 @@ import { abortGroupingJob, requeueStaleJobs } from '../../lib/material-grouping/
 
 /** Задание живёт 30 дней: результат привязан к составу сметы и быстро устаревает. */
 const RETENTION_DAYS = 30;
-/** Журнал обмена — 7 дней: он тяжелее задания (промпты и ответы целиком), а нужен по свежим следам. */
-const CALL_LOG_RETENTION_DAYS = 7;
+/**
+ * Тексты журнала — 7 дней: промпты и ответы целиком тяжелее самого задания, а нужны по свежим
+ * следам. Вычищается только текст: токены, статусы и длительности живут вместе с заданием, иначе
+ * статистика расхода за 30/90 дней в «Заданиях ИИ» начала бы уменьшаться задним числом.
+ */
+const CALL_LOG_TEXT_RETENTION_DAYS = 7;
 const REQUEUE_INTERVAL_MS = 60_000;
 const CLEANUP_INTERVAL_MS = 6 * 60 * 60_000;
 
@@ -90,20 +94,23 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
   });
 
   /**
-   * Чистка. Задания — 30 дней, журнал обмена — 7: он на порядок тяжелее.
+   * Чистка. Задания — 30 дней, тексты журнала — 7: они на порядок тяжелее.
    *
-   * Журнал незавершённых вызовов не трогаем: активное задание должно остаться с историей.
+   * У журнала вычищается ТЕКСТ, а не строка: расход токенов и статусы вызовов кормят статистику
+   * «Заданий ИИ» за 30/90 дней, и удаление строк занижало бы её задним числом. Запись остаётся с
+   * пометкой texts_purged_at — «сохраняли и вычистили» надо отличать от «не сохраняли вовсе».
+   *
+   * Незавершённые вызовы не трогаем: активное задание должно остаться с историей.
    * Паузы не трогаем вовсе — остановку снимает только «Пересчитать».
    */
   async function cleanup(): Promise<void> {
     await fastify.pool.query(
-      `DELETE FROM material_grouping_llm_calls c
-        WHERE c.created_at < now() - ($1 || ' days')::interval
-          AND EXISTS (
-            SELECT 1 FROM material_grouping_jobs j
-             WHERE j.id = c.job_id AND j.status IN ('ready', 'failed', 'cancelled', 'dead')
-          )`,
-      [String(CALL_LOG_RETENTION_DAYS)],
+      `UPDATE ai_llm_calls
+          SET system_text = NULL, request_text = NULL, response_text = NULL, texts_purged_at = now()
+        WHERE created_at < now() - ($1 || ' days')::interval
+          AND texts_purged_at IS NULL
+          AND status NOT IN ('queued', 'waiting_slot', 'in_progress')`,
+      [String(CALL_LOG_TEXT_RETENTION_DAYS)],
     );
     await fastify.pool.query(
       `DELETE FROM material_grouping_jobs
@@ -170,8 +177,8 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
   async function loadActivity(jobId: string): Promise<GroupingActivity | null> {
     const { rows } = await fastify.pool.query(
       `SELECT status, batch_index, http_attempts, started_at
-         FROM material_grouping_llm_calls
-        WHERE job_id = $1 AND status IN ('queued', 'waiting_slot', 'in_progress')
+         FROM ai_llm_calls
+        WHERE material_grouping_job_id = $1 AND status IN ('queued', 'waiting_slot', 'in_progress')
         ORDER BY started_at DESC LIMIT 1`,
       [jobId],
     );
@@ -370,8 +377,8 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     const { rows } = await fastify.pool.query(
       `SELECT id, attempt, kind, batch_index, lines_count, status, parse_status, groups_count,
               http_status, http_attempts, total_tokens, error, started_at, duration_ms
-         FROM material_grouping_llm_calls
-        WHERE job_id = $1
+         FROM ai_llm_calls
+        WHERE material_grouping_job_id = $1
         ORDER BY started_at, id`,
       [id],
     );
@@ -432,9 +439,9 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
       throw err;
     }
 
-    // Пара job_id + id: чужой вызов по прямой ссылке не отдаём.
+    // Пара задание + id: чужой вызов по прямой ссылке не отдаём.
     const { rows } = await fastify.pool.query(
-      `SELECT * FROM material_grouping_llm_calls WHERE id = $1 AND job_id = $2`,
+      `SELECT * FROM ai_llm_calls WHERE id = $1 AND material_grouping_job_id = $2`,
       [callId, id],
     );
     const r = rows[0];

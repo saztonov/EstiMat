@@ -191,6 +191,7 @@ export async function buildApp() {
   await app.register(import('./routes/ai-prompts/index.js'), { prefix: '/api/settings/ai-prompts' });
   await app.register(import('./routes/llm/index.js'), { prefix: '/api/llm' });
   await app.register(import('./routes/ai/index.js'), { prefix: '/api/ai' });
+  await app.register(import('./routes/ai-tasks/index.js'), { prefix: '/api/ai-tasks' });
   await app.register(import('./routes/ai-chat/index.js'), { prefix: '/api/ai-chat' });
   await app.register(import('./routes/material-grouping/index.js'), { prefix: '/api/material-grouping' });
 

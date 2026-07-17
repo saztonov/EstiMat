@@ -11,7 +11,9 @@ import type { ChatMessage, ChatSession, ChatStep, ChatCard } from '@estimat/shar
 import { config } from '../../config.js';
 import type { SectionScope } from '../../lib/extract/types.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
-import { runAgentTurn } from '../../lib/chat/agent.js';
+import { runAgentTurn, type AgentCallLog } from '../../lib/chat/agent.js';
+import { abortRun, registerRun, unregisterRun } from '../../lib/ai/run-registry.js';
+import { finishLlmCall, markLlmCall, startLlmCall } from '../../lib/llm/call-log.js';
 import { loadLlmRuntime, resolveLlmEndpoint, type ResolvedEndpoint } from '../../lib/llm/endpoint.js';
 import { withLmStudioSlot } from '../../lib/llm/limiter.js';
 import { resolveChatModel, resolveQwenNoThink } from '../../lib/llm/settings.js';
@@ -22,9 +24,9 @@ import type { AgentContext, ChatUser } from '../../lib/chat/types.js';
 import { randomUUID } from 'node:crypto';
 import { makeEstimateEvent } from '../../lib/realtime/bus.js';
 
-// Реестр выполняющихся ходов агента (AbortController на сообщение). Корректно
-// при одном инстансе API (single-VPS). Переходы статуса условные (WHERE status=...).
-const runningChats = new Map<string, AbortController>();
+// Реестр выполняющихся ходов — общий для всех контуров ИИ (lib/ai/run-registry): останавливать ход
+// умеет и административная вкладка «Задания ИИ», а до Map внутри этого модуля она бы не дотянулась.
+// Корректно при одном инстансе API (single-VPS). Переходы статуса условные (WHERE status=...).
 
 function chatUser(u: { id: string; orgId: string | null; role: ChatUser['role'] }): ChatUser {
   return { id: u.id, orgId: u.orgId, role: u.role };
@@ -78,7 +80,7 @@ async function runChatTurn(
   const { assistantId, userMsgId, chatId, estimateId, projectId, user, userText, endpoint, noThink, sectionScope } =
     params;
   const controller = new AbortController();
-  runningChats.set(assistantId, controller);
+  registerRun('chat_turn', assistantId, controller);
   try {
     const mode = CHAT_CATALOG_MODE;
     const [hasTrgm, hist] = await Promise.all([
@@ -113,6 +115,20 @@ async function runChatTurn(
       resolvePrompt(fastify.pool, 'chat.scopeNote'),
     ]);
 
+    // Журнал обмена. Родитель — ХОД, а не сессия: за один ход агент зовёт модель до 8 раз, и в
+    // административной вкладке нужен каждый вызов с его токенами и попытками.
+    const callLog: AgentCallLog = {
+      start: (kind) =>
+        startLlmCall(fastify, {
+          parent: { kind: 'chat', aiChatMessageId: assistantId },
+          kind,
+          model: endpoint.model,
+          provider: endpoint.provider,
+        }),
+      mark: (callId, status) => markLlmCall(fastify, callId, status),
+      finish: (callId, f) => finishLlmCall(fastify, callId, f),
+    };
+
     const runTurn = () =>
       runAgentTurn({
         llm: {
@@ -126,6 +142,7 @@ async function runChatTurn(
         userText,
         ctx,
         noThink,
+        callLog,
         systemPrompt: chatSystem,
         scopeNote: isScopeActive(sectionScope) ? chatScopeNote : undefined,
         onStep: async (steps, cards) => {
@@ -162,7 +179,7 @@ async function runChatTurn(
         .catch(() => {});
     }
   } finally {
-    runningChats.delete(assistantId);
+    unregisterRun('chat_turn', assistantId);
   }
 }
 
@@ -258,11 +275,13 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
       const endpoint = resolveLlmEndpoint(qualifiedModel, rt);
       const noThink = endpoint.isLmStudio && (await resolveQwenNoThink(fastify.pool));
 
-      // user-сообщение
+      // user-сообщение. created_by — автор ХОДА: сессия общая (доступ даёт смета, а не владение),
+      // и по создателю чата расход токенов не отнести на того, кто его вызвал.
       const userRow = (
         await fastify.pool.query(
-          `INSERT INTO ai_chat_messages (chat_id, role, status, content) VALUES ($1, 'user', 'done', $2) RETURNING *`,
-          [chat.id, body.content],
+          `INSERT INTO ai_chat_messages (chat_id, role, status, content, created_by)
+           VALUES ($1, 'user', 'done', $2, $3) RETURNING *`,
+          [chat.id, body.content, request.currentUser.id],
         )
       ).rows[0];
 
@@ -288,22 +307,26 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
         const content =
           `ИИ-диалог недоступен (${reason}). ` +
           (items.length ? 'Вот что нашлось в справочнике по вашему запросу:' : 'Ничего подходящего в справочнике не нашлось.');
+        // model НЕ пишем: модель не вызывали, а её имя здесь выдало бы ответ справочника за
+        // ответ нейросети — и пустой журнал вызовов у такого хода выглядел бы сбоем логирования.
         const asstRow = (
           await fastify.pool.query(
-            `INSERT INTO ai_chat_messages (chat_id, role, status, content, model, steps, cards)
-             VALUES ($1, 'assistant', 'done', $2, $3, '[]'::jsonb, $4::jsonb) RETURNING *`,
-            [chat.id, content, endpoint.model, JSON.stringify(cards)],
+            `INSERT INTO ai_chat_messages (chat_id, role, status, content, execution_mode, created_by, steps, cards)
+             VALUES ($1, 'assistant', 'done', $2, 'fallback', $3, '[]'::jsonb, $4::jsonb) RETURNING *`,
+            [chat.id, content, request.currentUser.id, JSON.stringify(cards)],
           )
         ).rows[0];
         return reply.status(201).send({ data: { user: mapMessage(userRow), assistant: mapMessage(asstRow) } });
       }
 
-      // assistant-сообщение в статусе running + фоновый ход агента
+      // assistant-сообщение в статусе running + фоновый ход агента.
+      // model — в квалифицированной форме 'provider:model', как в ai_jobs и заданиях группировки:
+      // голый id у LM Studio и у OpenRouter выглядит одинаково, и провайдера потом не восстановить.
       const asstRow = (
         await fastify.pool.query(
-          `INSERT INTO ai_chat_messages (chat_id, role, status, model, steps, cards)
-           VALUES ($1, 'assistant', 'running', $2, '[]'::jsonb, '[]'::jsonb) RETURNING *`,
-          [chat.id, endpoint.model],
+          `INSERT INTO ai_chat_messages (chat_id, role, status, model, execution_mode, created_by, steps, cards)
+           VALUES ($1, 'assistant', 'running', $2, 'llm', $3, '[]'::jsonb, '[]'::jsonb) RETURNING *`,
+          [chat.id, `${endpoint.provider}:${endpoint.model}`, request.currentUser.id],
         )
       ).rows[0];
 
@@ -333,7 +356,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
         `UPDATE ai_chat_messages SET status = 'cancelled' WHERE id = $1 AND status = 'running' RETURNING id`,
         [request.params.id],
       );
-      runningChats.get(request.params.id)?.abort();
+      abortRun('chat_turn', request.params.id);
       if (upd.rowCount === 0) return reply.status(409).send({ error: 'Сообщение уже завершено' });
       return { data: { id: request.params.id, status: 'cancelled' } };
     },

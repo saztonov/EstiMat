@@ -21,6 +21,7 @@ export * from './prompts.js';
 export * from './llm.js';
 export * from './user.js';
 export * from './ai.js';
+export * from './ai-tasks.js';
 export * from './aiChat.js';
 export * from './realtime.js';
 export * from './audit.js';

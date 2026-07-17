@@ -163,7 +163,33 @@ html, body, #root {
   font-size: 12px;
 }
 
-/* Компактные таблицы сметной части: минимальные отступы и мелкий шрифт */
+/* Журнал общения с нейросетью (карточка задания ИИ): сырой текст запросов и ответов */
+.ai-log-pre {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 320px;
+  overflow: auto;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  /* Длинные JSON-строки без пробелов иначе растягивают модалку по горизонтали */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ai-log-msg {
+  margin-bottom: 8px;
+}
+.ai-log-msg__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+/* Компактные таблицы (смета, администрирование): минимальные отступы и мелкий шрифт */
 .estimat-compact .ant-table-cell {
   padding: 2px 6px !important;
   font-size: 12.5px;
@@ -171,6 +197,16 @@ html, body, #root {
 .estimat-compact .ant-table-thead .ant-table-cell {
   font-size: 12px;
   color: #595959;
+}
+/* Заголовки в одну строку: короткие подписи («Ошиб», «Выз») не режутся на слоги, когда рядом
+   встают иконки сортировки и отбора. Отдельным классом: в таблицах сметы длинные заголовки,
+   наоборот, обязаны переноситься. */
+.estimat-th-nowrap .ant-table-thead .ant-table-cell {
+  white-space: nowrap;
+}
+/* Строка-ссылка: клик открывает карточку */
+.estimat-row-clickable {
+  cursor: pointer;
 }
 /* Ячейка названия с review-тегами: имя слева (переносится), теги прижаты к правому краю */
 .estimat-review-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }

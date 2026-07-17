@@ -1,11 +1,13 @@
 import { Tabs } from 'antd';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
-import { AiJobsPanel } from './AiJobsPanel';
+import { AiTasksPanel } from './aiTasks/AiTasksPanel';
 import { LlmServerPanel } from './LlmServerPanel';
 import { PromptsPanel } from './PromptsPanel';
 
 const tabs = [
-  { key: 'ai-jobs', label: 'Задания ИИ', children: <AiJobsPanel /> },
+  // Ключ 'ai-jobs' исторический: он лежит в localStorage у всех, и переименование сбросило бы
+  // выбранную вкладку. Содержимое шире названия — задачи всех контуров ИИ, не только задания РД.
+  { key: 'ai-jobs', label: 'Задания ИИ', children: <AiTasksPanel /> },
   { key: 'llm-server', label: 'Сервер моделей', children: <LlmServerPanel /> },
   { key: 'prompts', label: 'Промпты', children: <PromptsPanel /> },
 ];

@@ -4,7 +4,14 @@
  * до финального текстового ответа. Лимиты итераций/вызовов; onStep пишет прогресс.
  */
 import type { ChatStep, ChatCard } from '@estimat/shared';
-import { chatWithTools, type ChatTurnMessage, type OpenRouterClientOptions } from '../llm/openrouter.js';
+import {
+  chatWithTools,
+  type ChatTurnMessage,
+  type HttpAttemptInfo,
+  type OpenRouterClientOptions,
+  type ToolDef,
+} from '../llm/openrouter.js';
+import type { CallStatus, LlmCallFinish } from '../llm/call-log.js';
 import { CHAT_SYSTEM_PROMPT } from './prompt.js';
 import { TOOL_DEFS, executeTool } from './tools.js';
 import type { AgentContext, AgentTurnResult } from './types.js';
@@ -12,6 +19,16 @@ import type { AgentContext, AgentTurnResult } from './types.js';
 const MAX_ITERATIONS = 8;
 const MAX_TOOL_CALLS_TOTAL = 24;
 const HISTORY_LIMIT = 40;
+
+/**
+ * Журнал вызовов модели. Интерфейсом, а не пулом БД: агент — чистая логика диалога, знать про
+ * таблицы ему незачем. Реализацию подставляет роут, где известен ход (ai_chat_messages.id).
+ */
+export interface AgentCallLog {
+  start(kind: 'chat.agent' | 'chat.force_final'): Promise<string | null>;
+  mark(callId: string | null, status: CallStatus): Promise<void>;
+  finish(callId: string | null, f: LlmCallFinish): Promise<void>;
+}
 
 export interface RunAgentArgs {
   llm: OpenRouterClientOptions;
@@ -25,6 +42,65 @@ export interface RunAgentArgs {
   /** Режим без рассуждений (Qwen/LM Studio): добавить /no_think в промпт. */
   noThink?: boolean;
   onStep?: (steps: ChatStep[], cards: ChatCard[]) => Promise<void> | void;
+  /** Журнал обмена с моделью (best-effort). Без него агент работает как раньше. */
+  callLog?: AgentCallLog;
+}
+
+/**
+ * Вызов модели с записью в журнал.
+ *
+ * Один ход агента — это до 8 обращений к модели плюс форс-ретраи, и в журнале нужен каждый:
+ * иначе «почему ответ такой» разбирать не по чему. Тексты пишем ровно те, что ушли в HTTP.
+ */
+async function callModel(
+  args: RunAgentArgs,
+  kind: 'chat.agent' | 'chat.force_final',
+  messages: ChatTurnMessage[],
+  tools: ToolDef[],
+): Promise<Awaited<ReturnType<typeof chatWithTools>>> {
+  const log = args.callLog;
+  const callId = (await log?.start(kind)) ?? null;
+  const attempts: HttpAttemptInfo[] = [];
+  const startedAt = Date.now();
+  // Первое сообщение — системный промпт, остальное (история, вопрос, ответы инструментов) — запрос.
+  const systemText = typeof messages[0]?.content === 'string' ? messages[0].content : '';
+  const requestText = JSON.stringify(messages.slice(1), null, 2);
+
+  await log?.mark(callId, 'in_progress');
+  try {
+    const res = await chatWithTools(
+      { ...args.llm, observer: (a) => attempts.push(a) },
+      messages,
+      tools,
+    );
+    const content = (res.message.content ?? '').trim();
+    const toolCalls = res.message.tool_calls ?? [];
+    await log?.finish(callId, {
+      // Пустой ответ без единого вызова инструмента — не успех: модель съела бюджет рассуждением.
+      status: content || toolCalls.length ? 'succeeded' : 'empty',
+      systemText,
+      requestText,
+      responseText: toolCalls.length
+        ? JSON.stringify({ content: res.message.content, tool_calls: toolCalls }, null, 2)
+        : (res.message.content ?? ''),
+      finishReason: res.finishReason,
+      usage: res.usage,
+      attempts,
+      durationMs: Date.now() - startedAt,
+    });
+    return res;
+  } catch (err) {
+    const status: CallStatus = args.ctx.signal?.aborted ? 'cancelled' : 'failed';
+    await log?.finish(callId, {
+      status,
+      systemText,
+      requestText,
+      error: err instanceof Error ? err.message : String(err),
+      attempts,
+      durationMs: Date.now() - startedAt,
+    });
+    throw err;
+  }
 }
 
 export async function runAgentTurn(args: RunAgentArgs): Promise<AgentTurnResult> {
@@ -49,7 +125,7 @@ export async function runAgentTurn(args: RunAgentArgs): Promise<AgentTurnResult>
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     if (ctx.signal?.aborted) throw new Error('aborted');
 
-    const res = await chatWithTools(llm, messages, TOOL_DEFS);
+    const res = await callModel(args, 'chat.agent', messages, TOOL_DEFS);
     messages.push({
       role: 'assistant',
       content: res.message.content,
@@ -71,7 +147,7 @@ export async function runAgentTurn(args: RunAgentArgs): Promise<AgentTurnResult>
           'Дай финальный ответ пользователю кратко и по делу, без рассуждений и без вызова инструментов.' +
           (args.noThink ? ' /no_think' : ''),
       });
-      const forced = await chatWithTools(llm, messages, []);
+      const forced = await callModel(args, 'chat.force_final', messages, []);
       return {
         content:
           (forced.message.content ?? '').trim() ||
@@ -116,6 +192,6 @@ export async function runAgentTurn(args: RunAgentArgs): Promise<AgentTurnResult>
   }
 
   // Достигнут лимит итераций — вынуждаем текстовый ответ без инструментов.
-  const final = await chatWithTools(llm, messages, []);
+  const final = await callModel(args, 'chat.force_final', messages, []);
   return { content: final.message.content ?? 'Не удалось завершить ответ — слишком много шагов.', steps, cards };
 }
