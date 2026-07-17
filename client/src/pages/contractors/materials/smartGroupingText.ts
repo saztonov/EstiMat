@@ -4,7 +4,13 @@
  * Вынесены из панели отдельно и без React: формулировки — это то, ради чего затевалась вся
  * наблюдаемость, и проверять их удобнее прямыми тестами, а не через отрисовку.
  */
-import type { GroupingActivity, GroupingLastAttempt, GroupingProgress, GroupingSuppressedBy } from '@estimat/shared';
+import type {
+  GroupingActivity,
+  GroupingLastAttempt,
+  GroupingProgress,
+  GroupingSuppressedBy,
+  LatestGroupingJobResponse,
+} from '@estimat/shared';
 
 /** «42 с» / «3 мин 05 с» — сколько уже длится текущая стадия. */
 export function formatElapsed(ms: number): string {
@@ -93,6 +99,28 @@ export function suppressedNotice(
       'Показан прежний результат — он может не соответствовать текущему списку материалов. ' +
       'Пересчёт запустится автоматически.',
   };
+}
+
+/**
+ * Почему в окне графика поставки умный режим показывает не то, что ожидается. null — результат
+ * есть и он свежий.
+ *
+ * Окно открыто посреди создания заявки: увести оттуда на пересчёт нельзя, поэтому здесь только
+ * объяснение — управление расчётом остаётся во вкладке «Материалы».
+ */
+export function groupingFallbackNotice(job: LatestGroupingJobResponse | undefined): string | null {
+  if (!job) return null;
+  const tail = 'Материалы показаны одним списком.';
+  if (!job.available && !job.data?.result) return `Умная группировка недоступна: ИИ-провайдер не настроен. ${tail}`;
+  if (job.active && !job.data?.result) return `Умная группировка ещё считается. ${tail}`;
+  if (!job.data || job.data.status === 'cancelled') return `Умная группировка ещё не сформирована. ${tail}`;
+  if (job.data.status === 'failed' || job.data.status === 'dead') {
+    return `Не удалось сформировать умную группировку. ${tail}`;
+  }
+  if (job.stale) {
+    return 'Умная группировка могла устареть: материалы, которых в ней нет, собраны в блоке «Не вошли в группировку».';
+  }
+  return null;
 }
 
 /** Подпись статуса вызова в журнале. */

@@ -1,20 +1,15 @@
-// Панель набора заявки: тип, доля остатка для массовых действий, отмена, сводка и отправка.
+// Панель набора заявки: тип, отмена последнего действия, сводка и отправка.
 //
 // Отдельный блок над таблицей (flexShrink: 0), а не «липкая» шапка: тулбар вкладки и так лежит
 // вне внутреннего скроллера и виден всегда.
-import { Button, InputNumber, Segmented, Space, Tag, Tooltip, Popconfirm } from 'antd';
+import { Button, Tag, Tooltip, Popconfirm } from 'antd';
 import { UndoOutlined } from '@ant-design/icons';
 import { MATERIAL_REQUEST_TYPE_LABELS, type MaterialRequestType } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
 import type { DraftStats } from './draftFill';
 
-/** Доли остатка «в один клик». Остальное — произвольным вводом. */
-const PRESETS = [25, 50, 75, 100];
-
 interface Props {
   requestType: MaterialRequestType;
-  percent: number;
-  onPercentChange: (v: number) => void;
   stats: DraftStats;
   canUndo: boolean;
   onUndo: () => void;
@@ -27,8 +22,6 @@ interface Props {
 
 export function RequestDraftBar({
   requestType,
-  percent,
-  onPercentChange,
   stats,
   canUndo,
   onUndo,
@@ -37,7 +30,6 @@ export function RequestDraftBar({
   submitting,
   onBehalfOf,
 }: Props) {
-  const preset = PRESETS.includes(percent) ? percent : 'custom';
   return (
     <div
       style={{
@@ -51,33 +43,6 @@ export function RequestDraftBar({
     >
       <Tag color="blue">{MATERIAL_REQUEST_TYPE_LABELS[requestType]}</Tag>
       {onBehalfOf && <Tag>За: {onBehalfOf}</Tag>}
-
-      <Space size={4}>
-        <span style={{ color: '#8c8c8c', fontSize: 13 }}>Доля остатка:</span>
-        <Segmented
-          size="small"
-          value={preset}
-          onChange={(v) => v !== 'custom' && onPercentChange(Number(v))}
-          options={[
-            ...PRESETS.map((p) => ({ label: `${p}%`, value: p })),
-            { label: 'Своя', value: 'custom' },
-          ]}
-        />
-        {preset === 'custom' && (
-          // Массовая доля ограничена сотней: заказать запас сверх остатка можно построчно, а вот
-          // разом превысить смету на сорока строках — это ошибка, которую не поймать внимательностью.
-          <InputNumber
-            size="small"
-            min={0.01}
-            max={100}
-            step={5}
-            value={percent}
-            onChange={(v) => v != null && onPercentChange(v)}
-            style={{ width: 80 }}
-            suffix="%"
-          />
-        )}
-      </Space>
 
       <Tooltip title="Отменить последнее массовое действие">
         <Button

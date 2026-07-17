@@ -1,9 +1,7 @@
-// Массовое добавление группы в заявку: одно действие в заголовке узла/карточки.
+// Массовое добавление группы в заявку: одно действие в шапке блока.
 //
-// Подпись кнопки — это и есть текущая доля («В заявку · 50%»), поэтому все кнопки на экране разом
-// показывают, что произойдёт по клику: режим виден, а не спрятан. Клик по самому заголовку
-// по-прежнему сворачивает группу — кнопка рендерится сиблингом кликабельной области, поэтому
-// stopPropagation не нужен.
+// Доля фиксирована сотней: набирают весь незаявленный остаток, а частный объём вводят построчно.
+// Кнопка — главное действие шапки, поэтому она цветная и стоит у правого края.
 //
 // ВАЖНО: массовое действие допустимо только в режиме заявки, где локационный отбор снят и
 // заблокирован. Тогда видимый набор строк совпадает с тем, что уходит в заявку. Если отбор в
@@ -15,15 +13,13 @@ import type { OrderMaterialRow } from './orderRow';
 interface Props {
   /** Строки области действия: поддерево узла или строки ИИ-группы. */
   rows: OrderMaterialRow[];
-  /** Текущая доля остатка, (0, 100]. */
-  percent: number;
   /** Сколько строк области уже в заявке. */
   draftCount: number;
-  onFill: (rows: OrderMaterialRow[], percent: number) => void;
+  onFill: (rows: OrderMaterialRow[]) => void;
   onClear: (rows: OrderMaterialRow[]) => void;
 }
 
-export function GroupFillButton({ rows, percent, draftCount, onFill, onClear }: Props) {
+export function GroupFillButton({ rows, draftCount, onFill, onClear }: Props) {
   if (rows.length === 0) return null;
   return (
     <Space size={4}>
@@ -33,9 +29,9 @@ export function GroupFillButton({ rows, percent, draftCount, onFill, onClear }: 
         </span>
       )}
       {/* Заголовок — функцией: иначе подсчёт для сотни узлов выполнялся бы на каждый рендер. */}
-      <Tooltip title={() => `Добавить в заявку ${percent}% остатка по ${rows.length} поз.`}>
-        <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => onFill(rows, percent)}>
-          {percent}%
+      <Tooltip title={() => `Добавить в заявку весь остаток по ${rows.length} поз.`}>
+        <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => onFill(rows)}>
+          100%
         </Button>
       </Tooltip>
       {draftCount > 0 && (

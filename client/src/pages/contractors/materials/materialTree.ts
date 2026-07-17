@@ -147,6 +147,27 @@ const byName = (a: OrderMaterialRow, b: OrderMaterialRow) => a.name.localeCompar
 const labelOf = (n: MaterialTreeNode) =>
   n.badges ? [...n.badges.zoneNames, n.badges.floorsLabel].filter(Boolean).join(' ') || n.label : n.label;
 
+/**
+ * Оставить узлы, в поддереве которых есть хоть одна строка из keys (отбор «Не заказанные
+ * материалы»).
+ *
+ * Отбор блочный: узел либо показан целиком, либо не показан вовсе. Счётчики и суммы узла
+ * не пересчитываются — внутри показанного блока строки не прячем, и «N поз.» продолжает
+ * означать состав блока, а не число уцелевших строк.
+ */
+export function pruneNodesByRows(nodes: MaterialTreeNode[], keys: Set<string>): MaterialTreeNode[] {
+  const out: MaterialTreeNode[] = [];
+  for (const n of nodes) {
+    if (n.materials.some((m) => keys.has(m.orderKey))) {
+      out.push(n);
+      continue;
+    }
+    const children = pruneNodesByRows(n.children, keys);
+    if (children.length) out.push({ ...n, children });
+  }
+  return out;
+}
+
 /** Все листовые строки дерева слева направо. */
 export function flattenTreeRows(nodes: MaterialTreeNode[]): OrderMaterialRow[] {
   const out: OrderMaterialRow[] = [];

@@ -1,13 +1,101 @@
 import { useMemo, useState } from 'react';
-import { Modal, Tabs, Table, InputNumber, DatePicker, Checkbox, Button, Space, Typography, Alert, App } from 'antd';
+import {
+  Modal,
+  Tabs,
+  Table,
+  InputNumber,
+  DatePicker,
+  Checkbox,
+  Button,
+  Segmented,
+  Space,
+  Spin,
+  Tag,
+  Tooltip,
+  Typography,
+  Alert,
+  App,
+} from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { type Dayjs } from 'dayjs';
+import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { DeliveryGantt, type GanttMaterial } from './DeliveryGantt';
+import { GroupCard } from './materials/GroupCard';
+import { smartBlocks, standardBlocks, type MaterialBlock } from './materials/materialBlocks';
+import type { MaterialLevelSettings } from './materials/materialTree';
+import type { OrderMaterialRow } from './materials/orderRow';
+import { groupingFallbackNotice } from './materials/smartGroupingText';
+import { useSmartGroupingJob } from './materials/useSmartGrouping';
 
 const { Text } = Typography;
 const EPS = 1e-6;
 const num = (v: number) => Math.round(v * 1e4) / 1e4;
+
+/** Блок материалов: шапка с датой на всю группу и таблица построчного графика. */
+function BlockCard({
+  block,
+  rows,
+  columns,
+  collapsed,
+  onToggle,
+  date,
+  onDateChange,
+  noDateCount,
+  singleDate,
+}: {
+  block: MaterialBlock;
+  rows: FlatRow[];
+  columns: ColumnsType<FlatRow>;
+  collapsed: boolean;
+  onToggle: () => void;
+  date: Dayjs | null;
+  onDateChange: (d: Dayjs | null) => void;
+  noDateCount: number;
+  singleDate: boolean;
+}) {
+  return (
+    <GroupCard
+      collapsed={collapsed}
+      onToggle={onToggle}
+      title={<strong style={{ fontSize: 14 }}>{block.title}</strong>}
+      meta={
+        <>
+          <span style={{ color: '#8c8c8c', fontSize: 12 }}>{block.orderKeys.length} поз.</span>
+          {block.hint && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {block.hint}
+            </Text>
+          )}
+          {!singleDate && noDateCount > 0 && <Tag color="orange">без даты · {noDateCount}</Tag>}
+        </>
+      }
+      extra={
+        // Отключена, а не скрыта: скрытая не объясняет, почему дату здесь больше не выбрать.
+        <Tooltip title={singleDate ? 'Действует единая дата поставки' : 'Дата поставки на весь блок'}>
+          <DatePicker
+            size="small"
+            format="DD.MM.YYYY"
+            style={{ width: 150 }}
+            placeholder="Дата на блок"
+            disabled={singleDate}
+            value={date}
+            onChange={onDateChange}
+          />
+        </Tooltip>
+      }
+    >
+      <Table<FlatRow>
+        rowKey="rowId"
+        size="small"
+        pagination={false}
+        columns={columns}
+        dataSource={rows}
+        scroll={{ x: 720 }}
+      />
+    </GroupCard>
+  );
+}
 
 // Материал заявки с общим количеством (вход модалки — из введённых подрядчиком объёмов).
 export interface ScheduleLineInput {
@@ -27,6 +115,16 @@ export interface ScheduledLine extends ScheduleLineInput {
 interface Props {
   open: boolean;
   lines: ScheduleLineInput[];
+  /** Смета — для умной группировки: ключ запроса общий с панелью вкладки. */
+  estimateId: string;
+  /**
+   * Полный свод заявки — ИСТОЧНИК ГРУППИРОВКИ (категория, вид работ, ключи ИИ-групп), но не
+   * количеств: их берём из lines, там доля заявки, а не сметный объём.
+   */
+  rows: OrderMaterialRow[];
+  /** Уровни стандартной группировки — из состояния вкладки: свой useMaterialLevels писал бы в тот
+   *  же localStorage, и вкладка о правке не узнала бы. */
+  levels: MaterialLevelSettings;
   loading?: boolean;
   onCancel: () => void;
   onConfirm: (lines: ScheduledLine[]) => void;
@@ -34,17 +132,34 @@ interface Props {
 
 interface Entry { date: Dayjs | null; qty: number | null }
 
+/** Строка таблицы блока: одна запись графика одного материала. */
+interface FlatRow { rowId: string; line: ScheduleLineInput; idx: number; count: number; entry: Entry }
+
 const rowKey = (costTypeId: string | null, aggKey: string) => `${costTypeId ?? ''}|${aggKey}`;
 
 /**
  * График поставки для заявки «Закупка через СУ-10»: по каждому материалу указываются даты поставки
  * и количество к каждой дате (сумма = общему количеству). В шапке — «Единая дата поставки» (одна дата
  * на всю заявку). Вкладка «График поставки» — предпросмотр диаграммой Ганта.
+ *
+ * Материалы идут блоками той же группировки, что и вкладка «Материалы»: даты назначают комплектом
+ * работы, а не перебором сорока строк подряд.
+ *
+ * Окно монтируется условно (`{scheduleModal && …}`), поэтому состояние графика собирается заново
+ * под каждый новый набор строк. Если заменить это на постоянно смонтированное окно с `open`, даты
+ * прошлой заявки переживут закрытие.
  */
-export function DeliveryScheduleModal({ open, lines, loading, onCancel, onConfirm }: Props) {
+export function DeliveryScheduleModal({ open, lines, estimateId, rows, levels, loading, onCancel, onConfirm }: Props) {
   const { message } = App.useApp();
   const [singleDate, setSingleDate] = useState(false);
   const [commonDate, setCommonDate] = useState<Dayjs | null>(null);
+  // Свой ключ, не общий со вкладкой: вкладка под окном уже смонтирована и о правке не узнает.
+  const [view, setView] = usePersistedTab('estimat:delivery-schedule-view', 'standard');
+  const smart = view === 'smart';
+  // Своё состояние свёрнутости на режим: ключи листьев дерева и ИИ-групп из разных пространств.
+  const [collapsedStandard, setCollapsedStandard] = useState<Set<string>>(new Set());
+  const [collapsedSmart, setCollapsedSmart] = useState<Set<string>>(new Set());
+  const smartJob = useSmartGroupingJob(estimateId, smart);
   // Ключ материала → записи графика. По умолчанию одна запись на полное количество.
   const [schedule, setSchedule] = useState<Map<string, Entry[]>>(() => {
     const m = new Map<string, Entry[]>();
@@ -62,18 +177,84 @@ export function DeliveryScheduleModal({ open, lines, loading, onCancel, onConfir
     });
   }
 
-  // Плоские строки таблицы (по одной на запись графика; rowSpan объединяет материал).
-  const flatRows = useMemo(() => {
-    const rows: { rowId: string; line: ScheduleLineInput; idx: number; count: number; entry: Entry }[] = [];
+  // Плоские строки таблицы (по одной на запись графика; rowSpan объединяет материал) — по ключу
+  // материала: таблицу теперь строит каждый блок из своих строк.
+  const flatByKey = useMemo(() => {
+    const map = new Map<string, FlatRow[]>();
     for (const l of lines) {
-      const entries = schedule.get(rowKey(l.costTypeId, l.aggKey)) ?? [];
+      const key = rowKey(l.costTypeId, l.aggKey);
+      const entries = schedule.get(key) ?? [];
       const list = singleDate ? entries.slice(0, 1) : entries;
-      list.forEach((entry, idx) => {
-        rows.push({ rowId: `${rowKey(l.costTypeId, l.aggKey)}#${idx}`, line: l, idx, count: list.length, entry });
-      });
+      map.set(
+        key,
+        list.map((entry, idx) => ({ rowId: `${key}#${idx}`, line: l, idx, count: list.length, entry })),
+      );
     }
-    return rows;
+    return map;
   }, [lines, schedule, singleDate]);
+
+  const lineByKey = useMemo(
+    () => new Map(lines.map((l) => [rowKey(l.costTypeId, l.aggKey), l])),
+    [lines],
+  );
+
+  // Свод полный, а заявляют не всё — группируем только строки заявки.
+  const blockRows = useMemo(() => rows.filter((r) => lineByKey.has(r.orderKey)), [rows, lineByKey]);
+  const smartResult = smartJob.data?.data?.result ?? null;
+  const blocks = useMemo(() => {
+    const base = smart ? smartBlocks(blockRows, smartResult) : standardBlocks(blockRows, levels);
+    // Группировка строится по своду, а дата нужна каждой строке заявки. Если свод разойдётся с
+    // набором, материал не должен исчезнуть с экрана: без даты его же отклонит валидация, и искать
+    // пропажу будет негде.
+    const covered = new Set(base.flatMap((b) => b.orderKeys));
+    const missing = [...lineByKey.keys()].filter((k) => !covered.has(k));
+    return missing.length
+      ? [...base, { key: 'block:missing', title: 'Прочие материалы', orderKeys: missing }]
+      : base;
+  }, [smart, blockRows, smartResult, levels, lineByKey]);
+  const fallbackNotice = smart ? groupingFallbackNotice(smartJob.data) : null;
+
+  const collapsed = smart ? collapsedSmart : collapsedStandard;
+  const setCollapsed = smart ? setCollapsedSmart : setCollapsedStandard;
+  const toggleBlock = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  /** Дата блока: только если у ВСЕХ его материалов ровно одна запись и дата одна — частичное
+   *  состояние нельзя выдавать за общее. */
+  function blockDateOf(keys: string[]): Dayjs | null {
+    let common: Dayjs | null = null;
+    for (const k of keys) {
+      const entries = schedule.get(k) ?? [];
+      if (entries.length !== 1 || !entries[0]!.date) return null;
+      const d = entries[0]!.date;
+      if (!common) common = d;
+      else if (!common.isSame(d, 'day')) return null;
+    }
+    return common;
+  }
+
+  /** Дата на весь блок: одна запись на полное количество вместо текущих. Дробить количество между
+   *  уже введёнными датами нечем — «дата на блок» и значит «весь объём в этот день». */
+  function setBlockDate(keys: string[], date: Dayjs | null) {
+    setSchedule((prev) => {
+      const next = new Map(prev);
+      for (const k of keys) {
+        const line = lineByKey.get(k);
+        if (line) next.set(k, [{ date, qty: line.quantity }]);
+      }
+      return next;
+    });
+  }
+
+  /** Сколько материалов блока ещё без даты — иначе о пропуске узнаёшь только по отказу на
+   *  «Подтвердить», возможно в свёрнутом блоке. */
+  const noDateCount = (keys: string[]) =>
+    keys.filter((k) => (schedule.get(k) ?? []).some((e) => !e.date)).length;
 
   const sumOf = (l: ScheduleLineInput) => entriesOf(l).reduce((s, e) => s + (e.qty ?? 0), 0);
 
@@ -96,7 +277,7 @@ export function DeliveryScheduleModal({ open, lines, loading, onCancel, onConfir
 
   const spanCell = (r: { idx: number; count: number }) => ({ rowSpan: r.idx === 0 ? r.count : 0 });
 
-  const columns: ColumnsType<(typeof flatRows)[number]> = [
+  const columns: ColumnsType<FlatRow> = [
     { title: 'Наименование', key: 'name', onCell: spanCell, render: (_, r) => r.line.name },
     { title: 'Ед.изм.', key: 'unit', width: 80, onCell: spanCell, render: (_, r) => r.line.unit },
     {
@@ -248,17 +429,45 @@ export function DeliveryScheduleModal({ open, lines, loading, onCancel, onConfir
             label: 'Материалы',
             children: (
               <>
+                <Segmented
+                  size="small"
+                  style={{ marginBottom: 8 }}
+                  value={view}
+                  onChange={setView}
+                  options={[
+                    { label: 'Стандартная группировка', value: 'standard' },
+                    { label: 'Умная группировка', value: 'smart' },
+                  ]}
+                />
                 {!singleDate && (
                   <Alert
                     type="info" showIcon style={{ marginBottom: 8 }}
-                    message="Для каждого материала укажите даты поставки и количество к каждой дате. Сумма по датам должна равняться общему количеству."
+                    message="Укажите дату на весь блок в его шапке либо даты и количества по каждому материалу. Сумма по датам должна равняться общему количеству."
                   />
                 )}
-                <Table
-                  rowKey="rowId" size="small" pagination={false}
-                  columns={columns} dataSource={flatRows} scroll={{ x: 720, y: 380 }}
-                  bordered
-                />
+                {fallbackNotice && <Alert type="info" showIcon style={{ marginBottom: 8 }} message={fallbackNotice} />}
+                {/* Скроллер общий на все блоки: у таблицы внутри карточки остаётся только
+                    горизонтальный, иначе на экране было бы два вложенных вертикальных. */}
+                <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
+                  {smart && smartJob.isLoading ? (
+                    <Spin style={{ margin: 24 }} />
+                  ) : (
+                    blocks.map((b) => (
+                      <BlockCard
+                        key={b.key}
+                        block={b}
+                        columns={columns}
+                        rows={b.orderKeys.flatMap((k) => flatByKey.get(k) ?? [])}
+                        collapsed={collapsed.has(b.key)}
+                        onToggle={() => toggleBlock(b.key)}
+                        date={blockDateOf(b.orderKeys)}
+                        onDateChange={(d) => setBlockDate(b.orderKeys, d)}
+                        noDateCount={noDateCount(b.orderKeys)}
+                        singleDate={singleDate}
+                      />
+                    ))
+                  )}
+                </div>
               </>
             ),
           },

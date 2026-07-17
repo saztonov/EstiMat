@@ -1,10 +1,10 @@
 import { Alert, Collapse, Space, Table, Tag, Typography } from 'antd';
-import { DownOutlined, RightOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { MaterialGroupDto } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
 import type { BulkFill } from './MaterialTreeView';
+import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
 import type { DimensionFinding } from './dimensionChecks';
 
@@ -69,18 +69,21 @@ export function SmartGroupCard({
   const draftCount = bulk ? rows.filter((r) => bulk.draftValues.has(r.orderKey)).length : 0;
 
   return (
-    <div style={{ marginBottom: 16 }}>
-      {/* Кликабельная часть шапки и кнопка набора — сиблинги: клик по шапке сворачивает карточку,
-          клик по кнопке до неё не доходит без stopPropagation. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-        <Space size={8} style={{ flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => onToggle(group.id)}>
-          {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+    <GroupCard
+      collapsed={collapsed}
+      onToggle={() => onToggle(group.id)}
+      title={
+        <>
           <strong style={{ fontSize: 14 }}>{group.name}</strong>
           {costTypeLabel && <Tag color="blue">{costTypeLabel}</Tag>}
           {status && <Tag color={status.color}>{status.label}</Tag>}
           {/* Счётчик находок — в шапке: иначе он виден только у развёрнутой карточки, внутри
               второго сворачивания. */}
           {findings > 0 && <Tag>Проверить · {findings}</Tag>}
+        </>
+      }
+      meta={
+        <>
           {group.purpose && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {group.purpose}
@@ -88,22 +91,18 @@ export function SmartGroupCard({
           )}
           <span style={{ color: '#8c8c8c', fontSize: 12 }}>{rows.length} поз.</span>
           {priced.length > 0 && <span style={{ color: '#1677ff' }}>{formatMoney(total)}</span>}
-        </Space>
-        {bulk && (
-          <GroupFillButton
-            rows={rows}
-            percent={bulk.percent}
-            draftCount={draftCount}
-            onFill={bulk.onFill}
-            onClear={bulk.onClear}
-          />
-        )}
-      </div>
-
-      {!collapsed && findings > 0 && (
+        </>
+      }
+      extra={
+        bulk && (
+          <GroupFillButton rows={rows} draftCount={draftCount} onFill={bulk.onFill} onClear={bulk.onClear} />
+        )
+      }
+    >
+      {findings > 0 && (
         <Collapse
           size="small"
-          style={{ marginBottom: 8 }}
+          style={{ margin: 8 }}
           items={[
             {
               key: 'check',
@@ -167,18 +166,16 @@ export function SmartGroupCard({
         />
       )}
 
-      {!collapsed && (
-        <Table<OrderMaterialRow>
-          rowKey="orderKey"
-          size="small"
-          pagination={false}
-          dataSource={rows}
-          columns={columns}
-          rowClassName={rowClassName}
-          scroll={{ x: 1100 }}
-        />
-      )}
-    </div>
+      <Table<OrderMaterialRow>
+        rowKey="orderKey"
+        size="small"
+        pagination={false}
+        dataSource={rows}
+        columns={columns}
+        rowClassName={rowClassName}
+        scroll={{ x: 1100 }}
+      />
+    </GroupCard>
   );
 }
 

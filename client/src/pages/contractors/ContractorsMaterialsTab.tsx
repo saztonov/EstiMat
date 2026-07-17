@@ -20,9 +20,10 @@ import { MaterialLocationsModal } from './MaterialLocationsModal';
 import { RpNextStepModal } from './RpNextStepModal';
 import { DeliveryScheduleModal, type ScheduleLineInput, type ScheduledLine } from './DeliveryScheduleModal';
 import { buildCategoryIndex, buildOrderRows, type OrderMaterialRow } from './materials/orderRow';
-import { assertTreeConserves, buildMaterialTree } from './materials/materialTree';
+import { assertTreeConserves, buildMaterialTree, pruneNodesByRows } from './materials/materialTree';
 import { useMaterialLevels } from './materials/useMaterialLevels';
 import { MaterialGroupingPopover } from './materials/MaterialGroupingPopover';
+import { DisplayPopover } from './materials/DisplayPopover';
 import { buildMaterialColumns } from './materials/materialColumns';
 import { MaterialTreeView, collectNodeKeys } from './materials/MaterialTreeView';
 import { SmartGroupingPanel, SHARED_KEY, UNGROUPED_KEY } from './materials/SmartGroupingPanel';
@@ -31,6 +32,8 @@ import { useOrderedSummary } from './materials/useOrderedSummary';
 import { useSmartGroupingJob } from './materials/useSmartGrouping';
 import { useRequestDraft } from './materials/useRequestDraft';
 import { buildDraftIndex, draftStats, isNoopFill } from './materials/draftFill';
+import { remainingOf } from './materials/remaining';
+import { countReviewGroups } from './materials/smartReview';
 import { indexDimensionIssues } from './materials/dimensionChecks';
 import { RequestDraftBar } from './materials/RequestDraftBar';
 import { RequestReviewModal, buildReviewLines } from './materials/RequestReviewModal';
@@ -46,6 +49,13 @@ interface Props {
 }
 
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
+
+/**
+ * Доля остатка массового набора. Фиксирована: набирают весь незаявленный объём, а частный —
+ * вводят построчно. Параметр у fillDraft остаётся — им пользуются тесты и он же задаёт базу
+ * («100% остатка», а не «100% сметы»).
+ */
+const FILL_PERCENT = 100;
 
 /**
  * Чьи объёмы показываем: 'me' — подрядчик (своя доля строки), список id — доли выбранных
@@ -101,14 +111,14 @@ export function ContractorsMaterialsTab({
   const [collapsedStandard, setCollapsedStandard] = useState<Set<string>>(new Set());
   const [collapsedSmart, setCollapsedSmart] = useState<Set<string>>(new Set());
   const [onlyReview, setOnlyReview] = useState(false);
+  // Блоки, где остался незаявленный объём. Отбор блочный: строки внутри показанного блока не прячем.
+  const [onlyUnordered, setOnlyUnordered] = useState(false);
   const { token } = theme.useToken();
   // Режим заявки на материалы (только подрядчик).
   const [editing, setEditing] = useState(false);
   // Тип заявки выбирается осознанно (без значения по умолчанию).
   const [requestType, setRequestType] = useState<MaterialRequestType | null>(null);
   const { draft, fill, clearFor, setValue, undo, reset: resetDraft, canUndo } = useRequestDraft();
-  // Доля остатка для массового набора: подпись кнопок в заголовках групп показывает её же.
-  const [percent, setPercent] = useState(100);
   const [reviewOpen, setReviewOpen] = useState(false);
   // Развилка после создания заявки «Оплата по РП» (Excel / Оформить РП / ОК).
   const [created, setCreated] = useState<{ id: string; number: string } | null>(null);
@@ -209,6 +219,20 @@ export function ContractorsMaterialsTab({
     return next;
   }, [rows, levels]);
 
+  // Строки, по которым ещё есть что заявить. Множество считаем один раз: оно нужно и дереву,
+  // и умной панели, и на 577 строках это не место для фильтра на каждый узел.
+  const remainderKeys = useMemo(
+    () =>
+      new Set(
+        rows
+          .filter((r) => remainingOf(r.quantity, orderedMap.get(r.orderKey) ?? 0) > 0)
+          .map((r) => r.orderKey),
+      ),
+    [rows, orderedMap],
+  );
+  // null — отбор выключен: пустое множество значит «показывать нечего», это разные вещи.
+  const blockKeys = onlyUnordered ? remainderKeys : null;
+
   const submitMutation = useMutation({
     mutationFn: (vars: { requestType: MaterialRequestType; lines: unknown[]; createRequestId: string }) =>
       api.post<{ data: { id: string; number: string } }>('/requests', {
@@ -230,6 +254,9 @@ export function ContractorsMaterialsTab({
       queryClient.invalidateQueries({ queryKey: ['material-ordered', estimateId] });
       queryClient.invalidateQueries({ queryKey: ['material-requests', estimateId] });
       queryClient.invalidateQueries({ queryKey: ['requests', 'list'] });
+      // Вкладка «Заявки» этого же объекта живёт на своём ключе и остаётся смонтированной: без
+      // инвалидации подрядчик возвращался на неё и не видел только что созданную заявку.
+      queryClient.invalidateQueries({ queryKey: ['requests', 'by-estimate'] });
       // Для «Оплата по РП» показываем развилку (Excel / Оформить РП); иначе — просто тост.
       if (vars.requestType === 'own_supplier' && res?.data?.id) {
         setCreated({ id: res.data.id, number });
@@ -339,11 +366,11 @@ export function ContractorsMaterialsTab({
     [levels.costType, locFilterActive, editing, scoped, priceMap, orderedMap, dimension, draft, setValue],
   );
 
-  // Массовое заполнение доли остатка. Итог показываем тостом: одно нажатие меняет десятки строк,
+  // Массовый набор остатка. Итог показываем тостом: одно нажатие меняет десятки строк,
   // и пользователь должен видеть, что именно произошло — вместе с отменой.
   const onFill = useCallback(
-    (fillRows: OrderMaterialRow[], p: number, replaceManual = false) => {
-      const r = fill(fillRows, orderedMap, p, replaceManual);
+    (fillRows: OrderMaterialRow[], replaceManual = false) => {
+      const r = fill(fillRows, orderedMap, FILL_PERCENT, replaceManual);
       // Ничего не поменялось — сказать об этом по существу. Причина у бездействия ровно одна из
       // трёх, и путать их нельзя: «уже заявлено» (нет остатка) — это не то же самое, что
       // «значения уже такие» или «строки введены вручную».
@@ -353,7 +380,7 @@ export function ContractorsMaterialsTab({
             content: (
               <span>
                 Все {r.manualKept} поз. введены вручную — массовый набор их не меняет
-                <Button type="link" size="small" onClick={() => onFill(fillRows, p, true)}>
+                <Button type="link" size="small" onClick={() => onFill(fillRows, true)}>
                   Заменить ручные
                 </Button>
               </span>
@@ -391,7 +418,7 @@ export function ContractorsMaterialsTab({
               Отменить
             </Button>
             {r.manualKept > 0 && (
-              <Button type="link" size="small" onClick={() => onFill(fillRows, p, true)}>
+              <Button type="link" size="small" onClick={() => onFill(fillRows, true)}>
                 Заменить ручные
               </Button>
             )}
@@ -407,9 +434,8 @@ export function ContractorsMaterialsTab({
   const draftIndex = useMemo(() => (editing ? buildDraftIndex(tree, draft) : new Map()), [editing, tree, draft]);
 
   const bulk = useMemo(
-    () =>
-      editing ? { percent, draftIndex, draftValues: draft.values, onFill, onClear: clearFor } : undefined,
-    [editing, percent, draftIndex, draft, onFill, clearFor],
+    () => (editing ? { draftIndex, draftValues: draft.values, onFill, onClear: clearFor } : undefined),
+    [editing, draftIndex, draft, onFill, clearFor],
   );
 
   const rowClassName = useCallback(
@@ -417,13 +443,15 @@ export function ContractorsMaterialsTab({
     [draft],
   );
 
-  // Свод для сверки — полный, без локационного отбора (как и обход в collectLines).
+  // Свод для сверки — полный, без локационного отбора (как и обход в collectLines). Нужен и окну
+  // графика поставки: оно живёт после выхода из режима набора, и без этих строк группировка в нём
+  // осталась бы без своего источника.
   const requestRows = useMemo(
     () =>
-      editing
+      editing || scheduleModal
         ? applyOrderPrices(buildOrderRows(requestGroups, categoryIndex, zoneIndex), priceMap)
         : [],
-    [editing, requestGroups, categoryIndex, zoneIndex, priceMap],
+    [editing, scheduleModal, requestGroups, categoryIndex, zoneIndex, priceMap],
   );
   const reviewLines = useMemo(
     () => (reviewOpen ? buildReviewLines(requestRows, draft, orderedMap) : []),
@@ -439,6 +467,15 @@ export function ContractorsMaterialsTab({
   // Нужен здесь только ради ключей «Свернуть всё».
   const smartJob = useSmartGroupingJob(estimateId, smart);
   const smartResult = smartJob.data?.data?.result ?? null;
+  // Подпись переключателя «Только с замечаниями» и сам отбор в панели считают одно и то же —
+  // иначе счётчик обещал бы одно число групп, а экран показывал другое.
+  const reviewCount = useMemo(
+    () => (smartResult ? countReviewGroups(smartResult.groups, new Set(rows.map((r) => r.orderKey)), dimension) : 0),
+    [smartResult, rows, dimension],
+  );
+
+  // Дерево под отбором «Не заказанные материалы»: узлы без остатка уходят целиком.
+  const shownTree = useMemo(() => (blockKeys ? pruneNodesByRows(tree, blockKeys) : tree), [tree, blockKeys]);
 
   const toggleNode = useCallback(
     (key: string) => {
@@ -455,11 +492,11 @@ export function ContractorsMaterialsTab({
   // Ключи для «Свернуть всё» — из активного режима: у дерева это узлы, у умной группировки
   // карточки групп плюс две секции.
   const collapsibleKeys = useMemo(() => {
-    if (!smart) return collectNodeKeys(tree);
+    if (!smart) return collectNodeKeys(shownTree);
     const result = smartResult;
     if (!result) return [];
     return [...result.groups.map((g) => g.id), SHARED_KEY, UNGROUPED_KEY];
-  }, [smart, tree, smartResult]);
+  }, [smart, shownTree, smartResult]);
 
   const allCollapsed = collapsibleKeys.length > 0 && collapsibleKeys.every((k) => collapsed.has(k));
 
@@ -470,7 +507,8 @@ export function ContractorsMaterialsTab({
     locFilterActive ||
     changedFromDefault > 0 ||
     collapsed.size > 0 ||
-    onlyReview;
+    onlyReview ||
+    onlyUnordered;
 
   const clearAll = () => {
     setFilterContractorIds([]);
@@ -478,6 +516,7 @@ export function ContractorsMaterialsTab({
     reset();
     setCollapsed(new Set());
     setOnlyReview(false);
+    setOnlyUnordered(false);
   };
 
   return (
@@ -524,23 +563,25 @@ export function ContractorsMaterialsTab({
             changedCount={changedFromDefault}
           />
         )}
-        <Tooltip title={allCollapsed ? 'Развернуть всё' : 'Свернуть всё'}>
-          <Button
-            type="text"
-            aria-label={allCollapsed ? 'Развернуть всё' : 'Свернуть всё'}
-            icon={allCollapsed ? <DownOutlined /> : <UpOutlined />}
-            disabled={collapsibleKeys.length === 0}
-            onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(collapsibleKeys))}
-          />
-        </Tooltip>
+        <DisplayPopover
+          onlyUnordered={onlyUnordered}
+          onOnlyUnorderedChange={setOnlyUnordered}
+          onlyReview={onlyReview}
+          onOnlyReviewChange={setOnlyReview}
+          reviewCount={reviewCount}
+          showReview={smart}
+        />
+        <Button
+          icon={allCollapsed ? <DownOutlined /> : <UpOutlined />}
+          disabled={collapsibleKeys.length === 0}
+          onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(collapsibleKeys))}
+        >
+          {allCollapsed ? 'Развернуть всё' : 'Свернуть всё'}
+        </Button>
         <Tooltip title="Сбросить отборы и группировку">
-          <Button
-            type="text"
-            aria-label="Очистить"
-            icon={<ClearOutlined />}
-            disabled={!dirty || editing}
-            onClick={clearAll}
-          />
+          <Button icon={<ClearOutlined />} disabled={!dirty || editing} onClick={clearAll}>
+            Очистить
+          </Button>
         </Tooltip>
         {!editing && (
           // Tooltip снаружи Dropdown — так уже сделано в разделе «Заявки»: внутри он перехватил
@@ -591,8 +632,6 @@ export function ContractorsMaterialsTab({
       {editing && requestType && (
         <RequestDraftBar
           requestType={requestType}
-          percent={percent}
-          onPercentChange={setPercent}
           stats={stats}
           canUndo={canUndo}
           onUndo={undo}
@@ -625,16 +664,17 @@ export function ContractorsMaterialsTab({
             collapsed={collapsedSmart}
             onToggle={toggleNode}
             onlyReview={onlyReview}
-            onOnlyReviewChange={setOnlyReview}
+            remainderKeys={blockKeys}
             bulk={bulk}
             rowClassName={rowClassName}
             dimension={dimension}
           />
-        ) : tree.length === 0 ? (
-          <Empty description="Материалов нет" />
+        ) : shownTree.length === 0 ? (
+          // Пустой экран под включённым отбором читается как поломка — говорим, что произошло.
+          <Empty description={onlyUnordered && tree.length > 0 ? 'Все материалы уже заявлены' : 'Материалов нет'} />
         ) : (
           <MaterialTreeView
-            nodes={tree}
+            nodes={shownTree}
             columns={columns}
             collapsed={collapsedStandard}
             onToggle={toggleNode}
@@ -666,6 +706,9 @@ export function ContractorsMaterialsTab({
         <DeliveryScheduleModal
           open
           lines={scheduleModal.lines}
+          estimateId={estimateId}
+          rows={requestRows}
+          levels={levels}
           loading={submitMutation.isPending}
           onCancel={() => setScheduleModal(null)}
           onConfirm={confirmSchedule}

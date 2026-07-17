@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react';
-import { Alert, Button, Empty, Progress, Space, Spin, Switch, Table, Typography } from 'antd';
-import { DownOutlined, FileTextOutlined, RightOutlined } from '@ant-design/icons';
+import { Alert, Button, Empty, Progress, Space, Spin, Table, Typography } from 'antd';
+import { FileTextOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { GroupingLastAttempt, GroupingProgress, GroupingSuppressedBy } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
 import { SmartGroupCard } from './SmartGroupCard';
 import type { BulkFill } from './MaterialTreeView';
+import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
+import { SHARED_KEY, UNGROUPED_KEY } from './materialBlocks';
 import type { DimensionFinding } from './dimensionChecks';
+import { isReviewGroup } from './smartReview';
 import { SmartGroupingLogDrawer } from './SmartGroupingLogDrawer';
 import { activityText, retryText, suppressedNotice } from './smartGroupingText';
 import { useCancelSmartGrouping, useRunSmartGrouping, useSmartGroupingJob } from './useSmartGrouping';
@@ -21,8 +24,10 @@ interface Props {
   isAdmin: boolean;
   collapsed: Set<string>;
   onToggle: (key: string) => void;
+  /** Отбор «Только с замечаниями» — состояние живёт в тулбаре вкладки. */
   onlyReview: boolean;
-  onOnlyReviewChange: (v: boolean) => void;
+  /** Ключи строк с незаявленным остатком; null — отбор «Не заказанные материалы» выключен. */
+  remainderKeys: Set<string> | null;
   /** Массовый набор: включён только в режиме заявки. */
   bulk?: BulkFill;
   rowClassName?: (row: OrderMaterialRow) => string;
@@ -30,9 +35,10 @@ interface Props {
   dimension: Map<string, DimensionFinding>;
 }
 
-/** Ключи сворачивания секций — с префиксом режима, чтобы не пересекаться со стандартным деревом. */
-export const SHARED_KEY = 'smart:shared';
-export const UNGROUPED_KEY = 'smart:ungrouped';
+// Ключи сворачивания секций (с префиксом режима, чтобы не пересекаться со стандартным деревом)
+// живут в чистом materialBlocks — их же использует окно графика поставки. Реэкспорт: вкладка берёт
+// их отсюда, вместе с самой панелью.
+export { SHARED_KEY, UNGROUPED_KEY };
 
 /**
  * Умная группировка: результат один на смету, ставится автоматически и одинаков для всех.
@@ -46,7 +52,7 @@ export function SmartGroupingPanel({
   collapsed,
   onToggle,
   onlyReview,
-  onOnlyReviewChange,
+  remainderKeys,
   bulk,
   rowClassName,
   dimension,
@@ -163,22 +169,26 @@ export function SmartGroupingPanel({
   const result = job.result;
   if (!result) return <Empty description="Результат пуст" />;
 
-  // Требует проверки — это и модельные оси, и детерминированные замечания: без последнего условия
-  // отбор спрятал бы карточку, в которой найдено дробное количество штучного материала.
-  const isReview = (g: { completeness: string; compatibility: string; orderKeys: string[] }) =>
-    g.completeness !== 'complete' ||
-    g.compatibility !== 'no_issues' ||
-    g.orderKeys.some((k) => dimension.has(k));
   // Группа без единой видимой строки — не показываем: у подрядчика в общем результате есть
   // группы целиком из чужих материалов (сервер их и так вырезает, здесь — страховка).
   const visibleGroups = result.groups.filter((g) => pick(g.orderKeys).length > 0);
-  const groups = onlyReview ? visibleGroups.filter(isReview) : visibleGroups;
-  const reviewCount = visibleGroups.filter(isReview).length;
+  // Отборы блочные: блок либо показан целиком, либо не показан вовсе — строка без остатка рядом с
+  // заявленными это контекст группы, а не мусор.
+  const hasRemainder = (keys: string[]) => !remainderKeys || keys.some((k) => remainderKeys.has(k));
+  const groups = visibleGroups
+    .filter((g) => !onlyReview || isReviewGroup(g, dimension))
+    .filter((g) => hasRemainder(g.orderKeys));
   const pricedRows = rows.filter((r) => r.materialCost != null);
   const totalMoney = pricedRows.reduce((s, r) => s + (r.materialCost ?? 0), 0);
 
-  const sharedRows = pick(result.sharedKeys);
-  const ungroupedRows = pick(result.ungroupedKeys);
+  const sharedRows = hasRemainder(result.sharedKeys) ? pick(result.sharedKeys) : [];
+  const ungroupedRows = hasRemainder(result.ungroupedKeys) ? pick(result.ungroupedKeys) : [];
+  // Отбор оставил пустой экран — сказать почему: молчаливая пустота читается как поломка.
+  const emptyText = remainderKeys
+    ? 'Все материалы уже заявлены'
+    : onlyReview
+      ? 'Групп с замечаниями нет'
+      : 'Групп по фильтру нет';
 
   return (
     <div>
@@ -199,35 +209,29 @@ export function SmartGroupingPanel({
         />
       )}
 
-      {/* Сводка — доказательство, что ничего не потерялось: сумма частей равна своду. Нужна всем:
-          заявку набирает подрядчик, и именно ему важны итог и отбор проблемных групп. Под ролью
-          админа — только пересчёт. */}
-      <Space style={{ marginBottom: 12, flexWrap: 'wrap' }} size={12}>
-        <span>
-          <strong>Итого:</strong> {result.stats.total} поз.
-          {pricedRows.length > 0 && ` · ${formatMoney(totalMoney)}`}
-        </span>
-        <span style={{ color: '#8c8c8c' }}>
-          в группах {result.stats.covered} · общие {result.stats.shared} · не сгруппировано{' '}
-          {result.stats.ungrouped}
-        </span>
-        {reviewCount > 0 && (
-          <Space size={6}>
-            <Switch size="small" checked={onlyReview} onChange={onOnlyReviewChange} />
-            <span style={{ fontSize: 13, color: '#595959' }}>Только требующие проверки ({reviewCount})</span>
-          </Space>
-        )}
-        {isAdmin && !stale && (
-          <Button size="small" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
-            Пересчитать
-          </Button>
-        )}
-        {isAdmin && (
+      {/* Сводка — доказательство, что ничего не потерялось: сумма частей равна своду. Нужна тому,
+          кто отвечает за качество группировки, то есть админу; подрядчик набирает заявку и цифрами
+          разбора не пользуется. Рядом — управление расчётом, оно и так только у админа. */}
+      {isAdmin && (
+        <Space style={{ marginBottom: 12, flexWrap: 'wrap' }} size={12}>
+          <span>
+            <strong>Итого:</strong> {result.stats.total} поз.
+            {pricedRows.length > 0 && ` · ${formatMoney(totalMoney)}`}
+          </span>
+          <span style={{ color: '#8c8c8c' }}>
+            в группах {result.stats.covered} · общие {result.stats.shared} · не сгруппировано{' '}
+            {result.stats.ungrouped}
+          </span>
+          {!stale && (
+            <Button size="small" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
+              Пересчитать
+            </Button>
+          )}
           <Button size="small" icon={<FileTextOutlined />} onClick={() => openLog(job.id)}>
             Журнал ИИ
           </Button>
-        )}
-      </Space>
+        </Space>
+      )}
 
       {job.warnings.length > 0 && isAdmin && (
         <Alert
@@ -258,7 +262,9 @@ export function SmartGroupingPanel({
           dimension={dimension}
         />
       ))}
-      {groups.length === 0 && <Empty description="Групп по фильтру нет" />}
+      {groups.length === 0 && sharedRows.length === 0 && ungroupedRows.length === 0 && (
+        <Empty description={emptyText} />
+      )}
 
       {sharedRows.length > 0 && (
         <Section
@@ -421,39 +427,35 @@ function Section({
 }) {
   const draftCount = bulk ? rows.filter((r) => bulk.draftValues.has(r.orderKey)).length : 0;
   return (
-    <div style={{ marginTop: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-        <Space size={8} style={{ cursor: 'pointer' }} onClick={() => onToggle(nodeKey)}>
-          {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
-          <strong style={{ fontSize: 14 }}>{title}</strong>
+    <GroupCard
+      collapsed={collapsed}
+      onToggle={() => onToggle(nodeKey)}
+      title={<strong style={{ fontSize: 14 }}>{title}</strong>}
+      meta={
+        <>
           <span style={{ color: '#8c8c8c', fontSize: 12 }}>{rows.length} поз.</span>
           {hint && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {hint}
             </Typography.Text>
           )}
-        </Space>
-        {bulk && (
-          <GroupFillButton
-            rows={rows}
-            percent={bulk.percent}
-            draftCount={draftCount}
-            onFill={bulk.onFill}
-            onClear={bulk.onClear}
-          />
-        )}
-      </div>
-      {!collapsed && (
-        <Table<OrderMaterialRow>
-          rowKey="orderKey"
-          size="small"
-          pagination={false}
-          dataSource={rows}
-          columns={columns}
-          rowClassName={rowClassName}
-          scroll={{ x: 1100 }}
-        />
-      )}
-    </div>
+        </>
+      }
+      extra={
+        bulk && (
+          <GroupFillButton rows={rows} draftCount={draftCount} onFill={bulk.onFill} onClear={bulk.onClear} />
+        )
+      }
+    >
+      <Table<OrderMaterialRow>
+        rowKey="orderKey"
+        size="small"
+        pagination={false}
+        dataSource={rows}
+        columns={columns}
+        rowClassName={rowClassName}
+        scroll={{ x: 1100 }}
+      />
+    </GroupCard>
   );
 }
