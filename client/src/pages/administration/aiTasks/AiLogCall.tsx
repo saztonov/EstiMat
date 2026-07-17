@@ -22,6 +22,7 @@ const attemptColumns: ColumnsType<AiTaskHttpAttempt> = [
         <span>{v}</span>
       ),
   },
+  // Очередь к шлюзу: одновременно к нему идёт не больше двух запросов, и остальные ждут здесь.
   { title: 'Ожидание', dataIndex: 'waitedMs', width: 90, render: (v: number) => fmtDuration(v) },
   { title: 'Запрос', dataIndex: 'durationMs', width: 90, render: (v: number) => fmtDuration(v) },
   {
@@ -29,6 +30,13 @@ const attemptColumns: ColumnsType<AiTaskHttpAttempt> = [
     dataIndex: 'retryDelayMs',
     width: 80,
     render: (v: number | null) => (v == null ? '—' : fmtDuration(v)),
+  },
+  {
+    // Отдельно от «Паузы»: она наша, а это — сколько просил подождать сам шлюз (Retry-After).
+    title: 'Просил ждать',
+    dataIndex: 'retryAfterMs',
+    width: 100,
+    render: (v: number | null | undefined) => (v == null ? '—' : fmtDuration(v)),
   },
   { title: 'X-Request-Id', dataIndex: 'requestId', ellipsis: true },
   {
@@ -120,7 +128,9 @@ export function AiLogCall({ callId, open }: { callId: string; open: boolean }) {
       )}
       <pre className="ai-log-pre">{c.responseText || '—'}</pre>
 
-      {c.attempts.length > 1 && (
+      {/* Показываем и единственную попытку: у неё есть «Ожидание», а это главное число, когда
+          разбираются, почему расчёт идёт медленно — очередь к шлюзу или сама модель. */}
+      {c.attempts.length > 0 && (
         <>
           <Typography.Text strong style={{ fontSize: 12 }}>
             HTTP-попытки

@@ -1,16 +1,20 @@
 /**
  * Реализация LlmPort через OpenRouter (фаза 2 — встроенный ИИ-извлекатель).
- * Дешёвая модель, температура 0.1, последовательные вызовы (pipeline сам не
- * параллелит), экспоненциальный backoff на 429/5xx.
+ * Дешёвая модель, температура 0.1, последовательные вызовы (pipeline сам не параллелит).
+ *
+ * Транспорт не свой: слот шлюза, темп отправок, таймаут попытки и повторы живут в общем клиенте
+ * (lib/llm/openrouter). Здесь была вторая их копия — она успела разойтись с оригиналом, а лимиты у
+ * прокси общие на процесс, и контур со своими правилами ломал бы их для всех.
+ *
+ * Своё здесь одно: повтор пустого ответа. Это не отказ шлюза, а особенность Qwen, и общему клиенту
+ * знать о ней незачем.
  *
  * Это единственное место, знающее про OpenRouter. Ядро (pipeline/matcher)
  * остаётся провайдеро-независимым.
  */
-import { randomUUID } from 'node:crypto';
 import { extractJson } from '../../llm/json.js';
 import type { CallStatus, LlmCallFinish } from '../../llm/call-log.js';
-import { withLlmGatewaySlot } from '../../llm/limiter.js';
-import type { HttpAttemptInfo } from '../../llm/openrouter.js';
+import { chatWithTools, LlmTimeoutError, type HttpAttemptInfo } from '../../llm/openrouter.js';
 import { PROMPT_DEFAULTS } from '../../llm/prompts.js';
 import type {
   LlmPort,
@@ -40,6 +44,8 @@ export interface OpenRouterOptions {
   signal?: AbortSignal;
   /** Лимит токенов ответа (LM Studio/Qwen). */
   maxTokens?: number;
+  /** Локальный сервер моделей: слот и темп шлюза такие вызовы не занимают — они до него не идут. */
+  isLmStudio?: boolean;
   /** Режим Qwen без рассуждений: добавить /no_think в системный промпт. */
   noThink?: boolean;
   /** Считать пустой ответ ошибкой (LM Studio): не отдавать молча '' в JSON-парсер. */
@@ -72,7 +78,8 @@ interface ChatMessage {
   content: string;
 }
 
-const MAX_RETRIES = 4;
+/** Повторов ПУСТОГО ответа. Отказы шлюза повторяет общий клиент по своей политике. */
+const EMPTY_RETRIES = 2;
 const BASE_BACKOFF_MS = 1500;
 
 function sleep(ms: number): Promise<void> {
@@ -121,126 +128,54 @@ export function createOpenRouterPort(opts: OpenRouterOptions): LlmPort {
 
     try {
       await log?.mark(callId, 'in_progress');
+      // Транспорт целиком (слот, темп, таймаут, повторы, ключ идемпотентности) — в общем клиенте:
+      // лимиты у шлюза одни на процесс, и второй набор правил ломал бы их для всех контуров.
+      // Здесь остаётся только то, чем извлечение отличается: повтор пустого ответа.
       let lastErr: unknown;
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        const isLast = attempt === MAX_RETRIES;
-        // X-Request-Id нужен и в заголовке, и в журнале: по нему вызов сверяется с журналом прокси.
-        const requestId = randomUUID();
-        // Ожидание слота считаем отдельно от запроса: это очередь, а не работа модели.
-        const queuedAt = Date.now();
-        let waitedMs = 0;
-        let attemptStartedAt = queuedAt;
-        // Слот шлюза общий на процесс: извлечение РД бьёт в тот же адрес, что группировка и чат,
-        // и без общего потолка суммарный поток снова упрётся в лимиты шлюза. Тело читаем внутри
-        // слота — пока оно не прочитано, соединение занято.
-        let out: { status: number; content: string | null; body: string };
-        try {
-          out = await withLlmGatewaySlot(async () => {
-            // Колбэк выполняется уже в слоте — разница и есть время ожидания в очереди.
-            waitedMs = Date.now() - queuedAt;
-            attemptStartedAt = Date.now();
-            const res = await fetch(`${opts.baseUrl}/chat/completions`, {
-              method: 'POST',
-              signal: opts.signal,
-              headers: {
-                Authorization: `Bearer ${opts.apiKey}`,
-                'Content-Type': 'application/json',
-                // Трейсинг в журнале proxy_llm (если baseUrl указывает на прокси). Свежий id
-                // на каждую попытку — прокси сам сгенерирует его при отсутствии заголовка.
-                'X-Request-Id': requestId,
-              },
-              body: JSON.stringify({
-                model: opts.model,
-                temperature: 0.1,
-                messages: outMessages,
-                ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
-              }),
-            });
-            if (res.ok) {
-              const data = (await res.json()) as {
-                choices?: { message?: { content?: string }; finish_reason?: string }[];
-                usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
-              };
-              // Расход токенов провайдер отдаёт здесь — раньше его просто выбрасывали.
-              usage = data.usage;
-              finishReason = data.choices?.[0]?.finish_reason ?? null;
-              return { status: res.status, content: data.choices?.[0]?.message?.content ?? '', body: '' };
-            }
-            // Тело отказа — в текст ошибки: «503» без него не объясняет ничего, а адрес может вести
-            // на прокси, и тогда неясно даже, чей это отказ.
-            return { status: res.status, content: null, body: await res.text().catch(() => '') };
-          });
-        } catch (err) {
-          // Сеть отвалилась или задание отменили: попытка тоже часть истории.
-          attempts.push({
-            no: attempt + 1,
-            requestId,
-            status: null,
-            waitedMs,
-            durationMs: Date.now() - attemptStartedAt,
-            retryDelayMs: null,
-            errorBody: null,
-            networkError: err instanceof Error ? err.message : String(err),
-          });
-          throw err;
-        }
+      for (let attempt = 0; attempt <= EMPTY_RETRIES; attempt++) {
+        const res = await chatWithTools(
+          {
+            apiKey: opts.apiKey,
+            model: opts.model,
+            baseUrl: opts.baseUrl,
+            signal: opts.signal,
+            maxTokens: opts.maxTokens,
+            isLmStudio: opts.isLmStudio,
+            // Ключ логического вызова — id записи журнала. У повтора пустого ответа он свой:
+            // пустой ответ уже оплачен, и просить тот же самый ещё раз бессмысленно.
+            idempotencyKey: callId ? `${callId}:${attempt}` : undefined,
+            observer: (a) => attempts.push(a),
+          },
+          outMessages,
+          [],
+        );
+        // Расход токенов и причину остановки провайдер отдаёт здесь — раньше их выбрасывали.
+        usage = res.usage;
+        finishReason = res.finishReason;
+        const content = res.message.content ?? '';
 
-        if (out.content !== null) {
-          // Пустой ответ (у Qwen бюджет мог уйти в reasoning) — для LM Studio это ошибка,
-          // иначе JSON-парсер тихо получит '' и позиция потеряется. Ретраим с backoff.
-          const empty = !out.content.trim() && opts.failOnEmpty;
-          const retryDelayMs = empty && !isLast ? BASE_BACKOFF_MS * 2 ** attempt : null;
-          attempts.push({
-            no: attempt + 1,
-            requestId,
-            status: out.status,
-            waitedMs,
-            durationMs: Date.now() - attemptStartedAt,
-            retryDelayMs,
-            errorBody: empty ? 'Пустой ответ модели' : null,
-            networkError: null,
-          });
-          if (empty) {
-            lastErr = new Error('LM Studio вернул пустой ответ');
-            if (isLast) break;
-            await sleep(retryDelayMs!);
-            continue;
-          }
-          await close('succeeded', undefined, out.content);
-          return out.content;
+        // Пустой ответ (у Qwen бюджет мог уйти в reasoning) — для LM Studio это ошибка, иначе
+        // JSON-парсер тихо получит '' и позиция потеряется.
+        if (content.trim() || !opts.failOnEmpty) {
+          await close('succeeded', undefined, content);
+          return content;
         }
-
-        const short = out.body.replace(/\s+/g, ' ').trim().slice(0, 200);
-        const text = short ? `ИИ-шлюз вернул ${out.status}: ${short}` : `ИИ-шлюз вернул ${out.status}`;
-        // Ретраим только на 429 и 5xx.
-        const retryable = out.status === 429 || (out.status >= 500 && out.status <= 599);
-        // Спать после последней попытки бессмысленно: следующей не будет.
-        const retryDelayMs = retryable && !isLast ? BASE_BACKOFF_MS * 2 ** attempt : null;
-        attempts.push({
-          no: attempt + 1,
-          requestId,
-          status: out.status,
-          waitedMs,
-          durationMs: Date.now() - attemptStartedAt,
-          retryDelayMs,
-          errorBody: short || null,
-          networkError: null,
-        });
-        if (!retryable) throw new Error(text);
-        lastErr = new Error(text);
-        if (isLast) break;
-        await sleep(retryDelayMs!);
+        lastErr = new Error('LM Studio вернул пустой ответ');
+        if (attempt === EMPTY_RETRIES) break;
+        await sleep(BASE_BACKOFF_MS * 2 ** attempt);
       }
-      const err = lastErr ?? new Error('ИИ-шлюз: исчерпаны попытки');
-      throw err;
+      throw lastErr ?? new Error('ИИ-шлюз: исчерпаны попытки');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // Отмену задания отличаем от отказа шлюза: в журнале это разные исходы.
-      const status: CallStatus = opts.signal?.aborted
-        ? 'cancelled'
-        : message.includes('пустой ответ')
-          ? 'empty'
-          : 'failed';
+      const status: CallStatus =
+        err instanceof LlmTimeoutError
+          ? 'timed_out'
+          : opts.signal?.aborted
+            ? 'cancelled'
+            : message.includes('пустой ответ')
+              ? 'empty'
+              : 'failed';
       await close(status, message);
       throw err;
     }

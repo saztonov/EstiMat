@@ -2,23 +2,34 @@
  * Одиночный JSON-запрос к модели поверх chatWithTools (tools=[] → обычный chat completion).
  *
  * Добавляет то, чего нет в низкоуровневом клиенте:
- *  - таймаут (у chatWithTools только внешний signal — зависший upstream висел бы вечно);
  *  - проверку адреса LM Studio перед КАЖДЫМ вызовом (адрес правится админом и хранится в БД);
  *  - отказ на пустом ответе (Qwen умеет съесть весь бюджет в рассуждении и вернуть '').
+ *
+ * Таймаут и повторы живут в самом chatWithTools: они обязаны действовать во всех контурах, а не
+ * только там, где вызывающий не забыл про обёртку.
  *
  * Возвращает не только текст: журналу группировки нужны фактически отправленные сообщения,
  * расход токенов и история HTTP-попыток. Собрать это позже нельзя — /no_think дописывается
  * здесь, а X-Request-Id свой у каждой попытки.
  */
-import { chatWithTools, type ChatTurnMessage, type HttpAttemptInfo } from './openrouter.js';
+import { chatWithTools, LlmTimeoutError, type ChatTurnMessage, type HttpAttemptInfo } from './openrouter.js';
 import type { ResolvedEndpoint } from './endpoint.js';
 import { assertAllowedLmUrl } from './url-guard.js';
 
+// Таймаут объявлен в openrouter (там он и срабатывает), но ловят его по этому имени — реэкспорт,
+// чтобы у вызывающих не появлялся импорт из низкоуровневого клиента.
+export { LlmTimeoutError };
+
 export interface ChatJsonOptions {
   endpoint: ResolvedEndpoint;
-  /** Отмена задания. Комбинируется с таймаутом вызова. */
+  /** Отмена задания. Комбинируется с таймаутом попытки внутри клиента. */
   signal: AbortSignal;
-  timeoutMs: number;
+  /** Таймаут одной попытки: отсчёт идёт после очереди к шлюзу. */
+  attemptTimeoutMs: number;
+  /** Бюджет всего вызова — попытки вместе с паузами между ними. */
+  callBudgetMs: number;
+  /** Ключ логического вызова для повторов (обычно id записи журнала). */
+  idempotencyKey?: string;
   /** Режим Qwen без рассуждений: /no_think в system и user (чувствительно к позиции). */
   noThink?: boolean;
 }
@@ -40,13 +51,6 @@ export class LlmEmptyResponseError extends Error {
   constructor() {
     super('Модель вернула пустой ответ');
     this.name = 'LlmEmptyResponseError';
-  }
-}
-
-export class LlmTimeoutError extends Error {
-  constructor(ms: number) {
-    super(`Модель не ответила за ${Math.round(ms / 1000)} с`);
-    this.name = 'LlmTimeoutError';
   }
 }
 
@@ -81,8 +85,6 @@ export async function chatJsonOnce(opts: ChatJsonOptions, system: string, user: 
     { role: 'user', content: sentUser },
   ];
 
-  const timeout = AbortSignal.timeout(opts.timeoutMs);
-  const signal = AbortSignal.any([opts.signal, timeout]);
   const attempts: HttpAttemptInfo[] = [];
   const startedAt = Date.now();
 
@@ -93,17 +95,21 @@ export async function chatJsonOnce(opts: ChatJsonOptions, system: string, user: 
         apiKey: ep.apiKey,
         model: ep.model,
         baseUrl: ep.baseUrl,
-        signal,
+        signal: opts.signal,
         maxTokens: ep.isLmStudio ? ep.maxTokens : undefined,
+        isLmStudio: ep.isLmStudio,
+        idempotencyKey: opts.idempotencyKey,
+        attemptTimeoutMs: opts.attemptTimeoutMs,
+        callBudgetMs: opts.callBudgetMs,
         observer: (a) => attempts.push(a),
       },
       messages,
       [],
     );
   } catch (e) {
-    // Таймаут вызова и отмена задания различимы только по тому, какой сигнал сработал.
-    const err = timeout.aborted && !opts.signal.aborted ? new LlmTimeoutError(opts.timeoutMs) : e;
-    throw new LlmCallError(err, attempts, sentSystem, sentUser, Date.now() - startedAt);
+    // Клиент уже различил таймаут и отмену (LlmTimeoutError) — здесь только сохраняем историю
+    // попыток: по упавшему вызову журнал иначе остался бы пустым.
+    throw new LlmCallError(e, attempts, sentSystem, sentUser, Date.now() - startedAt);
   }
 
   const durationMs = Date.now() - startedAt;

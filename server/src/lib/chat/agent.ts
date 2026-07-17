@@ -69,7 +69,9 @@ async function callModel(
   await log?.mark(callId, 'in_progress');
   try {
     const res = await chatWithTools(
-      { ...args.llm, observer: (a) => attempts.push(a) },
+      // Ключ повторов — id записи журнала: он заведён выше, до отправки, и один на все попытки
+      // этого хода. Без него повтор после отказа шлюза оплачивался бы как новый вызов.
+      { ...args.llm, idempotencyKey: callId ?? undefined, observer: (a) => attempts.push(a) },
       messages,
       tools,
     );

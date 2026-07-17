@@ -137,6 +137,9 @@ async function runChatTurn(
           baseUrl: endpoint.baseUrl,
           signal: controller.signal,
           maxTokens: endpoint.maxTokens,
+          // Локальные вызовы слот шлюза не занимают: до прокси они не доходят, а потолок там всего
+          // два запроса — один ход на LM Studio держал бы половину впустую.
+          isLmStudio: endpoint.isLmStudio,
         },
         history,
         userText,

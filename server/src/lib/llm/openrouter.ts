@@ -3,7 +3,15 @@
  * Completions) с поддержкой function/tool calling. Не зависит от extract-ядра —
  * используется ИИ-чатом и может быть переиспользован другими сценариями.
  *
- * Экспоненциальный backoff на 429/5xx, прерывание через AbortSignal.
+ * Единственное место, где живёт транспорт к шлюзу: слот и темп (lib/llm/limiter), таймаут попытки,
+ * бюджет вызова, повторы по политике (lib/llm/retry-policy). Всё это здесь, а не у вызывающих,
+ * потому что лимиты у прокси общие на процесс: контур, обошедший это место, ломает их для всех.
+ *
+ * Две величины времени, и путать их нельзя. Таймаут ПОПЫТКИ (attemptTimeoutMs) больше дедлайна
+ * прокси: оборвать запрос раньше, чем он ответит, — это 499 в его журнале и оплаченный ответ,
+ * который мы не прочитали. Бюджет ВЫЗОВА (callBudgetMs) ограничивает попытки вместе с паузами;
+ * одного таймаута на весь вызов не хватало — при таймауте больше дедлайна прокси повтор в него
+ * просто не помещался.
  *
  * Наблюдаемость: каждая HTTP-попытка сообщается через необязательный `observer` — у попытки свой
  * X-Request-Id, свой код и своя длительность, и одной сводной записи на вызов недостаточно, чтобы
@@ -12,10 +20,23 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { config } from '../../config.js';
 import { withLlmGatewaySlot } from './limiter.js';
+import { MAX_RETRIES, canStartAttempt, classifyGatewayFailure, parseRetryAfterMs, retryDelayMs } from './retry-policy.js';
 
-const MAX_RETRIES = 4;
-const BASE_BACKOFF_MS = 1500;
+/**
+ * Бюджет вызова по умолчанию. 420 с — это две полновесные попытки по 200 с плюс паузы: столько
+ * нужно, чтобы пережить один таймаут прокси и всё же получить ответ. На быстрых отказах (503 за
+ * доли секунды) бюджет почти не тратится, и доступны все попытки.
+ */
+const DEFAULT_CALL_BUDGET_MS = 420_000;
+/**
+ * У локального сервера дедлайна прокси нет, зато Qwen думает долго — на своей модели ждём дольше.
+ * Умолчания нужны контурам, которые время не задают (ИИ-чат): до них у вызовов не было вообще
+ * никакого предела, и зависший upstream держал бы слот вечно.
+ */
+const DEFAULT_LM_ATTEMPT_TIMEOUT_MS = 240_000;
+const DEFAULT_LM_CALL_BUDGET_MS = 600_000;
 /** Тело ошибки — для показа человеку, а не для разбора: длинный HTML прокси незачем хранить. */
 const MAX_ERROR_BODY_CHARS = 2000;
 /**
@@ -82,6 +103,14 @@ export class LlmHttpError extends Error {
   }
 }
 
+/** Модель не ответила за отведённое попытке время. Отличать от отмены задания: причины разные. */
+export class LlmTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Модель не ответила за ${Math.round(ms / 1000)} с`);
+    this.name = 'LlmTimeoutError';
+  }
+}
+
 /** Одна фактическая HTTP-попытка — для журнала. */
 export interface HttpAttemptInfo {
   /** Номер попытки, с 1. */
@@ -89,11 +118,16 @@ export interface HttpAttemptInfo {
   /** X-Request-Id этой попытки: у прокси он в журнале. */
   requestId: string;
   status: number | null;
-  /** Сколько ждали свободный слот шлюза. Отделено от времени запроса: это очередь, а не модель. */
+  /**
+   * Сколько ждали очереди к шлюзу: свободный слот и свою щель в темпе отправок. Отделено от
+   * времени запроса — это очередь, а не модель, и в таймаут попытки не входит.
+   */
   waitedMs: number;
   durationMs: number;
   /** Пауза перед следующей попыткой; null — повтора не будет. */
   retryDelayMs: number | null;
+  /** Сколько просил подождать сам шлюз (Retry-After). null — не просил. */
+  retryAfterMs: number | null;
   /** Тело ответа при отказе (очищенное и усечённое). */
   errorBody: string | null;
   /** Сетевой сбой/отмена — ответа не было вовсе. */
@@ -107,6 +141,21 @@ export interface OpenRouterClientOptions {
   signal?: AbortSignal;
   /** Лимит токенов ответа (для LM Studio/Qwen — чтобы рассуждение не съедало ответ). */
   maxTokens?: number;
+  /**
+   * Локальный сервер моделей. До прокси такие вызовы не доходят, поэтому его слот и темп они не
+   * занимают: иначе один локальный прогон на 4 минуты держал бы половину потолка шлюза впустую.
+   * Свой слот (worker=1) держит вызывающий — на всю единицу работы, а не на попытку.
+   */
+  isLmStudio?: boolean;
+  /**
+   * Ключ логического вызова: один на все попытки. Прокси по нему отсекает повторную оплату при
+   * ретрае. Без него берётся случайный — заголовок есть всегда.
+   */
+  idempotencyKey?: string;
+  /** Таймаут одной попытки. Отсчёт начинается после очереди — ждать не значит работать. */
+  attemptTimeoutMs?: number;
+  /** Бюджет всего вызова: попытки вместе с паузами. */
+  callBudgetMs?: number;
   /** Наблюдатель за попытками. Его исключения на вызов не влияют. */
   observer?: (attempt: HttpAttemptInfo) => void;
 }
@@ -192,8 +241,24 @@ export async function chatWithTools(
     }
   };
 
+  // Ключ логического вызова — ОДИН на все попытки: по нему прокси отличает повтор после отказа от
+  // нового запроса и не оплачивает его дважды. Этим он и отличается от X-Request-Id ниже.
+  const idempotencyKey = opts.idempotencyKey ?? randomUUID();
+  const attemptTimeoutMs =
+    opts.attemptTimeoutMs ?? (opts.isLmStudio ? DEFAULT_LM_ATTEMPT_TIMEOUT_MS : config.ai.attemptTimeoutMs);
+  const callDeadline =
+    Date.now() + (opts.callBudgetMs ?? (opts.isLmStudio ? DEFAULT_LM_CALL_BUDGET_MS : DEFAULT_CALL_BUDGET_MS));
+  // Локальный сервер моделей мимо шлюза — его лимиты к нему не относятся. Слот LM Studio здесь не
+  // берём: его держит вызывающий на всю единицу работы, а семафор не реентрантный.
+  const withSlot = <T>(fn: () => Promise<T>): Promise<T> =>
+    opts.isLmStudio ? fn() : withLlmGatewaySlot(fn, opts.signal);
+
   let lastErr: unknown;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // Попытку начинаем, только если бюджета хватит на неё целиком: иначе мы отправим запрос,
+    // заведомо зная, что оборвём его раньше ответа.
+    if (attempt > 0 && !canStartAttempt(Date.now(), callDeadline, attemptTimeoutMs)) break;
+
     // Трейсинг в журнале proxy_llm (если baseUrl указывает на прокси). Свежий id
     // на каждую попытку — прокси сам сгенерирует его при отсутствии заголовка.
     const requestId = randomUUID();
@@ -203,42 +268,82 @@ export async function chatWithTools(
     let res: Response;
     let data: ChatCompletionResponse | null = null;
     let errorBody: string | null = null;
+    let retryAfterMs: number | null = null;
+    // Свой таймаут от чужой отмены отличает только этот флаг: первый — повод повторить, вторая нет.
+    let timedOut = false;
 
     try {
       // Слот — на одну попытку, а не на весь вызов: во время паузы перед повтором держать его
-      // незачем, иначе четыре ждущих запроса заняли бы весь потолок на десятки секунд.
+      // незачем, иначе ждущие запросы заняли бы весь потолок на десятки секунд.
       // Тело читаем здесь же: пока оно не прочитано, соединение со шлюзом ещё занято.
-      ({ res, data, errorBody } = await withLlmGatewaySlot(async () => {
+      ({ res, data, errorBody, retryAfterMs } = await withSlot(async () => {
         waitedMs = Date.now() - queuedAt;
         startedAt = Date.now();
-        const r = await fetch(`${opts.baseUrl}/chat/completions`, {
-          method: 'POST',
-          signal: opts.signal,
-          headers: {
-            Authorization: `Bearer ${opts.apiKey}`,
-            'Content-Type': 'application/json',
-            'X-Request-Id': requestId,
-          },
-          body: JSON.stringify(body),
-        });
-        if (r.ok) return { res: r, data: (await r.json()) as ChatCompletionResponse, errorBody: null };
-        // Без тела «503» не отличить от «503, потому что кончился баланс», а при работе через
-        // прокси — прокси это или сам OpenRouter.
-        return { res: r, data: null, errorBody: sanitizeErrorBody(await r.text().catch(() => '')) };
+        // Таймаут взводим ЗДЕСЬ, а не до очереди: ожидание слота и щели — не работа модели, и
+        // съедать им время запроса нельзя. Раньше на этом набор отваливался, не отправив ни байта.
+        // Живёт он ровно столько, сколько идёт запрос: иначе таймер на три минуты держал бы
+        // event loop всё время паузы перед повтором.
+        const attemptAbort = new AbortController();
+        const timer = setTimeout(() => {
+          timedOut = true;
+          attemptAbort.abort();
+        }, attemptTimeoutMs);
+        const signal = opts.signal ? AbortSignal.any([opts.signal, attemptAbort.signal]) : attemptAbort.signal;
+        try {
+          const r = await fetch(`${opts.baseUrl}/chat/completions`, {
+            method: 'POST',
+            signal,
+            headers: {
+              Authorization: `Bearer ${opts.apiKey}`,
+              'Content-Type': 'application/json',
+              'X-Request-Id': requestId,
+              'X-Idempotency-Key': idempotencyKey,
+            },
+            body: JSON.stringify(body),
+          });
+          if (r.ok) {
+            return { res: r, data: (await r.json()) as ChatCompletionResponse, errorBody: null, retryAfterMs: null };
+          }
+          // Без тела «503» не отличить от «503, потому что кончился баланс», а при работе через
+          // прокси — прокси это или сам OpenRouter.
+          return {
+            res: r,
+            data: null,
+            errorBody: sanitizeErrorBody(await r.text().catch(() => '')),
+            retryAfterMs: parseRetryAfterMs(r.headers.get('retry-after')),
+          };
+        } finally {
+          clearTimeout(timer);
+        }
       }));
     } catch (err) {
-      // Сеть отвалилась или вызов отменили: попытка тоже часть истории.
+      const isLast = attempt === MAX_RETRIES;
+      // Сеть отвалилась, вышло время попытки или вызов отменили — ответа не было вовсе.
+      // Отмену не повторяем ни при каких условиях: это воля человека, и она главнее нашего
+      // таймаута, даже если они сработали разом. Сеть и таймаут повторяем — они транзиентные.
+      const aborted = opts.signal?.aborted ?? false;
+      const retryable = !aborted && !isLast;
+      const cause = timedOut && !aborted ? new LlmTimeoutError(attemptTimeoutMs) : err;
+      const delay =
+        retryable && canStartAttempt(Date.now(), callDeadline, attemptTimeoutMs)
+          ? retryDelayMs(attempt, null)
+          : null;
       notify({
         no: attempt + 1,
         requestId,
         status: null,
         waitedMs,
         durationMs: Date.now() - startedAt,
-        retryDelayMs: null,
+        retryDelayMs: delay,
+        retryAfterMs: null,
         errorBody: null,
-        networkError: err instanceof Error ? err.message : String(err),
+        networkError: cause instanceof Error ? cause.message : String(cause),
       });
-      throw err;
+      if (delay === null) throw cause;
+      lastErr = cause;
+      await sleep(delay, opts.signal);
+      if (opts.signal?.aborted) throw cause;
+      continue;
     }
 
     if (res.ok && data) {
@@ -249,6 +354,7 @@ export async function chatWithTools(
         waitedMs,
         durationMs: Date.now() - startedAt,
         retryDelayMs: null,
+        retryAfterMs: null,
         errorBody: null,
         networkError: null,
       });
@@ -267,10 +373,14 @@ export async function chatWithTools(
       };
     }
 
-    const retryable = res.status === 429 || (res.status >= 500 && res.status <= 599);
+    const { retry } = classifyGatewayFailure(res.status, errorBody ?? '');
     const isLast = attempt === MAX_RETRIES;
     // Спать после последней попытки бессмысленно: следующей не будет, а вызов задерживается.
-    const retryDelayMs = retryable && !isLast ? BASE_BACKOFF_MS * 2 ** attempt : null;
+    // И спать незачем, если на саму попытку бюджета уже не хватит.
+    const delay =
+      retry && !isLast && canStartAttempt(Date.now() + (retryAfterMs ?? 0), callDeadline, attemptTimeoutMs)
+        ? retryDelayMs(attempt, retryAfterMs)
+        : null;
 
     notify({
       no: attempt + 1,
@@ -278,17 +388,18 @@ export async function chatWithTools(
       status: res.status,
       waitedMs,
       durationMs: Date.now() - startedAt,
-      retryDelayMs,
+      retryDelayMs: delay,
+      retryAfterMs,
       errorBody,
       networkError: null,
     });
 
     const err = new LlmHttpError(res.status, errorBody ?? '', requestId, attempt + 1);
-    // Ретраим только на 429 и 5xx.
-    if (!retryable) throw err;
+    // Повторяем только то, что повтор способен вылечить (см. lib/llm/retry-policy).
+    if (!retry) throw err;
     lastErr = err;
-    if (retryDelayMs === null) break;
-    await sleep(retryDelayMs, opts.signal);
+    if (delay === null) break;
+    await sleep(delay, opts.signal);
     if (opts.signal?.aborted) break;
   }
   throw lastErr ?? new Error('ИИ-шлюз: исчерпаны попытки');

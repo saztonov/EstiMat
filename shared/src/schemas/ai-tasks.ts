@@ -92,9 +92,12 @@ export interface AiTaskHttpAttempt {
   no: number;
   requestId: string;
   status: number | null;
+  /** Ожидание очереди к шлюзу: слот и щель в темпе отправок. Не работа модели. */
   waitedMs: number;
   durationMs: number;
   retryDelayMs: number | null;
+  /** Сколько просил подождать сам шлюз (Retry-After); null — не просил. */
+  retryAfterMs?: number | null;
   errorBody: string | null;
   networkError: string | null;
 }

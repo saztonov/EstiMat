@@ -29,13 +29,32 @@ const WORKER_ID = `${process.pid}-${randomUUID().slice(0, 8)}`;
 const LOCK_TTL_MS = 5 * 60_000;
 /** Продлеваем блокировку после каждого набора: живое задание не должен подобрать watchdog. */
 const HEARTBEAT_MS = LOCK_TTL_MS;
-const BATCH_TIMEOUT_LM_MS = 240_000;
-const BATCH_TIMEOUT_OR_MS = 90_000;
-/** Внутренние ретраи chatWithTools съедают до ~46 с только на sleep — таймаут меньше минуты ловил бы их. */
-const MERGE_TIMEOUT_MS = 90_000;
+/**
+ * Таймаут ОДНОЙ попытки. У шлюза он обязан быть больше дедлайна прокси (190 с): оборвав запрос
+ * раньше, мы получаем 499 в его журнале и оплаченный ответ, который не прочитали. Прежние 90 с
+ * ровно это и делали.
+ */
+const ATTEMPT_TIMEOUT_LM_MS = 240_000;
+const ATTEMPT_TIMEOUT_OR_MS = 200_000;
+/**
+ * Бюджет вызова: попытки вместе с паузами. Одного таймаута на весь вызов не хватает — при
+ * таймауте больше дедлайна прокси повтор в него просто не помещался бы.
+ */
+const CALL_BUDGET_LM_MS = 600_000;
+const CALL_BUDGET_OR_MS = 420_000;
 const JOB_DEADLINE_LM_MS = 40 * 60_000;
-const JOB_DEADLINE_OR_MS = 8 * 60_000;
+/**
+ * Дедлайн задания. 40 минут: смета в 1600 строк (заявленный максимум) — это ~22 набора, по два
+ * одновременно, то есть ~9 минут при обычном ответе модели и ~21 при медленном. Прежних 8 минут не
+ * хватало на такую смету уже до перехода на два одновременных запроса.
+ */
+const JOB_DEADLINE_OR_MS = 40 * 60_000;
 const OR_PARALLEL = 4;
+/**
+ * Заданий на процесс. Потолок шлюза всё равно два запроса, и третье задание не посчитается
+ * быстрее — оно лишь растянет первые два и подведёт их под дедлайн.
+ */
+const MAX_CONCURRENT_JOBS = 2;
 
 const runningJobs = new Map<string, AbortController>();
 
@@ -97,6 +116,22 @@ async function claim(fastify: FastifyInstance, jobId: string): Promise<JobRow | 
   return rows[0] ?? null;
 }
 
+/**
+ * Продлить только блокировку. Нужен потому, что heartbeat ниже привязан к ЗАВЕРШЁННОМУ набору, а
+ * один набор с повтором занимает до 7 минут (бюджет вызова) — дольше, чем живёт блокировка. Без
+ * этого watchdog забрал бы живое задание, и над ним работали бы два исполнителя сразу.
+ */
+async function touchLock(fastify: FastifyInstance, jobId: string): Promise<void> {
+  await fastify.pool
+    .query(
+      `UPDATE material_grouping_jobs
+          SET locked_until = now() + ($2 || ' milliseconds')::interval
+        WHERE id = $1 AND locked_by = $3 AND status = 'running'`,
+      [jobId, String(LOCK_TTL_MS), WORKER_ID],
+    )
+    .catch(() => {});
+}
+
 /** Прогресс + продление блокировки + checkpoint одним UPDATE: живое задание не заберёт watchdog. */
 async function heartbeat(
   fastify: FastifyInstance,
@@ -124,6 +159,10 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
   const controller = new AbortController();
   runningJobs.set(jobId, controller);
   const started = Date.now();
+  // Блокировку продлеваем по таймеру, а не только после набора: набор с повтором идёт дольше, чем
+  // она живёт, и живое задание досталось бы watchdog'у вторым исполнителем.
+  const lockTimer = setInterval(() => void touchLock(fastify, jobId), LOCK_TTL_MS / 3);
+  lockTimer.unref();
   // Прошлую попытку могли оборвать деплоем: её незакрытые записи иначе вечно показывали бы
   // «отправляем запрос».
   await closeDanglingCalls(fastify, jobId);
@@ -148,7 +187,8 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
     const actualModel = `${ep.provider}:${ep.model}`;
     const batches = planBatches(lines, job.settings);
     const deadline = started + (ep.isLmStudio ? JOB_DEADLINE_LM_MS : JOB_DEADLINE_OR_MS);
-    const batchTimeout = ep.isLmStudio ? BATCH_TIMEOUT_LM_MS : BATCH_TIMEOUT_OR_MS;
+    const attemptTimeout = ep.isLmStudio ? ATTEMPT_TIMEOUT_LM_MS : ATTEMPT_TIMEOUT_OR_MS;
+    const callBudget = ep.isLmStudio ? CALL_BUDGET_LM_MS : CALL_BUDGET_OR_MS;
     /** Суммарное ожидание слота LM Studio: очередь — не работа задания, в дедлайн не входит. */
     let waitedForSlotMs = 0;
 
@@ -192,7 +232,16 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
       const call = async () => {
         await markCall(fastify, callId, 'in_progress');
         return chatJsonOnce(
-          { endpoint: ep, signal: controller.signal, timeoutMs: batchTimeout, noThink },
+          {
+            endpoint: ep,
+            signal: controller.signal,
+            attemptTimeoutMs: attemptTimeout,
+            callBudgetMs: callBudget,
+            // Ключ повторов — id записи журнала: она заведена до отправки, живёт ровно этот вызов и
+            // одна на все его попытки. Заодно ключ в журнале прокси совпадает с нашим id вызова.
+            idempotencyKey: callId ?? undefined,
+            noThink,
+          },
           system,
           userPrompt,
         );
@@ -294,7 +343,14 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
           const call = async () => {
             await markCall(fastify, callId, 'in_progress');
             return chatJsonOnce(
-              { endpoint: ep, signal: controller.signal, timeoutMs: MERGE_TIMEOUT_MS, noThink },
+              {
+                endpoint: ep,
+                signal: controller.signal,
+                attemptTimeoutMs: attemptTimeout,
+                callBudgetMs: callBudget,
+                idempotencyKey: callId ?? undefined,
+                noThink,
+              },
               mergeSystem,
               mergePrompt,
             );
@@ -377,6 +433,7 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
         .catch(() => {});
     }
   } finally {
+    clearInterval(lockTimer);
     runningJobs.delete(jobId);
   }
 }
@@ -384,15 +441,22 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
 /**
  * Подобрать задания, брошенные упавшим процессом: истёк locked_until либо ждут ретрая.
  * Без этого прогон на 20 минут терялся бы при каждом деплое.
+ *
+ * Берём не больше, чем свободно до потолка. Ограничивать только выборку бесполезно: поднятые
+ * задания держат locked_until и в неё уже не попадают, поэтому каждый тик добавлял бы к ним новые —
+ * за пять минут набирались десятки, и все они дрались за два слота шлюза.
  */
 export async function requeueStaleJobs(fastify: FastifyInstance): Promise<void> {
+  const free = MAX_CONCURRENT_JOBS - runningJobs.size;
+  if (free <= 0) return;
   const { rows } = await fastify.pool.query<{ id: string }>(
     `SELECT id FROM material_grouping_jobs
       WHERE status IN ('pending', 'running')
         AND next_run_at <= now()
         AND (locked_until IS NULL OR locked_until < now())
       ORDER BY created_at
-      LIMIT 5`,
+      LIMIT $1`,
+    [free],
   );
   for (const r of rows) void runGroupingJob(fastify, r.id);
 }

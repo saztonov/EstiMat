@@ -85,6 +85,7 @@ async function runJobInBackground(fastify: FastifyInstance, jobId: string): Prom
       rolePrompt,
       signal: controller.signal,
       maxTokens: ep.isLmStudio ? ep.maxTokens : undefined,
+      isLmStudio: ep.isLmStudio,
       noThink,
       failOnEmpty: ep.isLmStudio,
       // Журнал обмена: извлечение делает вызов на каждый фрагмент РД, и без него не понять,
