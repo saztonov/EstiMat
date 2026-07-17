@@ -81,27 +81,53 @@ test('повторная попытка: номер, время следующе
   assert.equal(text, 'Попытка 2 из 3 · повтор через 45 с · ИИ-шлюз вернул 503');
 });
 
-test('остановлено человеком — не обещаем автоматический пересчёт', () => {
-  const n = suppressedNotice('manual_stop', null);
+/** Ограничений нет: пересчёт закажет ближайшее открытие раздела. */
+const OPEN = { nextAutoRunAt: null, now: NOW };
+
+test('остановлено человеком — не обещаем пересчёт вовсе', () => {
+  const n = suppressedNotice('manual_stop', null, OPEN);
   assert.equal(n.message, 'Пересчёт остановлен');
   assert.match(n.description, /Правки сметы пересчёт не возобновят/);
-  assert.doesNotMatch(n.description, /запустится автоматически/);
+  assert.doesNotMatch(n.description, /Пересчёт начнётся|при следующем открытии/);
 });
 
 test('попытки исчерпаны — показываем причину', () => {
-  const n = suppressedNotice('terminal_failure', {
-    id: 'j',
-    status: 'dead',
-    error: 'ИИ-шлюз вернул 503',
-    attempts: 3,
-    stoppedByUser: false,
-  });
+  const n = suppressedNotice(
+    'terminal_failure',
+    { id: 'j', status: 'dead', error: 'ИИ-шлюз вернул 503', attempts: 3, stoppedByUser: false },
+    OPEN,
+  );
   assert.equal(n.type, 'error');
   assert.match(n.description, /ИИ-шлюз вернул 503/);
 });
 
-test('ничего не подавлено — прежнее обещание автопересчёта остаётся правдой', () => {
-  const n = suppressedNotice(null, null);
+test('ничего не мешает — пересчёт закажет открытие раздела, а не правка сметы', () => {
+  // Обещать «запустится автоматически» больше нельзя: правка сметы расчёт не ставит.
+  const n = suppressedNotice(null, null, OPEN);
   assert.equal(n.message, 'Результат устарел и будет пересчитан');
-  assert.match(n.description, /запустится автоматически/);
+  assert.match(n.description, /при следующем открытии раздела/);
+});
+
+test('пересчёт отложен — называем срок, а не обещаем «сейчас»', () => {
+  // Раздел уже открыт: расчёт начнётся сам, но за прошлый прогон только что заплатили.
+  const n = suppressedNotice(null, null, {
+    nextAutoRunAt: new Date(NOW + 20 * 60_000).toISOString(),
+    now: NOW,
+  });
+  assert.match(n.description, /Пересчёт начнётся примерно через 20 мин/);
+  assert.doesNotMatch(n.description, /при следующем открытии/);
+});
+
+test('отложенный срок уже прошёл — снова обычное обещание', () => {
+  // Момент наступил, а роут ещё не перечитан: «начнётся примерно через 0 мин» было бы бессмыслицей.
+  const n = suppressedNotice(null, null, {
+    nextAutoRunAt: new Date(NOW - 1000).toISOString(),
+    now: NOW,
+  });
+  assert.match(n.description, /при следующем открытии раздела/);
+});
+
+test('до срока меньше минуты — не показываем «через 0 мин»', () => {
+  const n = suppressedNotice(null, null, { nextAutoRunAt: new Date(NOW + 30_000).toISOString(), now: NOW });
+  assert.match(n.description, /меньше чем через минуту/);
 });

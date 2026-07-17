@@ -16,17 +16,28 @@ const CALLS_KEY = (jobId: string) => ['material-grouping-calls', jobId] as const
 const CALL_KEY = (jobId: string, callId: string) => ['material-grouping-call', jobId, callId] as const;
 
 /**
- * Группировка сметы. Пока считается — поллинг (как в ИИ-чате): задание фоновое, ставится само,
- * и клиентский таймаут запроса роли не играет.
+ * Группировка сметы. Сам этот запрос и заказывает расчёт: сервер ставит задание при чтении, то
+ * есть по открытию вкладки. Пока считается — поллинг (как в ИИ-чате): задание фоновое, и
+ * клиентский таймаут запроса роли не играет.
  */
 export function useSmartGroupingJob(estimateId: string, enabled: boolean) {
   return useQuery({
     queryKey: KEY(estimateId),
     queryFn: () => getLatestGroupingJob(estimateId),
     enabled: enabled && !!estimateId,
-    // Поллим по active, а не по data: data — это последний готовый результат, и во время
-    // пересчёта он остаётся 'ready'.
-    refetchInterval: (q) => (q.state.data?.active ? 1500 : false),
+    refetchInterval: (q) => {
+      const data = q.state.data;
+      // Поллим по active, а не по data: data — это последний готовый результат, и во время
+      // пересчёта он остаётся 'ready'.
+      if (data?.active) return 1500;
+      // Пересчёт отложен: перечитываем роут ровно к сроку — сервер поставит задание, и включится
+      // ветка выше. Без этого открытая вкладка ждала бы перезагрузки страницы, а обещанный
+      // пересчёт так и не начался бы.
+      if (data?.nextAutoRunAt) {
+        return Math.max(1000, new Date(data.nextAutoRunAt).getTime() - Date.now());
+      }
+      return false;
+    },
   });
 }
 

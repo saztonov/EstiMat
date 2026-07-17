@@ -24,10 +24,6 @@ declare module 'fastify' {
     storage: import('../plugins/s3.js').Storage | null;
     outbox: import('../lib/integration/outbox-worker.js').OutboxWorker;
     publishEstimateChanged(event: import('@estimat/shared').EstimateChangedEvent): Promise<void>;
-    /** Подписка на изменения всех смет (серверные фоновые реакции). Возвращает отписку. */
-    onEstimateChanged(
-      cb: (event: import('@estimat/shared').EstimateChangedEvent) => void,
-    ): () => void;
   }
   interface FastifyRequest {
     currentUser: RequestUser;

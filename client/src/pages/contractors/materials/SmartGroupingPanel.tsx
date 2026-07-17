@@ -41,8 +41,9 @@ interface Props {
 export { SHARED_KEY, UNGROUPED_KEY };
 
 /**
- * Умная группировка: результат один на смету, ставится автоматически и одинаков для всех.
- * Подрядчику сервер отдаёт его обрезанным до своих строк — здесь область уже не выбирается.
+ * Умная группировка: результат один на смету и одинаков для всех. Расчёт заказывает само открытие
+ * этой панели (сервер ставит задание при чтении роута), но не чаще раза в полчаса на смету.
+ * Подрядчику сервер отдаёт результат обрезанным до своих строк — здесь область уже не выбирается.
  */
 export function SmartGroupingPanel({
   estimateId,
@@ -71,6 +72,8 @@ export function SmartGroupingPanel({
   const active = jobQuery.data?.active ?? null;
   // Почему пересчёта не будет: остановлен человеком либо исчерпал попытки.
   const suppressed = jobQuery.data?.autoRunSuppressed ?? null;
+  // А это — «будет, но позже»: прошлый прогон слишком свежий, чтобы платить за новый.
+  const nextAutoRunAt = jobQuery.data?.nextAutoRunAt ?? null;
   const lastAttempt = jobQuery.data?.lastAttempt ?? null;
   // Журнал открывается по любому заданию, но смысл имеет по последнему: идущему либо упавшему.
   const openLog = (id: string) => setLogJobId(id);
@@ -109,8 +112,8 @@ export function SmartGroupingPanel({
     );
   }
 
-  // Задания нет или оно остановлено. Группировка безусловна: сервер ставит её сам при чтении,
-  // поэтому сюда попадаем, только если ставить нечего (нет материалов) или расчёт остановили.
+  // Задания нет или оно остановлено. Открытие панели расчёт уже заказало, поэтому сюда попадаем,
+  // только если ставить нечего (нет материалов) или расчёт остановили.
   if (!job || job.status === 'cancelled') {
     return (
       <>
@@ -204,6 +207,7 @@ export function SmartGroupingPanel({
           run={run}
           onOpenLog={openLog}
           suppressed={suppressed}
+          nextAutoRunAt={nextAutoRunAt}
           lastAttempt={lastAttempt}
           logJobId={lastAttempt?.id ?? job.id}
         />
@@ -306,6 +310,7 @@ function StaleAlert({
   run,
   onOpenLog,
   suppressed,
+  nextAutoRunAt,
   lastAttempt,
   logJobId,
 }: {
@@ -313,10 +318,13 @@ function StaleAlert({
   run: { isPending: boolean; mutate: (v: { force?: boolean }) => void };
   onOpenLog: (id: string) => void;
   suppressed: GroupingSuppressedBy | null;
+  nextAutoRunAt: string | null;
   lastAttempt: GroupingLastAttempt | null;
   logJobId: string;
 }) {
-  const notice = suppressedNotice(suppressed, lastAttempt);
+  // Срок пересчёта — грубый, до минут: плашка живёт без таймера и перерисуется, только когда
+  // useSmartGroupingJob перечитает роут (он это сделает как раз к сроку).
+  const notice = suppressedNotice(suppressed, lastAttempt, { nextAutoRunAt, now: Date.now() });
   return (
     <Alert
       type={notice.type}

@@ -1,9 +1,14 @@
 /**
  * Постановка заданий группировки — единственная точка создания.
  *
- * Группировка безусловна: результат один на смету, ставится сам (назначение подрядчика,
- * изменение состава сметы) и одинаков для всех. Пользователь её не запускает — «Пересчитать»
- * у администратора это тот же вызов с force.
+ * Результат один на смету и одинаков для всех. Ставится он ПО ОТКРЫТИЮ РАЗДЕЛА (ленивый вызов из
+ * GET /jobs/latest), а не по правке сметы: прогон стоит токенов и минут, и платить за него имеет
+ * смысл только когда результат кому-то нужен прямо сейчас. Правка сметы результат не пересчитывает,
+ * а лишь помечает устаревшим (stale считается на лету по input_hash). «Пересчитать» у
+ * администратора — тот же вызов с force.
+ *
+ * Не чаще раза в COOLDOWN_MS по смете: иначе получается петля — открытая вкладка досчитала, а
+ * сметчик за эти минуты правил смету, и следующее чтение немедленно ставит новый полный прогон.
  *
  * Здесь же решается, что делать с уже существующим заданием. Правила:
  *   • готовый результат с тем же входом — ничего не делаем (это и есть кэш);
@@ -11,12 +16,12 @@
  *   • pending с другим входом — отменяем и ставим новое: расчёт ещё не начинался, терять нечего;
  *   • running с другим входом — НЕ трогаем. На LM Studio прогон идёт 10–25 минут, и правка сметы
  *     во время расчёта убивала бы его снова и снова — до конца он не досчитался бы никогда.
- *     Вместо этого по завершении прогона проверяем вход ещё раз (startJob) и ставим новое.
+ *     Устаревший результат честно отдаётся как stale, а пересчитает его следующий заход.
  */
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { PoolClient } from 'pg';
-import { type EstimateChangeReason, type GroupingSettings } from '@estimat/shared';
+import { type GroupingSettings } from '@estimat/shared';
 import { loadLlmRuntime, resolveLlmEndpoint } from '../llm/endpoint.js';
 import { resolveAiModel, resolveGroupingLevels, resolveQwenNoThink } from '../llm/settings.js';
 import { resolveAllPrompts } from '../llm/prompts.js';
@@ -28,36 +33,11 @@ import { abortGroupingJob, runGroupingJob } from './run.js';
 export const MAX_GROUPING_LINES = 1600;
 
 /**
- * Причины изменения сметы, способные поменять вход группировки (состав материалов, работы,
- * местоположение, назначения). Дешёвый первый отсев: комментарии и переименование сметы на
- * группы не влияют, и гонять из-за них тяжёлый запрос состава незачем.
- *
- * Точный ответ всё равно даёт input_hash внутри ensureEstimateGrouping — этот список лишь
- * отбрасывает заведомо бесполезные поводы.
+ * Минимальный интервал между автоматическими прогонами одной сметы. Ограничивает частоту ТРАТ, а не
+ * свежесть результата: смету правят весь день, а каждый заход в раздел после правки — это полный
+ * прогон всех наборов. Полчаса — тот возраст результата, который сметчику ещё не мешает.
  */
-const RELEVANT_REASONS = new Set<EstimateChangeReason>([
-  'item_created',
-  'item_updated',
-  'item_deleted',
-  'material_created',
-  'material_updated',
-  'material_deleted',
-  'materials_reassigned',
-  'bulk_deleted',
-  'confirmed_all',
-  'contractor_set',
-  'contractor_cleared',
-  'ai_applied',
-  'items_replicated',
-  'undo_applied',
-  'vor_created',
-  'vor_deleted',
-]);
-
-export const affectsGrouping = (reason: EstimateChangeReason): boolean => RELEVANT_REASONS.has(reason);
-
-/** Массовое редактирование не должно ставить задание после каждой строки. */
-const DEBOUNCE_MS = 15_000;
+const COOLDOWN_MS = 30 * 60_000;
 
 export interface GroupingJobRow {
   id: string;
@@ -82,6 +62,7 @@ export type EnsureReason =
   | 'created' // поставлено новое задание
   | 'cached' // готовый результат с тем же входом
   | 'active' // уже считается
+  | 'cooldown' // прошлый прогон слишком свежий: пересчитаем позже
   | 'suppressed' // остановлено человеком либо исчерпаны попытки на этом же входе
   | 'disabled' // ИИ-провайдер не настроен
   | 'empty' // в смете нет материалов
@@ -95,6 +76,8 @@ export interface EnsureResult {
   reason: EnsureReason;
   /** Заполняется только при reason='suppressed'. */
   suppressedBy?: SuppressedBy;
+  /** Заполняется только при reason='cooldown': когда автозапуск станет возможен снова. */
+  retryAfter?: Date;
 }
 
 /**
@@ -124,27 +107,37 @@ export function decideSuppression(
   return null;
 }
 
-const pendingTimers = new Map<string, NodeJS.Timeout>();
+/**
+ * Ждать ли до следующего автоматического прогона. Чистая функция — по тем же соображениям, что и
+ * decideSuppression.
+ *
+ * Считаем от created_at, а не от updated_at: второй дёргает триггер на каждом UPDATE (heartbeat,
+ * checkpoint), а нам нужен интервал между СТАРТАМИ прогонов.
+ *
+ * Только при готовом результате: есть что показать, спешить некуда. На dead/cancelled действуют
+ * свои правила (decideSuppression), и подменять их задержкой нельзя — иначе законный повтор на
+ * новом составе сметы ждал бы полчаса без причины.
+ */
+export function decideCooldown(
+  last: { status: string; created_at: Date | string } | null,
+  nowMs: number,
+  cooldownMs: number,
+): Date | null {
+  if (last?.status !== 'ready') return null;
+  const readyAt = new Date(last.created_at).getTime();
+  const until = readyAt + cooldownMs;
+  return nowMs < until ? new Date(until) : null;
+}
 
 /**
- * Запустить задание и по завершении сверить вход ещё раз: пока считали, смету могли поправить
- * (running мы намеренно не убиваем). Повтор ставим только после успешного прогона — иначе
- * упавшее задание порождало бы новое бесконечно.
+ * Запустить задание. Вход по завершении не перепроверяем: смета могла измениться, пока считали, но
+ * это повод показать stale, а не начать новый прогон за спиной у пользователя — следующий заход в
+ * раздел его и закажет.
  */
 function startJob(fastify: FastifyInstance, jobId: string, estimateId: string): void {
-  void (async () => {
-    try {
-      await runGroupingJob(fastify, jobId);
-      const { rows } = await fastify.pool.query<{ status: string }>(
-        'SELECT status FROM material_grouping_jobs WHERE id = $1',
-        [jobId],
-      );
-      if (rows[0]?.status !== 'ready') return;
-      await ensureEstimateGrouping(fastify, estimateId, { actorUserId: null });
-    } catch (err) {
-      fastify.log.error({ err, jobId, estimateId }, 'material grouping: job run failed');
-    }
-  })();
+  void runGroupingJob(fastify, jobId).catch((err) =>
+    fastify.log.error({ err, jobId, estimateId }, 'material grouping: job run failed'),
+  );
 }
 
 /**
@@ -241,8 +234,16 @@ export async function ensureEstimateGrouping(
           [estimateId, scopeHash],
         ),
       ]);
-      const suppressedBy = decideSuppression(last.rows[0] ?? null, pause.rowCount! > 0, inputHash);
-      if (suppressedBy) result = { job: last.rows[0] ?? null, reason: 'suppressed', suppressedBy };
+      const lastRow = last.rows[0] ?? null;
+      const suppressedBy = decideSuppression(lastRow, pause.rowCount! > 0, inputHash);
+      if (suppressedBy) result = { job: lastRow, reason: 'suppressed', suppressedBy };
+
+      // Задержка — после подавления: остановленной вручную смете обещать «пересчитаем через 20
+      // минут» нельзя, там пересчёта не будет вовсе.
+      if (!result) {
+        const retryAfter = decideCooldown(lastRow, Date.now(), COOLDOWN_MS);
+        if (retryAfter) result = { job: lastRow, reason: 'cooldown', retryAfter };
+      }
     }
 
     if (!result) {
@@ -307,7 +308,8 @@ async function decideOnActive(
   if (!active) return null;
 
   if (!ctx.force && active.input_hash === ctx.inputHash) return { job: active, reason: 'active' };
-  // Идёт расчёт по устаревшему входу: досчитает и сам перепроверит вход (startJob).
+  // Идёт расчёт по устаревшему входу: пусть досчитает — результат отдастся как stale, а пересчёт
+  // закажет следующий заход в раздел.
   if (!ctx.force && active.status === 'running') return { job: active, reason: 'active' };
 
   // force — админ попросил явно; либо pending по устаревшему входу — расчёт ещё не начинался.
@@ -324,26 +326,3 @@ async function decideOnActive(
   return null;
 }
 
-/**
- * Отложенная проверка после изменения сметы. Собирает всплеск правок в один вызов: при массовом
- * редактировании иначе ставилось бы задание на каждую строку. Сам ensure дешёвых поводов не
- * боится — если вход не изменился, до модели дело не дойдёт.
- */
-export function cancelScheduledRefresh(estimateId: string): void {
-  const timer = pendingTimers.get(estimateId);
-  if (timer) clearTimeout(timer);
-  pendingTimers.delete(estimateId);
-}
-
-export function scheduleGroupingRefresh(fastify: FastifyInstance, estimateId: string): void {
-  const existing = pendingTimers.get(estimateId);
-  if (existing) clearTimeout(existing);
-  const timer = setTimeout(() => {
-    pendingTimers.delete(estimateId);
-    void ensureEstimateGrouping(fastify, estimateId, { actorUserId: null }).catch((err) =>
-      fastify.log.warn({ err, estimateId }, 'material grouping: scheduled refresh failed'),
-    );
-  }, DEBOUNCE_MS);
-  timer.unref();
-  pendingTimers.set(estimateId, timer);
-}

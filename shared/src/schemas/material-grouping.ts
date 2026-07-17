@@ -240,6 +240,8 @@ export interface GroupingCallsResponse {
  * `lastAttempt` — отменённая или мёртвая попытка, которую заслоняет прежний `ready`.
  * `autoRunSuppressed` — почему пересчёта не будет: пока он не null, обещать автоматический
  * пересчёт нельзя.
+ * `nextAutoRunAt` — пересчёт БУДЕТ, но не раньше этого момента (прошлый прогон слишком свежий).
+ * С `autoRunSuppressed` не смешивать: там «не будет вовсе, нужна рука».
  */
 export interface LatestGroupingJobResponse {
   data: GroupingJob | null;
@@ -248,4 +250,5 @@ export interface LatestGroupingJobResponse {
   stale: boolean;
   lastAttempt: GroupingLastAttempt | null;
   autoRunSuppressed: GroupingSuppressedBy | null;
+  nextAutoRunAt: string | null;
 }

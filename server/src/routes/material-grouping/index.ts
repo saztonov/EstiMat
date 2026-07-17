@@ -1,9 +1,10 @@
 /**
  * Умная группировка материалов сметы (ИИ).
  *
- * Результат ОДИН на смету и одинаков для всех: он не запускается пользователем и не зависит от
- * его отборов. Постановка задания — автоматическая (lib/material-grouping/enqueue.ts), здесь
- * только чтение и «Пересчитать» для администратора.
+ * Результат ОДИН на смету и одинаков для всех: он не зависит от отборов пользователя. Задание
+ * ставится при чтении этого роута — то есть по открытию раздела и не чаще, чем разрешает задержка
+ * (lib/material-grouping/enqueue.ts). Правка сметы пересчёта не запускает: прогон стоит токенов, и
+ * платить за него имеет смысл, когда результат кому-то нужен. Здесь же «Пересчитать» админа.
  *
  * Доступ к чтению — по смете, а не по роли: вкладку видит и подрядчик. Ему ответ обрезается до
  * его строк (lib/material-grouping/project.ts) — общий результат содержит названия материалов
@@ -34,12 +35,7 @@ import {
   loadGroupingLines,
 } from '../../lib/material-grouping/input.js';
 import { PROMPT_VERSION } from '../../lib/material-grouping/prompt.js';
-import {
-  affectsGrouping,
-  cancelScheduledRefresh,
-  ensureEstimateGrouping,
-  scheduleGroupingRefresh,
-} from '../../lib/material-grouping/enqueue.js';
+import { ensureEstimateGrouping } from '../../lib/material-grouping/enqueue.js';
 import { projectResultFor } from '../../lib/material-grouping/project.js';
 import { abortGroupingJob, requeueStaleJobs } from '../../lib/material-grouping/run.js';
 
@@ -86,13 +82,6 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
   const timer = setInterval(() => void requeueStaleJobs(fastify), REQUEUE_INTERVAL_MS);
   timer.unref();
 
-  // Группировка безусловна: смету изменили — результат обновляется сам, без действий пользователя.
-  // Подписка одна на все сметы вместо вызова из каждого роута, который правит смету (их 11).
-  const unsubscribe = fastify.onEstimateChanged((event) => {
-    if (!affectsGrouping(event.reason)) return;
-    scheduleGroupingRefresh(fastify, event.estimateId);
-  });
-
   /**
    * Чистка. Задания — 30 дней, тексты журнала — 7: они на порядок тяжелее.
    *
@@ -130,7 +119,6 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
   fastify.addHook('onClose', async () => {
     clearInterval(timer);
     clearInterval(cleanupTimer);
-    unsubscribe();
   });
 
   /** Доступ к смете. Область больше не зависит от пользователя — результат общий. */
@@ -229,6 +217,11 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     if (reason === 'suppressed') {
       return reply.status(409).send({ error: 'Пересчёт остановлен вручную', code: 'suppressed' });
     }
+    // Тоже недостижимо из панели. Без этой ветки force:false внутри задержки ушёл бы ниже и
+    // получил бы «уже выполняется» — неправду, из-за которой ошибку искали бы не там.
+    if (reason === 'cooldown') {
+      return reply.status(409).send({ error: 'Группировка пересчитывалась недавно', code: 'cooldown' });
+    }
     if (!job) {
       return reply.status(409).send({ error: 'Группировка по этой смете уже выполняется', code: 'already_running' });
     }
@@ -282,15 +275,16 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     // полного чтения состава сметы (клиент в это время поллит раз в 1.5 с).
     const stale = ready && !activeRow ? await isStale(ready) : false;
 
-    // Самовосстановление: группировка безусловна, поэтому отсутствие результата или устаревший
-    // результат — повод поставить задание. Событие с шины могло потеряться (reconnect LISTEN), а
-    // сметы, назначенные до этой версии, заданий не имеют вовсе.
+    // ЗДЕСЬ И СТАВИТСЯ РАСЧЁТ: чтение этого роута = «раздел открыт», а открытый раздел — это и
+    // есть повод потратить токены. Правка сметы задание не ставит, поэтому отсутствие результата
+    // или устаревший результат разрешаются только так.
     // Ждём постановки, а не пускаем в фон: клиент включает поллинг по active, и без него экран
     // «формируется» завис бы до ручного обновления страницы.
     // Остановленное человеком и исчерпавшее попытки задание ensure не воскрешает (decideSuppression) —
     // раньше цикл замыкался именно здесь: `job` это ready, он stale, и отменённый расчёт ставился заново.
     let lastAttempt: GroupingLastAttempt | null = null;
     let autoRunSuppressed: GroupingSuppressedBy | null = null;
+    let nextAutoRunAt: string | null = null;
     if (!activeRow && (!job || stale)) {
       try {
         const ensured = await ensureEstimateGrouping(fastify, estimateId, { actorUserId: user.id });
@@ -306,6 +300,9 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
             next_run_at: null,
           };
         }
+        // Пересчёт будет, но позже: панель показывает срок и сама перечитает роут к этому моменту.
+        // Это не autoRunSuppressed — там «не будет вовсе, нужна рука».
+        if (ensured.reason === 'cooldown') nextAutoRunAt = ensured.retryAfter?.toISOString() ?? null;
         // Постановки не будет — говорим прямо. Иначе панель обещает автоматический пересчёт,
         // которого не случится, и «Остановить» снова выглядит сломанным.
         if (ensured.reason === 'suppressed') {
@@ -352,6 +349,7 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
       stale,
       lastAttempt,
       autoRunSuppressed,
+      nextAutoRunAt,
     });
   });
 
@@ -551,9 +549,6 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     // (WHERE status='running') и отметку manual не перетрёт.
     abortGroupingJob(id);
     if (row.id !== id) abortGroupingJob(row.id);
-    // Отложенный refresh от недавней правки сметы больше не нужен: ensure его всё равно подавит,
-    // но и будить его незачем.
-    cancelScheduledRefresh(job.estimate_id);
     return reply.send({ data: mapJob(row, await resultFor(row, user)) });
   });
 }
