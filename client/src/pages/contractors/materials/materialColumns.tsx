@@ -1,10 +1,10 @@
 import { Button, InputNumber, Space, Tag, Tooltip } from 'antd';
 import { EditOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { checkDiscreteQuantity } from '@estimat/shared';
 import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
+import type { DimensionFinding } from './dimensionChecks';
 import { remainingOf } from './remaining';
 
 const EPS = 1e-6;
@@ -25,6 +25,12 @@ interface Options {
   /** По смете есть хоть одна закупленная цена — иначе «Цена»/«Сумма» пусты и не нужны. */
   hasPrices: boolean;
   orderedMap: Map<string, number>;
+  /**
+   * Замечания по размерности, посчитанные по СМЕТНЫМ объёмам (до сведения к доле подрядчика):
+   * дробь, возникшая из деления строки между подрядчиками, — не ошибка, и предупреждать о ней
+   * нельзя. Ключ — orderKey, он от количества не зависит.
+   */
+  dimension: Map<string, DimensionFinding>;
   draft: Map<string, number>;
   /** Строки, где количество введено вручную: массовые действия их не трогают — это надо видеть. */
   manual?: Set<string>;
@@ -45,6 +51,7 @@ export function buildMaterialColumns({
   scoped,
   hasPrices,
   orderedMap,
+  dimension,
   draft,
   manual,
   onDraftChange,
@@ -68,7 +75,7 @@ export function buildMaterialColumns({
         const over = scoped ? ordered + req > m.quantity + EPS : ordered > m.quantity + EPS;
         // Дробное количество штучного материала — та же проверка, что в умной группировке. Здесь она
         // закрывает и стандартное дерево, и секции «Общие расходные»/«Не удалось сгруппировать».
-        const discrete = checkDiscreteQuantity(m.unit, m.quantity);
+        const discrete = dimension.get(m.orderKey);
         return (
           <Space size={4}>
             {/* Имя кликабельно (детализация по местоположениям), но не синее: на экране десятки
@@ -85,7 +92,7 @@ export function buildMaterialColumns({
             {m.hasAi && <Tag color="blue">ИИ</Tag>}
             {discrete && (
               <Tooltip
-                title={`Заказ возможен только целым числом, ближайшее целое — ${discrete.suggested} ${m.unit}`}
+                title={`По смете ${discrete.quantity} ${m.unit} — штучный материал заказывают целым числом. Проверьте объём в смете.`}
               >
                 <Tag color="orange">Дробное количество</Tag>
               </Tooltip>
@@ -197,10 +204,12 @@ export function buildMaterialColumns({
       key: 'request',
       width: 140,
       align: 'right',
+      // Дробность вводимого количества здесь НЕ проверяем: при доле подрядчика остаток сам по себе
+      // дробный (1 шт на двоих → 0.5), и предупреждение висело бы на законном вводе, а округление
+      // вверх у обоих подрядчиков дало бы двойной заказ. Дробность — свойство сметы, и о ней
+      // говорит тег в колонке «Материал».
       render: (_, m) => {
         const isManual = manual?.has(m.orderKey) ?? false;
-        // Дробное количество проверяем и у заявляемого объёма, а не только у сметного.
-        const badQty = checkDiscreteQuantity(m.unit, draft.get(m.orderKey) ?? 0);
         return (
           <Space size={4}>
             {/* Ручные строки массовый набор не перезаписывает — метка объясняет, почему строка
@@ -210,23 +219,14 @@ export function buildMaterialColumns({
                 <EditOutlined style={{ color: '#1677ff', fontSize: 12 }} />
               </Tooltip>
             )}
-            <Tooltip
-              title={
-                badQty
-                  ? `Штучный материал: заказ возможен только целым числом (ближайшее — ${badQty.suggested})`
-                  : undefined
-              }
-            >
-              <InputNumber
-                min={0}
-                style={{ width: 100 }}
-                status={badQty ? 'warning' : undefined}
-                // Подсказка — остаток: сразу видно, сколько ещё можно заявить.
-                placeholder={String(qty(remainingOf(m.quantity, orderedMap.get(m.orderKey) ?? 0)))}
-                value={draft.get(m.orderKey)}
-                onChange={(v) => onDraftChange(m.orderKey, v as number | null)}
-              />
-            </Tooltip>
+            <InputNumber
+              min={0}
+              style={{ width: 100 }}
+              // Подсказка — остаток: сразу видно, сколько ещё можно заявить.
+              placeholder={String(qty(remainingOf(m.quantity, orderedMap.get(m.orderKey) ?? 0)))}
+              value={draft.get(m.orderKey)}
+              onChange={(v) => onDraftChange(m.orderKey, v as number | null)}
+            />
           </Space>
         );
       },

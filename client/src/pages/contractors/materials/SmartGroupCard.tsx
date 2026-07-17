@@ -120,8 +120,8 @@ export function SmartGroupCard({
                         <ul style={{ margin: 0, paddingLeft: 18 }}>
                           {dimIssues.map((f) => (
                             <li key={f.orderKey}>
-                              {f.name} — {f.quantity} {f.unit}; заказ возможен только целым числом,
-                              ближайшее целое — {f.suggested}
+                              {f.name} — по смете {f.quantity} {f.unit}; штучный материал заказывают
+                              целым числом, ближайшее целое — {f.suggested}
                             </li>
                           ))}
                         </ul>

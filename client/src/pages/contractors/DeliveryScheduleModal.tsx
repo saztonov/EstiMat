@@ -1,9 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Modal, Tabs, Table, InputNumber, DatePicker, Checkbox, Button, Space, Typography, Alert, App, Tooltip } from 'antd';
+import { Modal, Tabs, Table, InputNumber, DatePicker, Checkbox, Button, Space, Typography, Alert, App } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { type Dayjs } from 'dayjs';
-import { checkDiscreteQuantity } from '@estimat/shared';
 import { DeliveryGantt, type GanttMaterial } from './DeliveryGantt';
 
 const { Text } = Typography;
@@ -133,33 +132,24 @@ export function DeliveryScheduleModal({ open, lines, loading, onCancel, onConfir
     },
     {
       title: 'Кол-во', key: 'qty', width: 130, align: 'right',
-      render: (_, r) => {
-        if (singleDate) return <span>{num(r.line.quantity)}</span>;
-        // Дробность проверяем у каждой поставки, а не только у итога по материалу: привезти
-        // полштуки нельзя, даже если сумма по датам целая.
-        const bad = checkDiscreteQuantity(r.line.unit, r.entry.qty ?? 0);
-        return (
-          <Tooltip
-            title={
-              bad
-                ? `Штучный материал: поставка возможна только целым числом (ближайшее — ${bad.suggested})`
-                : undefined
+      // Дробность поставки не проверяем: заявляемый объём сам бывает дробным при делении строки
+      // между подрядчиками (1 шт на двоих → 0.5), и предупреждение висело бы на законном вводе.
+      // Дробное количество в самой смете показывает тег во вкладке «Материалы».
+      render: (_, r) =>
+        singleDate ? (
+          <span>{num(r.line.quantity)}</span>
+        ) : (
+          <InputNumber
+            min={0}
+            style={{ width: 110 }}
+            value={r.entry.qty}
+            onChange={(v) =>
+              mutate(rowKey(r.line.costTypeId, r.line.aggKey), (es) =>
+                es.map((e, i) => (i === r.idx ? { ...e, qty: v as number | null } : e)),
+              )
             }
-          >
-            <InputNumber
-              min={0}
-              style={{ width: 110 }}
-              status={bad ? 'warning' : undefined}
-              value={r.entry.qty}
-              onChange={(v) =>
-                mutate(rowKey(r.line.costTypeId, r.line.aggKey), (es) =>
-                  es.map((e, i) => (i === r.idx ? { ...e, qty: v as number | null } : e)),
-                )
-              }
-            />
-          </Tooltip>
-        );
-      },
+          />
+        ),
     },
     {
       title: '', key: 'act', width: 80, align: 'center',

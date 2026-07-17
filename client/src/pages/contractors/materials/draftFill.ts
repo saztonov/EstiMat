@@ -34,11 +34,16 @@ export interface FillOutcome {
   added: number;
   /** Строк обновлено (значение было и изменилось). */
   updated: number;
+  /** Строк уже имели ровно это значение — повторное нажатие той же доли ничего не поменяло. */
+  unchanged: number;
   /** Ручных строк сохранено — их массовое действие не тронуло. */
   manualKept: number;
   /** Строк пропущено: остатка нет (всё уже заявлено). */
   noRemainder: number;
 }
+
+/** Массовое действие ничего не изменило — незачем ни тост-отчёт, ни снимок в истории. */
+export const isNoopFill = (r: FillOutcome): boolean => r.added === 0 && r.updated === 0;
 
 /** Остаток по строке с учётом уже заявленного. */
 export function availableOf(row: OrderMaterialRow, ordered: Map<string, number>): number {
@@ -66,6 +71,7 @@ export function fillDraft(
   const manual = new Set(draft.manual);
   let added = 0;
   let updated = 0;
+  let unchanged = 0;
   let manualKept = 0;
   let noRemainder = 0;
 
@@ -90,12 +96,13 @@ export function fillDraft(
     }
     if (had == null) added++;
     else if (had !== value) updated++;
+    else unchanged++;
     values.set(key, value);
     // Значение стало расчётным — ручная пометка снимается.
     if (replaceManual) manual.delete(key);
   }
 
-  return { next: { values, manual }, added, updated, manualKept, noRemainder };
+  return { next: { values, manual }, added, updated, unchanged, manualKept, noRemainder };
 }
 
 /** Убрать строки набора из черновика (кнопка «убрать группу из заявки»). */

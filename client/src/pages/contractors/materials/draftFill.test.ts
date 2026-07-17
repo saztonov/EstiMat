@@ -9,6 +9,7 @@ import {
   draftStats,
   emptyDraft,
   fillDraft,
+  isNoopFill,
   setDraftValue,
 } from './draftFill';
 import type { OrderMaterialRow } from './orderRow';
@@ -48,6 +49,23 @@ test('массовое действие присваивает, а не нака
   assert.equal(second.next.values.get(a.orderKey), 50, '100% → 50% даёт 50, а не 150');
   assert.equal(second.updated, 1);
   assert.equal(second.added, 0);
+});
+
+test('повтор той же доли — это «без изменений», а не «всё уже заявлено»', () => {
+  const a = row('Кабель', 100);
+  const first = fillDraft(emptyDraft(), [a], new Map(), 100);
+  const again = fillDraft(first.next, [a], new Map(), 100);
+  assert.equal(again.unchanged, 1, 'значение то же — строка не добавлена и не обновлена');
+  assert.equal(again.added, 0);
+  assert.equal(again.updated, 0);
+  assert.equal(again.noRemainder, 0, 'остаток есть, просто он уже в черновике');
+  assert.ok(isNoopFill(again), 'действие ничего не изменило — в историю его писать незачем');
+  assert.equal(again.next.values.get(a.orderKey), 100, 'значение на месте');
+});
+
+test('заливка, что-то изменившая, noop-ом не считается', () => {
+  const a = row('Кабель', 100);
+  assert.equal(isNoopFill(fillDraft(emptyDraft(), [a], new Map(), 100)), false);
 });
 
 test('повторный 100% по уже заявленной группе даёт 0 — строка выпадает из черновика', () => {

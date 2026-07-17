@@ -6,7 +6,6 @@
 import { useMemo, useState } from 'react';
 import { Alert, Button, InputNumber, Modal, Space, Switch, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { checkDiscreteQuantity } from '@estimat/shared';
 import { DEFAULT_PAGINATION } from '../../../lib/tableConfig';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
@@ -25,8 +24,6 @@ export interface ReviewLine {
   available: number;
   /** Заявляется больше, чем осталось по смете. */
   over: boolean;
-  /** Дробное количество штучного материала: ближайшее целое вверх, иначе null. */
-  discrete: number | null;
 }
 
 interface Props {
@@ -40,8 +37,7 @@ interface Props {
 
 export function RequestReviewModal({ open, lines, submitting, onChange, onCancel, onConfirm }: Props) {
   const [onlyIssues, setOnlyIssues] = useState(false);
-  const issues = useMemo(() => lines.filter((l) => l.over || l.discrete != null), [lines]);
-  const fractional = useMemo(() => lines.filter((l) => l.discrete != null), [lines]);
+  const issues = useMemo(() => lines.filter((l) => l.over), [lines]);
   const shown = onlyIssues ? issues : lines;
   const total = useMemo(
     () =>
@@ -58,7 +54,6 @@ export function RequestReviewModal({ open, lines, submitting, onChange, onCancel
         <Space size={4}>
           <span>{l.row.name}</span>
           {l.over && <Tag color="red">Сверх остатка</Tag>}
-          {l.discrete != null && <Tag color="orange">Дробное количество</Tag>}
         </Space>
       ),
     },
@@ -88,7 +83,7 @@ export function RequestReviewModal({ open, lines, submitting, onChange, onCancel
           min={0}
           size="small"
           style={{ width: 100 }}
-          status={l.over || l.discrete != null ? 'warning' : undefined}
+          status={l.over ? 'warning' : undefined}
           value={l.value}
           onChange={(v) => onChange(l.row.orderKey, v as number | null)}
         />
@@ -119,34 +114,11 @@ export function RequestReviewModal({ open, lines, submitting, onChange, onCancel
       onOk={onConfirm}
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        {fractional.length > 0 && (
+        {issues.length > 0 && (
           <Alert
             type="warning"
             showIcon
-            message={`Дробное количество в штучных единицах: ${fractional.length} поз.`}
-            description="Такой материал отпускается только целыми единицами. Округление меняет заявку и может превысить остаток по смете."
-            action={
-              <Space>
-                {!onlyIssues && (
-                  <Button size="small" onClick={() => setOnlyIssues(true)}>
-                    Показать
-                  </Button>
-                )}
-                <Button
-                  size="small"
-                  onClick={() => fractional.forEach((l) => onChange(l.row.orderKey, l.discrete!))}
-                >
-                  Округлить вверх
-                </Button>
-              </Space>
-            }
-          />
-        )}
-        {lines.some((l) => l.over) && (
-          <Alert
-            type="warning"
-            showIcon
-            message={`Сверх остатка: ${lines.filter((l) => l.over).length} поз.`}
+            message={`Сверх остатка: ${issues.length} поз.`}
             description="Заявляется больше, чем осталось по смете. Это допустимо (запас, отходы), но стоит проверить."
             action={
               !onlyIssues && (
@@ -201,14 +173,7 @@ export function buildReviewLines(
     if (value == null) continue;
     const already = ordered.get(row.orderKey) ?? 0;
     const available = remainingOf(row.quantity, already);
-    out.push({
-      row,
-      value,
-      ordered: already,
-      available,
-      over: value > available + 1e-6,
-      discrete: checkDiscreteQuantity(row.unit, value)?.suggested ?? null,
-    });
+    out.push({ row, value, ordered: already, available, over: value > available + 1e-6 });
   }
   return out;
 }

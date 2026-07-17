@@ -8,7 +8,7 @@ import type { OrderMaterialRow } from './orderRow';
 import { SmartGroupCard } from './SmartGroupCard';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupFillButton } from './GroupFillButton';
-import { indexDimensionIssues } from './dimensionChecks';
+import type { DimensionFinding } from './dimensionChecks';
 import { useCancelSmartGrouping, useRunSmartGrouping, useSmartGroupingJob } from './useSmartGrouping';
 
 interface Props {
@@ -24,6 +24,8 @@ interface Props {
   /** Массовый набор: включён только в режиме заявки. */
   bulk?: BulkFill;
   rowClassName?: (row: OrderMaterialRow) => string;
+  /** Замечания по размерности, посчитанные по сметным (немасштабированным) объёмам. */
+  dimension: Map<string, DimensionFinding>;
 }
 
 /** Ключи сворачивания секций — с префиксом режима, чтобы не пересекаться со стандартным деревом. */
@@ -45,6 +47,7 @@ export function SmartGroupingPanel({
   onOnlyReviewChange,
   bulk,
   rowClassName,
+  dimension,
 }: Props) {
   const jobQuery = useSmartGroupingJob(estimateId, true);
   const run = useRunSmartGrouping(estimateId);
@@ -59,9 +62,6 @@ export function SmartGroupingPanel({
   const active = jobQuery.data?.active ?? null;
   const byKey = useMemo(() => new Map(rows.map((r) => [r.orderKey, r])), [rows]);
   const pick = (keys: string[]) => keys.map((k) => byKey.get(k)).filter((r): r is OrderMaterialRow => !!r);
-  // Считаем один раз по всему своду и раздаём картой: иначе каждая карточка проверяла бы свои
-  // строки заново.
-  const dimension = useMemo(() => indexDimensionIssues(rows), [rows]);
 
   if (jobQuery.isLoading) return <Spin style={{ margin: 24 }} />;
 

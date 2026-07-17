@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { Card, Row, Col, Tag, Empty, Spin, Space, Button, Tabs } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
@@ -35,6 +35,9 @@ interface ContractorEstimateRow {
   // подрядчик:
   my_amount?: string;
 }
+
+/** Ключи вкладок карточки сметы — ими же валидируется ?tab из ссылки. */
+const TAB_KEYS = ['smeta', 'materials', 'requests'];
 
 function ObjectList() {
   const navigate = useNavigate();
@@ -145,15 +148,18 @@ export function ContractorsPage() {
   const canAssign = role === 'admin' || role === 'engineer';
   const [tab, setTab] = usePersistedTab('estimat:contractors-tab', 'smeta');
 
-  // Вкладка из ссылки (вход «Новая заявка» из раздела «Заявки») — один раз при открытии:
-  // дальше пользователь переключает вкладки сам, и запомненная вкладка снова главнее.
+  // Вкладка из ссылки (вход «Новая заявка» из раздела «Заявки») — один раз при открытии и только
+  // на время этого визита: в localStorage не пишем, иначе разовый переход по ссылке молча сменил
+  // бы вкладку по умолчанию для всех будущих заходов в раздел.
   const tabParam = searchParams.get('tab');
-  const applied = useRef(false);
-  useEffect(() => {
-    if (applied.current || !tabParam) return;
-    applied.current = true;
-    setTab(tabParam);
-  }, [tabParam, setTab]);
+  const [tabOverride, setTabOverride] = useState<string | null>(
+    TAB_KEYS.includes(tabParam ?? '') ? tabParam : null,
+  );
+  const activeTab = tabOverride ?? tab;
+  const onTabChange = (key: string) => {
+    setTabOverride(null);
+    setTab(key);
+  };
 
   const engineerQ = useQuery({
     queryKey: ['estimate', estimateId],
@@ -224,8 +230,8 @@ export function ContractorsPage() {
         <Spin size="large" />
       ) : (
         <Tabs
-          activeKey={tab}
-          onChange={setTab}
+          activeKey={activeTab}
+          onChange={onTabChange}
           items={[
             {
               key: 'smeta',

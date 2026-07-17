@@ -30,7 +30,8 @@ import { applyOrderPrices } from './materials/prices';
 import { useOrderedSummary } from './materials/useOrderedSummary';
 import { useSmartGroupingJob } from './materials/useSmartGrouping';
 import { useRequestDraft } from './materials/useRequestDraft';
-import { buildDraftIndex, draftStats } from './materials/draftFill';
+import { buildDraftIndex, draftStats, isNoopFill } from './materials/draftFill';
+import { indexDimensionIssues } from './materials/dimensionChecks';
 import { RequestDraftBar } from './materials/RequestDraftBar';
 import { RequestReviewModal, buildReviewLines } from './materials/RequestReviewModal';
 
@@ -193,6 +194,15 @@ export function ContractorsMaterialsTab({
     [groups, categoryIndex, zoneIndex, priceMap],
   );
 
+  // Дробное количество штучного материала — свойство СМЕТЫ, а не доли подрядчика: строка «1 шт»,
+  // назначенная на 50%, даёт 0.5 шт, и это корректная смета, а не ошибка сметчика. Поэтому
+  // считаем по НЕмасштабированному своду. Ключ заказа не зависит от количества, поэтому карта
+  // сходится со строками экрана при любом скоупе.
+  const dimension = useMemo(
+    () => indexDimensionIssues(buildOrderRows(buildMaterialGroups(baseItems, []), categoryIndex, zoneIndex)),
+    [baseItems, categoryIndex, zoneIndex],
+  );
+
   const tree = useMemo(() => {
     const next = buildMaterialTree(rows, levels);
     assertTreeConserves(rows, next);
@@ -320,12 +330,13 @@ export function ContractorsMaterialsTab({
         scoped,
         hasPrices: priceMap.size > 0,
         orderedMap,
+        dimension,
         draft: draft.values,
         manual: draft.manual,
         onDraftChange: setValue,
         onBreakdown: setBreakdown,
       }),
-    [levels.costType, locFilterActive, editing, scoped, priceMap, orderedMap, draft, setValue],
+    [levels.costType, locFilterActive, editing, scoped, priceMap, orderedMap, dimension, draft, setValue],
   );
 
   // Массовое заполнение доли остатка. Итог показываем тостом: одно нажатие меняет десятки строк,
@@ -333,21 +344,50 @@ export function ContractorsMaterialsTab({
   const onFill = useCallback(
     (fillRows: OrderMaterialRow[], p: number, replaceManual = false) => {
       const r = fill(fillRows, orderedMap, p, replaceManual);
+      // Ничего не поменялось — сказать об этом по существу. Причина у бездействия ровно одна из
+      // трёх, и путать их нельзя: «уже заявлено» (нет остатка) — это не то же самое, что
+      // «значения уже такие» или «строки введены вручную».
+      if (isNoopFill(r)) {
+        if (r.manualKept > 0 && r.unchanged === 0 && r.noRemainder === 0) {
+          message.info({
+            content: (
+              <span>
+                Все {r.manualKept} поз. введены вручную — массовый набор их не меняет
+                <Button type="link" size="small" onClick={() => onFill(fillRows, p, true)}>
+                  Заменить ручные
+                </Button>
+              </span>
+            ),
+          });
+        } else if (r.unchanged > 0) {
+          message.info(`Значения уже такие: ${r.unchanged} поз.`);
+        } else {
+          message.info('По этой группе не осталось незаявленного объёма');
+        }
+        return;
+      }
       const parts = [
         r.added > 0 && `добавлено ${r.added}`,
         r.updated > 0 && `обновлено ${r.updated}`,
+        r.unchanged > 0 && `без изменений ${r.unchanged}`,
         r.manualKept > 0 && `ручных сохранено ${r.manualKept}`,
         r.noRemainder > 0 && `без остатка ${r.noRemainder}`,
       ].filter(Boolean);
-      if (r.added === 0 && r.updated === 0 && r.manualKept === 0) {
-        message.info('По этой группе всё уже заявлено');
-        return;
-      }
       message.success({
         content: (
           <span>
             {parts.join(' · ')}
-            <Button type="link" size="small" onClick={() => undo()}>
+            {/* Отменяем СВОЙ шаг: тост живёт дольше действия, и без привязки к нему клик по
+                старому тосту откатил бы более свежую заливку. */}
+            <Button
+              type="link"
+              size="small"
+              onClick={() => {
+                if (r.historyId != null && !undo(r.historyId)) {
+                  message.info('Уже были другие изменения — отменить это действие нельзя');
+                }
+              }}
+            >
               Отменить
             </Button>
             {r.manualKept > 0 && (
@@ -588,6 +628,7 @@ export function ContractorsMaterialsTab({
             onOnlyReviewChange={setOnlyReview}
             bulk={bulk}
             rowClassName={rowClassName}
+            dimension={dimension}
           />
         ) : tree.length === 0 ? (
           <Empty description="Материалов нет" />
