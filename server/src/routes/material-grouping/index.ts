@@ -10,7 +10,16 @@
  * всей сметы.
  */
 import type { FastifyInstance } from 'fastify';
-import { createGroupingJobSchema, type GroupingJob, type GroupingResult } from '@estimat/shared';
+import {
+  createGroupingJobSchema,
+  type GroupingActivity,
+  type GroupingCallDetail,
+  type GroupingCallSummary,
+  type GroupingJob,
+  type GroupingLastAttempt,
+  type GroupingResult,
+  type GroupingSuppressedBy,
+} from '@estimat/shared';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
@@ -27,6 +36,7 @@ import {
 import { PROMPT_VERSION } from '../../lib/material-grouping/prompt.js';
 import {
   affectsGrouping,
+  cancelScheduledRefresh,
   ensureEstimateGrouping,
   scheduleGroupingRefresh,
 } from '../../lib/material-grouping/enqueue.js';
@@ -35,7 +45,10 @@ import { abortGroupingJob, requeueStaleJobs } from '../../lib/material-grouping/
 
 /** Задание живёт 30 дней: результат привязан к составу сметы и быстро устаревает. */
 const RETENTION_DAYS = 30;
+/** Журнал обмена — 7 дней: он тяжелее задания (промпты и ответы целиком), а нужен по свежим следам. */
+const CALL_LOG_RETENTION_DAYS = 7;
 const REQUEUE_INTERVAL_MS = 60_000;
+const CLEANUP_INTERVAL_MS = 6 * 60 * 60_000;
 
 interface CurrentUser {
   id: string;
@@ -76,18 +89,42 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     scheduleGroupingRefresh(fastify, event.estimateId);
   });
 
-  fastify.addHook('onClose', async () => {
-    clearInterval(timer);
-    unsubscribe();
-  });
-
-  fastify.pool
-    .query(
+  /**
+   * Чистка. Задания — 30 дней, журнал обмена — 7: он на порядок тяжелее.
+   *
+   * Журнал незавершённых вызовов не трогаем: активное задание должно остаться с историей.
+   * Паузы не трогаем вовсе — остановку снимает только «Пересчитать».
+   */
+  async function cleanup(): Promise<void> {
+    await fastify.pool.query(
+      `DELETE FROM material_grouping_llm_calls c
+        WHERE c.created_at < now() - ($1 || ' days')::interval
+          AND EXISTS (
+            SELECT 1 FROM material_grouping_jobs j
+             WHERE j.id = c.job_id AND j.status IN ('ready', 'failed', 'cancelled', 'dead')
+          )`,
+      [String(CALL_LOG_RETENTION_DAYS)],
+    );
+    await fastify.pool.query(
       `DELETE FROM material_grouping_jobs
         WHERE created_at < now() - ($1 || ' days')::interval AND status IN ('ready', 'failed', 'cancelled', 'dead')`,
       [String(RETENTION_DAYS)],
-    )
-    .catch((err) => fastify.log.error({ err }, 'material grouping retention cleanup failed'));
+    );
+  }
+
+  // Раз в сутки процесс не перезапускают, поэтому одной чистки на старте мало.
+  void cleanup().catch((err) => fastify.log.error({ err }, 'material grouping retention cleanup failed'));
+  const cleanupTimer = setInterval(
+    () => void cleanup().catch((err) => fastify.log.error({ err }, 'material grouping retention cleanup failed')),
+    CLEANUP_INTERVAL_MS,
+  );
+  cleanupTimer.unref();
+
+  fastify.addHook('onClose', async () => {
+    clearInterval(timer);
+    clearInterval(cleanupTimer);
+    unsubscribe();
+  });
 
   /** Доступ к смете. Область больше не зависит от пользователя — результат общий. */
   async function assertAccess(estimateId: string, user: CurrentUser): Promise<void> {
@@ -126,6 +163,31 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     return computeInputHash(lines, settings, qualifiedModel, promptVersion) !== job.input_hash;
   }
 
+  /**
+   * Чем занят расчёт прямо сейчас. Ровно то, чего не хватало на экране: «0 из 57» без этого
+   * выглядят зависанием, хотя запрос отправлен и модель думает (или шлюз отдаёт 503 по кругу).
+   */
+  async function loadActivity(jobId: string): Promise<GroupingActivity | null> {
+    const { rows } = await fastify.pool.query(
+      `SELECT status, batch_index, http_attempts, started_at
+         FROM material_grouping_llm_calls
+        WHERE job_id = $1 AND status IN ('queued', 'waiting_slot', 'in_progress')
+        ORDER BY started_at DESC LIMIT 1`,
+      [jobId],
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const attempts = (row.http_attempts ?? []) as Array<{ status: number | null }>;
+    const withStatus = [...attempts].reverse().find((a) => a.status != null);
+    return {
+      stage: row.status,
+      batchNumber: row.batch_index == null ? null : row.batch_index + 1,
+      httpAttempt: attempts.length + 1,
+      lastHttpStatus: withStatus?.status ?? null,
+      since: row.started_at instanceof Date ? row.started_at.toISOString() : String(row.started_at),
+    };
+  }
+
   /** Подрядчику — только его строки; сотруднику — полный результат. */
   async function resultFor(job: any, user: CurrentUser): Promise<GroupingResult | null> {
     const result = (job.result ?? null) as GroupingResult | null;
@@ -156,6 +218,10 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     }
     if (reason === 'empty') return reply.status(422).send({ error: 'В смете нет материалов' });
     if (reason === 'too_many') return reply.status(422).send({ error: 'Слишком много позиций; лимит 1600' });
+    // Недостижимо из панели (force по умолчанию true), но контракт должен быть закрыт.
+    if (reason === 'suppressed') {
+      return reply.status(409).send({ error: 'Пересчёт остановлен вручную', code: 'suppressed' });
+    }
     if (!job) {
       return reply.status(409).send({ error: 'Группировка по этой смете уже выполняется', code: 'already_running' });
     }
@@ -187,7 +253,8 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
         [estimateId],
       ),
       fastify.pool.query(
-        `SELECT id, status, batches_done, batches_total FROM material_grouping_jobs
+        `SELECT id, status, batches_done, batches_total, attempts, max_attempts, last_error, next_run_at
+           FROM material_grouping_jobs
           WHERE estimate_id = $1 AND status IN ('pending', 'running')
           ORDER BY created_at DESC LIMIT 1`,
         [estimateId],
@@ -213,7 +280,10 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     // сметы, назначенные до этой версии, заданий не имеют вовсе.
     // Ждём постановки, а не пускаем в фон: клиент включает поллинг по active, и без него экран
     // «формируется» завис бы до ручного обновления страницы.
-    // failed/dead/cancelled не перезапускаем — иначе падающее задание крутилось бы в цикле.
+    // Остановленное человеком и исчерпавшее попытки задание ensure не воскрешает (decideSuppression) —
+    // раньше цикл замыкался именно здесь: `job` это ready, он stale, и отменённый расчёт ставился заново.
+    let lastAttempt: GroupingLastAttempt | null = null;
+    let autoRunSuppressed: GroupingSuppressedBy | null = null;
     if (!activeRow && (!job || stale)) {
       try {
         const ensured = await ensureEstimateGrouping(fastify, estimateId, { actorUserId: user.id });
@@ -223,7 +293,27 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
             status: ensured.job.status,
             batches_done: ensured.job.batches_done,
             batches_total: ensured.job.batches_total,
+            attempts: ensured.job.attempts,
+            max_attempts: ensured.job.max_attempts,
+            last_error: ensured.job.last_error,
+            next_run_at: null,
           };
+        }
+        // Постановки не будет — говорим прямо. Иначе панель обещает автоматический пересчёт,
+        // которого не случится, и «Остановить» снова выглядит сломанным.
+        if (ensured.reason === 'suppressed') {
+          autoRunSuppressed = ensured.suppressedBy ?? null;
+          // Берём задание из ensure, а не отдельным запросом: ensure ищет по (смета, scope_hash),
+          // а этот роут — по смете, и на старых заданиях выборки разъезжаются.
+          if (ensured.job) {
+            lastAttempt = {
+              id: ensured.job.id,
+              status: ensured.job.status === 'dead' ? 'dead' : 'cancelled',
+              error: ensured.job.last_error,
+              attempts: ensured.job.attempts,
+              stoppedByUser: ensured.suppressedBy === 'manual_stop',
+            };
+          }
         }
       } catch (err) {
         // Не роняем чтение: показать имеющееся важнее, чем поставить пересчёт.
@@ -240,11 +330,144 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
             status: activeRow.status,
             batchesDone: activeRow.batches_done,
             batchesTotal: activeRow.batches_total,
+            attempts: activeRow.attempts ?? 1,
+            maxAttempts: activeRow.max_attempts ?? 3,
+            lastError: activeRow.last_error ?? null,
+            // Только для pending: у running время следующего запуска смысла не имеет.
+            nextRunAt:
+              activeRow.status === 'pending' && activeRow.next_run_at
+                ? new Date(activeRow.next_run_at).toISOString()
+                : null,
+            activity: await loadActivity(activeRow.id),
           }
         : null,
       available: ep.enabled,
       stale,
+      lastAttempt,
+      autoRunSuppressed,
     });
+  });
+
+  /**
+   * GET /jobs/:id/calls — журнал обмена с моделью, краткий вид.
+   *
+   * Только админ: здесь сырые промпты и названия материалов всей сметы, а подрядчику видна лишь
+   * его часть. Тексты не отдаём — список поллится, а промпт набора это тысячи символов.
+   */
+  fastify.get('/jobs/:id/calls', { preHandler: [requireRole('admin')] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const user = request.currentUser as CurrentUser;
+    const { rows: jobRows } = await fastify.pool.query('SELECT * FROM material_grouping_jobs WHERE id = $1', [id]);
+    const job = jobRows[0];
+    if (!job) return reply.status(404).send({ error: 'Задание не найдено' });
+    try {
+      await assertAccess(job.estimate_id, user);
+    } catch (err) {
+      if (handleAccessError(err, reply)) return;
+      throw err;
+    }
+
+    const { rows } = await fastify.pool.query(
+      `SELECT id, attempt, kind, batch_index, lines_count, status, parse_status, groups_count,
+              http_status, http_attempts, total_tokens, error, started_at, duration_ms
+         FROM material_grouping_llm_calls
+        WHERE job_id = $1
+        ORDER BY started_at, id`,
+      [id],
+    );
+
+    const data: GroupingCallSummary[] = rows.map((r) => ({
+      id: r.id,
+      attempt: r.attempt,
+      kind: r.kind,
+      batchIndex: r.batch_index,
+      linesCount: r.lines_count,
+      status: r.status,
+      parseStatus: r.parse_status,
+      groupsCount: r.groups_count,
+      httpStatus: r.http_status,
+      httpAttempts: Array.isArray(r.http_attempts) ? r.http_attempts.length : 0,
+      totalTokens: r.total_tokens,
+      error: r.error,
+      startedAt: r.started_at instanceof Date ? r.started_at.toISOString() : String(r.started_at),
+      durationMs: r.duration_ms,
+    }));
+
+    // Список отдаём целиком: строки меняют статус по ходу, и курсор по времени пропустил бы
+    // обновления уже показанных вызовов.
+    reply.header('Cache-Control', 'no-store');
+    return reply.send({
+      job: {
+        id: job.id,
+        status: job.status,
+        model: job.model,
+        promptVersion: job.prompt_version,
+        attempts: job.attempts,
+        maxAttempts: job.max_attempts,
+        batchesDone: job.batches_done,
+        batchesTotal: job.batches_total,
+        error: job.last_error,
+        nextRunAt:
+          job.status === 'pending' && job.next_run_at ? new Date(job.next_run_at).toISOString() : null,
+        createdAt: job.created_at instanceof Date ? job.created_at.toISOString() : String(job.created_at),
+      },
+      data,
+    });
+  });
+
+  /** GET /jobs/:id/calls/:callId — что именно ушло в модель и что она ответила. */
+  fastify.get('/jobs/:id/calls/:callId', { preHandler: [requireRole('admin')] }, async (request, reply) => {
+    const { id, callId } = request.params as { id: string; callId: string };
+    const user = request.currentUser as CurrentUser;
+    const { rows: jobRows } = await fastify.pool.query(
+      'SELECT estimate_id, model FROM material_grouping_jobs WHERE id = $1',
+      [id],
+    );
+    const job = jobRows[0];
+    if (!job) return reply.status(404).send({ error: 'Задание не найдено' });
+    try {
+      await assertAccess(job.estimate_id, user);
+    } catch (err) {
+      if (handleAccessError(err, reply)) return;
+      throw err;
+    }
+
+    // Пара job_id + id: чужой вызов по прямой ссылке не отдаём.
+    const { rows } = await fastify.pool.query(
+      `SELECT * FROM material_grouping_llm_calls WHERE id = $1 AND job_id = $2`,
+      [callId, id],
+    );
+    const r = rows[0];
+    if (!r) return reply.status(404).send({ error: 'Вызов не найден' });
+
+    const data: GroupingCallDetail = {
+      id: r.id,
+      attempt: r.attempt,
+      kind: r.kind,
+      batchIndex: r.batch_index,
+      linesCount: r.lines_count,
+      status: r.status,
+      parseStatus: r.parse_status,
+      groupsCount: r.groups_count,
+      httpStatus: r.http_status,
+      httpAttempts: Array.isArray(r.http_attempts) ? r.http_attempts.length : 0,
+      totalTokens: r.total_tokens,
+      error: r.error,
+      startedAt: r.started_at instanceof Date ? r.started_at.toISOString() : String(r.started_at),
+      durationMs: r.duration_ms,
+      model: r.model,
+      finishReason: r.finish_reason,
+      partitionKey: r.partition_key,
+      systemText: r.system_text,
+      requestText: r.request_text,
+      responseText: r.response_text,
+      parseWarnings: r.parse_warnings ?? [],
+      promptTokens: r.prompt_tokens,
+      completionTokens: r.completion_tokens,
+      attemptsLog: r.http_attempts ?? [],
+    };
+    reply.header('Cache-Control', 'no-store');
+    return reply.send({ data });
   });
 
   // GET /jobs/:id
@@ -263,7 +486,13 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
     return reply.send({ data: mapJob(job, await resultFor(job, user)) });
   });
 
-  // POST /jobs/:id/cancel — идемпотентна. Только админ: расчёт общий.
+  /**
+   * POST /jobs/:id/cancel — «Остановить». Идемпотентна. Только админ: расчёт общий.
+   *
+   * Останавливает не одно задание, а группировку сметы целиком: ставит паузу, которую снимает
+   * только «Пересчитать». Без паузы отмена была бесполезной — чтение страницы тут же ставило
+   * новое задание (сметa устарела → lazy ensure), и расчёт воскресал через полторы секунды.
+   */
   fastify.post('/jobs/:id/cancel', { preHandler: [requireRole('admin')] }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const user = request.currentUser as CurrentUser;
@@ -277,15 +506,47 @@ export default async function materialGroupingRoutes(fastify: FastifyInstance) {
       throw err;
     }
 
+    const client = await fastify.pool.connect();
+    let row = job;
+    try {
+      await client.query('BEGIN');
+      // Тот же замок, что в ensureEstimateGrouping. Без него ensure, начатый до отмены, успевал
+      // вставить новое задание уже после неё — «Остановить» проигрывал гонку, а клиент поллит
+      // раз в 1.5 с, так что попыток попасть в это окно много.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [job.estimate_id]);
+      await client.query(
+        `INSERT INTO material_grouping_pauses (estimate_id, paused_by, paused_job_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (estimate_id) DO UPDATE
+            SET paused_at = now(), paused_by = EXCLUDED.paused_by, paused_job_id = EXCLUDED.paused_job_id`,
+        [job.estimate_id, user.id, id],
+      );
+      // Гасим все активные задания сметы, а не только запрошенное: пока шло нажатие, ensure мог
+      // подменить задание, и остановка обязана накрыть и его.
+      const upd = await client.query(
+        `UPDATE material_grouping_jobs
+            SET status = 'cancelled', cancel_reason = 'manual', cancelled_at = now(), cancelled_by = $2,
+                locked_by = NULL, locked_until = NULL
+          WHERE estimate_id = $1 AND status IN ('pending', 'running')
+          RETURNING *`,
+        [job.estimate_id, user.id],
+      );
+      await client.query('COMMIT');
+      row = upd.rows.find((r) => r.id === id) ?? upd.rows[0] ?? job;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    // Только после COMMIT: раннер в своём catch увидит уже 'cancelled', его UPDATE не сматчит
+    // (WHERE status='running') и отметку manual не перетрёт.
     abortGroupingJob(id);
-    const upd = await fastify.pool.query(
-      `UPDATE material_grouping_jobs
-          SET status = 'cancelled', locked_by = NULL, locked_until = NULL
-        WHERE id = $1 AND status IN ('pending', 'running')
-        RETURNING *`,
-      [id],
-    );
-    const row = upd.rows[0] ?? job;
+    if (row.id !== id) abortGroupingJob(row.id);
+    // Отложенный refresh от недавней правки сметы больше не нужен: ensure его всё равно подавит,
+    // но и будить его незачем.
+    cancelScheduledRefresh(job.estimate_id);
     return reply.send({ data: mapJob(row, await resultFor(row, user)) });
   });
 }

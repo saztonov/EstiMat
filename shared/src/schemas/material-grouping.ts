@@ -117,12 +117,112 @@ export const createGroupingJobSchema = z.object({
 });
 export type CreateGroupingJobInput = z.infer<typeof createGroupingJobSchema>;
 
+/**
+ * Что именно сейчас происходит с набором. Нужна, чтобы «0 из 57» не выглядели зависанием:
+ * между отправкой запроса и ответом модели проходят минуты, и без этого экран молчит.
+ */
+export interface GroupingActivity {
+  stage: 'queued' | 'waiting_slot' | 'in_progress';
+  /** Номер набора (с 1) — как его видит пользователь. */
+  batchNumber: number | null;
+  /** Номер HTTP-попытки внутри вызова: при отказах шлюза их до 5. */
+  httpAttempt: number;
+  /** Последний код от шлюза, если он уже отвечал отказом. */
+  lastHttpStatus: number | null;
+  /** Когда эта стадия началась — клиент показывает «ждём ответ 42 с». */
+  since: string;
+}
+
 /** Идущий расчёт: только прогресс, результата у него ещё нет. */
 export interface GroupingProgress {
   id: string;
   status: 'pending' | 'running';
   batchesDone: number;
   batchesTotal: number;
+  /** Попытка задания: при отказе шлюза их до max_attempts, и это видно на экране. */
+  attempts: number;
+  maxAttempts: number;
+  /** Ошибка предыдущей попытки. Есть и у идущего расчёта — иначе причина повторов не видна. */
+  lastError: string | null;
+  /** Когда задание возьмут снова. Только для pending (ждёт ретрая). */
+  nextRunAt: string | null;
+  /** Текущий вызов модели. null — ни одного вызова в работе нет. */
+  activity: GroupingActivity | null;
+}
+
+/** Последняя попытка, которую заслоняет прежний готовый результат. */
+export interface GroupingLastAttempt {
+  id: string;
+  status: 'cancelled' | 'dead';
+  error: string | null;
+  attempts: number;
+  /** true — остановлено человеком; false — исчерпаны попытки. */
+  stoppedByUser: boolean;
+}
+
+/** Почему автоматического пересчёта не будет. */
+export type GroupingSuppressedBy = 'manual_stop' | 'terminal_failure';
+
+/** Один вызов модели в журнале — краткий вид (без текстов). */
+export interface GroupingCallSummary {
+  id: string;
+  attempt: number;
+  kind: 'batch' | 'merge';
+  batchIndex: number | null;
+  linesCount: number | null;
+  status: 'queued' | 'waiting_slot' | 'in_progress' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled' | 'empty';
+  parseStatus: 'not_run' | 'ok' | 'warnings' | 'failed';
+  groupsCount: number | null;
+  httpStatus: number | null;
+  /** Сколько фактических HTTP-попыток понадобилось. */
+  httpAttempts: number;
+  totalTokens: number | null;
+  error: string | null;
+  startedAt: string;
+  durationMs: number | null;
+}
+
+/** Одна HTTP-попытка вызова: у каждой свой X-Request-Id для сверки с журналом шлюза. */
+export interface GroupingCallHttpAttempt {
+  no: number;
+  requestId: string;
+  status: number | null;
+  durationMs: number;
+  retryDelayMs: number | null;
+  errorBody: string | null;
+  networkError: string | null;
+}
+
+/** Полный вызов: то, что реально ушло в модель, и то, что она ответила. */
+export interface GroupingCallDetail extends GroupingCallSummary {
+  model: string | null;
+  finishReason: string | null;
+  partitionKey: string | null;
+  systemText: string | null;
+  requestText: string | null;
+  responseText: string | null;
+  parseWarnings: string[];
+  promptTokens: number | null;
+  completionTokens: number | null;
+  attemptsLog: GroupingCallHttpAttempt[];
+}
+
+/** Шапка журнала: состояние задания целиком. */
+export interface GroupingCallsResponse {
+  job: {
+    id: string;
+    status: GroupingJobStatus;
+    model: string | null;
+    promptVersion: string | null;
+    attempts: number;
+    maxAttempts: number;
+    batchesDone: number;
+    batchesTotal: number;
+    error: string | null;
+    nextRunAt: string | null;
+    createdAt: string;
+  };
+  data: GroupingCallSummary[];
 }
 
 /**
@@ -135,10 +235,15 @@ export interface GroupingProgress {
  * `available` — настроен ли ИИ-провайдер (готовый результат отдаётся и без него).
  * `stale` — вход сметы изменился после расчёта; считает сервер по input_hash (клиент сам этого
  * знать не может: у подрядчика на руках только его часть строк).
+ * `lastAttempt` — отменённая или мёртвая попытка, которую заслоняет прежний `ready`.
+ * `autoRunSuppressed` — почему пересчёта не будет: пока он не null, обещать автоматический
+ * пересчёт нельзя.
  */
 export interface LatestGroupingJobResponse {
   data: GroupingJob | null;
   active: GroupingProgress | null;
   available: boolean;
   stale: boolean;
+  lastAttempt: GroupingLastAttempt | null;
+  autoRunSuppressed: GroupingSuppressedBy | null;
 }

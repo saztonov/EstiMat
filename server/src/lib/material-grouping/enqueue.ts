@@ -67,9 +67,12 @@ export interface GroupingJobRow {
   input_hash: string;
   batches_total: number;
   batches_done: number;
+  attempts: number;
+  max_attempts: number;
   result: unknown;
   warnings: string[];
   last_error: string | null;
+  cancel_reason: string | null;
   model: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -79,13 +82,46 @@ export type EnsureReason =
   | 'created' // поставлено новое задание
   | 'cached' // готовый результат с тем же входом
   | 'active' // уже считается
+  | 'suppressed' // остановлено человеком либо исчерпаны попытки на этом же входе
   | 'disabled' // ИИ-провайдер не настроен
   | 'empty' // в смете нет материалов
   | 'too_many'; // строк больше лимита
 
+/** Почему автоматической постановки не будет. Панель обязана сказать это прямо. */
+export type SuppressedBy = 'manual_stop' | 'terminal_failure';
+
 export interface EnsureResult {
   job: GroupingJobRow | null;
   reason: EnsureReason;
+  /** Заполняется только при reason='suppressed'. */
+  suppressedBy?: SuppressedBy;
+}
+
+/**
+ * Ставить ли расчёт автоматически. Чистая функция: решение важное, а протестировать его на живой
+ * БД в этом проекте негде.
+ *
+ * Ручная остановка держится ПО СМЕТЕ, вход игнорируется: «Остановить» нажимают, когда шлюз
+ * штормит, и правка сметы не должна возобновлять шторм. Снимает её только «Пересчитать» (force),
+ * который сюда не заходит.
+ *
+ * Исчерпание попыток (dead) держится только на ТОМ ЖЕ входе: шлюз мог починиться, и новый состав
+ * сметы — законный повод попробовать снова. Иначе один шторм убил бы группировку сметы навсегда.
+ *
+ * Служебная отмена (cancel_reason='superseded' — это decideOnActive заменяет протухшее задание)
+ * не подавляет ничего: её делает сам сервер, а не человек.
+ *
+ * Статуса 'failed' здесь намеренно нет: раннер его не пишет — при неудаче задание остаётся
+ * 'pending' до max_attempts, а затем становится 'dead' (см. run.ts).
+ */
+export function decideSuppression(
+  last: { status: string; input_hash: string; cancel_reason: string | null } | null,
+  paused: boolean,
+  currentInputHash: string,
+): SuppressedBy | null {
+  if (paused) return 'manual_stop';
+  if (last?.status === 'dead' && last.input_hash === currentInputHash) return 'terminal_failure';
+  return null;
 }
 
 const pendingTimers = new Map<string, NodeJS.Timeout>();
@@ -121,6 +157,22 @@ export async function ensureEstimateGrouping(
   estimateId: string,
   opts: { actorUserId: string | null; force?: boolean },
 ): Promise<EnsureResult> {
+  // Дешёвый отсев до тяжёлой подготовки: на остановленной смете чтение состава и резолв промптов
+  // не нужны, а клиент во время расчёта поллит раз в 1.5 с. Решение всё равно перепроверяется под
+  // advisory-lock ниже — здесь только экономия.
+  if (!opts.force) {
+    const { rowCount } = await fastify.pool.query('SELECT 1 FROM material_grouping_pauses WHERE estimate_id = $1', [
+      estimateId,
+    ]);
+    if (rowCount! > 0) {
+      const { rows } = await fastify.pool.query<GroupingJobRow>(
+        `SELECT * FROM material_grouping_jobs WHERE estimate_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [estimateId],
+      );
+      return { job: rows[0] ?? null, reason: 'suppressed', suppressedBy: 'manual_stop' };
+    }
+  }
+
   // Задание не создаём вовсе: иначе останется вечный pending, который не подберёт даже watchdog
   // (так устроены ai_jobs — здесь этот паттерн не повторяем).
   const qualifiedModel = await resolveAiModel(fastify.pool);
@@ -171,6 +223,23 @@ export async function ensureEstimateGrouping(
       if (cached.rows[0]) result = { job: cached.rows[0], reason: 'cached' };
     }
 
+    // Проверка подавления строго ДО decideOnActive: тот отменяет протухшее задание и рассчитывает,
+    // что следом будет INSERT. Проверка после него увидела бы эту отмену в своей же транзакции и
+    // залипла бы навсегда, не создав задание.
+    if (!result && !opts.force) {
+      const [pause, last] = await Promise.all([
+        client.query(`SELECT 1 FROM material_grouping_pauses WHERE estimate_id = $1`, [estimateId]),
+        client.query<GroupingJobRow>(
+          `SELECT * FROM material_grouping_jobs
+            WHERE estimate_id = $1 AND scope_hash = $2
+            ORDER BY created_at DESC LIMIT 1`,
+          [estimateId, scopeHash],
+        ),
+      ]);
+      const suppressedBy = decideSuppression(last.rows[0] ?? null, pause.rowCount! > 0, inputHash);
+      if (suppressedBy) result = { job: last.rows[0] ?? null, reason: 'suppressed', suppressedBy };
+    }
+
     if (!result) {
       const decided = await decideOnActive(client, { estimateId, scopeHash, inputHash, force: opts.force });
       if (decided) result = decided;
@@ -198,6 +267,10 @@ export async function ensureEstimateGrouping(
       );
       created = ins.rows[0] ?? null;
       result = { job: created, reason: 'created' };
+      // Паузу снимает только успешная постановка и только в одной транзакции с ней: при откате
+      // вставки остановка обязана сохраниться, иначе «Пересчитать» с ошибкой молча возобновил бы
+      // автоматические прогоны.
+      await client.query('DELETE FROM material_grouping_pauses WHERE estimate_id = $1', [estimateId]);
     }
     await client.query('COMMIT');
   } catch (err) {
@@ -233,9 +306,13 @@ async function decideOnActive(
   if (!ctx.force && active.status === 'running') return { job: active, reason: 'active' };
 
   // force — админ попросил явно; либо pending по устаревшему входу — расчёт ещё не начинался.
+  // Отмена служебная: её делает сервер, заменяя задание, и держать из-за неё паузу нельзя —
+  // отсюда cancel_reason, отличающий её от «Остановить» (см. decideSuppression).
   abortGroupingJob(active.id);
   await client.query(
-    `UPDATE material_grouping_jobs SET status = 'cancelled', locked_by = NULL, locked_until = NULL
+    `UPDATE material_grouping_jobs
+        SET status = 'cancelled', cancel_reason = 'superseded', cancelled_at = now(),
+            locked_by = NULL, locked_until = NULL
       WHERE id = $1 AND status IN ('pending', 'running')`,
     [active.id],
   );
@@ -247,6 +324,12 @@ async function decideOnActive(
  * редактировании иначе ставилось бы задание на каждую строку. Сам ensure дешёвых поводов не
  * боится — если вход не изменился, до модели дело не дойдёт.
  */
+export function cancelScheduledRefresh(estimateId: string): void {
+  const timer = pendingTimers.get(estimateId);
+  if (timer) clearTimeout(timer);
+  pendingTimers.delete(estimateId);
+}
+
 export function scheduleGroupingRefresh(fastify: FastifyInstance, estimateId: string): void {
   const existing = pendingTimers.get(estimateId);
   if (existing) clearTimeout(existing);

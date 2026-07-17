@@ -14,12 +14,13 @@ import { loadLlmRuntime, resolveLlmEndpoint } from '../llm/endpoint.js';
 import { withLmStudioSlot } from '../llm/limiter.js';
 import { resolveAiModel, resolveQwenNoThink } from '../llm/settings.js';
 import { resolvePrompt } from '../llm/prompts.js';
-import { chatJsonOnce } from '../llm/chat-json.js';
+import { chatJsonOnce, LlmCallError, LlmEmptyResponseError, LlmTimeoutError } from '../llm/chat-json.js';
 import { loadGroupingLines } from './input.js';
 import { planBatches, partitionsNeedingMerge } from './batch.js';
 import { buildSystemPrompt, buildBatchUserPrompt, buildMergeUserPrompt } from './prompt.js';
 import { parseBatchResponse, parseMergeResponse } from './parse.js';
 import { assembleResult, type MergeOp } from './assemble.js';
+import { closeDanglingCalls, finishCall, markCall, startCall, type CallStatus } from './call-log.js';
 import type { DraftBatch, GroupingBatch } from './types.js';
 
 /** Идентификатор процесса-исполнителя: чей это захват. */
@@ -65,6 +66,14 @@ interface JobRow {
 function nextRunDelaySec(attempt: number): number {
   const base = Math.min(300, 30 * 2 ** attempt);
   return Math.round(base / 2 + Math.random() * (base / 2));
+}
+
+/** Чем закончился вызов — для журнала. Таймаут и отмену различаем: причины разные. */
+function callStatusOf(cause: unknown, aborted: boolean): CallStatus {
+  if (cause instanceof LlmTimeoutError) return 'timed_out';
+  if (cause instanceof LlmEmptyResponseError) return 'empty';
+  if (aborted) return 'cancelled';
+  return 'failed';
 }
 
 /**
@@ -115,6 +124,9 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
   const controller = new AbortController();
   runningJobs.set(jobId, controller);
   const started = Date.now();
+  // Прошлую попытку могли оборвать деплоем: её незакрытые записи иначе вечно показывали бы
+  // «отправляем запрос».
+  await closeDanglingCalls(fastify, jobId);
 
   try {
     const lines = await loadGroupingLines(fastify.pool, job.estimate_id);
@@ -163,26 +175,82 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
       // растягивают друг друга и упираются в дедлайн — при исчерпании попыток задание уходит в
       // dead, откуда его поднимает только ручной «Пересчитать».
       if (Date.now() - waitedForSlotMs > deadline) throw new Error('Превышено время выполнения задания');
-      const call = () =>
-        chatJsonOnce(
+      const userPrompt = buildBatchUserPrompt(batch, job.settings);
+      // Запись заводим до отправки: пока модель думает, журнал обязан показывать сам факт работы.
+      const callId = await startCall(fastify, {
+        jobId,
+        attempt: job.attempts,
+        kind: 'batch',
+        batchIndex: batch.index,
+        partitionKey: batch.partitionKey,
+        linesCount: batch.lines.length,
+        model: qualifiedModel,
+      });
+      const call = async () => {
+        await markCall(fastify, callId, 'in_progress');
+        return chatJsonOnce(
           { endpoint: ep, signal: controller.signal, timeoutMs: batchTimeout, noThink },
           system,
-          buildBatchUserPrompt(batch, job.settings),
+          userPrompt,
         );
-      // Слот берём на КАЖДЫЙ набор, а не на весь прогон: удержание слота на 20 минут
-      // заблокировало бы ИИ-чат целиком (у LM Studio worker = 1).
-      let raw: string;
-      if (ep.isLmStudio) {
-        const queuedAt = Date.now();
-        raw = await withLmStudioSlot(() => {
-          // Колбэк выполняется уже в слоте — разница и есть время ожидания в очереди.
-          waitedForSlotMs += Date.now() - queuedAt;
-          return call();
-        });
-      } else {
-        raw = await call();
+      };
+
+      let res;
+      try {
+        // Слот берём на КАЖДЫЙ набор, а не на весь прогон: удержание слота на 20 минут
+        // заблокировало бы ИИ-чат целиком (у LM Studio worker = 1).
+        if (ep.isLmStudio) {
+          const queuedAt = Date.now();
+          await markCall(fastify, callId, 'waiting_slot');
+          res = await withLmStudioSlot(() => {
+            // Колбэк выполняется уже в слоте — разница и есть время ожидания в очереди.
+            waitedForSlotMs += Date.now() - queuedAt;
+            return call();
+          });
+        } else {
+          res = await call();
+        }
+      } catch (err) {
+        if (err instanceof LlmCallError) {
+          await finishCall(fastify, callId, {
+            status: callStatusOf(err.cause, controller.signal.aborted),
+            systemText: err.sentSystem,
+            requestText: err.sentUser,
+            attempts: err.attempts,
+            error: err.message,
+            durationMs: err.durationMs,
+          });
+        } else {
+          await finishCall(fastify, callId, {
+            status: controller.signal.aborted ? 'cancelled' : 'failed',
+            systemText: system,
+            requestText: userPrompt,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        throw err;
       }
-      done[String(batch.index)] = parseBatchResponse(raw, batch);
+
+      // Разбор — отдельная ось: HTTP успешен, но JSON мог оказаться непригодным. Пустой список
+      // групп ошибкой НЕ считается: ответ может состоять из одних общих/несгруппированных.
+      const draft = parseBatchResponse(res.content, batch);
+      const parsedNothing =
+        draft.groups.length === 0 && draft.sharedKeys.length === 0 && draft.ungroupedKeys.length === 0;
+      await finishCall(fastify, callId, {
+        status: 'succeeded',
+        parseStatus: parsedNothing ? 'failed' : draft.warnings.length > 0 ? 'warnings' : 'ok',
+        parseWarnings: draft.warnings,
+        groupsCount: draft.groups.length,
+        systemText: res.sentSystem,
+        requestText: res.sentUser,
+        responseText: res.content,
+        finishReason: res.finishReason,
+        usage: res.usage,
+        attempts: res.attempts,
+        durationMs: res.durationMs,
+      });
+
+      done[String(batch.index)] = draft;
       await heartbeat(fastify, jobId, Object.keys(done).length, { batches: done, merges: job.checkpoint?.merges ?? [] });
     };
 
@@ -209,17 +277,59 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
         const groups = drafts.filter((d) => d.partitionKey === partitionKey).flatMap((d) => d.groups);
         if (groups.length < 2) continue;
         if (controller.signal.aborted) throw new Error('aborted');
+        const mergePrompt = buildMergeUserPrompt(groups);
+        const callId = await startCall(fastify, {
+          jobId,
+          attempt: job.attempts,
+          kind: 'merge',
+          batchIndex: null,
+          partitionKey,
+          linesCount: groups.length,
+          model: qualifiedModel,
+        });
         try {
-          const call = () =>
-            chatJsonOnce(
+          const call = async () => {
+            await markCall(fastify, callId, 'in_progress');
+            return chatJsonOnce(
               { endpoint: ep, signal: controller.signal, timeoutMs: MERGE_TIMEOUT_MS, noThink },
               mergeSystem,
-              buildMergeUserPrompt(groups),
+              mergePrompt,
             );
-          const raw = ep.isLmStudio ? await withLmStudioSlot(call) : await call();
-          merges.push(...parseMergeResponse(raw, new Set(groups.map((g) => g.id))));
+          };
+          const res = ep.isLmStudio ? await withLmStudioSlot(call) : await call();
+          const ops = parseMergeResponse(res.content, new Set(groups.map((g) => g.id)));
+          await finishCall(fastify, callId, {
+            status: 'succeeded',
+            parseStatus: 'ok',
+            groupsCount: ops.length,
+            systemText: res.sentSystem,
+            requestText: res.sentUser,
+            responseText: res.content,
+            finishReason: res.finishReason,
+            usage: res.usage,
+            attempts: res.attempts,
+            durationMs: res.durationMs,
+          });
+          merges.push(...ops);
         } catch (err) {
           // Слияние — улучшение, а не обязательный шаг: его сбой не должен убивать прогон.
+          if (err instanceof LlmCallError) {
+            await finishCall(fastify, callId, {
+              status: callStatusOf(err.cause, controller.signal.aborted),
+              systemText: err.sentSystem,
+              requestText: err.sentUser,
+              attempts: err.attempts,
+              error: err.message,
+              durationMs: err.durationMs,
+            });
+          } else {
+            await finishCall(fastify, callId, {
+              status: controller.signal.aborted ? 'cancelled' : 'failed',
+              systemText: mergeSystem,
+              requestText: mergePrompt,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
           fastify.log.warn({ err, jobId, partitionKey }, 'material grouping merge failed');
         }
       }

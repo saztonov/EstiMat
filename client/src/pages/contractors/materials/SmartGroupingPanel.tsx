@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react';
 import { Alert, Button, Empty, Progress, Space, Spin, Switch, Table, Typography } from 'antd';
-import { DownOutlined, RightOutlined } from '@ant-design/icons';
+import { DownOutlined, FileTextOutlined, RightOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import type { GroupingProgress } from '@estimat/shared';
+import type { GroupingLastAttempt, GroupingProgress, GroupingSuppressedBy } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
 import { SmartGroupCard } from './SmartGroupCard';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupFillButton } from './GroupFillButton';
 import type { DimensionFinding } from './dimensionChecks';
+import { SmartGroupingLogDrawer } from './SmartGroupingLogDrawer';
+import { activityText, retryText, suppressedNotice } from './smartGroupingText';
 import { useCancelSmartGrouping, useRunSmartGrouping, useSmartGroupingJob } from './useSmartGrouping';
 
 interface Props {
@@ -52,6 +54,7 @@ export function SmartGroupingPanel({
   const jobQuery = useSmartGroupingJob(estimateId, true);
   const run = useRunSmartGrouping(estimateId);
   const cancel = useCancelSmartGrouping(estimateId);
+  const [logJobId, setLogJobId] = useState<string | null>(null);
 
   const job = jobQuery.data?.data ?? null;
   const available = jobQuery.data?.available ?? true;
@@ -60,6 +63,19 @@ export function SmartGroupingPanel({
   // Идущий расчёт. Может соседствовать с готовым результатом — тогда результат остаётся на
   // экране, а прогресс показываем плашкой: пересчёт длится 10–25 минут.
   const active = jobQuery.data?.active ?? null;
+  // Почему пересчёта не будет: остановлен человеком либо исчерпал попытки.
+  const suppressed = jobQuery.data?.autoRunSuppressed ?? null;
+  const lastAttempt = jobQuery.data?.lastAttempt ?? null;
+  // Журнал открывается по любому заданию, но смысл имеет по последнему: идущему либо упавшему.
+  const openLog = (id: string) => setLogJobId(id);
+  const logDrawer = (
+    <SmartGroupingLogDrawer
+      jobId={logJobId}
+      active={!!active && active.id === logJobId}
+      open={!!logJobId}
+      onClose={() => setLogJobId(null)}
+    />
+  );
   const byKey = useMemo(() => new Map(rows.map((r) => [r.orderKey, r])), [rows]);
   const pick = (keys: string[]) => keys.map((k) => byKey.get(k)).filter((r): r is OrderMaterialRow => !!r);
 
@@ -78,44 +94,69 @@ export function SmartGroupingPanel({
   }
 
   // Расчёт идёт, а прежнего результата нет — показать нечего, кроме прогресса.
-  if (active && !job?.result) return <ActiveAlert active={active} isAdmin={isAdmin} cancel={cancel} />;
+  if (active && !job?.result) {
+    return (
+      <>
+        <ActiveAlert active={active} isAdmin={isAdmin} cancel={cancel} onOpenLog={openLog} />
+        {logDrawer}
+      </>
+    );
+  }
 
   // Задания нет или оно остановлено. Группировка безусловна: сервер ставит её сам при чтении,
   // поэтому сюда попадаем, только если ставить нечего (нет материалов) или расчёт остановили.
   if (!job || job.status === 'cancelled') {
     return (
-      <Empty
-        description={
-          job?.status === 'cancelled' ? 'Группировка остановлена' : 'Группировка ещё не сформирована'
-        }
-      >
-        {isAdmin && (
-          <Button type="primary" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
-            Сформировать сейчас
-          </Button>
-        )}
-      </Empty>
+      <>
+        <Empty
+          description={
+            job?.status === 'cancelled' ? 'Группировка остановлена' : 'Группировка ещё не сформирована'
+          }
+        >
+          <Space>
+            {isAdmin && (
+              <Button type="primary" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
+                Сформировать сейчас
+              </Button>
+            )}
+            {isAdmin && job && (
+              <Button icon={<FileTextOutlined />} onClick={() => openLog(job.id)}>
+                Журнал ИИ
+              </Button>
+            )}
+          </Space>
+        </Empty>
+        {logDrawer}
+      </>
     );
   }
 
   // Ошибку показываем всем: иначе подрядчик молча смотрит на пустой экран и не знает, почему.
   if (job.status === 'failed' || job.status === 'dead') {
     return (
-      <Alert
-        type="error"
-        showIcon
-        message="Не удалось сформировать умную группировку"
-        description={
-          <Space direction="vertical">
-            <span>{job.error ?? 'Неизвестная ошибка'}</span>
-            {isAdmin && (
-              <Button size="small" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
-                Попробовать снова
-              </Button>
-            )}
-          </Space>
-        }
-      />
+      <>
+        <Alert
+          type="error"
+          showIcon
+          message="Не удалось сформировать умную группировку"
+          description={
+            <Space direction="vertical">
+              <span>{job.error ?? 'Неизвестная ошибка'}</span>
+              {isAdmin && (
+                <Space>
+                  <Button size="small" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
+                    Попробовать снова
+                  </Button>
+                  <Button size="small" icon={<FileTextOutlined />} onClick={() => openLog(job.id)}>
+                    Журнал ИИ
+                  </Button>
+                </Space>
+              )}
+            </Space>
+          }
+        />
+        {logDrawer}
+      </>
     );
   }
 
@@ -144,30 +185,17 @@ export function SmartGroupingPanel({
       {/* Состояние данных видно всем — управление только у админа. */}
       {active && (
         <div style={{ marginBottom: 12 }}>
-          <ActiveAlert active={active} isAdmin={isAdmin} cancel={cancel} hasResult />
+          <ActiveAlert active={active} isAdmin={isAdmin} cancel={cancel} onOpenLog={openLog} hasResult />
         </div>
       )}
       {stale && !active && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 12 }}
-          // Устаревание даёт не только правка сметы, но и смена модели или промпта — про «состав
-          // материалов» плашка в этих случаях говорила неправду.
-          message="Результат устарел и будет пересчитан"
-          description={
-            <Space direction="vertical">
-              <span>
-                Показан прежний результат — он может не соответствовать текущему списку материалов.
-                Пересчёт запустится автоматически.
-              </span>
-              {isAdmin && (
-                <Button size="small" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
-                  Пересчитать
-                </Button>
-              )}
-            </Space>
-          }
+        <StaleAlert
+          isAdmin={isAdmin}
+          run={run}
+          onOpenLog={openLog}
+          suppressed={suppressed}
+          lastAttempt={lastAttempt}
+          logJobId={lastAttempt?.id ?? job.id}
         />
       )}
 
@@ -192,6 +220,11 @@ export function SmartGroupingPanel({
         {isAdmin && !stale && (
           <Button size="small" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
             Пересчитать
+          </Button>
+        )}
+        {isAdmin && (
+          <Button size="small" icon={<FileTextOutlined />} onClick={() => openLog(job.id)}>
+            Журнал ИИ
           </Button>
         )}
       </Space>
@@ -252,7 +285,54 @@ export function SmartGroupingPanel({
           rowClassName={rowClassName}
         />
       )}
+      {logDrawer}
     </div>
+  );
+}
+
+/**
+ * Результат устарел, а расчёта нет. Раньше плашка всегда обещала автоматический пересчёт — после
+ * остановки или исчерпания попыток это была неправда, и «Остановить» выглядела сломанной.
+ * Показываем всем: подрядчику тоже важно знать, что цифры на экране могут быть несвежими.
+ */
+function StaleAlert({
+  isAdmin,
+  run,
+  onOpenLog,
+  suppressed,
+  lastAttempt,
+  logJobId,
+}: {
+  isAdmin: boolean;
+  run: { isPending: boolean; mutate: (v: { force?: boolean }) => void };
+  onOpenLog: (id: string) => void;
+  suppressed: GroupingSuppressedBy | null;
+  lastAttempt: GroupingLastAttempt | null;
+  logJobId: string;
+}) {
+  const notice = suppressedNotice(suppressed, lastAttempt);
+  return (
+    <Alert
+      type={notice.type}
+      showIcon
+      style={{ marginBottom: 12 }}
+      message={notice.message}
+      description={
+        <Space direction="vertical">
+          <span>{notice.description}</span>
+          {isAdmin && (
+            <Space>
+              <Button size="small" loading={run.isPending} onClick={() => run.mutate({ force: true })}>
+                Пересчитать
+              </Button>
+              <Button size="small" icon={<FileTextOutlined />} onClick={() => onOpenLog(logJobId)}>
+                Журнал ИИ
+              </Button>
+            </Space>
+          )}
+        </Space>
+      }
+    />
   );
 }
 
@@ -261,11 +341,13 @@ function ActiveAlert({
   active,
   isAdmin,
   cancel,
+  onOpenLog,
   hasResult = false,
 }: {
   active: GroupingProgress;
   isAdmin: boolean;
   cancel: { isPending: boolean; mutate: (id: string) => void };
+  onOpenLog: (id: string) => void;
   hasResult?: boolean;
 }) {
   const percent = active.batchesTotal > 0 ? Math.round((active.batchesDone / active.batchesTotal) * 100) : 0;
@@ -273,6 +355,10 @@ function ActiveAlert({
     active.batchesTotal > 0
       ? `Обработано ${active.batchesDone} из ${active.batchesTotal} наборов`
       : 'Готовим наборы материалов…';
+  // Пересчитываем на каждом тике поллинга (раз в 1.5 с) — секунды ожидания должны идти.
+  const now = Date.now();
+  const doing = activityText(active.activity, now);
+  const retry = retryText(active, now);
 
   return (
     <Alert
@@ -286,13 +372,25 @@ function ActiveAlert({
             {hasResult ? `${progressText}. Ниже — прежний результат.` : progressText}
           </span>
           {active.batchesTotal > 0 && <Progress percent={percent} size="small" />}
+          {/* Без этих строк 0% выглядят зависанием: запрос отправлен, но экран об этом молчал. */}
+          {doing && <Typography.Text style={{ fontSize: 12.5 }}>{doing}</Typography.Text>}
+          {retry && (
+            <Typography.Text type="danger" style={{ fontSize: 12.5 }}>
+              {retry}
+            </Typography.Text>
+          )}
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Можно уйти со страницы — расчёт продолжится в фоне.
           </Typography.Text>
           {isAdmin && (
-            <Button size="small" loading={cancel.isPending} onClick={() => cancel.mutate(active.id)}>
-              Остановить
-            </Button>
+            <Space>
+              <Button size="small" loading={cancel.isPending} onClick={() => cancel.mutate(active.id)}>
+                Остановить
+              </Button>
+              <Button size="small" icon={<FileTextOutlined />} onClick={() => onOpenLog(active.id)}>
+                Журнал ИИ
+              </Button>
+            </Space>
           )}
         </Space>
       }
