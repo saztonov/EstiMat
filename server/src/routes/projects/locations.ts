@@ -60,7 +60,7 @@ export function registerLocationRoutes(fastify: FastifyInstance): void {
         where += ` AND name_norm LIKE $${values.length}`;
       }
       const { rows } = await fastify.pool.query(
-        `SELECT id, name FROM project_location_types WHERE ${where} ORDER BY sort_order, name LIMIT 50`,
+        `SELECT id, name FROM project_location_types WHERE ${where} ORDER BY sort_order, name`,
         values,
       );
       return { data: rows };
