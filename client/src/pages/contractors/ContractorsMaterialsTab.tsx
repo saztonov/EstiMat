@@ -24,7 +24,7 @@ import { buildCategoryIndex, buildOrderRows, type OrderMaterialRow } from './mat
 import { assertTreeConserves, buildMaterialTree, pruneNodesByRows } from './materials/materialTree';
 import { useMaterialLevels } from './materials/useMaterialLevels';
 import { MaterialGroupingPopover } from './materials/MaterialGroupingPopover';
-import { useSmartSplit, buildSplitTree, collectSplitKeys } from './materials/smartSplit';
+import { useSmartSplit, buildSplitTree, collectSplitKeys, type SplitNode } from './materials/smartSplit';
 import { DisplayPopover } from './materials/DisplayPopover';
 import { buildMaterialColumns } from './materials/materialColumns';
 import { MaterialTreeView, collectNodeKeys } from './materials/MaterialTreeView';
@@ -497,29 +497,31 @@ export function ContractorsMaterialsTab({
     [setCollapsed],
   );
 
+  // Деревья разбивки по каждой ИИ-группе строим ОДИН раз здесь: их же берут и «Свернуть всё»,
+  // и карточки блоков. Иначе occurrence-разложение считалось бы дважды и на каждый рендер (rows
+  // из pick() — новая ссылка). Ключи узлов — в пространстве блока (smart:<id>/…).
+  const splitTreesByGroup = useMemo(() => {
+    const map = new Map<string, SplitNode[]>();
+    if (!smart || !smartSplit.active || !smartResult) return map;
+    const byKey = new Map(rows.map((r) => [r.orderKey, r]));
+    for (const g of smartResult.groups) {
+      const groupRows = g.orderKeys.map((k) => byKey.get(k)).filter((r): r is (typeof rows)[number] => !!r);
+      map.set(g.id, buildSplitTree(groupRows, smartSplit.levels, zones, zoneIndex, `smart:${g.id}`));
+    }
+    return map;
+  }, [smart, smartSplit.active, smartSplit.levels, smartResult, rows, zones, zoneIndex]);
+
   // Ключи для «Свернуть всё» — из активного режима: у дерева это узлы, у умной группировки
-  // карточки групп плюс две секции.
+  // карточки групп плюс две секции плюс узлы разбивки (переиспользуем splitTreesByGroup).
   const collapsibleKeys = useMemo(() => {
     if (!smart) return collectNodeKeys(shownTree);
     const result = smartResult;
     if (!result) return [];
     const base = [...result.groups.map((g) => g.id), SHARED_KEY, UNGROUPED_KEY];
     if (!smartSplit.active) return base;
-    // Подузлы разбивки тоже сворачиваются: собираем их ключи по каждому блоку.
-    const byKey = new Map(rows.map((r) => [r.orderKey, r]));
-    const nodeKeys = result.groups.flatMap((g) =>
-      collectSplitKeys(
-        buildSplitTree(
-          g.orderKeys.map((k) => byKey.get(k)).filter((r): r is (typeof rows)[number] => !!r),
-          smartSplit.levels,
-          zones,
-          zoneIndex,
-          `smart:${g.id}`,
-        ),
-      ),
-    );
+    const nodeKeys = result.groups.flatMap((g) => collectSplitKeys(splitTreesByGroup.get(g.id) ?? []));
     return [...base, ...nodeKeys];
-  }, [smart, shownTree, smartResult, smartSplit.active, smartSplit.levels, rows, zones, zoneIndex]);
+  }, [smart, shownTree, smartResult, smartSplit.active, splitTreesByGroup]);
 
   const allCollapsed = collapsibleKeys.length > 0 && collapsibleKeys.every((k) => collapsed.has(k));
 
@@ -699,9 +701,7 @@ export function ContractorsMaterialsTab({
             bulk={bulk}
             rowClassName={rowClassName}
             dimension={dimension}
-            splitLevels={smartSplit.levels}
-            roots={zones}
-            zoneIndex={zoneIndex}
+            splitTrees={splitTreesByGroup}
           />
         ) : shownTree.length === 0 ? (
           // Пустой экран под включённым отбором читается как поломка — говорим, что произошло.

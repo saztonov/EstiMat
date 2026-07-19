@@ -4,9 +4,8 @@ import { FileTextOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { GroupingLastAttempt, GroupingProgress, GroupingSuppressedBy } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
-import type { ZoneIndex, ZoneNode } from '../../estimates/components/location';
 import type { OrderMaterialRow } from './orderRow';
-import type { SmartSplitLevels } from './smartSplit';
+import type { SplitNode } from './smartSplit';
 import { SmartGroupCard } from './SmartGroupCard';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupCard } from './GroupCard';
@@ -37,10 +36,8 @@ interface Props {
   rowClassName?: (row: OrderMaterialRow) => string;
   /** Замечания по размерности, посчитанные по сметным (немасштабированным) объёмам. */
   dimension: Map<string, DimensionFinding>;
-  /** Разбивка внутри блоков по корпусам/этажам/виду работ (read-only). */
-  splitLevels: SmartSplitLevels;
-  roots: ZoneNode[];
-  zoneIndex: ZoneIndex;
+  /** Готовые деревья разбивки по id ИИ-группы (строятся один раз в родителе). Пусто → без разбивки. */
+  splitTrees: Map<string, SplitNode[]>;
 }
 
 // Ключи сворачивания секций (с префиксом режима, чтобы не пересекаться со стандартным деревом)
@@ -66,9 +63,7 @@ export function SmartGroupingPanel({
   bulk,
   rowClassName,
   dimension,
-  splitLevels,
-  roots,
-  zoneIndex,
+  splitTrees,
 }: Props) {
   const jobQuery = useSmartGroupingJob(estimateId, contractorId, !!contractorId);
   const run = useRunSmartGrouping(estimateId, contractorId);
@@ -286,10 +281,8 @@ export function SmartGroupingPanel({
           bulk={bulk}
           rowClassName={rowClassName}
           dimension={dimension}
-          splitLevels={splitLevels}
+          splitTree={splitTrees.get(g.id) ?? []}
           collapsedNodes={collapsed}
-          roots={roots}
-          zoneIndex={zoneIndex}
         />
       ))}
       {groups.length === 0 && sharedRows.length === 0 && ungroupedRows.length === 0 && (

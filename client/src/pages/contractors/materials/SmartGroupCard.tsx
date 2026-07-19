@@ -1,15 +1,13 @@
-import { useMemo } from 'react';
 import { Alert, Collapse, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { MaterialGroupDto } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
-import type { ZoneIndex, ZoneNode } from '../../estimates/components/location';
 import type { OrderMaterialRow } from './orderRow';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
 import type { DimensionFinding } from './dimensionChecks';
-import { buildSplitTree, type SmartSplitLevels } from './smartSplit';
+import type { SplitNode } from './smartSplit';
 import { SmartSplitView } from './SmartSplitView';
 
 /** Сколько корпусов показать тегами в шапке блока, прежде чем свернуть в «+N». */
@@ -25,12 +23,10 @@ interface Props {
   rowClassName?: (row: OrderMaterialRow) => string;
   /** Детерминированные замечания по строкам свода (ключ заказа → находка). */
   dimension?: Map<string, DimensionFinding>;
-  /** Разбивка внутри блока по корпусам/этажам/виду работ (read-only). */
-  splitLevels: SmartSplitLevels;
+  /** Готовое дерево разбивки блока (строится в родителе). Пусто → плоская таблица строк. */
+  splitTree: SplitNode[];
   /** Свёрнутые узлы разбивки (общее с картами пространство ключей smart:...). */
   collapsedNodes: Set<string>;
-  roots: ZoneNode[];
-  zoneIndex: ZoneIndex;
 }
 
 /**
@@ -65,10 +61,8 @@ export function SmartGroupCard({
   bulk,
   rowClassName,
   dimension,
-  splitLevels,
+  splitTree,
   collapsedNodes,
-  roots,
-  zoneIndex,
 }: Props) {
   // Итог — только по строкам с ценой закупки: сметные цены материалов во вкладке не показываются.
   const priced = rows.filter((r) => r.materialCost != null);
@@ -86,13 +80,6 @@ export function SmartGroupCard({
   const zoneNames = [...new Set(rows.flatMap((r) => r.zoneNames))].sort((a, b) => a.localeCompare(b, 'ru'));
 
   const draftCount = bulk ? rows.filter((r) => bulk.draftValues.has(r.orderKey)).length : 0;
-
-  // Разбивка по корпусам/этажам/виду работ. Ключи узлов — в пространстве этого блока (smart:id/…).
-  const splitActive = splitLevels.costType || splitLevels.location || splitLevels.locationType;
-  const splitTree = useMemo(
-    () => (splitActive ? buildSplitTree(rows, splitLevels, roots, zoneIndex, `smart:${group.id}`) : []),
-    [splitActive, rows, splitLevels, roots, zoneIndex, group.id],
-  );
 
   return (
     <GroupCard
@@ -198,7 +185,7 @@ export function SmartGroupCard({
         />
       )}
 
-      {splitActive && splitTree.length > 0 ? (
+      {splitTree.length > 0 ? (
         <div style={{ padding: 8 }}>
           <SmartSplitView nodes={splitTree} collapsed={collapsedNodes} onToggle={onToggle} />
         </div>
