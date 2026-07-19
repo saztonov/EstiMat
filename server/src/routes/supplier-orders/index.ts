@@ -7,6 +7,7 @@ import {
   upsertOfferSchema, offerFileMetaSchema, finalizeOrderSchema,
   putOrderDeliveryScheduleSchema,
   assignMaterialResponsibleSchema, bulkAssignMaterialResponsibleSchema,
+  setMaterialResponsiblesSchema, bulkSetMaterialResponsiblesSchema,
   MANUAL_VAT_RATE_VALUE, type ManualVatRate,
 } from '@estimat/shared';
 import { config } from '../../config.js';
@@ -21,6 +22,19 @@ import { guardedStreamUpload, FileGuardError } from '../../lib/uploads/file-guar
 
 const FILE_LIMIT = 50 * 1024 * 1024; // 50 МБ на файл предложения
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Все переданные пользователи активны и во внутренней роли (могут быть ответственными).
+// userIds уже дедуплицированы схемой → сравнение count === length корректно. Пустой набор — ок.
+type PoolClientLike = { query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
+async function assertAssignable(client: PoolClientLike, userIds: string[]): Promise<boolean> {
+  if (userIds.length === 0) return true;
+  const { rows } = await client.query(
+    `SELECT count(*)::int AS n FROM users
+      WHERE id = ANY($1::uuid[]) AND is_active = true AND role IN ('admin','engineer','manager')`,
+    [userIds],
+  );
+  return (rows[0]?.n ?? 0) === userIds.length;
+}
 
 /**
  * Закупочные лоты СУ-10 (supplier_orders.kind='sourcing'). Инструмент снабжения — доступ только
@@ -81,14 +95,18 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
               to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
               mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS placed,
               mr.contractor_id, mr.contractor_name,
-              mri.responsible_user_id AS assigned_responsible_id, ru.full_name AS assigned_responsible_name,
+              COALESCE((
+                SELECT json_agg(json_build_object('id', u.id, 'full_name', u.full_name) ORDER BY u.full_name, u.id)
+                  FROM material_request_item_responsibles r
+                  JOIN users u ON u.id = r.user_id
+                 WHERE r.request_item_id = mri.id
+              ), '[]') AS assigned_responsibles,
               COUNT(*) OVER() AS total_count
          FROM material_request_items mri
          JOIN material_requests mr ON mr.id = mri.request_id
          LEFT JOIN projects p ON p.id = mr.project_id
          LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
          LEFT JOIN cost_categories cc ON cc.id = ct.category_id
-         LEFT JOIN users ru ON ru.id = mri.responsible_user_id
          LEFT JOIN (
            SELECT soi.request_item_id, SUM(soi.quantity) AS qty
              FROM supplier_order_items soi
@@ -134,100 +152,161 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         const isSu10 = r.request_type === 'su10';
         const ordered = isSu10 ? Number(placed) : null;
         const remaining = isSu10 ? Number(r.requested) - Number(placed) : null;
-        return { ...r, ordered, remaining };
+        // Deprecated-поля для незакрытых старых вкладок — первый из отсортированного набора.
+        const first = (r.assigned_responsibles as { id: string; full_name: string }[])[0] ?? null;
+        return {
+          ...r, ordered, remaining,
+          assigned_responsible_id: first?.id ?? null,
+          assigned_responsible_name: first?.full_name ?? null,
+        };
       }),
       meta: { total, limit, offset, truncated: total > rows.length, facets: facetRows[0] },
     };
   });
 
   // ============================================================
-  // PATCH /materials/:requestItemId/responsible — назначить/сбросить ответственного за строку.
-  //   userId=null — сброс (строка снова показывает всех ответственных по категории). Назначение
-  //   информационное: прав формирования закупок (assertCategoryAccess) не меняет.
+  // Ответственные за строку материала (many-to-many, override поверх ответственных по категории).
+  //   Пустой набор — override сброшен: строка снова показывает всех ответственных по категории.
+  //   Назначение информационное: прав формирования закупок (assertCategoryAccess) не меняет.
   // ============================================================
+
+  // Полная замена набора ответственных одной строки. Уже назначенных (в т.ч. ставших неактивными)
+  // разрешаем сохранить/снять — валидируем во внутренней роли только ДОБАВЛЯЕМЫХ.
+  async function applySetRowResponsibles(
+    requestItemId: string, userIds: string[], actorId: string,
+  ): Promise<{ status: number; body: unknown }> {
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: itemRows } = await client.query(
+        `SELECT mr.status, mr.estimate_id, mr.project_id
+           FROM material_request_items mri JOIN material_requests mr ON mr.id = mri.request_id
+          WHERE mri.id = $1 FOR UPDATE OF mri`,
+        [requestItemId],
+      );
+      if (!itemRows[0]) { await client.query('ROLLBACK'); return { status: 404, body: { error: 'Позиция не найдена' } }; }
+      if (itemRows[0].status === 'cancelled') { await client.query('ROLLBACK'); return { status: 409, body: { error: 'Заявка отменена' } }; }
+
+      const { rows: cur } = await client.query(
+        `SELECT user_id FROM material_request_item_responsibles WHERE request_item_id = $1`, [requestItemId],
+      );
+      const currentSet = new Set(cur.map((r) => r.user_id as string));
+      const added = userIds.filter((id) => !currentSet.has(id));
+      if (!(await assertAssignable(client, added))) {
+        await client.query('ROLLBACK');
+        return { status: 400, body: { error: 'Пользователь не может быть ответственным' } };
+      }
+
+      // Diff: снять отсутствующих в новом наборе (пустой набор → снять всех: x <> ALL('{}') = true),
+      // добавить новых. Метаданные существующих не трогаем — сохраняем историю назначения.
+      await client.query(
+        `DELETE FROM material_request_item_responsibles WHERE request_item_id = $1 AND user_id <> ALL($2::uuid[])`,
+        [requestItemId, userIds],
+      );
+      if (userIds.length) {
+        await client.query(
+          `INSERT INTO material_request_item_responsibles (request_item_id, user_id, assigned_by)
+           SELECT $1, u, $3 FROM unnest($2::uuid[]) u
+           ON CONFLICT (request_item_id, user_id) DO NOTHING`,
+          [requestItemId, userIds, actorId],
+        );
+      }
+      await recordAudit(client, {
+        estimateId: itemRows[0].estimate_id, projectId: itemRows[0].project_id,
+        entityType: 'material_request_item', entityId: requestItemId,
+        action: 'material.responsible.set', userId: actorId, changes: { userIds },
+      });
+      const { rows: result } = await client.query(
+        `SELECT u.id, u.full_name FROM material_request_item_responsibles r JOIN users u ON u.id = r.user_id
+          WHERE r.request_item_id = $1 ORDER BY u.full_name, u.id`,
+        [requestItemId],
+      );
+      await client.query('COMMIT');
+      return { status: 200, body: { data: { requestItemId, responsibles: result } } };
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  }
+
+  // Массовое назначение на набор строк узла дерева. 'add' — добавить выбранных ко всем (текущих
+  // не трогает); 'replace' — заменить набор (userIds=[] = массовый сброс). «Всё или ничего»:
+  // существование/статус позиций проверяем ОТДЕЛЬНЫМ SELECT (не по числу вставок).
+  async function applyBulkResponsibles(
+    requestItemIds: string[], userIds: string[], mode: 'add' | 'replace', actorId: string,
+  ): Promise<{ status: number; body: unknown }> {
+    // Потолок произведения строк×пользователей — защита от разрастания одной операции.
+    if (requestItemIds.length * Math.max(userIds.length, 1) > 20000) {
+      return { status: 400, body: { error: 'Слишком большой набор — сузьте выбор' } };
+    }
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: found } = await client.query(
+        `SELECT mr.status FROM material_request_items mri JOIN material_requests mr ON mr.id = mri.request_id
+          WHERE mri.id = ANY($1::uuid[]) FOR UPDATE OF mri`,
+        [requestItemIds],
+      );
+      if (found.length !== requestItemIds.length) {
+        await client.query('ROLLBACK'); return { status: 404, body: { error: 'Часть позиций не найдена' } };
+      }
+      if (found.some((r) => r.status === 'cancelled')) {
+        await client.query('ROLLBACK'); return { status: 409, body: { error: 'Среди позиций есть отменённые заявки' } };
+      }
+      if (!(await assertAssignable(client, userIds))) {
+        await client.query('ROLLBACK'); return { status: 400, body: { error: 'Пользователь не может быть ответственным' } };
+      }
+      if (mode === 'replace') {
+        await client.query(
+          `DELETE FROM material_request_item_responsibles
+            WHERE request_item_id = ANY($1::uuid[]) AND user_id <> ALL($2::uuid[])`,
+          [requestItemIds, userIds],
+        );
+      }
+      if (userIds.length) {
+        await client.query(
+          `INSERT INTO material_request_item_responsibles (request_item_id, user_id, assigned_by)
+           SELECT i, u, $3 FROM unnest($1::uuid[]) i CROSS JOIN unnest($2::uuid[]) u
+           ON CONFLICT (request_item_id, user_id) DO NOTHING`,
+          [requestItemIds, userIds, actorId],
+        );
+      }
+      await recordAudit(client, {
+        estimateId: null, entityType: 'material_request_item', entityId: requestItemIds[0]!,
+        action: 'material.responsible.bulk_set', userId: actorId,
+        changes: { userIds, mode, count: requestItemIds.length, requestItemIds },
+      });
+      await client.query('COMMIT');
+      return { status: 200, body: { data: { updated: requestItemIds.length } } };
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  }
+
+  // PUT /materials/:requestItemId/responsibles — заменить набор ответственных строки.
+  fastify.put<{ Params: { requestItemId: string } }>('/materials/:requestItemId/responsibles', async (request, reply) => {
+    const { userIds } = setMaterialResponsiblesSchema.parse(request.body);
+    const { requestItemId } = request.params;
+    if (!UUID_RE.test(requestItemId)) return reply.status(400).send({ error: 'Некорректный идентификатор позиции' });
+    const r = await applySetRowResponsibles(requestItemId, userIds, request.currentUser.id);
+    return reply.status(r.status).send(r.body);
+  });
+
+  // PATCH /materials/responsibles — массовое (add/replace) на набор строк узла дерева.
+  fastify.patch('/materials/responsibles', async (request, reply) => {
+    const { requestItemIds, userIds, mode } = bulkSetMaterialResponsiblesSchema.parse(request.body);
+    const r = await applyBulkResponsibles(requestItemIds, userIds, mode, request.currentUser.id);
+    return reply.status(r.status).send(r.body);
+  });
+
+  // Legacy (на один релиз, для незакрытых старых вкладок): прежние одиночный/массовый маршруты
+  // «один ответственный». userId → набор [userId] (или [] при null = сброс), семантика replace.
   fastify.patch<{ Params: { requestItemId: string } }>('/materials/:requestItemId/responsible', async (request, reply) => {
     const { userId } = assignMaterialResponsibleSchema.parse(request.body);
     const { requestItemId } = request.params;
     if (!UUID_RE.test(requestItemId)) return reply.status(400).send({ error: 'Некорректный идентификатор позиции' });
-    const client = await fastify.pool.connect();
-    try {
-      await client.query('BEGIN');
-      if (userId) {
-        const { rows: valid } = await client.query(
-          `SELECT 1 FROM users WHERE id = $1 AND is_active = true AND role IN ('admin','engineer','manager')`,
-          [userId],
-        );
-        if (!valid[0]) { await client.query('ROLLBACK'); return reply.status(400).send({ error: 'Пользователь не может быть ответственным' }); }
-      }
-      const { rows } = await client.query(
-        `UPDATE material_request_items mri
-            SET responsible_user_id = $2,
-                responsible_assigned_by = CASE WHEN $2 IS NULL THEN NULL ELSE $3 END,
-                responsible_assigned_at = CASE WHEN $2 IS NULL THEN NULL ELSE now() END
-           FROM material_requests mr
-          WHERE mri.id = $1 AND mr.id = mri.request_id AND mr.status <> 'cancelled'
-        RETURNING mr.estimate_id, mr.project_id`,
-        [requestItemId, userId, request.currentUser.id],
-      );
-      if (!rows[0]) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Позиция не найдена или заявка отменена' }); }
-      await recordAudit(client, {
-        estimateId: rows[0].estimate_id, projectId: rows[0].project_id,
-        entityType: 'material_request_item', entityId: requestItemId,
-        action: 'material.responsible.set', userId: request.currentUser.id, changes: { userId },
-      });
-      let name: string | null = null;
-      if (userId) {
-        const { rows: u } = await client.query('SELECT full_name FROM users WHERE id = $1', [userId]);
-        name = u[0]?.full_name ?? null;
-      }
-      await client.query('COMMIT');
-      return { data: { requestItemId, assignedResponsibleId: userId, assignedResponsibleName: name } };
-    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+    const r = await applySetRowResponsibles(requestItemId, userId ? [userId] : [], request.currentUser.id);
+    return reply.status(r.status).send(r.body);
   });
-
-  // ============================================================
-  // PATCH /materials/responsible — массовое назначение «на группу/вид» (явный набор строк узла
-  //   дерева). Транзакционно «всё или ничего»: все позиции обязаны существовать и не быть в
-  //   отменённой заявке, иначе откат. Клиент шлёт набор только по неусечённому набору (truncated).
-  // ============================================================
   fastify.patch('/materials/responsible', async (request, reply) => {
     const { requestItemIds, userId } = bulkAssignMaterialResponsibleSchema.parse(request.body);
-    const uniqueIds = [...new Set(requestItemIds)];
-    const client = await fastify.pool.connect();
-    try {
-      await client.query('BEGIN');
-      if (userId) {
-        const { rows: valid } = await client.query(
-          `SELECT 1 FROM users WHERE id = $1 AND is_active = true AND role IN ('admin','engineer','manager')`,
-          [userId],
-        );
-        if (!valid[0]) { await client.query('ROLLBACK'); return reply.status(400).send({ error: 'Пользователь не может быть ответственным' }); }
-      }
-      // Атомарно: сам UPDATE фильтрует по статусу заявки (join к mr), поэтому нет TOCTOU между
-      // проверкой и записью. Если обновлены не все переданные позиции (не найдены или заявка
-      // отменена) — откат и 409. FOR UPDATE не нужен: один statement согласован.
-      const { rows: updated } = await client.query(
-        `UPDATE material_request_items mri
-            SET responsible_user_id = $2,
-                responsible_assigned_by = CASE WHEN $2 IS NULL THEN NULL ELSE $3 END,
-                responsible_assigned_at = CASE WHEN $2 IS NULL THEN NULL ELSE now() END
-           FROM material_requests mr
-          WHERE mri.id = ANY($1::uuid[]) AND mr.id = mri.request_id AND mr.status <> 'cancelled'
-        RETURNING mri.id`,
-        [uniqueIds, userId, request.currentUser.id],
-      );
-      if (updated.length !== uniqueIds.length) {
-        await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Часть позиций не найдена или относится к отменённой заявке' });
-      }
-      await recordAudit(client, {
-        estimateId: null, entityType: 'material_request_item', entityId: uniqueIds[0]!,
-        action: 'material.responsible.bulk_set', userId: request.currentUser.id,
-        changes: { userId, count: uniqueIds.length, requestItemIds: uniqueIds },
-      });
-      await client.query('COMMIT');
-      return { data: { updated: uniqueIds.length } };
-    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+    const r = await applyBulkResponsibles([...new Set(requestItemIds)], userId ? [userId] : [], 'replace', request.currentUser.id);
+    return reply.status(r.status).send(r.body);
   });
 
   // ============================================================

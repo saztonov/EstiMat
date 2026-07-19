@@ -1,16 +1,23 @@
-// Перенос назначенного ответственного при завершении доработки заявки: строки
-// material_request_items пересоздаются (DELETE+INSERT с новыми id), поэтому override
-// ответственного сопоставляется со снимком по устойчивому ключу cost_type_id + agg_key +
-// delivery_date. Совпал ключ — назначение переносится; изменённая/исчезнувшая позиция — нет.
+// Перенос назначенных ответственных при завершении доработки заявки: строки
+// material_request_items пересоздаются (DELETE+INSERT с новыми id), поэтому назначения
+// сопоставляются со снимком по устойчивому ключу cost_type_id + agg_key + delivery_date.
+// Совпал ключ — весь набор ответственных строки переносится; изменённая/исчезнувшая позиция — нет.
+// Снимок берётся ПО СТРОКЕ (одна запись = одна исходная позиция с её массивом ответственных),
+// а не по назначению — иначе несколько ответственных одной строки выглядели бы как конфликт ключа.
+
+export interface ResponsibleAssignment {
+  userId: string;
+  assignedBy: string | null;
+  assignedAt: string | null;
+}
 
 export interface ResponsibleSnapshot {
   costTypeId: string | null;
   aggKey: string;
   /** YYYY-MM-DD либо null (позиция без графика поставки). */
   deliveryDate: string | null;
-  userId: string;
-  assignedBy: string | null;
-  assignedAt: string | null;
+  /** Все ответственные ОДНОЙ исходной строки. */
+  responsibles: ResponsibleAssignment[];
 }
 
 export interface ItemKey {
@@ -24,10 +31,11 @@ export function carryOverKey(k: ItemKey): string {
 }
 
 /**
- * Из снимка назначений оставить те, что можно перенести ОДНОЗНАЧНО: ключ встречается ровно один
- * раз и в снимке, и среди новых строк. Так исключается over-application (одно назначение на две
- * строки с одинаковым ключом) и молчаливая перезапись (два разных назначения на один ключ) —
+ * Из снимка оставить строки, чей набор можно перенести ОДНОЗНАЧНО: ключ встречается ровно один
+ * раз и среди исходных строк снимка, и среди новых строк. Так исключается over-application (перенос
+ * на две строки с одинаковым ключом) и молчаливая перезапись (две исходные строки одного ключа) —
  * строки material_request_items по ключу (cost_type_id, agg_key, delivery_date) НЕ уникальны.
+ * Счёт ведётся по СТРОКАМ (записям снимка), а не по числу ответственных внутри строки.
  */
 export function matchResponsibleCarryOver(
   snapshot: ResponsibleSnapshot[],

@@ -159,6 +159,33 @@ export const bulkAssignMaterialResponsibleSchema = z.object({
 });
 export type BulkAssignMaterialResponsibleInput = z.infer<typeof bulkAssignMaterialResponsibleSchema>;
 
+// ===== Несколько ответственных на строку материала (many-to-many, поверх категорийных) =====
+
+// Массив UUID без дубликатов: валидируем формат и потолок по исходному вводу, затем схлопываем
+// повторы (клиент может прислать один id дважды — идемпотентно нормализуем).
+const uniqueUuidArray = (min: number, max: number) =>
+  z.array(z.string().uuid()).min(min).max(max).transform((arr) => [...new Set(arr)]);
+
+// Полная замена набора ответственных одной строки. Пустой массив — очистить (снова показываются
+// все ответственные по категории вида работ).
+export const setMaterialResponsiblesSchema = z.object({
+  userIds: uniqueUuidArray(0, 50),
+});
+export type SetMaterialResponsiblesInput = z.infer<typeof setMaterialResponsiblesSchema>;
+
+// Массовое назначение «на группу/вид»: явный набор строк узла дерева. mode='add' — добавить
+// выбранных ко всем строкам (не трогая уже назначенных); mode='replace' — заменить набор
+// (userIds=[] + replace = массовый сброс). Пустой 'add' бессмысленен → отклоняем.
+export const bulkSetMaterialResponsiblesSchema = z.object({
+  requestItemIds: uniqueUuidArray(1, 5000),
+  userIds: uniqueUuidArray(0, 50),
+  mode: z.enum(['add', 'replace']),
+}).refine((v) => !(v.mode === 'add' && v.userIds.length === 0), {
+  message: 'Для добавления выберите хотя бы одного ответственного',
+  path: ['userIds'],
+});
+export type BulkSetMaterialResponsiblesInput = z.infer<typeof bulkSetMaterialResponsiblesSchema>;
+
 // ===== Runtime-схемы ответов тендерного портала (валидация на границе) =====
 
 export const tenderSchema = z.object({

@@ -167,9 +167,12 @@ export interface Su10MaterialRow {
   remaining: number | null;
   contractor_id: string | null;
   contractor_name: string | null;
-  /** Назначенный ответственный за строку (override). null — показываются все по категории. */
-  assigned_responsible_id: string | null;
-  assigned_responsible_name: string | null;
+  /** Назначенные ответственные за строку (override). Пусто — показываются все по категории. */
+  assigned_responsibles: { id: string; full_name: string }[];
+  /** @deprecated Первый из набора — только для совместимости; используйте assigned_responsibles. */
+  assigned_responsible_id?: string | null;
+  /** @deprecated */
+  assigned_responsible_name?: string | null;
 }
 
 // Кандидат в ответственные (GET /procurement/assignable-users).

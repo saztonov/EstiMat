@@ -31,6 +31,31 @@ const fmtRuDate = (d: string) => { const [y, m, dd] = d.split('-'); return `${dd
 type MaterialTableRow = GroupRow<Su10MaterialRow>;
 const GROUPABLE = new Set(MATERIALS_COLUMN_DEFS.filter((d) => d.groupable).map((d) => d.key));
 
+// Групповое добавление ответственных узлу дерева: накопить выбор и добавить одним запросом.
+function GroupResponsibleAssign({ assignable, disabled, onAdd }: {
+  assignable: AssignableUser[];
+  disabled: boolean;
+  onAdd: (userIds: string[]) => void;
+}) {
+  const [picked, setPicked] = useState<string[]>([]);
+  return (
+    <Space size={4} onClick={(e) => e.stopPropagation()}>
+      <Select
+        mode="multiple" size="small" style={{ width: 220 }} variant="filled" showSearch
+        maxTagCount="responsive" placeholder="Добавить ответств." disabled={disabled}
+        value={picked}
+        options={assignable.map((u) => ({ value: u.id, label: u.full_name }))}
+        optionFilterProp="label"
+        onChange={setPicked}
+      />
+      <Button size="small" type="primary" disabled={disabled || picked.length === 0}
+        onClick={() => { onAdd(picked); setPicked([]); }}>
+        Добавить{picked.length ? ` ${picked.length}` : ''}
+      </Button>
+    </Space>
+  );
+}
+
 /**
  * Вкладка «Материалы» (снабжение): свод материалов заявок с настраиваемыми столбцами, отборами и
  * группировкой прямо в заголовках. Дерево строится по отмеченным столбцам в порядке настроек.
@@ -93,9 +118,11 @@ export function SU10MaterialsTab() {
     return { myCategoryIds: mine, categoriesWithResp: withResp, respByCategory: byCat, respIdsByCategory: idsByCat };
   }, [responsiblesQ.data, user]);
 
-  // Эффективный ответственный строки (для отбора и группировки по столбцу): override или все по категории.
+  // Эффективные ответственные строки (для отбора и группировки по столбцу): override или все по категории.
   const respText = (r: Su10MaterialRow): string =>
-    r.assigned_responsible_name ?? (r.category_id ? (respByCategory.get(r.category_id) ?? []).join(', ') : '');
+    r.assigned_responsibles.length
+      ? r.assigned_responsibles.map((x) => x.full_name).join(', ')
+      : (r.category_id ? (respByCategory.get(r.category_id) ?? []).join(', ') : '');
 
   // Уровни дерева — из отмеченных «Группировать» видимых столбцов в порядке настроек.
   const levelMap = useMemo<Record<string, GroupLevel<Su10MaterialRow> | undefined>>(() => ({
@@ -110,7 +137,10 @@ export function SU10MaterialsTab() {
       cmp: (a, b) => (a.contractor_name || '').localeCompare(b.contractor_name || '', 'ru'),
     },
     resp: {
-      key: 'resp', idOf: (r) => r.assigned_responsible_id ?? (r.category_id ? `cat:${r.category_id}` : 'none'),
+      // Детерминированный ключ: отсортированный набор назначенных id, иначе категория, иначе none.
+      key: 'resp', idOf: (r) => (r.assigned_responsibles.length
+        ? r.assigned_responsibles.map((x) => x.id).slice().sort().join('+')
+        : (r.category_id ? `cat:${r.category_id}` : 'none')),
       labelOf: (r) => respText(r) || '— не назначены',
     },
     req: {
@@ -238,28 +268,30 @@ export function SU10MaterialsTab() {
   const lockedProjectId = selectedRows[0]?.project_id ?? null;
   const hiddenActiveCount = (requestType ? 1 : 0) + (categoryId ? 1 : 0);
 
-  // Назначение ответственного.
-  const assignMut = useMutation({
-    mutationFn: (v: { id: string; userId: string | null }) =>
-      api.patch(`/supplier-orders/materials/${v.id}/responsible`, { userId: v.userId }),
+  // Назначение ответственных (несколько на строку). Замена набора одной строки — одним запросом.
+  const setMut = useMutation({
+    mutationFn: (v: { id: string; userIds: string[] }) =>
+      api.put(`/supplier-orders/materials/${v.id}/responsibles`, { userIds: v.userIds }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['su10-materials'] }),
     onError: (e: Error) => message.error(e.message),
   });
-  const bulkAssignMut = useMutation({
-    mutationFn: (v: { ids: string[]; userId: string | null }) =>
-      api.patch('/supplier-orders/materials/responsible', { requestItemIds: v.ids, userId: v.userId }),
-    onSuccess: (_d, v) => { message.success(`Ответственный назначен: ${v.ids.length} поз.`); qc.invalidateQueries({ queryKey: ['su10-materials'] }); },
+  const bulkSetMut = useMutation({
+    mutationFn: (v: { ids: string[]; userIds: string[]; mode: 'add' | 'replace' }) =>
+      api.patch('/supplier-orders/materials/responsibles', { requestItemIds: v.ids, userIds: v.userIds, mode: v.mode }),
+    onSuccess: (_d, v) => { message.success(`Ответственные обновлены: ${v.ids.length} поз.`); qc.invalidateQueries({ queryKey: ['su10-materials'] }); },
     onError: (e: Error) => message.error(e.message),
   });
 
-  function assignGroup(node: GroupNode<Su10MaterialRow>, userId: string | null) {
+  // Групповое: добавить выбранных ответственных ко всем строкам узла (текущих не трогает).
+  function assignGroup(node: GroupNode<Su10MaterialRow>, userIds: string[]) {
+    if (userIds.length === 0) return;
     const ids = node.items.map((i) => i.request_item_id);
     modal.confirm({
-      title: userId ? 'Назначить ответственного группе' : 'Сбросить ответственного у группы',
-      content: `${userId ? 'Назначить выбранного ответственного' : 'Убрать назначение'} для ${ids.length} позиций «${node.label}»?`,
-      okText: userId ? 'Назначить' : 'Сбросить',
+      title: 'Добавить ответственных группе',
+      content: `Добавить выбранных (${userIds.length}) ко всем ${ids.length} позициям «${node.label}»?`,
+      okText: 'Добавить',
       cancelText: 'Отмена',
-      onOk: () => bulkAssignMut.mutateAsync({ ids, userId }),
+      onOk: () => bulkSetMut.mutateAsync({ ids, userIds, mode: 'add' }),
     });
   }
 
@@ -313,15 +345,15 @@ export function SU10MaterialsTab() {
         const catIds = row.category_id ? respIdsByCategory.get(row.category_id) ?? [] : [];
         return (
           <ResponsibleSelect
-            value={row.assigned_responsible_id}
-            assignedName={row.assigned_responsible_name}
+            value={row.assigned_responsibles.map((x) => x.id)}
+            assignedUsers={row.assigned_responsibles}
             categoryNames={catNames}
             categoryIds={catIds}
             assignable={assignable}
             assignableReady={assignableQ.isSuccess}
             canAssign={canAssign}
-            saving={assignMut.isPending && assignMut.variables?.id === row.request_item_id}
-            onAssign={(userId) => assignMut.mutate({ id: row.request_item_id, userId })}
+            saving={setMut.isPending && setMut.variables?.id === row.request_item_id}
+            onSave={(userIds) => setMut.mutate({ id: row.request_item_id, userIds })}
           />
         );
       },
@@ -357,13 +389,10 @@ export function SU10MaterialsTab() {
       </strong>
       {canAssign && (
         <Tooltip title={truncated ? 'Набор усечён — сузьте фильтры, чтобы назначить всей группе' : ''}>
-          <Select
-            size="small" style={{ width: 190 }} variant="filled" allowClear showSearch
-            placeholder="Назначить ответств." disabled={truncated}
-            value={null}
-            options={assignable.map((u) => ({ value: u.id, label: u.full_name }))}
-            optionFilterProp="label"
-            onChange={(userId) => assignGroup(node, userId ?? null)}
+          <GroupResponsibleAssign
+            assignable={assignable}
+            disabled={truncated}
+            onAdd={(userIds) => assignGroup(node, userIds)}
           />
         </Tooltip>
       )}

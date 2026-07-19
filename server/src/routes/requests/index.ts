@@ -703,17 +703,22 @@ export default async function requestRoutes(fastify: FastifyInstance) {
             const err = validateSu10Schedule(lines);
             if (err) { await client.query('ROLLBACK'); return reply.status(400).send({ error: err }); }
           }
-          // Снимок назначенных ответственных до пересборки — вернём совпавшим по ключу строкам.
+          // Снимок ответственных до пересборки (по строке, с массивом) — вернём совпавшим по ключу.
+          // Каскад ON DELETE удалит назначения вместе со строками, поэтому берём снимок ДО DELETE.
           const { rows: respSnap } = await client.query(
-            `SELECT cost_type_id, agg_key, to_char(delivery_date, 'YYYY-MM-DD') AS delivery_date,
-                    responsible_user_id, responsible_assigned_by, responsible_assigned_at
-               FROM material_request_items
-              WHERE request_id = $1 AND responsible_user_id IS NOT NULL`,
+            `SELECT mri.cost_type_id, mri.agg_key, to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
+                    json_agg(json_build_object(
+                      'userId', r.user_id, 'assignedBy', r.assigned_by, 'assignedAt', r.assigned_at
+                    )) AS responsibles
+               FROM material_request_items mri
+               JOIN material_request_item_responsibles r ON r.request_item_id = mri.id
+              WHERE mri.request_id = $1
+              GROUP BY mri.id, mri.cost_type_id, mri.agg_key, mri.delivery_date`,
             [mr.id],
           );
           const snapshot: ResponsibleSnapshot[] = respSnap.map((r) => ({
             costTypeId: r.cost_type_id, aggKey: r.agg_key, deliveryDate: r.delivery_date,
-            userId: r.responsible_user_id, assignedBy: r.responsible_assigned_by, assignedAt: r.responsible_assigned_at,
+            responsibles: r.responsibles as ResponsibleSnapshot['responsibles'],
           }));
 
           await client.query('DELETE FROM material_request_items WHERE request_id = $1', [mr.id]);
@@ -735,14 +740,21 @@ export default async function requestRoutes(fastify: FastifyInstance) {
             }
           }
 
-          // Перенос override ответственного на совпавшие по ключу пересозданные строки.
+          // Перенос набора ответственных на совпавшую по ключу пересозданную строку (ключ уникален
+          // по гарантии матчера → CROSS JOIN даст ровно одну строку × N ответственных).
           for (const s of matchResponsibleCarryOver(snapshot, newKeys)) {
             await client.query(
-              `UPDATE material_request_items
-                  SET responsible_user_id = $2, responsible_assigned_by = $3, responsible_assigned_at = $4
-                WHERE request_id = $1 AND cost_type_id IS NOT DISTINCT FROM $5 AND agg_key = $6
-                  AND delivery_date IS NOT DISTINCT FROM $7::date`,
-              [mr.id, s.userId, s.assignedBy, s.assignedAt, s.costTypeId, s.aggKey, s.deliveryDate],
+              `INSERT INTO material_request_item_responsibles (request_item_id, user_id, assigned_by, assigned_at)
+               SELECT mri.id, x.user_id, x.assigned_by, COALESCE(x.assigned_at, now())
+                 FROM material_request_items mri
+                 CROSS JOIN jsonb_to_recordset($5::jsonb)
+                   AS x(user_id uuid, assigned_by uuid, assigned_at timestamptz)
+                WHERE mri.request_id = $1 AND mri.cost_type_id IS NOT DISTINCT FROM $2 AND mri.agg_key = $3
+                  AND mri.delivery_date IS NOT DISTINCT FROM $4::date
+               ON CONFLICT (request_item_id, user_id) DO NOTHING`,
+              [mr.id, s.costTypeId, s.aggKey, s.deliveryDate, JSON.stringify(s.responsibles.map((r) => ({
+                user_id: r.userId, assigned_by: r.assignedBy, assigned_at: r.assignedAt,
+              })))],
             );
           }
         }
