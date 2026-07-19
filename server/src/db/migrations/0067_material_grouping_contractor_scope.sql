@@ -20,14 +20,25 @@ BEGIN
   END IF;
 END $$;
 
+-- Снять старый одностолбцовый PK (estimate_id) БЕЗУСЛОВНО: без этого разворот пауз с несколькими
+-- подрядчиками одной сметы упрётся в него, а на пустой таблице (типичный прод) новый составной ключ
+-- вообще не создался бы. Составной PK проверяем по числу колонок, а не по имени: имя одинаковое.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+     WHERE t.relname = 'material_grouping_pauses' AND c.contype = 'p' AND array_length(c.conkey, 1) = 1
+  ) THEN
+    ALTER TABLE material_grouping_pauses DROP CONSTRAINT material_grouping_pauses_pkey;
+  END IF;
+END $$;
+
 -- Старые глобальные паузы (contractor_id IS NULL) разворачиваем на всех подрядчиков сметы: остановку
 -- сохраняем для каждого, кому смета назначена. Смета без подрядчиков паузу теряет (группировки нет).
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM material_grouping_pauses WHERE contractor_id IS NULL) THEN
-    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'material_grouping_pauses_pkey') THEN
-      ALTER TABLE material_grouping_pauses DROP CONSTRAINT material_grouping_pauses_pkey;
-    END IF;
     INSERT INTO material_grouping_pauses (estimate_id, contractor_id, paused_at, paused_by, paused_job_id)
     SELECT DISTINCT p.estimate_id, eic.contractor_id, p.paused_at, p.paused_by, p.paused_job_id
       FROM material_grouping_pauses p
@@ -37,6 +48,7 @@ BEGIN
   END IF;
 END $$;
 
+-- Составной PK (estimate_id, contractor_id) создаём безусловно, если его ещё нет.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'material_grouping_pauses_pkey') THEN

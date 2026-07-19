@@ -71,10 +71,11 @@ interface RowSlice {
   quantity: number;
 }
 
-/** Количества вхождения по корпусам: мультизону распределяем равномерно по ячейкам «зона×этаж». */
+/** Разложить вхождение на количества по корпусам. Сумма qty = quantity вхождения. */
 function occurrenceZoneQuantities(
   loc: LocationSnapshot,
   quantity: number,
+  roots: ZoneNode[],
 ): { zoneId: string | null; zoneName: string | null; floors: number[]; qty: number }[] {
   const locs = loc.locations ?? [];
   if (locs.length === 0) {
@@ -85,8 +86,14 @@ function occurrenceZoneQuantities(
     } else if (loc.floorFrom != null) floors.push(loc.floorFrom);
     return [{ zoneId: loc.zoneId, zoneName: loc.zoneName, floors, qty: quantity }];
   }
-  // Мультизона: qty пересчитывается по ячейкам в buildRowSlices, имя резолвится из zoneIndex.
-  return locs.map((l) => ({ zoneId: l.zoneId, zoneName: null as string | null, floors: l.floors ?? [], qty: 0 }));
+  // Мультизона: доля зоны = доля её ячеек «зона×этаж». Σ qty = quantity (perCell × Σ cells).
+  const perCell = quantity / countLocationCells(locs, roots);
+  return locs.map((l) => ({
+    zoneId: l.zoneId,
+    zoneName: null,
+    floors: l.floors ?? [],
+    qty: perCell * countLocationCells([{ zoneId: l.zoneId, floors: l.floors ?? [] }], roots),
+  }));
 }
 
 /** Разложить строку на срезы по её вхождениям. Сумма quantity срезов = quantity строки (доле). */
@@ -99,18 +106,8 @@ function buildRowSlices(row: OrderMaterialRow, roots: ZoneNode[], zoneIndex: Zon
   for (const occ of row.occurrences) {
     const typeId = occ.location.locationTypeId ?? '';
     const typeName = occ.location.locationTypeName ?? null;
-    const locs = occ.location.locations ?? [];
-    const totalCells = countLocationCells(locs, roots);
-    const perCell = totalCells > 0 ? occ.quantity / totalCells : 0;
 
-    const zones = occurrenceZoneQuantities(occ.location, occ.quantity).map((z) => {
-      // Мультизона: доля вхождения = доля ячеек этой зоны. Legacy отдаёт весь объём одной зоной.
-      const cells = locs.length > 0 ? countLocationCells([{ zoneId: z.zoneId, floors: z.floors }], roots) : 0;
-      const qty = locs.length > 0 ? perCell * cells : z.qty;
-      return { ...z, qty };
-    });
-
-    for (const z of zones) {
+    for (const z of occurrenceZoneQuantities(occ.location, occ.quantity, roots)) {
       const zoneKey = z.zoneId ?? 'no-zone';
       const key = `${zoneKey}|${typeId}`;
       let slice = byKey.get(key);
@@ -156,7 +153,6 @@ interface LevelSpec {
   level: SplitNode['level'];
   keyOf: (s: RowSlice) => string;
   label: (s: RowSlice) => string;
-  badges?: (s: RowSlice) => SplitNode['badges'];
   isEmpty: (s: RowSlice) => boolean;
 }
 
@@ -175,7 +171,6 @@ function specsFor(levels: SmartSplitLevels): LevelSpec[] {
       level: 'location',
       keyOf: (s) => `loc:${s.zoneKey}`,
       label: (s) => s.zoneName ?? NO_ZONE,
-      badges: (s) => ({ zoneNames: s.zoneName ? [s.zoneName] : [], floorsLabel: formatFloors(s.floors) }),
       isEmpty: (s) => s.zoneKey === 'no-zone',
     });
   }
@@ -231,11 +226,20 @@ function buildLevel(
       }
       leaves.push(...[...byRow.values()].sort((a, b2) => a.row.name.localeCompare(b2.row.name, 'ru')));
     }
+    // Бейджи корпуса: этажи собираем со ВСЕХ строк зоны, а не с первой — иначе подпись «эт. 1»
+    // вместо «эт. 1-3», когда строки зоны стоят на разных этажах.
+    const badges =
+      spec.level === 'location'
+        ? {
+            zoneNames: b.sample.zoneName ? [b.sample.zoneName] : [],
+            floorsLabel: formatFloors(b.slices.flatMap((s) => s.slice.floors)),
+          }
+        : null;
     const node: SplitNode = {
       key: nodeKey,
       level: spec.level,
       label: spec.label(b.sample),
-      badges: spec.badges?.(b.sample) ?? null,
+      badges,
       rowCount: new Set(b.slices.map((s) => s.row.orderKey)).size,
       children: isLeaf ? [] : buildLevel(b.slices, specs, depth + 1, nodeKey),
       leaves,

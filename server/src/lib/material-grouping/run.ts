@@ -339,9 +339,11 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
     // на каждом раунде модель видит уже укрупнённые группы.
     const linesByKey = new Map<string, GroupingLine>(lines.map((l) => [l.orderKey, l]));
     const allGroups = drafts.flatMap((d) => d.groups);
+    // Накопленные из checkpoint слияния — стартовое состояние: при resume раунды продолжаются с
+    // укрупнённых групп, а не гоняются с нуля и не бросаются недоделанными. Сходимость (пустой ответ
+    // модели → break) сама остановит цикл, а MAX_MERGE_ROUNDS ограничивает добавочные раунды.
     const merges: MergeOp[] = [...(job.checkpoint?.merges ?? [])];
-    const startedRounds = merges.length > 0; // resume: раунды уже были — не гоняем заново
-    for (let round = 0; !startedRounds && round < MAX_MERGE_ROUNDS; round++) {
+    for (let round = 0; round < MAX_MERGE_ROUNDS; round++) {
       if (controller.signal.aborted) throw new Error('aborted');
       // Текущее состояние с накопленными слияниями — на клоне, чтобы не мутировать drafts до сборки.
       const current: DraftGroup[] = applyMerges(structuredClone(allGroups), merges).groups;

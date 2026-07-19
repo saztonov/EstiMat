@@ -1,4 +1,21 @@
+export interface ChangelogEntry {
+  /** Номер версии, например '0.25' */
+  version: string;
+  /** Дата коммита YYYY-MM-DD */
+  date: string;
+  /** Понятные пользователю формулировки изменений */
+  changes: string[];
+}
+
+/** Новые версии добавляются В НАЧАЛО массива. Текущая версия = CHANGELOG[0]. */
 export const CHANGELOG: readonly [ChangelogEntry, ...ChangelogEntry[]] = [
+  {
+    version: '1.01',
+    date: '2026-07-19',
+    changes: [
+      'Технические улучшения и исправления',
+    ],
+  },
   {
     version: '1.00',
     date: '2026-07-19',
