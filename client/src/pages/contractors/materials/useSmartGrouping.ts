@@ -10,21 +10,21 @@ import {
   getLatestGroupingJob,
 } from '../../../services/materialGrouping';
 
-/** Ключ — только смета: результат общий, от отборов пользователя он не зависит. */
-const KEY = (estimateId: string) => ['material-grouping', estimateId] as const;
+/** Ключ — смета + подрядчик: у каждого подрядчика свой расчёт. */
+const KEY = (estimateId: string, contractorId: string) => ['material-grouping', estimateId, contractorId] as const;
 const CALLS_KEY = (jobId: string) => ['material-grouping-calls', jobId] as const;
 const CALL_KEY = (jobId: string, callId: string) => ['material-grouping-call', jobId, callId] as const;
 
 /**
- * Группировка сметы. Сам этот запрос и заказывает расчёт: сервер ставит задание при чтении, то
- * есть по открытию вкладки. Пока считается — поллинг (как в ИИ-чате): задание фоновое, и
- * клиентский таймаут запроса роли не играет.
+ * Группировка scope (смета + подрядчик). Сам этот запрос и заказывает расчёт: сервер ставит задание
+ * при чтении, то есть по открытию вкладки. Пока считается — поллинг (как в ИИ-чате): задание
+ * фоновое, и клиентский таймаут запроса роли не играет. Без выбранного подрядчика не грузим.
  */
-export function useSmartGroupingJob(estimateId: string, enabled: boolean) {
+export function useSmartGroupingJob(estimateId: string, contractorId: string | null, enabled: boolean) {
   return useQuery({
-    queryKey: KEY(estimateId),
-    queryFn: () => getLatestGroupingJob(estimateId),
-    enabled: enabled && !!estimateId,
+    queryKey: KEY(estimateId, contractorId ?? ''),
+    queryFn: () => getLatestGroupingJob(estimateId, contractorId!),
+    enabled: enabled && !!estimateId && !!contractorId,
     refetchInterval: (q) => {
       const data = q.state.data;
       // Поллим по active, а не по data: data — это последний готовый результат, и во время
@@ -41,24 +41,25 @@ export function useSmartGroupingJob(estimateId: string, enabled: boolean) {
   });
 }
 
-/** Пересчёт (админ). Настройки и область не передаются — их определяет сервер. */
-export function useRunSmartGrouping(estimateId: string) {
+/** Пересчёт (админ) для scope. Настройки не передаются — их определяет сервер. */
+export function useRunSmartGrouping(estimateId: string, contractorId: string | null) {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
   return useMutation({
     mutationFn: (vars: { force?: boolean } = {}) =>
       createGroupingJob({
         estimateId,
+        contractorId: contractorId ?? undefined,
         clientRequestId: crypto.randomUUID(),
         force: vars.force,
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY(estimateId) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY(estimateId, contractorId ?? '') }),
     onError: (err: Error) => {
       // Понятный текст вместо «409»: занято другим прогоном либо ИИ не настроен.
       const code = err instanceof ApiError ? (err.data as { code?: string } | undefined)?.code : undefined;
       if (code === 'already_running') {
-        message.info('Группировка по этой смете уже выполняется');
-        queryClient.invalidateQueries({ queryKey: KEY(estimateId) });
+        message.info('Группировка уже выполняется');
+        queryClient.invalidateQueries({ queryKey: KEY(estimateId, contractorId ?? '') });
         return;
       }
       message.error(err.message);
@@ -66,7 +67,7 @@ export function useRunSmartGrouping(estimateId: string) {
   });
 }
 
-export function useCancelSmartGrouping(estimateId: string) {
+export function useCancelSmartGrouping(estimateId: string, contractorId: string | null) {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
   return useMutation({
@@ -75,7 +76,7 @@ export function useCancelSmartGrouping(estimateId: string) {
       // Правим кэш вместо немедленного invalidate: refetch пришёл бы раньше, чем сервер погасит
       // задание, вернул бы прежний active — и плашка «идёт расчёт» мигала бы после остановки.
       // Прежний результат при этом остаётся на экране.
-      queryClient.setQueryData<LatestGroupingJobResponse>(KEY(estimateId), (prev) => {
+      queryClient.setQueryData<LatestGroupingJobResponse>(KEY(estimateId, contractorId ?? ''), (prev) => {
         if (!prev || prev.active?.id !== id) return prev;
         return {
           ...prev,
@@ -91,7 +92,7 @@ export function useCancelSmartGrouping(estimateId: string) {
         };
       });
       // Поллинг уже остановлен (active=null) — сверяемся с сервером один раз, без гонки.
-      void queryClient.invalidateQueries({ queryKey: KEY(estimateId) });
+      void queryClient.invalidateQueries({ queryKey: KEY(estimateId, contractorId ?? '') });
     },
     onError: (err: Error) => message.error(err.message),
   });

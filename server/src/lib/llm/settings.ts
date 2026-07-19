@@ -3,7 +3,6 @@
  * в routes/ai и routes/ai-chat, и каждый новый сценарий добавлял ещё одну копию.
  */
 import type { Pool } from 'pg';
-import { groupingSettingsSchema, DEFAULT_GROUPING_SETTINGS, type GroupingSettings } from '@estimat/shared';
 import { config } from '../../config.js';
 
 /**
@@ -33,15 +32,4 @@ export async function resolveQwenNoThink(pool: Pool): Promise<boolean> {
   const r = await pool.query(`SELECT value FROM app_settings WHERE key = 'ai_qwen_no_think'`);
   const v = r.rows[0]?.value;
   return typeof v === 'boolean' ? v : true;
-}
-
-/**
- * Границы групп для умной группировки (material_grouping_levels). Настройка общая: результат
- * один на смету, поэтому уровни задаёт администратор, а не пользователь у себя во вкладке.
- * Некорректное значение из БД игнорируется — как и в GET /settings.
- */
-export async function resolveGroupingLevels(pool: Pool): Promise<GroupingSettings> {
-  const r = await pool.query(`SELECT value FROM app_settings WHERE key = 'material_grouping_levels'`);
-  const parsed = groupingSettingsSchema.safeParse(r.rows[0]?.value);
-  return parsed.success ? parsed.data : DEFAULT_GROUPING_SETTINGS;
 }

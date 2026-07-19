@@ -10,6 +10,7 @@
  */
 import { extractJson } from '../llm/json.js';
 import type { DraftBatch, DraftGroup, GroupingBatch } from './types.js';
+import type { MergeOp } from './assemble.js';
 
 const COMPLETENESS = new Set(['complete', 'incomplete', 'unknown']);
 const COMPATIBILITY = new Set(['no_issues', 'possible_issue', 'unknown']);
@@ -48,7 +49,6 @@ export function parseBatchResponse(raw: string, batch: GroupingBatch): DraftBatc
   const warnings: string[] = [];
   const empty: DraftBatch = {
     batchIndex: batch.index,
-    partitionKey: batch.partitionKey,
     groups: [],
     sharedKeys: [],
     ungroupedKeys: [],
@@ -100,7 +100,6 @@ export function parseBatchResponse(raw: string, batch: GroupingBatch): DraftBatc
     groups.push({
       id: `b${batch.index}g${seq++}`,
       batchIndex: batch.index,
-      partitionKey: batch.partitionKey,
       name,
       purpose: g ? str(g.purpose) : null,
       // Недопустимое или отсутствующее значение → unknown: «не знаю» безопаснее выдумки.
@@ -116,7 +115,6 @@ export function parseBatchResponse(raw: string, batch: GroupingBatch): DraftBatc
 
   return {
     batchIndex: batch.index,
-    partitionKey: batch.partitionKey,
     groups,
     sharedKeys: mapIdx(parsed.shared, batch, duplicated, warnings),
     ungroupedKeys: [...mapIdx(parsed.ungrouped, batch, duplicated, warnings), ...duplicated],
@@ -163,11 +161,14 @@ function parseMissing(raw: unknown): DraftGroup['missing'] {
   return out;
 }
 
-/** Разбор ответа фазы слияния. Неизвестные id игнорируются. */
-export function parseMergeResponse(raw: string, known: Set<string>): { into: string; from: string[]; name: string | null }[] {
+/**
+ * Разбор ответа фазы слияния. Неизвестные id игнорируются. Пересмотренная оценка (purpose,
+ * completeness, compatibility) необязательна: при отсутствии сборка вернётся к «худшему из двух».
+ */
+export function parseMergeResponse(raw: string, known: Set<string>): MergeOp[] {
   const parsed = asRecord(extractJson(raw));
   const list = parsed && Array.isArray(parsed.merge) ? parsed.merge : [];
-  const out: { into: string; from: string[]; name: string | null }[] = [];
+  const out: MergeOp[] = [];
   for (const item of list) {
     const r = asRecord(item);
     const into = r ? str(r.into) : null;
@@ -175,7 +176,18 @@ export function parseMergeResponse(raw: string, known: Set<string>): { into: str
     const from = Array.isArray(r.from)
       ? r.from.map((v) => str(v)).filter((v): v is string => !!v && known.has(v) && v !== into)
       : [];
-    if (from.length) out.push({ into, from, name: str(r.name) });
+    if (!from.length) continue;
+    const completeness = str(r.completeness);
+    const compatibility = str(r.compatibility);
+    out.push({
+      into,
+      from,
+      name: str(r.name),
+      purpose: str(r.purpose),
+      completeness: completeness && COMPLETENESS.has(completeness) ? (completeness as MergeOp['completeness']) : null,
+      compatibility:
+        compatibility && COMPATIBILITY.has(compatibility) ? (compatibility as MergeOp['compatibility']) : null,
+    });
   }
   return out;
 }

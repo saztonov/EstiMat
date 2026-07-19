@@ -9,10 +9,10 @@ import { api } from './api';
 
 export type { LatestGroupingJobResponse } from '@estimat/shared';
 
-/** Группировка одна на смету: ни отбор по подрядчикам, ни настройки пользователя на неё не влияют. */
-export function getLatestGroupingJob(estimateId: string) {
+/** Группировка принадлежит паре (смета, подрядчик): считается по назначенным подрядчику материалам. */
+export function getLatestGroupingJob(estimateId: string, contractorId: string) {
   return api.get<LatestGroupingJobResponse>(
-    `/material-grouping/jobs/latest?${new URLSearchParams({ estimateId }).toString()}`,
+    `/material-grouping/jobs/latest?${new URLSearchParams({ estimateId, contractorId }).toString()}`,
   );
 }
 

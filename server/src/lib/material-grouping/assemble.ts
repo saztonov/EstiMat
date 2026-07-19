@@ -14,9 +14,17 @@ export interface MergeOp {
   into: string;
   from: string[];
   name: string | null;
+  /** Пересмотренная оценка объединённой группы от модели; null — вернуться к «худшему из двух». */
+  purpose: string | null;
+  completeness: DraftGroup['completeness'] | null;
+  compatibility: DraftGroup['compatibility'] | null;
 }
 
-/** Слить черновые группы по указаниям фазы reduce. Только внутри одной партиции. */
+/**
+ * Слить черновые группы по указаниям фазы reduce. Merge глобальный — вида работ как границы больше
+ * нет, одну операцию под разными видами работ слить можно. Оценку объединённой группы берём из
+ * пересмотра модели; если его нет — консервативно «худшее из двух».
+ */
 export function applyMerges(groups: DraftGroup[], merges: MergeOp[]): { groups: DraftGroup[]; warnings: string[] } {
   const byId = new Map(groups.map((g) => [g.id, g]));
   const removed = new Set<string>();
@@ -25,24 +33,25 @@ export function applyMerges(groups: DraftGroup[], merges: MergeOp[]): { groups: 
   for (const op of merges) {
     const target = byId.get(op.into);
     if (!target || removed.has(op.into)) continue;
+    let mergedAny = false;
     for (const fromId of op.from) {
       const src = byId.get(fromId);
       if (!src || removed.has(fromId) || fromId === op.into) continue;
-      // Партиция — это граница, которую включил пользователь. Модель не вправе её пересечь
-      // даже на слиянии: проверяем сами, а не полагаемся на промпт.
-      if (src.partitionKey !== target.partitionKey) {
-        warnings.push(`Слияние «${src.name}» отклонено: разные области группировки`);
-        continue;
-      }
       for (const k of src.orderKeys) if (!target.orderKeys.includes(k)) target.orderKeys.push(k);
       target.issues.push(...src.issues);
       target.missing.push(...src.missing);
-      // Оценка объединённой группы — консервативная: худшее из двух.
+      // Фолбэк-оценка на случай, если модель не прислала пересмотр: худшее из двух.
       target.completeness = worstCompleteness(target.completeness, src.completeness);
       target.compatibility = worstCompatibility(target.compatibility, src.compatibility);
       removed.add(fromId);
+      mergedAny = true;
     }
+    if (!mergedAny) continue;
     if (op.name) target.name = op.name;
+    if (op.purpose) target.purpose = op.purpose;
+    // Пересмотр модели перекрывает фолбэк: две неполные половины вместе могут быть комплектом.
+    if (op.completeness) target.completeness = op.completeness;
+    if (op.compatibility) target.compatibility = op.compatibility;
   }
 
   return { groups: groups.filter((g) => !removed.has(g.id)), warnings };

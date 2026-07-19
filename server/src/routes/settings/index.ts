@@ -1,13 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import {
-  updateAppSettingsSchema,
-  aiCatalogSourceSchema,
-  groupingSettingsSchema,
-  DEFAULT_GROUPING_SETTINGS,
-  type AppSettings,
-} from '@estimat/shared';
+import { updateAppSettingsSchema, aiCatalogSourceSchema, type AppSettings } from '@estimat/shared';
 
 // Соответствие полей API ключам в app_settings.
 const SETTING_KEYS: Record<keyof AppSettings, string> = {
@@ -17,7 +11,6 @@ const SETTING_KEYS: Record<keyof AppSettings, string> = {
   aiModelDefault: 'ai_model_default',
   aiChatModelDefault: 'ai_chat_model_default',
   aiQwenNoThink: 'ai_qwen_no_think',
-  materialGroupingLevels: 'material_grouping_levels',
 };
 
 const DEFAULTS: AppSettings = {
@@ -27,7 +20,6 @@ const DEFAULTS: AppSettings = {
   aiModelDefault: 'google/gemini-2.5-flash',
   aiChatModelDefault: 'google/gemini-2.5-flash',
   aiQwenNoThink: true,
-  materialGroupingLevels: DEFAULT_GROUPING_SETTINGS,
 };
 
 export default async function settingsRoutes(fastify: FastifyInstance) {
@@ -51,8 +43,6 @@ export default async function settingsRoutes(fastify: FastifyInstance) {
     if (typeof chatDef === 'string' && chatDef) settings.aiChatModelDefault = chatDef;
     const noThink = byKey.get(SETTING_KEYS.aiQwenNoThink);
     if (typeof noThink === 'boolean') settings.aiQwenNoThink = noThink;
-    const levels = groupingSettingsSchema.safeParse(byKey.get(SETTING_KEYS.materialGroupingLevels));
-    if (levels.success) settings.materialGroupingLevels = levels.data;
     return settings;
   }
 

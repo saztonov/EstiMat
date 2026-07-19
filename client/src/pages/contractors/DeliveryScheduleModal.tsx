@@ -117,6 +117,8 @@ interface Props {
   lines: ScheduleLineInput[];
   /** Смета — для умной группировки: ключ запроса общий с панелью вкладки. */
   estimateId: string;
+  /** Подрядчик scope умной группировки (заявка всегда от одного подрядчика). */
+  contractorId: string | null;
   /**
    * Полный свод заявки — ИСТОЧНИК ГРУППИРОВКИ (категория, вид работ, ключи ИИ-групп), но не
    * количеств: их берём из lines, там доля заявки, а не сметный объём.
@@ -149,7 +151,7 @@ const rowKey = (costTypeId: string | null, aggKey: string) => `${costTypeId ?? '
  * под каждый новый набор строк. Если заменить это на постоянно смонтированное окно с `open`, даты
  * прошлой заявки переживут закрытие.
  */
-export function DeliveryScheduleModal({ open, lines, estimateId, rows, levels, loading, onCancel, onConfirm }: Props) {
+export function DeliveryScheduleModal({ open, lines, estimateId, contractorId, rows, levels, loading, onCancel, onConfirm }: Props) {
   const { message } = App.useApp();
   const [singleDate, setSingleDate] = useState(false);
   const [commonDate, setCommonDate] = useState<Dayjs | null>(null);
@@ -159,7 +161,7 @@ export function DeliveryScheduleModal({ open, lines, estimateId, rows, levels, l
   // Своё состояние свёрнутости на режим: ключи листьев дерева и ИИ-групп из разных пространств.
   const [collapsedStandard, setCollapsedStandard] = useState<Set<string>>(new Set());
   const [collapsedSmart, setCollapsedSmart] = useState<Set<string>>(new Set());
-  const smartJob = useSmartGroupingJob(estimateId, smart);
+  const smartJob = useSmartGroupingJob(estimateId, contractorId, smart && !!contractorId);
   // Ключ материала → записи графика. По умолчанию одна запись на полное количество.
   const [schedule, setSchedule] = useState<Map<string, Entry[]>>(() => {
     const m = new Map<string, Entry[]>();

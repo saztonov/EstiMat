@@ -1,34 +1,25 @@
 /**
- * Планирование батчей.
+ * Планирование батчей — ТОЛЬКО техническая нарезка.
  *
- * Зачем вообще: 576 позиций в один ответ не помещаются — у LM Studio лимит вывода 8192 токена,
- * а ответ на всю смету это ~15 000. Режем на наборы по ~80 строк.
+ * Зачем: смета не помещается в один ответ модели (лимит вывода ~8192 токена), режем на наборы по
+ * ~80 строк. Родственное держим вместе по affinity (вид работ → работа), чтобы модель видела
+ * операцию целиком, но это НЕ граница: группы разных наборов вправе слиться глобальным merge.
  *
- * Граница — работа, а не вид работ: в реальной смете «Отопление» это 410 строк из 576 (71 %),
- * и батч по виду работ ничего бы не решил. При этом только 6 строк из 576 встречаются больше
- * чем в одной работе, а средняя работа — 10 строк, так что работа режется идеально.
- *
- * План ДЕТЕРМИНИРОВАН: один и тот же вход всегда даёт одни и те же батчи. На этом держится
- * resume — после перезапуска раннер обязан получить тот же план, иначе checkpoint не сойдётся.
+ * План ДЕТЕРМИНИРОВАН: один и тот же вход всегда даёт одни и те же батчи. На этом держится resume —
+ * после перезапуска раннер обязан получить тот же план, иначе checkpoint не сойдётся. ALGO_VERSION
+ * повышается при изменении нарезки, чтобы задания старого алгоритма не доигрывались по чужому плану.
  */
-import type { GroupingBatch, GroupingLine, GroupingSettings } from './types.js';
+import type { GroupingBatch, GroupingLine } from './types.js';
+
+/** Версия алгоритма нарезки. Входит в хэш и снимок задания; resume несовместимой версии запрещён. */
+export const ALGO_VERSION = 'batch-2';
 
 export const MAX_LINES_PER_BATCH = 80;
 /** Ограничение на объём названий в батче: 80 длинных позиций тоже должны влезть в ответ. */
 export const MAX_NAME_CHARS_PER_BATCH = 7000;
 
-/**
- * Hard partition: границы, которые модель физически не может нарушить — материалов другого
- * partition просто нет в её запросе. Включённый флаг = материалы с разными значениями
- * объединять нельзя, поэтому валидация превращается в дешёвую проверку.
- */
-export function partitionKeyOf(line: GroupingLine, s: GroupingSettings): string {
-  const parts: string[] = [];
-  if (s.costType) parts.push(`ct:${line.costTypeId ?? ''}`);
-  if (s.location) parts.push(`loc:${line.locationSig}`);
-  if (s.locationType) parts.push(`lt:${line.typeSig}`);
-  return parts.join('|');
-}
+/** Affinity набора — вид работ его строк. Пишется в журнал как partition_key (для отладки). */
+const affinityKeyOf = (costTypeId: string | null): string => `ct:${costTypeId ?? ''}`;
 
 const nameCost = (l: GroupingLine) => l.name.length + 24;
 
@@ -60,8 +51,8 @@ function splitOversizedWork(lines: GroupingLine[]): GroupingLine[][] {
 function packWorks(works: GroupingLine[][]): GroupingLine[][] {
   const bins: { lines: GroupingLine[]; chars: number }[] = [];
   // Крупные работы первыми — иначе они не влезут в уже занятые наборы. Тай-брейк — по
-  // МИНИМАЛЬНОМУ ключу работы, а не по первой строке: порядок строк внутри работы зависит от
-  // порядка выборки, и план перестал бы быть детерминированным (а на нём держится resume).
+  // МИНИМАЛЬНОМУ ключу работы: порядок строк внутри работы зависит от выборки, и план перестал
+  // бы быть детерминированным (а на нём держится resume).
   const minKey = (w: GroupingLine[]) => w.reduce((m, l) => (l.orderKey < m ? l.orderKey : m), w[0]?.orderKey ?? '');
   const sorted = [...works].sort((a, b) => b.length - a.length || minKey(a).localeCompare(minKey(b)));
   for (const work of sorted) {
@@ -80,18 +71,19 @@ function packWorks(works: GroupingLine[][]): GroupingLine[][] {
 }
 
 /** Составить план батчей. Чистая функция: одинаковый вход → одинаковый выход. */
-export function planBatches(lines: GroupingLine[], settings: GroupingSettings): GroupingBatch[] {
-  const byPartition = new Map<string, GroupingLine[]>();
+export function planBatches(lines: GroupingLine[]): GroupingBatch[] {
+  // Affinity верхнего уровня — вид работ: родственное держим вместе, но это не запрет на слияние.
+  const byCostType = new Map<string, GroupingLine[]>();
   for (const l of lines) {
-    const key = partitionKeyOf(l, settings);
-    const bucket = byPartition.get(key);
+    const key = l.costTypeId ?? '';
+    const bucket = byCostType.get(key);
     if (bucket) bucket.push(l);
-    else byPartition.set(key, [l]);
+    else byCostType.set(key, [l]);
   }
 
   const batches: GroupingBatch[] = [];
-  for (const partitionKey of [...byPartition.keys()].sort()) {
-    const partLines = byPartition.get(partitionKey)!;
+  for (const costTypeId of [...byCostType.keys()].sort()) {
+    const partLines = byCostType.get(costTypeId)!;
 
     // Строки одной работы держим вместе: материалы одной операции не должны разъезжаться.
     const byWork = new Map<string, GroupingLine[]>();
@@ -115,21 +107,10 @@ export function planBatches(lines: GroupingLine[], settings: GroupingSettings): 
     for (const binLines of packWorks(works)) {
       batches.push({
         index: batches.length,
-        partitionKey,
+        affinityKey: affinityKeyOf(costTypeId || null),
         lines: [...binLines].sort((a, b) => a.name.localeCompare(b.name, 'ru') || a.orderKey.localeCompare(b.orderKey)),
       });
     }
   }
   return batches;
-}
-
-/**
- * Партиции, размазанные больше чем по одному батчу: только их и нужно сливать вторым проходом.
- * Иначе «Монтаж трубопровода» из батча 1 и из батча 3 останутся двумя разными группами — даже
- * когда вид работ учитывается и обе группы законно лежат в одной партиции.
- */
-export function partitionsNeedingMerge(batches: GroupingBatch[]): string[] {
-  const count = new Map<string, number>();
-  for (const b of batches) count.set(b.partitionKey, (count.get(b.partitionKey) ?? 0) + 1);
-  return [...count.entries()].filter(([, n]) => n > 1).map(([k]) => k).sort();
 }

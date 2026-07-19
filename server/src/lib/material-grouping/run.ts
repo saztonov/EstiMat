@@ -9,19 +9,21 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { GroupingSettings } from '@estimat/shared';
 import { loadLlmRuntime, resolveLlmEndpoint } from '../llm/endpoint.js';
 import { withLmStudioSlot } from '../llm/limiter.js';
 import { resolveAiModel, resolveQwenNoThink } from '../llm/settings.js';
 import { resolvePrompt } from '../llm/prompts.js';
 import { chatJsonOnce, LlmCallError, LlmEmptyResponseError, LlmTimeoutError } from '../llm/chat-json.js';
 import { loadGroupingLines } from './input.js';
-import { planBatches, partitionsNeedingMerge } from './batch.js';
+import { planBatches } from './batch.js';
 import { buildSystemPrompt, buildBatchUserPrompt, buildMergeUserPrompt } from './prompt.js';
 import { parseBatchResponse, parseMergeResponse } from './parse.js';
-import { assembleResult, type MergeOp } from './assemble.js';
+import { applyMerges, assembleResult, type MergeOp } from './assemble.js';
 import { closeDanglingCalls, finishCall, markCall, startCall, type CallStatus } from './call-log.js';
-import type { DraftBatch, GroupingBatch } from './types.js';
+import type { DraftBatch, DraftGroup, GroupingBatch, GroupingLine } from './types.js';
+
+/** Сколько раундов reduce делаем максимум, если модель продолжает находить слияния. */
+const MAX_MERGE_ROUNDS = 3;
 
 /** Идентификатор процесса-исполнителя: чей это захват. */
 const WORKER_ID = `${process.pid}-${randomUUID().slice(0, 8)}`;
@@ -74,8 +76,11 @@ interface JobSnapshot {
 interface JobRow {
   id: string;
   estimate_id: string;
+  /** Подрядчик задания (scope_org_id). Нужен для fallback-чтения снимка у старых заданий. */
+  scope_org_id: string | null;
   payload: { snapshot?: JobSnapshot };
-  settings: GroupingSettings;
+  /** Канонический снимок строк входа, зафиксированный при создании. */
+  input: { lines?: GroupingLine[] } | null;
   attempts: number;
   max_attempts: number;
   checkpoint: { batches?: Record<string, DraftBatch>; merges?: MergeOp[] };
@@ -110,7 +115,7 @@ async function claim(fastify: FastifyInstance, jobId: string): Promise<JobRow | 
         AND status IN ('pending', 'running')
         AND next_run_at <= now()
         AND (locked_until IS NULL OR locked_until < now())
-      RETURNING id, estimate_id, payload, settings, attempts, max_attempts, checkpoint`,
+      RETURNING id, estimate_id, scope_org_id, payload, input, attempts, max_attempts, checkpoint`,
     [jobId, WORKER_ID, String(LOCK_TTL_MS)],
   );
   return rows[0] ?? null;
@@ -168,7 +173,14 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
   await closeDanglingCalls(fastify, jobId);
 
   try {
-    const lines = await loadGroupingLines(fastify.pool, job.estimate_id);
+    // Вход берём из СНИМКА задания, а не из живой сметы: правка сметы во время прогона не должна
+    // разъезжаться с тем, что заказали и учли в input_hash. Fallback (чтение по scope) — только
+    // для заданий, созданных до появления снимка.
+    const lines =
+      job.input?.lines ??
+      (job.scope_org_id
+        ? await loadGroupingLines(fastify.pool, { estimateId: job.estimate_id, contractorId: job.scope_org_id })
+        : []);
     if (lines.length === 0) throw new Error('В смете нет материалов');
 
     // Промпты/модель/режим берём ИЗ СНИМКА задания — resume и retry обязаны идти на том же
@@ -185,7 +197,7 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
     // Фактическая модель, а не строка из снимка: при варианте «OpenRouter (прокси)» снимок хранит
     // 'openrouter:' без идентификатора, и журнал не отвечал бы на вопрос, чем считали.
     const actualModel = `${ep.provider}:${ep.model}`;
-    const batches = planBatches(lines, job.settings);
+    const batches = planBatches(lines);
     const deadline = started + (ep.isLmStudio ? JOB_DEADLINE_LM_MS : JOB_DEADLINE_OR_MS);
     const attemptTimeout = ep.isLmStudio ? ATTEMPT_TIMEOUT_LM_MS : ATTEMPT_TIMEOUT_OR_MS;
     const callBudget = ep.isLmStudio ? CALL_BUDGET_LM_MS : CALL_BUDGET_OR_MS;
@@ -201,7 +213,7 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
       [
         jobId,
         batches.length,
-        JSON.stringify(batches.map((b) => ({ index: b.index, partitionKey: b.partitionKey, lines: b.lines.length }))),
+        JSON.stringify(batches.map((b) => ({ index: b.index, partitionKey: b.affinityKey, lines: b.lines.length }))),
         actualModel,
       ],
     );
@@ -209,7 +221,7 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
     // Resume: наборы из checkpoint не пересчитываем. План детерминирован, поэтому индексы
     // после рестарта означают ровно те же строки.
     const done: Record<string, DraftBatch> = { ...(job.checkpoint?.batches ?? {}) };
-    const system = buildSystemPrompt(job.settings, systemBase);
+    const system = buildSystemPrompt(systemBase);
 
     const runBatch = async (batch: GroupingBatch): Promise<void> => {
       if (done[String(batch.index)]) return;
@@ -218,14 +230,14 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
       // растягивают друг друга и упираются в дедлайн — при исчерпании попыток задание уходит в
       // dead, откуда его поднимает только ручной «Пересчитать».
       if (Date.now() - waitedForSlotMs > deadline) throw new Error('Превышено время выполнения задания');
-      const userPrompt = buildBatchUserPrompt(batch, job.settings);
+      const userPrompt = buildBatchUserPrompt(batch);
       // Запись заводим до отправки: пока модель думает, журнал обязан показывать сам факт работы.
       const callId = await startCall(fastify, {
         jobId,
         attempt: job.attempts,
         kind: 'batch',
         batchIndex: batch.index,
-        partitionKey: batch.partitionKey,
+        partitionKey: batch.affinityKey,
         linesCount: batch.lines.length,
         model: actualModel,
       });
@@ -322,75 +334,83 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
     const drafts = batches.map((b) => done[String(b.index)]).filter((d): d is DraftBatch => !!d);
     if (drafts.length === 0) throw new Error('Модель не вернула ни одного разобранного ответа');
 
-    // Слияние — только для областей, разъехавшихся по нескольким наборам.
+    // Слияние — ГЛОБАЛЬНОЕ: вида работ как границы больше нет, одну операцию под разными видами
+    // работ можно слить. Итеративно, пока модель находит слияния, но не больше MAX_MERGE_ROUNDS:
+    // на каждом раунде модель видит уже укрупнённые группы.
+    const linesByKey = new Map<string, GroupingLine>(lines.map((l) => [l.orderKey, l]));
+    const allGroups = drafts.flatMap((d) => d.groups);
     const merges: MergeOp[] = [...(job.checkpoint?.merges ?? [])];
-    if (merges.length === 0) {
-      for (const partitionKey of partitionsNeedingMerge(batches)) {
-        const groups = drafts.filter((d) => d.partitionKey === partitionKey).flatMap((d) => d.groups);
-        if (groups.length < 2) continue;
-        if (controller.signal.aborted) throw new Error('aborted');
-        const mergePrompt = buildMergeUserPrompt(groups);
-        const callId = await startCall(fastify, {
-          jobId,
-          attempt: job.attempts,
-          kind: 'merge',
-          batchIndex: null,
-          partitionKey,
-          linesCount: groups.length,
-          model: qualifiedModel,
+    const startedRounds = merges.length > 0; // resume: раунды уже были — не гоняем заново
+    for (let round = 0; !startedRounds && round < MAX_MERGE_ROUNDS; round++) {
+      if (controller.signal.aborted) throw new Error('aborted');
+      // Текущее состояние с накопленными слияниями — на клоне, чтобы не мутировать drafts до сборки.
+      const current: DraftGroup[] = applyMerges(structuredClone(allGroups), merges).groups;
+      if (current.length < 2) break;
+      const mergePrompt = buildMergeUserPrompt(current, linesByKey);
+      const callId = await startCall(fastify, {
+        jobId,
+        attempt: job.attempts,
+        kind: 'merge',
+        batchIndex: null,
+        partitionKey: `round-${round}`,
+        linesCount: current.length,
+        model: qualifiedModel,
+      });
+      try {
+        const call = async () => {
+          await markCall(fastify, callId, 'in_progress');
+          return chatJsonOnce(
+            {
+              endpoint: ep,
+              signal: controller.signal,
+              attemptTimeoutMs: attemptTimeout,
+              callBudgetMs: callBudget,
+              idempotencyKey: callId ?? undefined,
+              noThink,
+            },
+            mergeSystem,
+            mergePrompt,
+          );
+        };
+        const res = ep.isLmStudio ? await withLmStudioSlot(call) : await call();
+        const ops = parseMergeResponse(res.content, new Set(current.map((g) => g.id)));
+        await finishCall(fastify, callId, {
+          status: 'succeeded',
+          parseStatus: 'ok',
+          groupsCount: ops.length,
+          systemText: res.sentSystem,
+          requestText: res.sentUser,
+          responseText: res.content,
+          finishReason: res.finishReason,
+          usage: res.usage,
+          attempts: res.attempts,
+          durationMs: res.durationMs,
         });
-        try {
-          const call = async () => {
-            await markCall(fastify, callId, 'in_progress');
-            return chatJsonOnce(
-              {
-                endpoint: ep,
-                signal: controller.signal,
-                attemptTimeoutMs: attemptTimeout,
-                callBudgetMs: callBudget,
-                idempotencyKey: callId ?? undefined,
-                noThink,
-              },
-              mergeSystem,
-              mergePrompt,
-            );
-          };
-          const res = ep.isLmStudio ? await withLmStudioSlot(call) : await call();
-          const ops = parseMergeResponse(res.content, new Set(groups.map((g) => g.id)));
+        if (ops.length === 0) break; // сходимость: сливать больше нечего
+        merges.push(...ops);
+        // Сохраняем раунды в checkpoint: при рестарте reduce не гоняем заново.
+        await heartbeat(fastify, jobId, Object.keys(done).length, { batches: done, merges });
+      } catch (err) {
+        // Слияние — улучшение, а не обязательный шаг: его сбой не должен убивать прогон.
+        if (err instanceof LlmCallError) {
           await finishCall(fastify, callId, {
-            status: 'succeeded',
-            parseStatus: 'ok',
-            groupsCount: ops.length,
-            systemText: res.sentSystem,
-            requestText: res.sentUser,
-            responseText: res.content,
-            finishReason: res.finishReason,
-            usage: res.usage,
-            attempts: res.attempts,
-            durationMs: res.durationMs,
+            status: callStatusOf(err.cause, controller.signal.aborted),
+            systemText: err.sentSystem,
+            requestText: err.sentUser,
+            attempts: err.attempts,
+            error: err.message,
+            durationMs: err.durationMs,
           });
-          merges.push(...ops);
-        } catch (err) {
-          // Слияние — улучшение, а не обязательный шаг: его сбой не должен убивать прогон.
-          if (err instanceof LlmCallError) {
-            await finishCall(fastify, callId, {
-              status: callStatusOf(err.cause, controller.signal.aborted),
-              systemText: err.sentSystem,
-              requestText: err.sentUser,
-              attempts: err.attempts,
-              error: err.message,
-              durationMs: err.durationMs,
-            });
-          } else {
-            await finishCall(fastify, callId, {
-              status: controller.signal.aborted ? 'cancelled' : 'failed',
-              systemText: mergeSystem,
-              requestText: mergePrompt,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-          fastify.log.warn({ err, jobId, partitionKey }, 'material grouping merge failed');
+        } else {
+          await finishCall(fastify, callId, {
+            status: controller.signal.aborted ? 'cancelled' : 'failed',
+            systemText: mergeSystem,
+            requestText: mergePrompt,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
+        fastify.log.warn({ err, jobId, round }, 'material grouping merge failed');
+        break;
       }
     }
 

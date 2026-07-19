@@ -9,6 +9,7 @@ import {
   type MaterialRequestType,
 } from '@estimat/shared';
 import { api, ApiError } from '../../services/api';
+import { useAuthStore } from '../../store/authStore';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { buildMaterialGroups } from '../estimates/materials/aggregateMaterials';
 import { type EstimateItem } from '../estimates/components/types';
@@ -165,6 +166,10 @@ export function ContractorsMaterialsTab({
   // Заявка всегда от имени одного подрядчика: сотруднику нужно выбрать ровно одного.
   const targetContractorId = viewerIsContractor ? null : (filterContractorIds[0] ?? null);
   const canCreateRequest = viewerIsContractor || filterContractorIds.length === 1;
+  // Умная группировка считается по scope (смета + подрядчик). Подрядчику — его организация;
+  // сотруднику нужен ровно один выбранный подрядчик, иначе scope не определён.
+  const myOrgId = useAuthStore((s) => s.user?.orgId ?? null);
+  const smartContractorId = viewerIsContractor ? myOrgId : filterContractorIds.length === 1 ? filterContractorIds[0]! : null;
   const targetContractorName = targetContractorId
     ? (assignedContractorOptions.find((o) => o.value === targetContractorId)?.label ?? null)
     : null;
@@ -465,7 +470,7 @@ export function ContractorsMaterialsTab({
 
   // Тот же ключ запроса, что и в панели, — TanStack отдаёт общий кэш, второго запроса нет.
   // Нужен здесь только ради ключей «Свернуть всё».
-  const smartJob = useSmartGroupingJob(estimateId, smart);
+  const smartJob = useSmartGroupingJob(estimateId, smartContractorId, smart && !!smartContractorId);
   const smartResult = smartJob.data?.data?.result ?? null;
   // Подпись переключателя «Только с замечаниями» и сам отбор в панели считают одно и то же —
   // иначе счётчик обещал бы одно число групп, а экран показывал другое.
@@ -658,6 +663,7 @@ export function ContractorsMaterialsTab({
           // Умный режим использует те же строки и те же колонки — черновик заявки общий.
           <SmartGroupingPanel
             estimateId={estimateId}
+            contractorId={smartContractorId}
             rows={rows}
             columns={columns}
             isAdmin={isAdmin}
@@ -707,6 +713,7 @@ export function ContractorsMaterialsTab({
           open
           lines={scheduleModal.lines}
           estimateId={estimateId}
+          contractorId={smartContractorId}
           rows={requestRows}
           levels={levels}
           loading={submitMutation.isPending}

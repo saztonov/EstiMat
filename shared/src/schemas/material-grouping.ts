@@ -11,21 +11,23 @@ import { z } from 'zod';
  * Подрядчику ответ обрезается на сервере до его строк (lib/material-grouping/project.ts).
  */
 
-/** Границы групп для модели. Настройка глобальная (app_settings), задаётся администратором. */
-export const groupingSettingsSchema = z.object({
-  /** true — материалы разных видов работ объединять нельзя. */
-  costType: z.boolean(),
-  location: z.boolean(),
-  locationType: z.boolean(),
+/**
+ * Область расчёта: смета + подрядчик. Результат считается и хранится по этой паре, а не на всю
+ * смету. ИИ получает только материалы работ, назначенных подрядчику, в количествах его доли.
+ */
+export const groupingScopeSchema = z.object({
+  estimateId: z.string().uuid(),
+  contractorId: z.string().uuid(),
 });
-export type GroupingSettings = z.infer<typeof groupingSettingsSchema>;
+export type GroupingScope = z.infer<typeof groupingScopeSchema>;
 
-/** Значение по умолчанию — то же, что привычный вид вкладки: разделять только по виду работ. */
-export const DEFAULT_GROUPING_SETTINGS: GroupingSettings = {
-  costType: true,
-  location: false,
-  locationType: false,
-};
+/**
+ * Устаревшая настройка границ группировки. Границы (вид работ/локация/тип) больше не разделяют
+ * группы для ИИ: вид работ стал affinity-подсказкой в промпте, локация и тип ушли в отображение
+ * внутри готовых блоков. Тип сохранён только для чтения колонки settings у старых заданий.
+ */
+export const groupingSettingsSchema = z.object({}).passthrough();
+export type GroupingSettings = z.infer<typeof groupingSettingsSchema>;
 
 /**
  * Две независимые оси вместо одного статуса: «комплект неполон» и «есть возможная
@@ -90,8 +92,10 @@ export type GroupingJobStatus = (typeof GROUPING_JOB_STATUSES)[number];
 export const groupingJobSchema = z.object({
   id: z.string().uuid(),
   estimateId: z.string().uuid(),
+  /** Подрядчик, для которого считался результат (scope_org_id). */
+  contractorId: z.string().uuid().nullable(),
   status: z.enum(GROUPING_JOB_STATUSES),
-  settings: groupingSettingsSchema,
+  settings: groupingSettingsSchema.optional(),
   inputHash: z.string(),
   batchesTotal: z.number(),
   batchesDone: z.number(),
@@ -111,6 +115,11 @@ export type GroupingJob = z.infer<typeof groupingJobSchema>;
  */
 export const createGroupingJobSchema = z.object({
   estimateId: z.string().uuid(),
+  /**
+   * Подрядчик, для которого считать. Обязателен для сотрудника; у пользователя-подрядчика сервер
+   * подставляет его организацию и чужой contractorId игнорирует.
+   */
+  contractorId: z.string().uuid().optional(),
   clientRequestId: z.string().uuid(),
   /** Пересчитать, даже если готовый результат с тем же входом уже есть. */
   force: z.boolean().optional(),

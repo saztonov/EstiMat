@@ -10,7 +10,6 @@ import {
 } from '@estimat/shared';
 import { useAiPrompts } from '../../hooks/useAiPrompts';
 import { updateAiPrompt } from '../../services/aiPrompts';
-import { GroupingLevelsPopover } from './GroupingLevelsPopover';
 
 // Вкладка «Промпты»: редактирование текстов, уходящих в LLM. Только admin (защита на сервере).
 export function PromptsPanel() {
@@ -111,9 +110,6 @@ export function PromptsPanel() {
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingTop: 16 }}>
-      <div style={{ marginBottom: 12 }}>
-        <GroupingLevelsPopover />
-      </div>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12.5, maxWidth: 900 }}>
         Тексты промптов, отправляемых в модель. Правки применяются к новым запросам: для умной
         группировки — к заданиям, запущенным после сохранения (готовые результаты остаются как есть).

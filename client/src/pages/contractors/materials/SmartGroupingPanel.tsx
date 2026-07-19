@@ -18,9 +18,11 @@ import { useCancelSmartGrouping, useRunSmartGrouping, useSmartGroupingJob } from
 
 interface Props {
   estimateId: string;
+  /** Подрядчик scope: расчёт принадлежит паре (смета, подрядчик). null — подрядчик не выбран. */
+  contractorId: string | null;
   rows: OrderMaterialRow[];
   columns: ColumnsType<OrderMaterialRow>;
-  /** Управление расчётом — только у админа: результат общий и затрагивает всех. */
+  /** Управление расчётом — только у админа. */
   isAdmin: boolean;
   collapsed: Set<string>;
   onToggle: (key: string) => void;
@@ -41,12 +43,13 @@ interface Props {
 export { SHARED_KEY, UNGROUPED_KEY };
 
 /**
- * Умная группировка: результат один на смету и одинаков для всех. Расчёт заказывает само открытие
- * этой панели (сервер ставит задание при чтении роута), но не чаще раза в полчаса на смету.
- * Подрядчику сервер отдаёт результат обрезанным до своих строк — здесь область уже не выбирается.
+ * Умная группировка: результат принадлежит паре (смета, подрядчик) — ИИ группирует материалы работ,
+ * назначенных подрядчику, в количествах его доли. Расчёт заказывает само открытие этой панели
+ * (сервер ставит задание при чтении роута), но не чаще раза в полчаса на scope.
  */
 export function SmartGroupingPanel({
   estimateId,
+  contractorId,
   rows,
   columns,
   isAdmin,
@@ -58,9 +61,9 @@ export function SmartGroupingPanel({
   rowClassName,
   dimension,
 }: Props) {
-  const jobQuery = useSmartGroupingJob(estimateId, true);
-  const run = useRunSmartGrouping(estimateId);
-  const cancel = useCancelSmartGrouping(estimateId);
+  const jobQuery = useSmartGroupingJob(estimateId, contractorId, !!contractorId);
+  const run = useRunSmartGrouping(estimateId, contractorId);
+  const cancel = useCancelSmartGrouping(estimateId, contractorId);
   const [logJobId, setLogJobId] = useState<string | null>(null);
 
   const job = jobQuery.data?.data ?? null;
@@ -87,6 +90,16 @@ export function SmartGroupingPanel({
   );
   const byKey = useMemo(() => new Map(rows.map((r) => [r.orderKey, r])), [rows]);
   const pick = (keys: string[]) => keys.map((k) => byKey.get(k)).filter((r): r is OrderMaterialRow => !!r);
+
+  // Умный режим считается по одному подрядчику: без выбора считать нечего и некому.
+  if (!contractorId) {
+    return (
+      <Empty
+        style={{ margin: 24 }}
+        description="Выберите одного подрядчика, чтобы увидеть умную группировку его материалов"
+      />
+    );
+  }
 
   if (jobQuery.isLoading) return <Spin style={{ margin: 24 }} />;
 

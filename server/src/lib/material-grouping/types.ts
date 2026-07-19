@@ -1,6 +1,6 @@
-import type { GroupingSettings } from '@estimat/shared';
+import type { GroupingScope, GroupingSettings } from '@estimat/shared';
 
-/** Строка материала для группировки — канонический снимок из БД. */
+/** Строка материала для группировки — канонический снимок из БД, свёрнутый по ключу заказа. */
 export interface GroupingLine {
   /** Ключ заказа: lineKey(costTypeId, aggKey). Совпадает с ключом строки на клиенте. */
   orderKey: string;
@@ -11,26 +11,24 @@ export interface GroupingLine {
   materialId: string | null;
   name: string;
   unit: string;
+  /** Количество ДОЛИ подрядчика: сумма масштабированных вхождений (см. loadGroupingLines). */
   quantity: number;
-  /** Группа справочника (material_groups) — единственный контекст помимо названия. */
+  /** Группа справочника (material_groups) — контекст помимо названия. */
   materialGroupName: string | null;
-  /** Работы-источники (уникальные имена). */
+  /** Работы-источники (уникальные имена, отсортированы для детерминизма хэша и промпта). */
   workNames: string[];
-  /** Работа, за которой строка закреплена при батчинге (детерминированно). */
+  /** Работа, за которой строка закреплена при батчинге (детерминированно, минимальный work_id). */
   primaryWorkId: string;
-  /** Сигнатура набора локаций строки (id-based, без типа). */
-  locationSig: string;
-  /** Сигнатура набора типов работ строки. */
-  typeSig: string;
-  locationLabels: string[];
-  typeLabels: string[];
 }
 
 /** Набор строк для одного вызова модели. */
 export interface GroupingBatch {
   index: number;
-  /** Ключ hard partition: границы, которые модель не может пересечь физически. */
-  partitionKey: string;
+  /**
+   * costType-происхождение набора (affinity): родственное держим в одном наборе. НЕ граница —
+   * группы разных наборов могут слиться глобальным merge. Пишется в журнал как partition_key.
+   */
+  affinityKey: string;
   lines: GroupingLine[];
 }
 
@@ -38,7 +36,6 @@ export interface GroupingBatch {
 export interface DraftGroup {
   id: string;
   batchIndex: number;
-  partitionKey: string;
   name: string;
   purpose: string | null;
   completeness: 'complete' | 'incomplete' | 'unknown';
@@ -51,11 +48,10 @@ export interface DraftGroup {
 /** Результат разбора одного батча. */
 export interface DraftBatch {
   batchIndex: number;
-  partitionKey: string;
   groups: DraftGroup[];
   sharedKeys: string[];
   ungroupedKeys: string[];
   warnings: string[];
 }
 
-export type { GroupingSettings };
+export type { GroupingScope, GroupingSettings };
