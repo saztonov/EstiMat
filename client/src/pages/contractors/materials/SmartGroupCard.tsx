@@ -1,12 +1,19 @@
+import { useMemo } from 'react';
 import { Alert, Collapse, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { MaterialGroupDto } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
+import type { ZoneIndex, ZoneNode } from '../../estimates/components/location';
 import type { OrderMaterialRow } from './orderRow';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
 import type { DimensionFinding } from './dimensionChecks';
+import { buildSplitTree, type SmartSplitLevels } from './smartSplit';
+import { SmartSplitView } from './SmartSplitView';
+
+/** Сколько корпусов показать тегами в шапке блока, прежде чем свернуть в «+N». */
+const MAX_ZONE_TAGS = 4;
 
 interface Props {
   group: MaterialGroupDto;
@@ -18,6 +25,12 @@ interface Props {
   rowClassName?: (row: OrderMaterialRow) => string;
   /** Детерминированные замечания по строкам свода (ключ заказа → находка). */
   dimension?: Map<string, DimensionFinding>;
+  /** Разбивка внутри блока по корпусам/этажам/виду работ (read-only). */
+  splitLevels: SmartSplitLevels;
+  /** Свёрнутые узлы разбивки (общее с картами пространство ключей smart:...). */
+  collapsedNodes: Set<string>;
+  roots: ZoneNode[];
+  zoneIndex: ZoneIndex;
 }
 
 /**
@@ -52,6 +65,10 @@ export function SmartGroupCard({
   bulk,
   rowClassName,
   dimension,
+  splitLevels,
+  collapsedNodes,
+  roots,
+  zoneIndex,
 }: Props) {
   // Итог — только по строкам с ценой закупки: сметные цены материалов во вкладке не показываются.
   const priced = rows.filter((r) => r.materialCost != null);
@@ -65,8 +82,17 @@ export function SmartGroupCard({
   // включённом виде работ не сливается — иначе на экране две одинаковые «Монтаж трубопровода»).
   const costTypes = [...new Set(rows.map((r) => r.costTypeName).filter((n): n is string => !!n))];
   const costTypeLabel = costTypes.length === 1 ? costTypes[0] : null;
+  // Корпуса блока — тегами в шапке: даёт увидеть географию блока, не раскрывая разбивку.
+  const zoneNames = [...new Set(rows.flatMap((r) => r.zoneNames))].sort((a, b) => a.localeCompare(b, 'ru'));
 
   const draftCount = bulk ? rows.filter((r) => bulk.draftValues.has(r.orderKey)).length : 0;
+
+  // Разбивка по корпусам/этажам/виду работ. Ключи узлов — в пространстве этого блока (smart:id/…).
+  const splitActive = splitLevels.costType || splitLevels.location || splitLevels.locationType;
+  const splitTree = useMemo(
+    () => (splitActive ? buildSplitTree(rows, splitLevels, roots, zoneIndex, `smart:${group.id}`) : []),
+    [splitActive, rows, splitLevels, roots, zoneIndex, group.id],
+  );
 
   return (
     <GroupCard
@@ -80,6 +106,12 @@ export function SmartGroupCard({
           {/* Счётчик находок — в шапке: иначе он виден только у развёрнутой карточки, внутри
               второго сворачивания. */}
           {findings > 0 && <Tag>Проверить · {findings}</Tag>}
+          {zoneNames.slice(0, MAX_ZONE_TAGS).map((z) => (
+            <Tag key={z} color="geekblue" style={{ marginInlineEnd: 4 }}>
+              {z}
+            </Tag>
+          ))}
+          {zoneNames.length > MAX_ZONE_TAGS && <Tag>+{zoneNames.length - MAX_ZONE_TAGS}</Tag>}
         </>
       }
       meta={
@@ -166,15 +198,21 @@ export function SmartGroupCard({
         />
       )}
 
-      <Table<OrderMaterialRow>
-        rowKey="orderKey"
-        size="small"
-        pagination={false}
-        dataSource={rows}
-        columns={columns}
-        rowClassName={rowClassName}
-        scroll={{ x: 1100 }}
-      />
+      {splitActive && splitTree.length > 0 ? (
+        <div style={{ padding: 8 }}>
+          <SmartSplitView nodes={splitTree} collapsed={collapsedNodes} onToggle={onToggle} />
+        </div>
+      ) : (
+        <Table<OrderMaterialRow>
+          rowKey="orderKey"
+          size="small"
+          pagination={false}
+          dataSource={rows}
+          columns={columns}
+          rowClassName={rowClassName}
+          scroll={{ x: 1100 }}
+        />
+      )}
     </GroupCard>
   );
 }

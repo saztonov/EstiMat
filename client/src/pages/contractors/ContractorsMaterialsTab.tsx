@@ -24,6 +24,7 @@ import { buildCategoryIndex, buildOrderRows, type OrderMaterialRow } from './mat
 import { assertTreeConserves, buildMaterialTree, pruneNodesByRows } from './materials/materialTree';
 import { useMaterialLevels } from './materials/useMaterialLevels';
 import { MaterialGroupingPopover } from './materials/MaterialGroupingPopover';
+import { useSmartSplit, buildSplitTree, collectSplitKeys } from './materials/smartSplit';
 import { DisplayPopover } from './materials/DisplayPopover';
 import { buildMaterialColumns } from './materials/materialColumns';
 import { MaterialTreeView, collectNodeKeys } from './materials/MaterialTreeView';
@@ -192,6 +193,8 @@ export function ContractorsMaterialsTab({
   // Уровни — только у стандартной группировки: у умной границы групп общие для всех и задаются
   // администратором (Администрирование → Нейросети → Промпты).
   const { levels, toggle, reset, changedFromDefault } = useMaterialLevels();
+  // Разбивка внутри ИИ-блоков (личная, свой localStorage) — только для умного режима.
+  const smartSplit = useSmartSplit();
 
   const categoryIndex = useMemo(() => buildCategoryIndex(items), [items]);
 
@@ -500,8 +503,23 @@ export function ContractorsMaterialsTab({
     if (!smart) return collectNodeKeys(shownTree);
     const result = smartResult;
     if (!result) return [];
-    return [...result.groups.map((g) => g.id), SHARED_KEY, UNGROUPED_KEY];
-  }, [smart, shownTree, smartResult]);
+    const base = [...result.groups.map((g) => g.id), SHARED_KEY, UNGROUPED_KEY];
+    if (!smartSplit.active) return base;
+    // Подузлы разбивки тоже сворачиваются: собираем их ключи по каждому блоку.
+    const byKey = new Map(rows.map((r) => [r.orderKey, r]));
+    const nodeKeys = result.groups.flatMap((g) =>
+      collectSplitKeys(
+        buildSplitTree(
+          g.orderKeys.map((k) => byKey.get(k)).filter((r): r is (typeof rows)[number] => !!r),
+          smartSplit.levels,
+          zones,
+          zoneIndex,
+          `smart:${g.id}`,
+        ),
+      ),
+    );
+    return [...base, ...nodeKeys];
+  }, [smart, shownTree, smartResult, smartSplit.active, smartSplit.levels, rows, zones, zoneIndex]);
 
   const allCollapsed = collapsibleKeys.length > 0 && collapsibleKeys.every((k) => collapsed.has(k));
 
@@ -557,15 +575,22 @@ export function ContractorsMaterialsTab({
           disabled={editing}
           tooltip="Отбор материалов по корпусам, этажам и типу"
         />
-        {/* В умном режиме уровней нет: границы групп общие для всех и заданы администратором.
-            В режиме заявки не блокируется: уровни меняют только расположение строк, а черновик
-            живёт по ключу заказа — введённые количества переживают перестройку дерева. */}
+        {/* Стандартное дерево: уровни группировки строк. */}
         {!smart && (
           <MaterialGroupingPopover
             value={levels}
             onToggle={toggle}
             onReset={reset}
             changedCount={changedFromDefault}
+          />
+        )}
+        {/* Умный режим: разбивка внутри готовых блоков по корпусам/этажам/виду работ (личная). */}
+        {smart && (
+          <MaterialGroupingPopover
+            value={smartSplit.levels}
+            onToggle={smartSplit.toggle}
+            onReset={smartSplit.reset}
+            changedCount={smartSplit.changedFromDefault}
           />
         )}
         <DisplayPopover
@@ -674,6 +699,9 @@ export function ContractorsMaterialsTab({
             bulk={bulk}
             rowClassName={rowClassName}
             dimension={dimension}
+            splitLevels={smartSplit.levels}
+            roots={zones}
+            zoneIndex={zoneIndex}
           />
         ) : shownTree.length === 0 ? (
           // Пустой экран под включённым отбором читается как поломка — говорим, что произошло.
