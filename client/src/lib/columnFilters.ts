@@ -34,11 +34,19 @@ export function isColumnFilterActive(v: ColumnFilterValue | undefined): boolean 
   }
 }
 
-// Дата ячейки может быть timestamp'ом — сравниваем по календарному дню (первые 10 символов ISO).
+// Календарный день ячейки для сравнения с выбранным пользователем (тоже локальным) диапазоном.
+// Дата-строку 'YYYY-MM-DD' (без TZ) берём как есть; timestamptz приводим к ЛОКАЛЬНОМУ дню —
+// чтобы отбор совпадал с тем, что показывает колонка через toLocaleString (локальный TZ).
 function dayOf(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const s = String(iso);
-  return s.length >= 10 ? s.slice(0, 10) : null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s; // чистая дата — без сдвига
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s.length >= 10 ? s.slice(0, 10) : null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
 }
 
 function matchesOne<T>(row: T, v: ColumnFilterValue, spec: ColumnFilterSpec<T>): boolean {
@@ -61,7 +69,8 @@ function matchesOne<T>(row: T, v: ColumnFilterValue, spec: ColumnFilterSpec<T>):
     }
     case 'numRange': {
       const raw = spec.getNum?.(row);
-      const n = raw == null ? null : Number(raw);
+      // Пустая строка/пробелы — не число (Number('')===0 иначе ложно попадёт в диапазон с 0).
+      const n = raw == null || (typeof raw === 'string' && raw.trim() === '') ? null : Number(raw);
       if (n == null || Number.isNaN(n)) return false;
       if (v.min != null && n < v.min) return false;
       if (v.max != null && n > v.max) return false;

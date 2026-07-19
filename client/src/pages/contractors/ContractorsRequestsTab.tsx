@@ -11,8 +11,8 @@ import {
 } from '@estimat/shared';
 import { api } from '../../services/api';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
-import { hasActiveColumnFilters, type ColumnFilters } from '../../lib/columnFilters';
-import { useGroupedTable } from '../../lib/useGroupedTable';
+import { type ColumnFilters } from '../../lib/columnFilters';
+import { useGroupedTable, computeNeedFull } from '../../lib/useGroupedTable';
 import { isGroupRow, type GroupLevel, type GroupNode, type GroupRow } from '../../lib/tableGrouping';
 import { ColumnSettingsButton } from '../../components/table/ColumnSettingsButton';
 import { contractorRequestsColumnsStore } from './columns/contractorRequestsColumns';
@@ -39,13 +39,14 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [colFilters, setColFilters] = useState<ColumnFilters>({});
+  const [peek, setPeek] = useState(false);
   const unread = useUnreadCounts();
 
   const order = contractorRequestsColumnsStore.useStore((s) => s.order);
   const hidden = contractorRequestsColumnsStore.useStore((s) => s.hidden);
   const groupBy = contractorRequestsColumnsStore.useStore((s) => s.groupBy);
   const prefs = contractorRequestsColumnsStore.resolve(order, hidden);
-  const needFull = groupBy.some((k) => !prefs.hidden[k]) || hasActiveColumnFilters(colFilters, prefs.hidden);
+  const needFull = computeNeedFull(prefs, groupBy, colFilters, peek);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -95,9 +96,9 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
 
   const gt = useGroupedTable<RequestRow>({
     store: contractorRequestsColumnsStore,
-    filterSpecs, levelMap,
+    rows, filterSpecs, levelMap,
     aggregate: (items) => ({ amount: items.reduce((s, x) => s + Number(x.order_amount ?? 0), 0) }),
-    rowsForOptions: rows, colFilters, setColFilters, onChange: () => setPage(1),
+    colFilters, setColFilters, onPeek: () => setPeek(true), onChange: () => setPage(1),
   });
 
   const leaf = (r: Row) => r as RequestRow;
@@ -133,7 +134,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
     <strong>{node.label} <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· {node.count} · {money(node.agg.amount ?? 0)}</span></strong>
   );
 
-  const tableData = gt.buildData(rows);
+  const tableData = gt.data;
   const columns = gt.view(leafColumns, renderGroup);
 
   return (
@@ -160,7 +161,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
           loading={isLoading}
           columns={columns}
           dataSource={tableData}
-          expandable={gt.treeMode ? { expandedRowKeys: gt.expandedKeys(tableData) } : undefined}
+          expandable={gt.expandable}
           pagination={needFull
             ? { ...DEFAULT_PAGINATION }
             : { ...DEFAULT_PAGINATION, current: page, pageSize, total, onChange: (p, ps) => { setPage(p); setPageSize(ps); } }}

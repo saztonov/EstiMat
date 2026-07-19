@@ -11,8 +11,8 @@ import {
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
-import { hasActiveColumnFilters, type ColumnFilters } from '../../lib/columnFilters';
-import { useGroupedTable } from '../../lib/useGroupedTable';
+import { type ColumnFilters } from '../../lib/columnFilters';
+import { useGroupedTable, computeNeedFull } from '../../lib/useGroupedTable';
 import { isGroupRow, type GroupLevel, type GroupNode, type GroupRow } from '../../lib/tableGrouping';
 import { ColumnSettingsButton } from '../../components/table/ColumnSettingsButton';
 import { purchasesRegistryColumnsStore } from './columns/purchasesRegistryColumns';
@@ -45,6 +45,7 @@ export function PurchasesRegistryTab() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [colFilters, setColFilters] = useState<ColumnFilters>({});
+  const [peek, setPeek] = useState(false);
   const [openOrderId, setOpenOrderId] = useState<string | undefined>();
   const [openRequestId, setOpenRequestId] = useState<string | null>(null);
 
@@ -54,7 +55,7 @@ export function PurchasesRegistryTab() {
   const hidden = purchasesRegistryColumnsStore.useStore((s) => s.hidden);
   const groupBy = purchasesRegistryColumnsStore.useStore((s) => s.groupBy);
   const prefs = purchasesRegistryColumnsStore.resolve(order, hidden);
-  const needFull = groupBy.some((k) => !prefs.hidden[k]) || hasActiveColumnFilters(colFilters, prefs.hidden);
+  const needFull = computeNeedFull(prefs, groupBy, colFilters, peek);
 
   const invalidateRegistry = () => {
     qc.invalidateQueries({ queryKey: ['purchases-registry'] });
@@ -113,9 +114,9 @@ export function PurchasesRegistryTab() {
 
   const gt = useGroupedTable<RegistryRow>({
     store: purchasesRegistryColumnsStore,
-    filterSpecs, levelMap,
+    rows, filterSpecs, levelMap,
     aggregate: (items) => ({ amount: items.reduce((s, x) => s + Number(x.amount ?? 0), 0) }),
-    rowsForOptions: rows, colFilters, setColFilters, onChange: () => setPage(1),
+    colFilters, setColFilters, onPeek: () => setPeek(true), onChange: () => setPage(1),
   });
 
   const leaf = (r: Row) => r as RegistryRow;
@@ -155,7 +156,7 @@ export function PurchasesRegistryTab() {
     <strong>{node.label} <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· {node.count} · {money(node.agg.amount ?? 0)}</span></strong>
   );
 
-  const tableData = gt.buildData(rows);
+  const tableData = gt.data;
   const columns = gt.view(leafColumns, renderGroup);
 
   return (
@@ -183,7 +184,7 @@ export function PurchasesRegistryTab() {
           loading={isLoading}
           columns={columns}
           dataSource={tableData}
-          expandable={gt.treeMode ? { expandedRowKeys: gt.expandedKeys(tableData) } : undefined}
+          expandable={gt.expandable}
           onRow={(r) => (isGroupRow(r) ? {} : { onClick: () => openRow(leaf(r)), style: { cursor: 'pointer' } })}
           locale={{ emptyText: <Empty description="Закупок пока нет. Заказ формируется из материалов заявок СУ-10 на вкладке «Материалы»." /> }}
           pagination={needFull

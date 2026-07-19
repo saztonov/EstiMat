@@ -53,6 +53,7 @@ export function SU10MaterialsTab() {
   const [limit, setLimit] = useState(100);
   const [offset, setOffset] = useState(0);
   const [colFilters, setColFilters] = useState<ColumnFilters>({});
+  const [peek, setPeek] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [action, setAction] = useState<'order' | 'tender' | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
@@ -127,8 +128,9 @@ export function SU10MaterialsTab() {
   const levels = levelsFromOrder(prefs.order, groupBy, prefs.hidden, levelMap);
   const treeMode = levels.length > 0;
   const anyColFilter = hasActiveColumnFilters(colFilters, prefs.hidden);
-  // Отбор/дерево считаются на клиенте по всему набору → грузим all=1.
-  const needFull = treeMode || anyColFilter;
+  // Отбор/дерево считаются на клиенте по всему набору → грузим all=1. peek — открыт дропдаун
+  // отбора (нужны варианты multi со всего набора).
+  const needFull = treeMode || anyColFilter || peek;
 
   const materialsQ = useQuery({
     queryKey: [
@@ -212,7 +214,9 @@ export function SU10MaterialsTab() {
     [filtered, treeMode, levels],
   );
 
-  const groupSignature = treeMode ? collectGroupKeys(tableData).join('|') : '';
+  // Сигнатура только по ВЕРХНИМ группам — иначе изменения внутри групп (перетекание позиций
+  // после назначения ответственного) сбрасывали бы ручное сворачивание подгрупп.
+  const groupSignature = treeMode ? tableData.filter(isGroupRow).map((g) => g.key).join('|') : '';
   useEffect(() => {
     setExpandedKeys(treeMode ? collectGroupKeys(tableData) : []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -260,11 +264,13 @@ export function SU10MaterialsTab() {
   }
 
   // Колонки (рендер листа; групповые строки перекрываются applyGroupSpan).
-  const hf = (key: string, spec: ColumnFilterSpec<Su10MaterialRow>) =>
-    headerFilterCol<Su10MaterialRow>({
+  const hf = (key: string, spec: ColumnFilterSpec<Su10MaterialRow>) => ({
+    ...headerFilterCol<Su10MaterialRow>({
       spec, value: colFilters[key], rows, onChange: (v) => changeColFilter(key, v),
       group: GROUPABLE.has(key) ? { active: groupBy.includes(key), onToggle: (on) => changeGroup(key, on) } : undefined,
-    });
+    }),
+    onFilterDropdownOpenChange: (open: boolean) => { if (open) setPeek(true); },
+  });
   const leaf = (r: MaterialTableRow) => r as Su10MaterialRow;
 
   const leafColumns: ColumnsType<MaterialTableRow> = [
@@ -312,6 +318,7 @@ export function SU10MaterialsTab() {
             categoryNames={catNames}
             categoryIds={catIds}
             assignable={assignable}
+            assignableReady={assignableQ.isSuccess}
             canAssign={canAssign}
             saving={assignMut.isPending && assignMut.variables?.id === row.request_item_id}
             onAssign={(userId) => assignMut.mutate({ id: row.request_item_id, userId })}

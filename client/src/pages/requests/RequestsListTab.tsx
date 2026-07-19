@@ -15,8 +15,7 @@ import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 import { type ColumnFilters } from '../../lib/columnFilters';
-import { hasActiveColumnFilters } from '../../lib/columnFilters';
-import { useGroupedTable } from '../../lib/useGroupedTable';
+import { useGroupedTable, computeNeedFull } from '../../lib/useGroupedTable';
 import { isGroupRow, type GroupLevel, type GroupNode, type GroupRow } from '../../lib/tableGrouping';
 import { ColumnSettingsButton } from '../../components/table/ColumnSettingsButton';
 import { requestsListColumnsStore } from './columns/requestsListColumns';
@@ -67,13 +66,14 @@ export function RequestsListTab() {
   const [pageSize, setPageSize] = useState(100);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [colFilters, setColFilters] = useState<ColumnFilters>({});
+  const [peek, setPeek] = useState(false);
   const unread = useUnreadCounts();
 
   const order = requestsListColumnsStore.useStore((s) => s.order);
   const hidden = requestsListColumnsStore.useStore((s) => s.hidden);
   const groupBy = requestsListColumnsStore.useStore((s) => s.groupBy);
   const prefs = requestsListColumnsStore.resolve(order, hidden);
-  const needFull = groupBy.some((k) => !prefs.hidden[k]) || hasActiveColumnFilters(colFilters, prefs.hidden);
+  const needFull = computeNeedFull(prefs, groupBy, colFilters, peek);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -133,12 +133,13 @@ export function RequestsListTab() {
 
   const gt = useGroupedTable<RequestRow>({
     store: requestsListColumnsStore,
+    rows,
     filterSpecs,
     levelMap,
     aggregate: (items) => ({ amount: items.reduce((s, x) => s + Number(x.order_amount ?? 0), 0) }),
-    rowsForOptions: rows,
     colFilters,
     setColFilters,
+    onPeek: () => setPeek(true),
     onChange: () => setPage(1),
   });
 
@@ -183,7 +184,7 @@ export function RequestsListTab() {
     </strong>
   );
 
-  const tableData = gt.buildData(rows);
+  const tableData = gt.data;
   const columns = gt.view(leafColumns, renderGroup);
 
   return (
@@ -214,7 +215,7 @@ export function RequestsListTab() {
           loading={isLoading}
           columns={columns}
           dataSource={tableData}
-          expandable={gt.treeMode ? { expandedRowKeys: gt.expandedKeys(tableData) } : undefined}
+          expandable={gt.expandable}
           pagination={needFull
             ? { ...DEFAULT_PAGINATION }
             : { ...DEFAULT_PAGINATION, current: page, pageSize, total, onChange: (p, ps) => { setPage(p); setPageSize(ps); } }}

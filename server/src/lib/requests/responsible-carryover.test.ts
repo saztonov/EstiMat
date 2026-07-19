@@ -28,3 +28,23 @@ test('перенос: совпавшие по ключу переносятся,
 test('перенос: пустой снимок — ничего не переносится', () => {
   assert.deepEqual(matchResponsibleCarryOver([], [{ costTypeId: 'ct', aggKey: 'a', deliveryDate: null }]), []);
 });
+
+test('перенос: неуникальный ключ среди новых строк не переносится (нет over-apply)', () => {
+  // Одно назначение, но в новых строках ключ встречается дважды → пропускаем (иначе назначили бы обеим).
+  const kept = matchResponsibleCarryOver(
+    [snap('ct1', 'a', null, 'u1')],
+    [
+      { costTypeId: 'ct1', aggKey: 'a', deliveryDate: null },
+      { costTypeId: 'ct1', aggKey: 'a', deliveryDate: null },
+    ],
+  );
+  assert.deepEqual(kept, []);
+});
+
+test('перенос: конфликт в снимке (два пользователя на один ключ) не переносится', () => {
+  const kept = matchResponsibleCarryOver(
+    [snap('ct1', 'a', null, 'u1'), snap('ct1', 'a', null, 'u2')],
+    [{ costTypeId: 'ct1', aggKey: 'a', deliveryDate: null }],
+  );
+  assert.deepEqual(kept, []);
+});

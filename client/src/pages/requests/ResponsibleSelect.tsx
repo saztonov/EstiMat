@@ -17,6 +17,8 @@ interface Props {
   categoryIds: string[];
   /** Кандидаты (/procurement/assignable-users). */
   assignable: AssignableUser[];
+  /** Список кандидатов загружен — только тогда отсутствующего в нём помечаем «(неактивен)». */
+  assignableReady?: boolean;
   /** Может ли пользователь назначать (внутренние роли). */
   canAssign: boolean;
   onAssign: (userId: string | null) => void;
@@ -24,22 +26,23 @@ interface Props {
 }
 
 export function ResponsibleSelect({
-  value, assignedName, categoryNames, categoryIds, assignable, canAssign, onAssign, saving,
+  value, assignedName, categoryNames, categoryIds, assignable, assignableReady, canAssign, onAssign, saving,
 }: Props) {
   const options = useMemo(() => {
     const inCat = new Set(categoryIds);
     const assigned = assignable.filter((u) => inCat.has(u.id));
     const others = assignable.filter((u) => !inCat.has(u.id));
     const toOpt = (u: AssignableUser) => ({ value: u.id, label: u.full_name });
-    // Назначенный неактивный пользователь мог выпасть из assignable — добавим его, чтобы value отобразился.
+    // Назначенный, отсутствующий в списке — добавим, чтобы value отобразился. «(неактивен)»
+    // помечаем только когда список ЗАГРУЖЕН (иначе активный временно казался бы неактивным).
     const extra = value && !assignable.some((u) => u.id === value)
-      ? [{ label: 'Текущий', options: [{ value, label: `${assignedName ?? 'выбран'} (неактивен)` }] }]
+      ? [{ label: 'Текущий', options: [{ value, label: assignableReady ? `${assignedName ?? 'выбран'} (неактивен)` : (assignedName ?? 'выбран') }] }]
       : [];
     const groups = [];
     if (assigned.length) groups.push({ label: 'По виду', options: assigned.map(toOpt) });
     if (others.length) groups.push({ label: 'Остальные', options: others.map(toOpt) });
     return [...extra, ...groups];
-  }, [assignable, categoryIds, value, assignedName]);
+  }, [assignable, assignableReady, categoryIds, value, assignedName]);
 
   // Только просмотр (нет права назначать): текст, как раньше.
   if (!canAssign) {

@@ -9,8 +9,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { api } from '../../services/api';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
-import { hasActiveColumnFilters, type ColumnFilters } from '../../lib/columnFilters';
-import { useGroupedTable } from '../../lib/useGroupedTable';
+import { type ColumnFilters } from '../../lib/columnFilters';
+import { useGroupedTable, computeNeedFull } from '../../lib/useGroupedTable';
 import { isGroupRow, type GroupLevel, type GroupNode, type GroupRow } from '../../lib/tableGrouping';
 import { ColumnSettingsButton } from '../../components/table/ColumnSettingsButton';
 import { rpRegistryColumnsStore } from './columns/rpRegistryColumns';
@@ -97,6 +97,7 @@ export function RpRegistryTab() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [colFilters, setColFilters] = useState<ColumnFilters>({});
+  const [peek, setPeek] = useState(false);
   const [editRow, setEditRow] = useState<RequestRow | null>(null);
   const [openRequestId, setOpenRequestId] = useState<string | null>(null);
   const unread = useUnreadCounts();
@@ -105,7 +106,7 @@ export function RpRegistryTab() {
   const hidden = rpRegistryColumnsStore.useStore((s) => s.hidden);
   const groupBy = rpRegistryColumnsStore.useStore((s) => s.groupBy);
   const prefs = rpRegistryColumnsStore.resolve(order, hidden);
-  const needFull = groupBy.some((k) => !prefs.hidden[k]) || hasActiveColumnFilters(colFilters, prefs.hidden);
+  const needFull = computeNeedFull(prefs, groupBy, colFilters, peek);
 
   const stopCell = { onCell: () => ({ onClick: (e: { stopPropagation: () => void }) => e.stopPropagation() }) };
 
@@ -170,9 +171,9 @@ export function RpRegistryTab() {
 
   const gt = useGroupedTable<RequestRow>({
     store: rpRegistryColumnsStore,
-    filterSpecs, levelMap,
+    rows, filterSpecs, levelMap,
     aggregate: (items) => ({ amount: items.reduce((s, x) => s + Number(x.order_amount ?? 0), 0) }),
-    rowsForOptions: rows, colFilters, setColFilters, onChange: () => setPage(1),
+    colFilters, setColFilters, onPeek: () => setPeek(true), onChange: () => setPage(1),
   });
 
   const leaf = (r: Row) => r as RequestRow;
@@ -181,7 +182,9 @@ export function RpRegistryTab() {
       const c = unread[leaf(r).id] || 0;
       return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: '#8c8c8c' }} /></Badge> : null;
     } },
-    { title: '№', key: 'index', width: 44, render: (_v, __, i) => (page - 1) * pageSize + i + 1 },
+    // В плоском режиме — сквозной номер по серверной странице; в полном/дереве пагинация
+    // клиентская и page заморожен, поэтому нумеруем по порядку строки (i из AntD).
+    { title: '№', key: 'index', width: 44, render: (_v, __, i) => (needFull ? i + 1 : (page - 1) * pageSize + i + 1) },
     { title: 'Номер', key: 'number', width: 160, ...gt.hf('number', filterSpecs.number), render: (_v, r) => {
       const row = leaf(r);
       return (
@@ -260,7 +263,7 @@ export function RpRegistryTab() {
     <strong>{node.label} <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· {node.count} · {fmtMoney(node.agg.amount ?? 0)}</span></strong>
   );
 
-  const tableData = gt.buildData(rows);
+  const tableData = gt.data;
   const columns = gt.view(leafColumns, renderGroup);
 
   return (
@@ -283,7 +286,7 @@ export function RpRegistryTab() {
           loading={isLoading}
           columns={columns}
           dataSource={tableData}
-          expandable={gt.treeMode ? { expandedRowKeys: gt.expandedKeys(tableData) } : undefined}
+          expandable={gt.expandable}
           pagination={needFull
             ? { ...DEFAULT_PAGINATION }
             : { ...DEFAULT_PAGINATION, current: page, pageSize, total, onChange: (p, ps) => { setPage(p); setPageSize(ps); } }}

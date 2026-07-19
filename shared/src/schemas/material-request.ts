@@ -94,6 +94,21 @@ export const requestRevisionSchema = z.object({
 });
 export type RequestRevisionInput = z.infer<typeof requestRevisionSchema>;
 
+// Проверка графика поставки строк su10 (общая для создания и завершения доработки): у каждой
+// строки непустой график, даты уникальны, сумма по датам равна количеству. Возвращает текст
+// ошибки или null. На сервере тип заявки берётся из БД, поэтому проверка вызывается отдельно.
+export function validateSu10Schedule(lines: { deliverySchedule?: DeliveryScheduleEntry[]; quantity: number }[]): string | null {
+  for (const line of lines) {
+    const sched = line.deliverySchedule ?? [];
+    if (sched.length === 0) return 'Для «Закупка через СУ-10» укажите график поставки каждого материала';
+    const dates = sched.map((s) => s.deliveryDate);
+    if (new Set(dates).size !== dates.length) return 'Даты поставки материала не должны повторяться';
+    const sum = sched.reduce((s, e) => s + e.quantity, 0);
+    if (Math.abs(sum - line.quantity) > DELIVERY_SCHEDULE_EPS) return 'Сумма по датам должна равняться общему количеству материала';
+  }
+  return null;
+}
+
 // Завершение доработки подрядчиком: правки позиций/реквизитов + возврат в работу.
 export const completeRevisionSchema = z.object({
   lines: z.array(materialRequestLineSchema).min(1).optional(),

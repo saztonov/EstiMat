@@ -8,6 +8,7 @@ import {
   createRequestSchema,
   requestRevisionSchema,
   completeRevisionSchema,
+  validateSu10Schedule,
   directSupplierSchema,
   createPaymentSchema,
   requestFileMetaSchema,
@@ -695,6 +696,12 @@ export default async function requestRoutes(fastify: FastifyInstance) {
           if (lines.length === 0) {
             await client.query('ROLLBACK');
             return reply.status(400).send({ error: 'Нет допустимых строк заявки' });
+          }
+          // su10: график поставки обязателен (иначе позиция без даты — нарушение инварианта и
+          // срыв переноса ответственных по датам). Тип берём из БД (mr), не из тела.
+          if (mr.request_type === 'su10') {
+            const err = validateSu10Schedule(lines);
+            if (err) { await client.query('ROLLBACK'); return reply.status(400).send({ error: err }); }
           }
           // Снимок назначенных ответственных до пересборки — вернём совпавшим по ключу строкам.
           const { rows: respSnap } = await client.query(

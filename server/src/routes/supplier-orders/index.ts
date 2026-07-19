@@ -20,6 +20,7 @@ import { TenderApiError, TenderNotConfiguredError } from '../../lib/tender/error
 import { guardedStreamUpload, FileGuardError } from '../../lib/uploads/file-guard.js';
 
 const FILE_LIMIT = 50 * 1024 * 1024; // 50 МБ на файл предложения
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Закупочные лоты СУ-10 (supplier_orders.kind='sourcing'). Инструмент снабжения — доступ только
@@ -147,6 +148,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   fastify.patch<{ Params: { requestItemId: string } }>('/materials/:requestItemId/responsible', async (request, reply) => {
     const { userId } = assignMaterialResponsibleSchema.parse(request.body);
     const { requestItemId } = request.params;
+    if (!UUID_RE.test(requestItemId)) return reply.status(400).send({ error: 'Некорректный идентификатор позиции' });
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
@@ -201,24 +203,23 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         );
         if (!valid[0]) { await client.query('ROLLBACK'); return reply.status(400).send({ error: 'Пользователь не может быть ответственным' }); }
       }
-      const { rows: locked } = await client.query(
-        `SELECT mri.id, mr.status
-           FROM material_request_items mri JOIN material_requests mr ON mr.id = mri.request_id
-          WHERE mri.id = ANY($1::uuid[]) FOR UPDATE OF mri`,
-        [uniqueIds],
-      );
-      if (locked.length !== uniqueIds.length || locked.some((r) => r.status === 'cancelled')) {
-        await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Часть позиций не найдена или относится к отменённой заявке' });
-      }
-      await client.query(
-        `UPDATE material_request_items
+      // Атомарно: сам UPDATE фильтрует по статусу заявки (join к mr), поэтому нет TOCTOU между
+      // проверкой и записью. Если обновлены не все переданные позиции (не найдены или заявка
+      // отменена) — откат и 409. FOR UPDATE не нужен: один statement согласован.
+      const { rows: updated } = await client.query(
+        `UPDATE material_request_items mri
             SET responsible_user_id = $2,
                 responsible_assigned_by = CASE WHEN $2 IS NULL THEN NULL ELSE $3 END,
                 responsible_assigned_at = CASE WHEN $2 IS NULL THEN NULL ELSE now() END
-          WHERE id = ANY($1::uuid[])`,
+           FROM material_requests mr
+          WHERE mri.id = ANY($1::uuid[]) AND mr.id = mri.request_id AND mr.status <> 'cancelled'
+        RETURNING mri.id`,
         [uniqueIds, userId, request.currentUser.id],
       );
+      if (updated.length !== uniqueIds.length) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Часть позиций не найдена или относится к отменённой заявке' });
+      }
       await recordAudit(client, {
         estimateId: null, entityType: 'material_request_item', entityId: uniqueIds[0]!,
         action: 'material.responsible.bulk_set', userId: request.currentUser.id,

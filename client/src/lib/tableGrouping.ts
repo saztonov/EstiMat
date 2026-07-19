@@ -102,8 +102,10 @@ export function levelsFromOrder<T>(
 
 /**
  * Групповая строка занимает всю ширину: рендер группы — в фактически первом столбце
- * (порядок настраиваемый, «первым» может стать любой), остальным colSpan:0. Существующие
- * onCell/render колонок сохраняются для листовых строк.
+ * (порядок настраиваемый, «первым» может стать любой), с выравниванием влево; остальным
+ * colSpan:0. Существующие onCell/render колонок сохраняются для листовых строк.
+ * В режиме дерева снимаем fixed:'right' со всех колонок — fixed-колонка, пересечённая
+ * широкой групповой ячейкой (colSpan), рендерится AntD некорректно (шов/наложение).
  */
 export function applyGroupSpan<T>(
   cols: ColumnsType<GroupRow<T>>,
@@ -114,10 +116,13 @@ export function applyGroupSpan<T>(
       onCell?: (r: GroupRow<T>, index?: number) => object;
       render?: (v: unknown, r: GroupRow<T>, index: number) => ReactNode;
     };
+    const { fixed: _fixed, ...rest } = c as ColumnsType<GroupRow<T>>[number] & { fixed?: unknown };
     return {
-      ...c,
+      ...rest,
       onCell: (r: GroupRow<T>, index?: number) =>
-        isGroupRow(r) ? { colSpan: i === 0 ? cols.length : 0 } : orig.onCell?.(r, index) ?? {},
+        isGroupRow(r)
+          ? (i === 0 ? { colSpan: cols.length, style: { textAlign: 'left' as const } } : { colSpan: 0 })
+          : orig.onCell?.(r, index) ?? {},
       render: (v: unknown, r: GroupRow<T>, index: number) =>
         isGroupRow(r) ? (i === 0 ? renderGroup(r) : null) : orig.render ? orig.render(v, r, index) : (v as ReactNode),
     };
