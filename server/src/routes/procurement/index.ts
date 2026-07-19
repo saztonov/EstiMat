@@ -43,7 +43,7 @@ export default async function procurementRoutes(fastify: FastifyInstance) {
   // GET /assignable-users — кандидаты в ответственные (активные внутренние роли).
   //   GET /api/users закрыт admin-only, поэтому свой лёгкий список.
   // ============================================================
-  fastify.get('/assignable-users', { preHandler: [requireRole('admin', 'engineer')] }, async () => {
+  fastify.get('/assignable-users', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async () => {
     const { rows } = await fastify.pool.query(
       `SELECT id, full_name, role FROM users
         WHERE is_active = true AND role IN ('admin', 'engineer', 'manager')

@@ -142,6 +142,23 @@ export const finalizeOrderSchema = z.object({
 });
 export type FinalizeOrderInput = z.infer<typeof finalizeOrderSchema>;
 
+// ===== Назначение ответственного за материал (override поверх ответственных по категории) =====
+
+// Назначить/сбросить ответственного за одну строку свода материалов. userId=null — сброс
+// (строка снова показывает всех ответственных по категории вида работ).
+export const assignMaterialResponsibleSchema = z.object({
+  userId: z.string().uuid().nullable(),
+});
+export type AssignMaterialResponsibleInput = z.infer<typeof assignMaterialResponsibleSchema>;
+
+// Массовое назначение «на группу/вид»: явный набор строк узла дерева (объект/подрядчик/вид/заявка).
+// Транзакционно «всё или ничего»; потолок совпадает с потолком свода (MATERIALS_GROUP_CAP=5000).
+export const bulkAssignMaterialResponsibleSchema = z.object({
+  requestItemIds: z.array(z.string().uuid()).min(1).max(5000),
+  userId: z.string().uuid().nullable(),
+});
+export type BulkAssignMaterialResponsibleInput = z.infer<typeof bulkAssignMaterialResponsibleSchema>;
+
 // ===== Runtime-схемы ответов тендерного портала (валидация на границе) =====
 
 export const tenderSchema = z.object({

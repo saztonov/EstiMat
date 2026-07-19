@@ -28,6 +28,7 @@ import {
   appendRequestAudit,
 } from '../../lib/material-requests/access.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
+import { matchResponsibleCarryOver, type ItemKey, type ResponsibleSnapshot } from '../../lib/requests/responsible-carryover.js';
 import {
   hasActiveAllocations, hasFrozenAllocations, releaseFormingAllocations, appendOrderAudit,
   FROZEN_LOT_STATUSES, DELETABLE_LOT_STATUSES,
@@ -108,7 +109,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
   fastify.get<{
     Querystring: {
       type?: string; status?: string; projectId?: string; estimateId?: string; contractorId?: string;
-      dateFrom?: string; dateTo?: string; q?: string; limit?: string; offset?: string;
+      dateFrom?: string; dateTo?: string; q?: string; limit?: string; offset?: string; all?: string;
     };
   }>('/', async (request, reply) => {
     const user = request.currentUser;
@@ -160,8 +161,13 @@ export default async function requestRoutes(fastify: FastifyInstance) {
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const limit = Math.min(Math.max(Number(q.limit) || 100, 1), 500);
-    const offset = Math.max(Number(q.offset) || 0, 0);
+    // all=1 — весь набор для отборов/дерева на клиенте (потолок + meta.truncated, как в /materials).
+    // Проекция тяжёлая (коррелированные подзапросы), но набор ограничен потолком; вкладки «Реестр
+    // РП» и «Заявки» подрядчика приходят уже сужёнными (type/status, estimateId).
+    const REQUESTS_ALL_CAP = 5000;
+    const groupAll = q.all === '1';
+    const limit = groupAll ? REQUESTS_ALL_CAP : Math.min(Math.max(Number(q.limit) || 100, 1), 500);
+    const offset = groupAll ? 0 : Math.max(Number(q.offset) || 0, 0);
     values.push(FROZEN_LOT_STATUSES);
     const frozenIdx = values.length;
     values.push(limit, offset);
@@ -207,7 +213,7 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       ...r,
       number: requestNumber(r.project_code, r.request_no),
     }));
-    return { data, meta: { total } };
+    return { data, meta: { total, truncated: groupAll && total > rows.length } };
   });
 
   // ============================================================
@@ -690,7 +696,21 @@ export default async function requestRoutes(fastify: FastifyInstance) {
             await client.query('ROLLBACK');
             return reply.status(400).send({ error: 'Нет допустимых строк заявки' });
           }
+          // Снимок назначенных ответственных до пересборки — вернём совпавшим по ключу строкам.
+          const { rows: respSnap } = await client.query(
+            `SELECT cost_type_id, agg_key, to_char(delivery_date, 'YYYY-MM-DD') AS delivery_date,
+                    responsible_user_id, responsible_assigned_by, responsible_assigned_at
+               FROM material_request_items
+              WHERE request_id = $1 AND responsible_user_id IS NOT NULL`,
+            [mr.id],
+          );
+          const snapshot: ResponsibleSnapshot[] = respSnap.map((r) => ({
+            costTypeId: r.cost_type_id, aggKey: r.agg_key, deliveryDate: r.delivery_date,
+            userId: r.responsible_user_id, assignedBy: r.responsible_assigned_by, assignedAt: r.responsible_assigned_at,
+          }));
+
           await client.query('DELETE FROM material_request_items WHERE request_id = $1', [mr.id]);
+          const newKeys: ItemKey[] = [];
           for (const l of lines) {
             // su10 с графиком поставки — разворачиваем по датам, иначе одна строка без даты.
             const schedule =
@@ -704,7 +724,19 @@ export default async function requestRoutes(fastify: FastifyInstance) {
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
                 [mr.id, l.costTypeId, l.aggKey, l.materialId, l.name, l.unit, s.quantity, s.deliveryDate],
               );
+              newKeys.push({ costTypeId: l.costTypeId, aggKey: l.aggKey, deliveryDate: s.deliveryDate });
             }
+          }
+
+          // Перенос override ответственного на совпавшие по ключу пересозданные строки.
+          for (const s of matchResponsibleCarryOver(snapshot, newKeys)) {
+            await client.query(
+              `UPDATE material_request_items
+                  SET responsible_user_id = $2, responsible_assigned_by = $3, responsible_assigned_at = $4
+                WHERE request_id = $1 AND cost_type_id IS NOT DISTINCT FROM $5 AND agg_key = $6
+                  AND delivery_date IS NOT DISTINCT FROM $7::date`,
+              [mr.id, s.userId, s.assignedBy, s.assignedAt, s.costTypeId, s.aggKey, s.deliveryDate],
+            );
           }
         }
 

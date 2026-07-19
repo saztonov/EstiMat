@@ -167,6 +167,16 @@ export interface Su10MaterialRow {
   remaining: number | null;
   contractor_id: string | null;
   contractor_name: string | null;
+  /** Назначенный ответственный за строку (override). null — показываются все по категории. */
+  assigned_responsible_id: string | null;
+  assigned_responsible_name: string | null;
+}
+
+// Кандидат в ответственные (GET /procurement/assignable-users).
+export interface AssignableUser {
+  id: string;
+  full_name: string;
+  role: string;
 }
 
 // Опции фильтров свода материалов (facets — по всему набору, независимо от текущих фильтров).

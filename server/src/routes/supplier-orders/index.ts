@@ -6,10 +6,12 @@ import {
   formLotSchema, startProcurementSchema, awardSchema, mapTenderUnit,
   upsertOfferSchema, offerFileMetaSchema, finalizeOrderSchema,
   putOrderDeliveryScheduleSchema,
+  assignMaterialResponsibleSchema, bulkAssignMaterialResponsibleSchema,
   MANUAL_VAT_RATE_VALUE, type ManualVatRate,
 } from '@estimat/shared';
 import { config } from '../../config.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
+import { recordAudit } from '../../lib/audit.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
 import { assertCategoryAccess } from '../../lib/procurement/access.js';
 import { exportSupplierOrderXlsx, SupplierOrderExportError } from '../../lib/supplier-order-export/index.js';
@@ -78,12 +80,14 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
               to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
               mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS placed,
               mr.contractor_id, mr.contractor_name,
+              mri.responsible_user_id AS assigned_responsible_id, ru.full_name AS assigned_responsible_name,
               COUNT(*) OVER() AS total_count
          FROM material_request_items mri
          JOIN material_requests mr ON mr.id = mri.request_id
          LEFT JOIN projects p ON p.id = mr.project_id
          LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
          LEFT JOIN cost_categories cc ON cc.id = ct.category_id
+         LEFT JOIN users ru ON ru.id = mri.responsible_user_id
          LEFT JOIN (
            SELECT soi.request_item_id, SUM(soi.quantity) AS qty
              FROM supplier_order_items soi
@@ -133,6 +137,96 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       }),
       meta: { total, limit, offset, truncated: total > rows.length, facets: facetRows[0] },
     };
+  });
+
+  // ============================================================
+  // PATCH /materials/:requestItemId/responsible — назначить/сбросить ответственного за строку.
+  //   userId=null — сброс (строка снова показывает всех ответственных по категории). Назначение
+  //   информационное: прав формирования закупок (assertCategoryAccess) не меняет.
+  // ============================================================
+  fastify.patch<{ Params: { requestItemId: string } }>('/materials/:requestItemId/responsible', async (request, reply) => {
+    const { userId } = assignMaterialResponsibleSchema.parse(request.body);
+    const { requestItemId } = request.params;
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (userId) {
+        const { rows: valid } = await client.query(
+          `SELECT 1 FROM users WHERE id = $1 AND is_active = true AND role IN ('admin','engineer','manager')`,
+          [userId],
+        );
+        if (!valid[0]) { await client.query('ROLLBACK'); return reply.status(400).send({ error: 'Пользователь не может быть ответственным' }); }
+      }
+      const { rows } = await client.query(
+        `UPDATE material_request_items mri
+            SET responsible_user_id = $2,
+                responsible_assigned_by = CASE WHEN $2 IS NULL THEN NULL ELSE $3 END,
+                responsible_assigned_at = CASE WHEN $2 IS NULL THEN NULL ELSE now() END
+           FROM material_requests mr
+          WHERE mri.id = $1 AND mr.id = mri.request_id AND mr.status <> 'cancelled'
+        RETURNING mr.estimate_id, mr.project_id`,
+        [requestItemId, userId, request.currentUser.id],
+      );
+      if (!rows[0]) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Позиция не найдена или заявка отменена' }); }
+      await recordAudit(client, {
+        estimateId: rows[0].estimate_id, projectId: rows[0].project_id,
+        entityType: 'material_request_item', entityId: requestItemId,
+        action: 'material.responsible.set', userId: request.currentUser.id, changes: { userId },
+      });
+      let name: string | null = null;
+      if (userId) {
+        const { rows: u } = await client.query('SELECT full_name FROM users WHERE id = $1', [userId]);
+        name = u[0]?.full_name ?? null;
+      }
+      await client.query('COMMIT');
+      return { data: { requestItemId, assignedResponsibleId: userId, assignedResponsibleName: name } };
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  });
+
+  // ============================================================
+  // PATCH /materials/responsible — массовое назначение «на группу/вид» (явный набор строк узла
+  //   дерева). Транзакционно «всё или ничего»: все позиции обязаны существовать и не быть в
+  //   отменённой заявке, иначе откат. Клиент шлёт набор только по неусечённому набору (truncated).
+  // ============================================================
+  fastify.patch('/materials/responsible', async (request, reply) => {
+    const { requestItemIds, userId } = bulkAssignMaterialResponsibleSchema.parse(request.body);
+    const uniqueIds = [...new Set(requestItemIds)];
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (userId) {
+        const { rows: valid } = await client.query(
+          `SELECT 1 FROM users WHERE id = $1 AND is_active = true AND role IN ('admin','engineer','manager')`,
+          [userId],
+        );
+        if (!valid[0]) { await client.query('ROLLBACK'); return reply.status(400).send({ error: 'Пользователь не может быть ответственным' }); }
+      }
+      const { rows: locked } = await client.query(
+        `SELECT mri.id, mr.status
+           FROM material_request_items mri JOIN material_requests mr ON mr.id = mri.request_id
+          WHERE mri.id = ANY($1::uuid[]) FOR UPDATE OF mri`,
+        [uniqueIds],
+      );
+      if (locked.length !== uniqueIds.length || locked.some((r) => r.status === 'cancelled')) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Часть позиций не найдена или относится к отменённой заявке' });
+      }
+      await client.query(
+        `UPDATE material_request_items
+            SET responsible_user_id = $2,
+                responsible_assigned_by = CASE WHEN $2 IS NULL THEN NULL ELSE $3 END,
+                responsible_assigned_at = CASE WHEN $2 IS NULL THEN NULL ELSE now() END
+          WHERE id = ANY($1::uuid[])`,
+        [uniqueIds, userId, request.currentUser.id],
+      );
+      await recordAudit(client, {
+        estimateId: null, entityType: 'material_request_item', entityId: uniqueIds[0]!,
+        action: 'material.responsible.bulk_set', userId: request.currentUser.id,
+        changes: { userId, count: uniqueIds.length, requestItemIds: uniqueIds },
+      });
+      await client.query('COMMIT');
+      return { data: { updated: uniqueIds.length } };
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
   });
 
   // ============================================================
@@ -1211,12 +1305,15 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   // GET /registry — единый реестр закупок (4 вида: заказ поставщику / тендер / заказ по РП / заказ
   //   поставщиком). Один скан supplier_orders (kind='sourcing' + kind='direct' JOIN заявок). Read-only.
   // ============================================================
-  fastify.get<{ Querystring: { projectId?: string; type?: string; limit?: string; offset?: string } }>('/registry', async (request) => {
+  fastify.get<{ Querystring: { projectId?: string; type?: string; limit?: string; offset?: string; all?: string } }>('/registry', async (request) => {
     const q = request.query;
     const projectId = q.projectId || null;
     const types = q.type ? q.type.split(',').map((s) => s.trim()).filter(Boolean) : null;
-    const limit = Math.min(Math.max(Number(q.limit) || 100, 1), 500);
-    const offset = Math.max(Number(q.offset) || 0, 0);
+    // all=1 — весь набор для отборов/дерева на клиенте (потолок + meta.truncated, как в /materials).
+    const REGISTRY_ALL_CAP = 5000;
+    const groupAll = q.all === '1';
+    const limit = groupAll ? REGISTRY_ALL_CAP : Math.min(Math.max(Number(q.limit) || 100, 1), 500);
+    const offset = groupAll ? 0 : Math.max(Number(q.offset) || 0, 0);
 
     const { rows } = await fastify.pool.query(
       `WITH reg AS (
@@ -1251,7 +1348,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       [projectId, types, limit, offset],
     );
     const total = rows[0] ? Number(rows[0].total) : 0;
-    return { data: rows.map(({ total: _t, ...r }) => r), meta: { total } };
+    return { data: rows.map(({ total: _t, ...r }) => r), meta: { total, truncated: groupAll && total > rows.length } };
   });
 
   // ============================================================

@@ -1,0 +1,114 @@
+// Чистая логика поколоночных отборов (без UI): значения фильтров, спецификации колонок и
+// применение к строкам. Отборы работают по полному загруженному набору (режим all=1), поэтому
+// фильтрация — на клиенте, до группировки. UI-дропдауны — в tableHeaderFilters.tsx.
+
+export type ColumnFilterValue =
+  | { kind: 'text'; value: string }
+  | { kind: 'multi'; values: string[] }
+  | { kind: 'dateRange'; from?: string; to?: string } // YYYY-MM-DD включительно
+  | { kind: 'numRange'; min?: number; max?: number };
+
+export interface ColumnFilterSpec<T> {
+  kind: ColumnFilterValue['kind'];
+  /** text: строка для поиска по вхождению; multi: значение варианта. */
+  getText?: (r: T) => string | null | undefined;
+  /** multi: подпись варианта (по умолчанию — само значение). */
+  labelOf?: (value: string) => string;
+  /** dateRange: ISO-дата/timestamp ячейки. */
+  getDate?: (r: T) => string | null | undefined;
+  /** numRange: числовое значение ячейки. */
+  getNum?: (r: T) => number | string | null | undefined;
+  /** multi: фиксированный набор вариантов (иначе собирается из строк). */
+  options?: { value: string; label: string }[];
+}
+
+export type ColumnFilters = Record<string, ColumnFilterValue | undefined>;
+
+export function isColumnFilterActive(v: ColumnFilterValue | undefined): boolean {
+  if (!v) return false;
+  switch (v.kind) {
+    case 'text': return v.value.trim() !== '';
+    case 'multi': return v.values.length > 0;
+    case 'dateRange': return !!v.from || !!v.to;
+    case 'numRange': return v.min != null || v.max != null;
+  }
+}
+
+// Дата ячейки может быть timestamp'ом — сравниваем по календарному дню (первые 10 символов ISO).
+function dayOf(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const s = String(iso);
+  return s.length >= 10 ? s.slice(0, 10) : null;
+}
+
+function matchesOne<T>(row: T, v: ColumnFilterValue, spec: ColumnFilterSpec<T>): boolean {
+  switch (v.kind) {
+    case 'text': {
+      const needle = v.value.trim().toLowerCase();
+      if (!needle) return true;
+      return String(spec.getText?.(row) ?? '').toLowerCase().includes(needle);
+    }
+    case 'multi': {
+      if (v.values.length === 0) return true;
+      return v.values.includes(String(spec.getText?.(row) ?? ''));
+    }
+    case 'dateRange': {
+      const day = dayOf(spec.getDate?.(row));
+      if (!day) return false;
+      if (v.from && day < v.from) return false;
+      if (v.to && day > v.to) return false;
+      return true;
+    }
+    case 'numRange': {
+      const raw = spec.getNum?.(row);
+      const n = raw == null ? null : Number(raw);
+      if (n == null || Number.isNaN(n)) return false;
+      if (v.min != null && n < v.min) return false;
+      if (v.max != null && n > v.max) return false;
+      return true;
+    }
+  }
+}
+
+/**
+ * Отфильтровать строки по активным отборам. hiddenKeys — скрытые столбцы: их отборы
+ * игнорируются (скрытие столбца снимает его отбор).
+ */
+export function applyColumnFilters<T>(
+  rows: T[],
+  filters: ColumnFilters,
+  specs: Record<string, ColumnFilterSpec<T> | undefined>,
+  hidden?: Record<string, boolean>,
+): T[] {
+  const active = Object.entries(filters).filter(([key, v]) => {
+    if (!v || !isColumnFilterActive(v)) return false;
+    if (hidden?.[key]) return false;
+    return !!specs[key];
+  });
+  if (active.length === 0) return rows;
+  return rows.filter((r) => active.every(([key, v]) => matchesOne(r, v!, specs[key]!)));
+}
+
+/** Есть ли хоть один действующий отбор (по видимым столбцам). */
+export function hasActiveColumnFilters(
+  filters: ColumnFilters,
+  hidden?: Record<string, boolean>,
+): boolean {
+  return Object.entries(filters).some(([key, v]) => isColumnFilterActive(v) && !hidden?.[key]);
+}
+
+/** Варианты для multi-отбора: из спецификации либо уникальные значения строк (сорт. по-русски). */
+export function collectMultiOptions<T>(
+  rows: T[],
+  spec: ColumnFilterSpec<T>,
+): { value: string; label: string }[] {
+  if (spec.options) return spec.options;
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const v = spec.getText?.(r);
+    if (v) seen.add(String(v));
+  }
+  return [...seen]
+    .sort((a, b) => a.localeCompare(b, 'ru'))
+    .map((v) => ({ value: v, label: spec.labelOf?.(v) ?? v }));
+}

@@ -92,6 +92,13 @@ export const MATERIAL_REQUEST_TYPE_LABELS: Record<MaterialRequestType, string> =
   own_supply: 'Закупка подрядчиком',
 };
 
+// Короткие подписи вида заявки для компактного бейджа в своде материалов (полные — выше).
+export const MATERIAL_REQUEST_TYPE_SHORT_LABELS: Record<MaterialRequestType, string> = {
+  own_supplier: 'РП',
+  su10: 'давал',
+  own_supply: 'подряд',
+};
+
 // Типы прикрепляемых документов (снимок операционного справочника BillHub) + платёжный.
 export const REQUEST_DOC_TYPES = [
   'invoice',        // Счет (обязательный для оформления РП)
