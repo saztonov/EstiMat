@@ -12,6 +12,7 @@ import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
 import { SHARED_KEY, UNGROUPED_KEY } from './materialBlocks';
 import type { DimensionFinding } from './dimensionChecks';
+import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
 import { isReviewGroup } from './smartReview';
 import { SmartGroupingLogDrawer } from './SmartGroupingLogDrawer';
 import { activityText, retryText, suppressedNotice } from './smartGroupingText';
@@ -38,6 +39,8 @@ interface Props {
   dimension: Map<string, DimensionFinding>;
   /** Готовые деревья разбивки по id ИИ-группы (строятся один раз в родителе). Пусто → без разбивки. */
   splitTrees: Map<string, SplitNode[]>;
+  /** Клик по виду работ (тег в шапке блока или узел разбивки) — показать его шифры РД. */
+  onCostTypeCiphers: OnCostTypeCiphers;
 }
 
 // Ключи сворачивания секций (с префиксом режима, чтобы не пересекаться со стандартным деревом)
@@ -64,6 +67,7 @@ export function SmartGroupingPanel({
   rowClassName,
   dimension,
   splitTrees,
+  onCostTypeCiphers,
 }: Props) {
   const jobQuery = useSmartGroupingJob(estimateId, contractorId, !!contractorId);
   const run = useRunSmartGrouping(estimateId, contractorId);
@@ -283,6 +287,7 @@ export function SmartGroupingPanel({
           dimension={dimension}
           splitTree={splitTrees.get(g.id) ?? []}
           collapsedNodes={collapsed}
+          onCostTypeCiphers={onCostTypeCiphers}
         />
       ))}
       {groups.length === 0 && sharedRows.length === 0 && ungroupedRows.length === 0 && (

@@ -195,8 +195,11 @@ export interface EstimateDetail {
   // Счётчики комментариев по видам работ: { [costTypeId]: number } (с сервера).
   cost_type_comment_counts?: Record<string, number>;
   // Шифры РД по видам работ (в контексте сметы): { [costTypeId]: [{id, code}] } (с сервера).
-  cost_type_ciphers?: Record<string, { id: string; code: string }[]>;
+  cost_type_ciphers?: CostTypeCiphers;
 }
+
+/** Шифры РД по видам работ сметы: costTypeId → назначенные шифры. */
+export type CostTypeCiphers = Record<string, { id: string; code: string }[]>;
 
 // Группа строк по виду затрат (строится на клиенте из items/contractors)
 export interface CostTypeGroup {
@@ -226,7 +229,7 @@ export function buildCostTypeGroups(
   contractors: EstimateContractor[],
   pending: CostTypeGroup[] = [],
   costTypeCommentCounts?: Record<string, number>,
-  costTypeCiphers?: Record<string, { id: string; code: string }[]>,
+  costTypeCiphers?: CostTypeCiphers,
 ): CostTypeGroup[] {
   const map = new Map<string, CostTypeGroup>();
   const keyOf = (id: string | null) => id ?? GROUP_NONE;

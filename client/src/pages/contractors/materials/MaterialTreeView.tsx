@@ -1,8 +1,9 @@
-import { Table, Space } from 'antd';
+import { Table, Space, Tooltip } from 'antd';
 import { DownOutlined, RightOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
+import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
 import type { MaterialTreeNode } from './materialTree';
 import type { OrderMaterialRow } from './orderRow';
 import { subtreeRows } from './draftFill';
@@ -26,6 +27,8 @@ interface Props {
   onToggle: (key: string) => void;
   bulk?: BulkFill;
   rowClassName?: (row: OrderMaterialRow) => string;
+  /** Клик по названию вида работ — показать его шифры РД (узел при этом не сворачивается). */
+  onCostTypeCiphers: OnCostTypeCiphers;
 }
 
 /** Ключи всех узлов дерева — для «Свернуть всё». */
@@ -63,7 +66,15 @@ function NodeTotal({ node }: { node: MaterialTreeNode }) {
 
 // Дерево группировки. Ветки рендерятся лениво: содержимое свёрнутого узла не строится вовсе —
 // при всех включённых уровнях узлов сотни, и разом они дали бы сотни таблиц.
-export function MaterialTreeView({ nodes, columns, collapsed, onToggle, bulk, rowClassName }: Props) {
+export function MaterialTreeView({
+  nodes,
+  columns,
+  collapsed,
+  onToggle,
+  bulk,
+  rowClassName,
+  onCostTypeCiphers,
+}: Props) {
   // Отступ между корневыми блоками задаёт сама карточка — обёртка со своим size его бы удвоила.
   return (
     <div>
@@ -77,6 +88,7 @@ export function MaterialTreeView({ nodes, columns, collapsed, onToggle, bulk, ro
           onToggle={onToggle}
           bulk={bulk}
           rowClassName={rowClassName}
+          onCostTypeCiphers={onCostTypeCiphers}
         />
       ))}
     </div>
@@ -91,11 +103,13 @@ function TreeNodeView({
   onToggle,
   bulk,
   rowClassName,
+  onCostTypeCiphers,
 }: {
   node: MaterialTreeNode;
   depth: number;
 } & Omit<Props, 'nodes'>) {
   const isCollapsed = collapsed.has(node.key);
+  const headFont = HEAD_FONT[Math.min(depth, HEAD_FONT.length - 1)];
 
   // Уровни «Локация» и «Тип работы» без подписи читались как случайные бейджи: из заголовка
   // не было видно, по какому признаку разделены материалы.
@@ -108,8 +122,22 @@ function TreeNodeView({
         typeLabels={[]}
       />
     </>
+  ) : node.level === 'costType' ? (
+    // Только название вида работ открывает шифры; остальная площадь заголовка по-прежнему
+    // сворачивает узел, поэтому клик сюда до неё доходить не должен.
+    <Tooltip title="Показать шифры рабочей документации">
+      <strong
+        style={{ fontSize: headFont, cursor: 'pointer' }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onCostTypeCiphers({ costTypeId: node.costTypeId, costTypeName: node.label });
+        }}
+      >
+        {node.label}
+      </strong>
+    </Tooltip>
   ) : (
-    <strong style={{ fontSize: HEAD_FONT[Math.min(depth, HEAD_FONT.length - 1)] }}>
+    <strong style={{ fontSize: headFont }}>
       {node.level === 'locationType' ? `Тип: ${node.label}` : node.label}
     </strong>
   );
@@ -150,6 +178,7 @@ function TreeNodeView({
           onToggle={onToggle}
           bulk={bulk}
           rowClassName={rowClassName}
+          onCostTypeCiphers={onCostTypeCiphers}
         />
       ))}
     </>

@@ -9,7 +9,12 @@ import { useAuthStore } from '../../store/authStore';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { useProjectZones } from '../../hooks/useProjectLocations';
 import { buildZoneIndex, type ZoneIndex } from '../estimates/components/LocationBadges';
-import { formatMoney, type EstimateDetail, type EstimateItem } from '../estimates/components/types';
+import {
+  formatMoney,
+  type CostTypeCiphers,
+  type EstimateDetail,
+  type EstimateItem,
+} from '../estimates/components/types';
 import { ContractorsSmetaTab } from './ContractorsSmetaTab';
 import { ContractorsMaterialsTab } from './ContractorsMaterialsTab';
 import { ContractorsRequestsTab } from './ContractorsRequestsTab';
@@ -169,7 +174,10 @@ export function ContractorsPage() {
   });
   const contractorQ = useQuery({
     queryKey: ['contractor-my-items', estimateId],
-    queryFn: () => api.get<{ data: { items: EstimateItem[] } }>(`/contractors/my-items?estimateId=${estimateId}`),
+    queryFn: () =>
+      api.get<{ data: { items: EstimateItem[]; cost_type_ciphers: CostTypeCiphers } }>(
+        `/contractors/my-items?estimateId=${estimateId}`,
+      ),
     enabled: !!estimateId && viewerIsContractor,
     refetchOnWindowFocus: true,
   });
@@ -177,6 +185,16 @@ export function ContractorsPage() {
   const items: EstimateItem[] = viewerIsContractor
     ? contractorQ.data?.data.items ?? []
     : engineerQ.data?.data.items ?? [];
+
+  // Шифры РД по видам работ: у инженера из детализации сметы, у подрядчика — из my-items
+  // (справочник шифров объекта ему закрыт).
+  const costTypeCiphers: CostTypeCiphers = useMemo(
+    () =>
+      (viewerIsContractor
+        ? contractorQ.data?.data.cost_type_ciphers
+        : engineerQ.data?.data.cost_type_ciphers) ?? {},
+    [viewerIsContractor, contractorQ.data, engineerQ.data],
+  );
 
   // Объект строк: у инженера — из сметы, у подрядчика — из его первой строки (project_id есть в
   // выдаче my-items). Пока строк нет — projectId undefined, и зоны не запрашиваются.
@@ -243,6 +261,7 @@ export function ContractorsPage() {
                   canAssign={canAssign}
                   viewerIsContractor={viewerIsContractor}
                   projectId={projectId ?? ''}
+                  costTypeCiphers={costTypeCiphers}
                   zones={zones}
                   zoneIndex={zoneIndex}
                   onChanged={() => refetch()}
@@ -258,6 +277,7 @@ export function ContractorsPage() {
                   items={items}
                   viewerIsContractor={viewerIsContractor}
                   isAdmin={role === 'admin'}
+                  costTypeCiphers={costTypeCiphers}
                   zones={zones}
                   zoneIndex={zoneIndex}
                 />

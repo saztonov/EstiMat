@@ -27,6 +27,7 @@ import { CostTypeGroupBlock } from '../estimates/components/CostTypeGroupBlock';
 import {
   buildCostTypeGroups,
   formatMoney,
+  type CostTypeCiphers,
   type CostTypeGroup,
   type EstimateItem,
   type ItemContractor,
@@ -49,6 +50,8 @@ interface Props {
   viewerIsContractor: boolean;
   /** Объект строк — для справочника типов в поповере локации (вид инженера). */
   projectId: string;
+  /** Шифры РД по видам работ — тегами в шапке блока (просмотр; правка только в разделе «Смета»). */
+  costTypeCiphers: CostTypeCiphers;
   zones: ZoneNode[];
   zoneIndex: ZoneIndex;
   onChanged: () => void;
@@ -168,11 +171,11 @@ export function ContractorsSmetaTab({
   canAssign,
   viewerIsContractor,
   projectId,
+  costTypeCiphers,
   zones,
   zoneIndex,
   onChanged,
 }: Props) {
-  void estimateId; // estimateId сервер выводит из itemIds — здесь не нужен
   const { message } = App.useApp();
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
@@ -227,7 +230,10 @@ export function ContractorsSmetaTab({
       );
     return filterByLocation(res);
   }, [items, onlyUnassigned, filterContractorIds, filterByLocation]);
-  const groups = useMemo(() => buildCostTypeGroups(visibleItems, []), [visibleItems]);
+  const groups = useMemo(
+    () => buildCostTypeGroups(visibleItems, [], [], undefined, costTypeCiphers),
+    [visibleItems, costTypeCiphers],
+  );
 
   // Секции категорий (категория → виды работ), как на странице «Смета».
   const sections = useMemo(() => {
@@ -519,6 +525,9 @@ export function ContractorsSmetaTab({
                     showLocationColumn
                     zones={zones}
                     projectId={projectId}
+                    // estimateId — только чтобы отрисовались шифры РД (условие показа в блоке);
+                    // назначения подрядчиков сервер выводит из itemIds и его не требуют.
+                    estimateId={estimateId}
                     showPrices={showPrices}
                     leadingColumns={executorColumn}
                     headerExtra={

@@ -1,4 +1,4 @@
-import { Alert, Collapse, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Collapse, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { MaterialGroupDto } from '@estimat/shared';
 import { formatMoney } from '../../estimates/components/types';
@@ -7,6 +7,7 @@ import type { BulkFill } from './MaterialTreeView';
 import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
 import type { DimensionFinding } from './dimensionChecks';
+import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
 import type { SplitNode } from './smartSplit';
 import { SmartSplitView } from './SmartSplitView';
 
@@ -27,6 +28,8 @@ interface Props {
   splitTree: SplitNode[];
   /** Свёрнутые узлы разбивки (общее с картами пространство ключей smart:...). */
   collapsedNodes: Set<string>;
+  /** Клик по тегу вида работ — показать его шифры РД (блок при этом не сворачивается). */
+  onCostTypeCiphers: OnCostTypeCiphers;
 }
 
 /**
@@ -63,6 +66,7 @@ export function SmartGroupCard({
   dimension,
   splitTree,
   collapsedNodes,
+  onCostTypeCiphers,
 }: Props) {
   // Итог — только по строкам с ценой закупки: сметные цены материалов во вкладке не показываются.
   const priced = rows.filter((r) => r.materialCost != null);
@@ -76,6 +80,11 @@ export function SmartGroupCard({
   // включённом виде работ не сливается — иначе на экране две одинаковые «Монтаж трубопровода»).
   const costTypes = [...new Set(rows.map((r) => r.costTypeName).filter((n): n is string => !!n))];
   const costTypeLabel = costTypes.length === 1 ? costTypes[0] : null;
+  // id того же вида работ — для показа его шифров РД. Тег рисуется только при единственном
+  // имени, поэтому достаточно первой строки с ним.
+  const costTypeId = costTypeLabel
+    ? rows.find((r) => r.costTypeName === costTypeLabel)?.costTypeId ?? null
+    : null;
   // Корпуса блока — тегами в шапке: даёт увидеть географию блока, не раскрывая разбивку.
   const zoneNames = [...new Set(rows.flatMap((r) => r.zoneNames))].sort((a, b) => a.localeCompare(b, 'ru'));
 
@@ -88,7 +97,22 @@ export function SmartGroupCard({
       title={
         <>
           <strong style={{ fontSize: 14 }}>{group.name}</strong>
-          {costTypeLabel && <Tag color="blue">{costTypeLabel}</Tag>}
+          {/* Тег вида работ открывает его шифры РД. Он лежит внутри кликабельной шапки, поэтому
+              без stopPropagation клик заодно свернул бы весь блок. */}
+          {costTypeLabel && (
+            <Tooltip title="Показать шифры рабочей документации">
+              <Tag
+                color="blue"
+                style={{ cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCostTypeCiphers({ costTypeId, costTypeName: costTypeLabel });
+                }}
+              >
+                {costTypeLabel}
+              </Tag>
+            </Tooltip>
+          )}
           {status && <Tag color={status.color}>{status.label}</Tag>}
           {/* Счётчик находок — в шапке: иначе он виден только у развёрнутой карточки, внутри
               второго сворачивания. */}
@@ -187,7 +211,12 @@ export function SmartGroupCard({
 
       {splitTree.length > 0 ? (
         <div style={{ padding: 8 }}>
-          <SmartSplitView nodes={splitTree} collapsed={collapsedNodes} onToggle={onToggle} />
+          <SmartSplitView
+            nodes={splitTree}
+            collapsed={collapsedNodes}
+            onToggle={onToggle}
+            onCostTypeCiphers={onCostTypeCiphers}
+          />
         </div>
       ) : (
         <Table<OrderMaterialRow>

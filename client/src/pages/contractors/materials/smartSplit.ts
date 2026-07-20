@@ -143,6 +143,8 @@ export interface SplitNode {
   label: string;
   /** Бейджи корпуса (только у уровня location). */
   badges: { zoneNames: string[]; floorsLabel: string } | null;
+  /** Вид работ узла (только у уровня 'costType') — для показа его шифров РД по клику. */
+  costTypeId: string | null;
   rowCount: number;
   children: SplitNode[];
   /** Непусто только у листового уровня. */
@@ -240,6 +242,7 @@ function buildLevel(
       level: spec.level,
       label: spec.label(b.sample),
       badges,
+      costTypeId: spec.level === 'costType' ? b.sample.costTypeId : null,
       rowCount: new Set(b.slices.map((s) => s.row.orderKey)).size,
       children: isLeaf ? [] : buildLevel(b.slices, specs, depth + 1, nodeKey),
       leaves,

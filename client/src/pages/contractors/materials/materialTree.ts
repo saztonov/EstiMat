@@ -27,6 +27,11 @@ export interface MaterialTreeNode {
   label: string;
   /** Бейджи вместо текстовой подписи (только у уровня 'location'). */
   badges: { zoneNames: string[]; floorsLabel: string } | null;
+  /**
+   * Вид работ узла (только у уровня 'costType', иначе null) — для показа его шифров РД по клику.
+   * Отдельным полем, а не разбором ключа: ключ — путь узла и его формат менять свободно.
+   */
+  costTypeId: string | null;
   /** Стоимость материалов по ценам закупок: строки без цены в сумму не входят. */
   total: number;
   /** Число материальных строк во всём поддереве. */
@@ -125,6 +130,7 @@ function buildLevel(
       level: spec.level,
       label: spec.label(bucket.sample),
       badges: spec.badges?.(bucket.sample) ?? null,
+      costTypeId: spec.level === 'costType' ? bucket.sample.costTypeId : null,
       total: bucket.rows.reduce((s, r) => s + (r.materialCost ?? 0), 0),
       rowCount: bucket.rows.length,
       pricedRowCount: bucket.rows.filter((r) => r.materialCost != null).length,

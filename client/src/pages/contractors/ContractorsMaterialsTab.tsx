@@ -12,12 +12,13 @@ import { api, ApiError } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { buildMaterialGroups } from '../estimates/materials/aggregateMaterials';
-import { type EstimateItem } from '../estimates/components/types';
+import { type CostTypeCiphers, type EstimateItem } from '../estimates/components/types';
 import { type ZoneNode } from '../estimates/components/location';
 import { type ZoneIndex } from '../estimates/components/LocationBadges';
 import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
 import { useContractorLocationFilter } from './useContractorLocationFilter';
 import { MaterialLocationsModal } from './MaterialLocationsModal';
+import { CostTypeCiphersModal, type CipherTarget } from './materials/CostTypeCiphersModal';
 import { RpNextStepModal } from './RpNextStepModal';
 import { DeliveryScheduleModal, type ScheduleLineInput, type ScheduledLine } from './DeliveryScheduleModal';
 import { buildCategoryIndex, buildOrderRows, type OrderMaterialRow } from './materials/orderRow';
@@ -46,6 +47,8 @@ interface Props {
   /** Подрядчик: материалы масштабируются по его доле строки (effective_qty / quantity). */
   viewerIsContractor: boolean;
   isAdmin: boolean;
+  /** Шифры РД по видам работ — показываются в модалке по клику на вид работ. */
+  costTypeCiphers: CostTypeCiphers;
   zones: ZoneNode[];
   zoneIndex: ZoneIndex;
 }
@@ -101,12 +104,15 @@ export function ContractorsMaterialsTab({
   items,
   viewerIsContractor,
   isAdmin,
+  costTypeCiphers,
   zones,
   zoneIndex,
 }: Props) {
   const [filterContractorIds, setFilterContractorIds] = useState<string[]>([]);
   // Разбивка сводной строки по локациям (клик по названию материала).
   const [breakdown, setBreakdown] = useState<OrderMaterialRow | null>(null);
+  // Шифры РД вида работ (клик по виду работ — в заголовке узла, в колонке или в шапке ИИ-блока).
+  const [cipherTarget, setCipherTarget] = useState<CipherTarget | null>(null);
   const [viewMode, setViewMode] = usePersistedTab('estimat:contractors-materials-view', 'standard');
   // Своё состояние свёрнутости на режим: ключи узлов дерева и ИИ-групп из разных пространств,
   // общий Set смешал бы их (свернул узел — свернулась чужая карточка).
@@ -370,6 +376,7 @@ export function ContractorsMaterialsTab({
         manual: draft.manual,
         onDraftChange: setValue,
         onBreakdown: setBreakdown,
+        onCostTypeCiphers: setCipherTarget,
       }),
     [levels.costType, locFilterActive, editing, scoped, priceMap, orderedMap, dimension, draft, setValue],
   );
@@ -702,6 +709,7 @@ export function ContractorsMaterialsTab({
             rowClassName={rowClassName}
             dimension={dimension}
             splitTrees={splitTreesByGroup}
+            onCostTypeCiphers={setCipherTarget}
           />
         ) : shownTree.length === 0 ? (
           // Пустой экран под включённым отбором читается как поломка — говорим, что произошло.
@@ -714,6 +722,7 @@ export function ContractorsMaterialsTab({
             onToggle={toggleNode}
             bulk={bulk}
             rowClassName={rowClassName}
+            onCostTypeCiphers={setCipherTarget}
           />
         )}
       </div>
@@ -727,6 +736,13 @@ export function ContractorsMaterialsTab({
       />
       {breakdown && (
         <MaterialLocationsModal material={breakdown} zoneIndex={zoneIndex} onClose={() => setBreakdown(null)} />
+      )}
+      {cipherTarget && (
+        <CostTypeCiphersModal
+          target={cipherTarget}
+          costTypeCiphers={costTypeCiphers}
+          onClose={() => setCipherTarget(null)}
+        />
       )}
       {created && (
         <RpNextStepModal

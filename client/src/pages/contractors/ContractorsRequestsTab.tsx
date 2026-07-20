@@ -15,6 +15,7 @@ import { type ColumnFilters } from '../../lib/columnFilters';
 import { useGroupedTable, computeNeedFull } from '../../lib/useGroupedTable';
 import { isGroupRow, type GroupLevel, type GroupNode, type GroupRow } from '../../lib/tableGrouping';
 import { ColumnSettingsButton } from '../../components/table/ColumnSettingsButton';
+import { CipherTags } from '../../components/CipherTags';
 import { contractorRequestsColumnsStore } from './columns/contractorRequestsColumns';
 import { RequestStatusTag, RequestTypeTag, money } from '../requests/requestConstants';
 import { RequestDetailModal } from '../requests/RequestDetailModal';
@@ -92,6 +93,8 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
     contractor_name: { kind: 'multi' as const, getText: (r: RequestRow) => r.contractor_name },
     status: { kind: 'multi' as const, getText: (r: RequestRow) => r.status, labelOf: (v: string) => REQUEST_STATUS_LABELS[v as keyof typeof REQUEST_STATUS_LABELS] ?? v },
     order_amount: { kind: 'numRange' as const, getNum: (r: RequestRow) => r.order_amount },
+    // Шифров у заявки несколько — отбор текстовый по их склейке (поиск по коду находит заявку).
+    rd_ciphers: { kind: 'text' as const, getText: (r: RequestRow) => (r.rd_ciphers ?? []).join(' ') },
   }), []);
 
   const gt = useGroupedTable<RequestRow>({
@@ -115,6 +118,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
       : []),
     { title: 'Статус', key: 'status', width: 160, ...gt.hf('status', filterSpecs.status), render: (_v, r) => { const row = leaf(r); return <RequestStatusTag status={row.status} comment={row.revision_reason} />; } },
     { title: 'Сумма', key: 'order_amount', width: 130, align: 'right', ...gt.hf('order_amount', filterSpecs.order_amount), render: (_v, r) => money(leaf(r).order_amount) },
+    { title: 'Шифры РД', key: 'rd_ciphers', width: 200, ...gt.hf('rd_ciphers', filterSpecs.rd_ciphers), render: (_v, r) => <CipherTags codes={leaf(r).rd_ciphers ?? []} /> },
     {
       title: '', key: 'actions', width: 110,
       onCell: () => ({ onClick: (e: { stopPropagation: () => void }) => e.stopPropagation() }),

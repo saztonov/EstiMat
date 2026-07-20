@@ -1,6 +1,7 @@
-import { App, Select, Space, Tag } from 'antd';
+import { App, Select } from 'antd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
+import { CipherTags } from '../../../components/CipherTags';
 
 interface Cipher {
   id: string;
@@ -40,16 +41,9 @@ export function CostTypeCipherSelect({ estimateId, projectId, costTypeId, value,
     onError: (e: Error) => message.error(e.message),
   });
 
-  if (!canEdit) {
-    if (!value.length) return null;
-    return (
-      <Space size={2} wrap>
-        {value.map((c) => (
-          <Tag key={c.id} color="geekblue" style={{ margin: 0 }}>{c.code}</Tag>
-        ))}
-      </Space>
-    );
-  }
+  // Просмотр — теми же тремя тегами со свёрткой «+N», что и режим правки (maxTagCount={3}):
+  // иначе у вида работ с десятком шифров шапка блока разъезжалась бы на несколько строк.
+  if (!canEdit) return <CipherTags codes={value.map((c) => c.code)} />;
 
   const options = (data?.data ?? []).map((c) => ({ value: c.id, label: c.code }));
 

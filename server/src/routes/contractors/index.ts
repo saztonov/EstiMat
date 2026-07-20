@@ -4,7 +4,12 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { recordAudit, recordAuditBatch } from '../../lib/audit.js';
 import { withImageSrc } from '../../lib/projectImage.js';
 import { emitEstimateChanged } from '../../lib/realtime/emit.js';
-import { loadProjectId, bucketBy, ITEMS_CANONICAL_ORDER_BY } from '../../lib/estimate-detail.js';
+import {
+  loadProjectId,
+  bucketBy,
+  fetchCostTypeCiphers,
+  ITEMS_CANONICAL_ORDER_BY,
+} from '../../lib/estimate-detail.js';
 import { assertEstimateAccess, ChatAccessError, isContractor } from '../../lib/chat/access.js';
 import {
   assignItemContractorsSchema,
@@ -198,7 +203,14 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
         materials: materialsByItem.get(it.id as string) ?? [],
       }));
 
-      return { data: { items: itemsWithMaterials } };
+      // Шифры РД по видам работ: подрядчику справочник шифров объекта закрыт, и детализацию сметы
+      // он не запрашивает — этот роут единственный путь доставки. Только при выборке по одной
+      // смете: индекс по cost_type_id между сметами неоднозначен.
+      const costTypeCiphers = request.query.estimateId
+        ? await fetchCostTypeCiphers(fastify.pool, request.query.estimateId)
+        : {};
+
+      return { data: { items: itemsWithMaterials, cost_type_ciphers: costTypeCiphers } };
     },
   );
 

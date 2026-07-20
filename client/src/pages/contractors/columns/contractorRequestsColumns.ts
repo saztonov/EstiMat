@@ -11,6 +11,8 @@ export const CONTRACTOR_REQUESTS_COLUMN_DEFS: ColumnDef[] = [
   { key: 'contractor_name', label: 'Подрядчик', groupable: true },
   { key: 'status', label: 'Статус', groupable: true },
   { key: 'order_amount', label: 'Сумма' },
+  // Шифры РД — набор, а не скаляр: уровнем дерева быть не может, поэтому без groupable.
+  { key: 'rd_ciphers', label: 'Шифры РД' },
 ];
 
 export const contractorRequestsColumnsStore = createTableColumnsStore({

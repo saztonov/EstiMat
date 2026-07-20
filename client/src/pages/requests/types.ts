@@ -113,6 +113,8 @@ export interface RequestRow {
   revision_reason: string | null;
   /** Материалы заявки в лоте, ушедшем в закупку (sourcing/awarded/cancel_pending). */
   in_active_purchase: boolean;
+  /** Шифры РД всех видов работ заявки (объединение, отсортировано по коду). */
+  rd_ciphers: string[];
 }
 
 // Данные для формы «Отправить РП» (GET /requests/:id/rp-config).

@@ -33,6 +33,31 @@ export async function loadProjectId(
   return rows[0]?.project_id ?? null;
 }
 
+/**
+ * Шифры РД, назначенные видам работ сметы → { [costTypeId]: [{id, code}] }.
+ * Отдельная функция, а не часть buildEstimateDetail: тот же индекс нужен разделу «Подрядчики»
+ * (GET /contractors/my-items), где полной детализации сметы не строят.
+ */
+export async function fetchCostTypeCiphers(
+  db: Pick<Pool | PoolClient, 'query'>,
+  estimateId: string,
+): Promise<Record<string, { id: string; code: string }[]>> {
+  const { rows } = await db.query(
+    `SELECT ectc.cost_type_id, c.id, c.code
+       FROM estimate_cost_type_ciphers ectc
+       JOIN project_rd_ciphers c ON c.id = ectc.cipher_id
+      WHERE ectc.estimate_id = $1
+      ORDER BY c.code`,
+    [estimateId],
+  );
+  const out: Record<string, { id: string; code: string }[]> = {};
+  for (const r of rows) {
+    const k = r.cost_type_id as string;
+    (out[k] ??= []).push({ id: r.id as string, code: r.code as string });
+  }
+  return out;
+}
+
 export interface EstimateDetailOptions {
   // true → дополнительный запрос estimate_item_contractors и поля item_contractors/
   // assigned_total/remaining_qty/over_assigned у каждой работы (как в GET /api/estimates/:id).
@@ -138,14 +163,7 @@ export async function buildEstimateDetail(
       [estimateId],
     );
     // Шифры РД по видам работ → { [costTypeId]: [{id, code}] }.
-    const costTypeCipherRows = await pool.query(
-      `SELECT ectc.cost_type_id, c.id, c.code
-         FROM estimate_cost_type_ciphers ectc
-         JOIN project_rd_ciphers c ON c.id = ectc.cipher_id
-        WHERE ectc.estimate_id = $1
-        ORDER BY c.code`,
-      [estimateId],
-    );
+    const costTypeCiphers = await fetchCostTypeCiphers(pool, estimateId);
     // Построчные назначения подрядчиков (раздел «Подрядчики») — только когда запрошены.
     const itemContractors = opts?.includeItemContractors
       ? await pool.query(
@@ -160,20 +178,14 @@ export async function buildEstimateDetail(
           [estimateId],
         )
       : null;
-    return { contractors, costTypeCommentRows, costTypeCipherRows, itemContractors };
+    return { contractors, costTypeCommentRows, costTypeCiphers, itemContractors };
   })();
 
   const [items, materials, rest] = await Promise.all([itemsPromise, materialsPromise, restPromise]);
-  const { contractors, costTypeCommentRows, costTypeCipherRows, itemContractors } = rest;
+  const { contractors, costTypeCommentRows, costTypeCiphers, itemContractors } = rest;
 
   const costTypeCommentCounts: Record<string, number> = {};
   for (const r of costTypeCommentRows.rows) costTypeCommentCounts[r.cost_type_id as string] = r.count as number;
-
-  const costTypeCiphers: Record<string, { id: string; code: string }[]> = {};
-  for (const r of costTypeCipherRows.rows) {
-    const k = r.cost_type_id as string;
-    (costTypeCiphers[k] ??= []).push({ id: r.id as string, code: r.code as string });
-  }
 
   // Бакетизация по item_id за один проход вместо вложенных .filter() внутри .map()
   // (было O(items × строк)). Порядок сохраняется: SQL уже отсортировал строки (ORDER BY),

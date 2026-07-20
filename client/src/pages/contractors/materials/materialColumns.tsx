@@ -5,6 +5,7 @@ import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
 import type { DimensionFinding } from './dimensionChecks';
+import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
 import { remainingOf } from './remaining';
 
 const EPS = 1e-6;
@@ -36,6 +37,8 @@ interface Options {
   manual?: Set<string>;
   onDraftChange: (orderKey: string, v: number | null) => void;
   onBreakdown: (m: OrderMaterialRow) => void;
+  /** Клик по виду работ — показать назначенные ему шифры РД. */
+  onCostTypeCiphers: OnCostTypeCiphers;
 }
 
 /**
@@ -56,6 +59,7 @@ export function buildMaterialColumns({
   manual,
   onDraftChange,
   onBreakdown,
+  onCostTypeCiphers,
 }: Options): ColumnsType<OrderMaterialRow> {
   // Цена и сумма приходят из оформленной закупки. Пока по смете не закупали ничего, обе колонки —
   // сплошные прочерки: не занимаем ими ширину. В режиме заявки деньги тоже ни к чему — там считают
@@ -111,8 +115,18 @@ export function buildMaterialColumns({
       title: 'Вид работ',
       key: 'costType',
       width: 180,
+      // Кликабельно, но не синее — как имя материала: колонка из ссылок читается как стена.
       render: (_, m) => (
-        <span style={{ color: '#8c8c8c' }}>{m.costTypeName ?? 'Без вида работ'}</span>
+        <Tooltip title="Показать шифры рабочей документации">
+          <Button
+            type="text"
+            className="estimat-material-name"
+            style={{ padding: 0, height: 'auto', color: '#8c8c8c', textAlign: 'left', whiteSpace: 'normal' }}
+            onClick={() => onCostTypeCiphers({ costTypeId: m.costTypeId, costTypeName: m.costTypeName })}
+          >
+            {m.costTypeName ?? 'Без вида работ'}
+          </Button>
+        </Tooltip>
       ),
     });
   }

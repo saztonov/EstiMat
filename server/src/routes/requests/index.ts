@@ -189,6 +189,14 @@ export default async function requestRoutes(fastify: FastifyInstance) {
               (SELECT count(*) FROM material_request_files f
                 WHERE f.request_id = mr.id AND NOT f.superseded) AS files_count,
               (SELECT count(*) FROM material_request_items i WHERE i.request_id = mr.id) AS items_count,
+              -- Шифры РД заявки: объединение шифров всех видов работ её позиций (столбец «Шифры РД»
+              -- во вкладке «Заявки» раздела «Подрядчики»). Пустой массив, если ничего не назначено.
+              (SELECT COALESCE(json_agg(DISTINCT c.code ORDER BY c.code), '[]'::json)
+                 FROM material_request_items mri
+                 JOIN estimate_cost_type_ciphers ectc
+                   ON ectc.estimate_id = mr.estimate_id AND ectc.cost_type_id = mri.cost_type_id
+                 JOIN project_rd_ciphers c ON c.id = ectc.cipher_id
+                WHERE mri.request_id = mr.id) AS rd_ciphers,
               (SELECT r.reason FROM material_request_revisions r
                 WHERE r.request_id = mr.id AND r.completed_at IS NULL
                 ORDER BY r.requested_at DESC LIMIT 1) AS revision_reason,
