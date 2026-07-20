@@ -178,10 +178,13 @@ export interface Su10MaterialRow {
 }
 
 // Кандидат в ответственные (GET /procurement/assignable-users).
+// is_active приходит с сервера: в списке есть и деактивированные сотрудники, у которых остались
+// назначения, — иначе их нельзя было бы найти, чтобы снять область.
 export interface AssignableUser {
   id: string;
   full_name: string;
   role: string;
+  is_active?: boolean;
 }
 
 // Опции фильтров свода материалов (facets — по всему набору, независимо от текущих фильтров).
@@ -191,14 +194,63 @@ export interface MaterialsFacets {
   categories: { id: string; name: string | null }[];
 }
 
-// Ответственный за категорию работ (справочник «Закупки»).
+// Вид затрат в дереве справочника «Закупки».
+export interface CostTypeResponsibleNode {
+  id: string;
+  name: string;
+  code: string | null;
+  sort_order: number;
+  is_active: boolean;
+  /** Назначенный на самом виде (null — наследует от категории). */
+  responsible_id: string | null;
+  responsible_name: string | null;
+  /** Эффективный с учётом наследования и замещения — то, что реально действует. */
+  effective_user_id: string | null;
+  effective_name: string | null;
+  source: 'type' | 'category' | null;
+  eff_substitution_id: string | null;
+}
+
+// Категория затрат с видами (GET /procurement/responsibles).
 export interface CategoryResponsibles {
   id: string; // category_id
   name: string;
   code: string | null;
   sort_order: number;
   is_active: boolean;
-  responsibles: { id: string; full_name: string; role: string; is_active: boolean }[];
+  responsible_id: string | null;
+  responsible_name: string | null;
+  substitution_id: string | null;
+  substitute_name: string | null;
+  substitution_ends_on: string | null;
+  types: CostTypeResponsibleNode[];
+  /** @deprecated Модель «много ответственных»; 0 или 1 элемент — для незакрытых старых вкладок. */
+  responsibles: { id: string; full_name: string; role?: string; is_active?: boolean }[];
+}
+
+// Назначения сотрудника (GET /procurement/responsibles/by-user/:id).
+export interface UserAssignments {
+  categories: { id: string; name: string }[];
+  costTypes: { id: string; name: string; category_id: string; category_name: string | null }[];
+  materials: {
+    id: string; agg_key: string; material_name: string | null;
+    project_name: string | null; contractor_name: string | null; cost_type_name: string | null;
+  }[];
+  substitutions: ProcurementSubstitution[];
+}
+
+// Замещение ответственного на период (справочник «Закупки»).
+export interface ProcurementSubstitution {
+  id: string;
+  principal_user_id: string;
+  deputy_user_id: string;
+  principal_name: string | null;
+  deputy_name: string | null;
+  starts_on: string;
+  ends_on: string;
+  ended_at: string | null;
+  reason: string | null;
+  is_active: boolean;
 }
 
 export interface SupplierLotRow {

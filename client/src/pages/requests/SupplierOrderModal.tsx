@@ -254,7 +254,7 @@ function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: st
         ? [{ key: 'del', danger: true, icon: <DeleteOutlined />, label: 'Удалить черновик' }]
         : []),
       ...(status === 'sourcing'
-        ? [{ key: 'cancel', danger: true, icon: <DeleteOutlined />, label: 'Отменить закупку' }]
+        ? [{ key: 'cancel', danger: true, icon: <DeleteOutlined />, label: 'Отменить заказ' }]
         : []),
     ],
     onClick: ({ key }: { key: string }) => {
@@ -266,8 +266,8 @@ function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: st
       }
       if (key === 'cancel') {
         Modal.confirm({
-          title: 'Отменить закупку? Остаток материалов вернётся в свод.', okText: 'Отменить', okButtonProps: { danger: true },
-          onOk: () => api.post(`/supplier-orders/${orderId}/cancel`).then(() => { message.success('Закупка отменена'); onChanged(); onClose(); }).catch((e) => message.error(e.message)),
+          title: 'Отменить заказ? Остаток материалов вернётся в свод.', okText: 'Отменить', okButtonProps: { danger: true },
+          onOk: () => api.post(`/supplier-orders/${orderId}/cancel`).then(() => { message.success('Заказ отменён'); onChanged(); onClose(); }).catch((e) => message.error(e.message)),
         });
       }
     },
@@ -319,7 +319,7 @@ function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: st
       {!isTender && status === 'awarded' && <AwardedView order={order} number={number} />}
 
       {(status === 'cancelled' || status === 'no_award') && (
-        <Alert type="warning" showIcon message="Закупка завершена без поставщика — материалы возвращены в свод" />
+        <Alert type="warning" showIcon message="Заказ завершён без поставщика — материалы возвращены в свод" />
       )}
     </Modal>
   );

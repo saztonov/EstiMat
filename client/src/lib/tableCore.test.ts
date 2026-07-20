@@ -147,6 +147,29 @@ test('отборы: варианты multi собираются из всех з
   );
 });
 
+test('отборы: варианты сортируются по подписи, а не по коду', () => {
+  // Латинские ключи в БД, русские подписи в UI: порядок должен быть по подписям.
+  const spec: ColumnFilterSpec<{ kind: string }> = {
+    kind: 'multi',
+    getText: (r) => r.kind,
+    labelOf: (v) => ({ tender: 'Тендер', rp_order: 'Заказ по РП', supplier_order: 'Заказ поставщику' }[v] ?? v),
+  };
+  const rows = [{ kind: 'tender' }, { kind: 'supplier_order' }, { kind: 'rp_order' }];
+  assert.deepEqual(
+    collectMultiOptions(rows, spec).map((o) => o.label),
+    ['Заказ по РП', 'Заказ поставщику', 'Тендер'],
+  );
+});
+
+test('отборы: пустое значение не создаёт вариант и не совпадает', () => {
+  // Предикаты в collectMultiOptions и matchesOne должны совпадать, иначе строка с '' стала бы
+  // недостижимой: она проходила бы отбор, но галочки для неё в списке не было бы.
+  const rows = [{ names: ['Альфа'] }, { names: [''] }];
+  const spec: ColumnFilterSpec<{ names: string[] }> = { kind: 'multi', getTexts: (r) => r.names };
+  assert.deepEqual(collectMultiOptions(rows, spec), [{ value: 'Альфа', label: 'Альфа' }]);
+  assert.equal(applyColumnFilters(rows, { c: { kind: 'multi', values: [''] } }, { c: spec }).length, 0);
+});
+
 test('отборы: диапазон дат ловит любую дату графика', () => {
   // Вторая дата заказа А попадает в диапазон — строка проходит.
   assert.deepEqual(

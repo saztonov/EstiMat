@@ -187,7 +187,7 @@ export type SourcingStatus = (typeof SOURCING_STATUSES)[number];
 
 export const SOURCING_STATUS_LABELS: Record<SourcingStatus, string> = {
   forming: 'Формируется',
-  sourcing: 'Закупка',
+  sourcing: 'Сбор предложений',
   awarded: 'Поставщик выбран',
   cancel_pending: 'Отмена тендера',
   cancelled: 'Отменён',
@@ -299,7 +299,7 @@ export const OFFER_DOC_TYPE_LABELS: Record<OfferDocType, string> = {
   invoice: 'Счёт',
 };
 
-// Виды строк единого реестра «Закупки».
+// Виды строк единого реестра «Заказы».
 export const PURCHASE_KINDS = ['supplier_order', 'tender', 'rp_order', 'direct_order'] as const;
 export type PurchaseKind = (typeof PURCHASE_KINDS)[number];
 

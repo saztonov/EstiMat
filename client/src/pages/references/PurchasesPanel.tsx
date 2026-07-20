@@ -1,128 +1,205 @@
-import { useState } from 'react';
-import { Table, Button, Modal, Select, Tag, Space, App } from 'antd';
+import { useMemo, useState } from 'react';
+import { Table, Button, Tag, Space, App, Popconfirm, Tooltip, Alert } from 'antd';
+import { TeamOutlined, ClearOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { PROCUREMENT_ASSIGN_ROLES } from '@estimat/shared';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
-import type { CategoryResponsibles } from '../requests/types';
-
-interface AssignableUser { id: string; full_name: string; role: string }
+import { ResponsibleCell } from './ResponsibleCell';
+import { ResponsiblesModal } from './ResponsiblesModal';
+import type { AssignableUser, CategoryResponsibles, CostTypeResponsibleNode } from '../requests/types';
 
 /**
- * Справочник «Закупки»: закрепление категорий работ за ответственными. Ответственные за категорию
- * + админы распределяют материалы этой категории в заказы поставщику (вкладка «Материалы» раздела
- * «Заявки»). Правят admin/engineer; категория без ответственных доступна всем внутренним ролям.
+ * Справочник «Закупки»: ответственные за категории и виды затрат.
+ *
+ * Модель — один ответственный на область с наследованием вид → категория. Назначение на категорию
+ * применяется ко всем её видам (индивидуальные назначения при этом снимаются — с подтверждением,
+ * чтобы потеря не была молчаливой). Правят manager/admin.
+ *
+ * Дерево строится через tree data (`children`), а не вложенной таблицей: колонки остаются общими,
+ * раскрытие «+» antd рисует сам.
  */
+
+type Row =
+  | ({ kind: 'cat' } & CategoryResponsibles)
+  | ({ kind: 'type'; categoryId: string; inheritedName: string | null } & CostTypeResponsibleNode);
+
 export function PurchasesPanel() {
   const queryClient = useQueryClient();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const role = useAuthStore((s) => s.user?.role);
-  const canEdit = role === 'admin' || role === 'engineer';
-
-  const [editing, setEditing] = useState<CategoryResponsibles | null>(null);
-  const [userIds, setUserIds] = useState<string[]>([]);
+  const canEdit = PROCUREMENT_ASSIGN_ROLES.includes(role as never);
+  const [peopleOpen, setPeopleOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['procurement-responsibles'],
     queryFn: () => api.get<{ data: CategoryResponsibles[] }>('/procurement/responsibles'),
   });
 
-  // Кандидаты грузятся только при открытом редакторе.
   const usersQ = useQuery({
     queryKey: ['procurement-assignable-users'],
     queryFn: () => api.get<{ data: AssignableUser[] }>('/procurement/assignable-users'),
-    enabled: editing !== null,
   });
+  const assignable = usersQ.data?.data ?? [];
 
-  const saveMutation = useMutation({
-    mutationFn: (vars: { categoryId: string; userIds: string[] }) =>
-      api.put(`/procurement/responsibles/${vars.categoryId}`, { userIds: vars.userIds }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['procurement-responsibles'] });
-      setEditing(null);
-      message.success('Ответственные обновлены');
-    },
-    onError: (err: Error) => message.error(err.message),
-  });
-
-  const openEdit = (row: CategoryResponsibles) => {
-    setEditing(row);
-    setUserIds(row.responsibles.map((r) => r.id));
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['procurement-responsibles'] });
+    // Свод материалов показывает унаследованного ответственного — он тоже устарел.
+    queryClient.invalidateQueries({ queryKey: ['su10-materials'] });
   };
+
+  const setCategory = useMutation({
+    mutationFn: (v: { categoryId: string; userId: string | null; clearTypeOverrides: boolean }) =>
+      api.put(`/procurement/responsibles/category/${v.categoryId}`, {
+        userId: v.userId, clearTypeOverrides: v.clearTypeOverrides,
+      }),
+    onSuccess: () => { invalidate(); message.success('Ответственный за категорию обновлён'); },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  const setCostType = useMutation({
+    mutationFn: (v: { costTypeId: string; userId: string | null }) =>
+      api.put(`/procurement/responsibles/cost-type/${v.costTypeId}`, { userId: v.userId }),
+    onSuccess: () => { invalidate(); message.success('Ответственный за вид затрат обновлён'); },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  /**
+   * Назначение на категорию перезаписывает индивидуальные назначения видов — так требует правило
+   * «назначили на категорию, применилось ко всем видам». Спрашиваем подтверждение, только если
+   * терять действительно есть что.
+   */
+  function assignCategory(cat: CategoryResponsibles, userId: string | null) {
+    const overrides = cat.types.filter((t) => t.responsible_id).length;
+    if (overrides === 0) {
+      setCategory.mutate({ categoryId: cat.id, userId, clearTypeOverrides: true });
+      return;
+    }
+    modal.confirm({
+      title: userId ? 'Применить ко всем видам затрат?' : 'Очистить категорию и все виды?',
+      content: `Индивидуальные назначения будут сняты: ${overrides} ${overrides === 1 ? 'вид' : 'вида(ов)'} затрат вернутся к ответственному категории.`,
+      okText: userId ? 'Применить' : 'Очистить',
+      cancelText: 'Отмена',
+      onOk: () => setCategory.mutateAsync({ categoryId: cat.id, userId, clearTypeOverrides: true }),
+    });
+  }
+
+  const rows = useMemo<Row[]>(() => (data?.data ?? []).map((cat) => ({
+    ...cat,
+    kind: 'cat' as const,
+    children: cat.types.map((t) => ({
+      ...t,
+      kind: 'type' as const,
+      categoryId: cat.id,
+      // Что вид унаследует, если снять с него собственное назначение.
+      inheritedName: cat.responsible_name,
+    })),
+  })) as Row[], [data]);
 
   const columns = [
     {
-      title: 'Категория работ',
-      dataIndex: 'name',
-      render: (v: string, row: CategoryResponsibles) => (
+      title: 'Категория / вид затрат',
+      key: 'name',
+      render: (_: unknown, r: Row) => (
         <Space size={4}>
-          {v}
-          {!row.is_active && <Tag>архив</Tag>}
+          <span style={{ fontWeight: r.kind === 'cat' ? 500 : 400 }}>{r.name}</span>
+          {!r.is_active && <Tag>архив</Tag>}
         </Space>
       ),
     },
     {
-      title: 'Ответственные',
-      dataIndex: 'responsibles',
-      render: (list: CategoryResponsibles['responsibles']) =>
-        list.length === 0 ? (
-          <span style={{ color: '#bfbfbf' }}>не назначены — доступно всем</span>
-        ) : (
-          <Space size={4} wrap>
-            {list.map((u) => (
-              <Tag key={u.id} color={u.is_active ? 'blue' : 'default'}>
-                {u.full_name}
-                {!u.is_active ? ' (неактивен)' : ''}
-              </Tag>
-            ))}
-          </Space>
-        ),
+      title: 'Ответственный',
+      key: 'resp',
+      width: 320,
+      render: (_: unknown, r: Row) => {
+        if (r.kind === 'cat') {
+          return (
+            <ResponsibleCell
+              value={r.responsible_id}
+              substitute={r.substitution_id && r.substitute_name && r.substitution_ends_on
+                ? { name: r.substitute_name, endsOn: r.substitution_ends_on } : null}
+              assignable={assignable}
+              disabled={!canEdit}
+              loading={setCategory.isPending && setCategory.variables?.categoryId === r.id}
+              onChange={(userId) => assignCategory(r, userId)}
+            />
+          );
+        }
+        return (
+          <ResponsibleCell
+            value={r.responsible_id}
+            inheritedName={r.inheritedName}
+            assignable={assignable}
+            disabled={!canEdit}
+            loading={setCostType.isPending && setCostType.variables?.costTypeId === r.id}
+            onChange={(userId) => setCostType.mutate({ costTypeId: r.id, userId })}
+          />
+        );
+      },
     },
-    ...(canEdit
-      ? [{
-          title: '',
-          width: 120,
-          render: (_: unknown, row: CategoryResponsibles) => (
-            <Button type="link" onClick={() => openEdit(row)}>Изменить</Button>
-          ),
-        }]
-      : []),
+    ...(canEdit ? [{
+      title: '',
+      key: 'act',
+      width: 60,
+      align: 'right' as const,
+      render: (_: unknown, r: Row) => {
+        if (r.kind === 'cat') {
+          if (!r.responsible_id && r.types.every((t) => !t.responsible_id)) return null;
+          return (
+            <Tooltip title="Очистить категорию и все виды">
+              <Popconfirm
+                title="Очистить назначения?"
+                description="Категория и все её виды затрат останутся без ответственного."
+                okText="Очистить" cancelText="Отмена"
+                onConfirm={() => setCategory.mutate({ categoryId: r.id, userId: null, clearTypeOverrides: true })}
+              >
+                <Button type="text" size="small" icon={<ClearOutlined />} />
+              </Popconfirm>
+            </Tooltip>
+          );
+        }
+        if (!r.responsible_id) return null;
+        return (
+          <Tooltip title="Вернуть наследование от категории">
+            <Button type="text" size="small" icon={<ClearOutlined />}
+              onClick={() => setCostType.mutate({ costTypeId: r.id, userId: null })} />
+          </Tooltip>
+        );
+      },
+    }] : []),
   ];
 
   return (
     <div className="table-page-wrapper">
-      <Table
-        rowKey="id"
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Button icon={<TeamOutlined />} onClick={() => setPeopleOpen(true)}>Ответственные</Button>
+        {!canEdit && <Tag color="default">Изменения доступны руководителю</Tag>}
+      </Space>
+
+      <Alert
+        type="info" showIcon style={{ marginBottom: 12 }}
+        message="Вид затрат без своего ответственного наследует ответственного категории. Назначение на категорию применяется ко всем её видам."
+      />
+
+      <Table<Row>
+        rowKey={(r) => (r.kind === 'cat' ? `cat:${r.id}` : `type:${r.id}`)}
         columns={columns}
-        dataSource={data?.data}
+        dataSource={rows}
         loading={isLoading}
-        scroll={{ x: 640, y: 'flex' }}
+        size="small"
+        scroll={{ x: 720, y: 'flex' }}
         pagination={DEFAULT_PAGINATION}
       />
 
-      <Modal
-        title={editing ? `Ответственные — ${editing.name}` : ''}
-        open={editing !== null}
-        onCancel={() => setEditing(null)}
-        onOk={() => editing && saveMutation.mutate({ categoryId: editing.id, userIds })}
-        confirmLoading={saveMutation.isPending}
-        okText="Сохранить"
-      >
-        <Select
-          mode="multiple"
-          style={{ width: '100%' }}
-          placeholder="Выберите ответственных"
-          loading={usersQ.isLoading}
-          value={userIds}
-          onChange={setUserIds}
-          optionFilterProp="label"
-          options={(usersQ.data?.data ?? []).map((u) => ({ value: u.id, label: u.full_name }))}
+      {peopleOpen && (
+        <ResponsiblesModal
+          assignable={assignable}
+          canEdit={canEdit}
+          onClose={() => setPeopleOpen(false)}
+          onChanged={invalidate}
         />
-        <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
-          Если ответственные не назначены — распределять материалы этой категории в заказы могут все
-          внутренние роли. После назначения — только выбранные пользователи и администраторы.
-        </div>
-      </Modal>
+      )}
     </div>
   );
 }

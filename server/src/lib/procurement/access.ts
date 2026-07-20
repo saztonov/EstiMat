@@ -1,48 +1,48 @@
 /**
- * Зоны ответственности закупок (справочник «Закупки», procurement_category_responsibles).
- * Право распределять материалы категорий в заказы поставщику:
+ * Зоны ответственности закупок: право вести заказ по материалам конкретных областей.
+ *
+ * Правила:
  *   - admin — всегда;
- *   - иначе для КАЖДОЙ категории пользователь должен быть её ответственным;
- *   - fallback: категория без единого ответственного доступна всем внутренним ролям
- *     (иначе пустой справочник заблокировал бы всех, кроме admin);
- *   - позиция без категории (null) — только admin (её нельзя авто-маршрутизировать).
+ *   - позиция без вида затрат (cost_type_id = null) — только admin: её нельзя авто-маршрутизировать;
+ *   - fallback: область, где НЕ назначен никто ни на одном уровне (материал/вид/категория),
+ *     доступна всем внутренним ролям — иначе пустой справочник заблокировал бы всех, кроме admin,
+ *     а после перехода на уровень видов незаполненных областей заведомо много;
+ *   - иначе доступ есть у назначенного И у его заместителя. Объединение, а не передача:
+ *     отбирать доступ у человека на время отпуска операционно опасно (вышел раньше, работает
+ *     из дома → блокировка и обращение в поддержку), а подмена нужна для маршрутизации и
+ *     отображения, а не для запрета.
+ *
+ * Применяется ко ВСЕМ рабочим мутациям заказа, а не только к созданию: до 0071 проверка стояла
+ * в одном месте, и правку состава, поставщиков и отправку на согласование мог делать любой
+ * внутренний пользователь.
  */
 import type { Pool, PoolClient } from 'pg';
 import type { Role } from '@estimat/shared';
+import { resolveResponsibles, scopeKey, type MaterialScopeKey } from './responsibles.js';
 
 type Db = Pool | PoolClient;
 
 export type CategoryAccess = { ok: true } | { ok: false; reason: string };
 
-export async function assertCategoryAccess(
+export async function assertOrderAccess(
   db: Db,
   userId: string,
   role: Role,
-  categoryIds: (string | null)[],
+  scopes: MaterialScopeKey[],
 ): Promise<CategoryAccess> {
   if (role === 'admin') return { ok: true };
-  if (categoryIds.some((c) => c == null)) {
-    return { ok: false, reason: 'Материалы без категории распределяет только администратор' };
+  if (scopes.some((s) => s.costTypeId == null)) {
+    return { ok: false, reason: 'Материалы без вида затрат распределяет только администратор' };
   }
-  const unique = [...new Set(categoryIds as string[])];
-  if (unique.length === 0) return { ok: true };
+  if (scopes.length === 0) return { ok: true };
 
-  const { rows } = await db.query(
-    `SELECT category_id, bool_or(user_id = $2) AS is_mine
-       FROM procurement_category_responsibles
-      WHERE category_id = ANY($1::uuid[])
-      GROUP BY category_id`,
-    [unique, userId],
-  );
-  // Категории, присутствующие в выборке, имеют хотя бы одного ответственного; отсутствующие —
-  // без ответственных (fallback: доступны). is_mine=false при наличии ответственных → запрет.
-  const withResp = new Map<string, boolean>(
-    (rows as { category_id: string; is_mine: boolean }[]).map((r) => [r.category_id, r.is_mine === true]),
-  );
-  for (const c of unique) {
-    if (withResp.has(c) && !withResp.get(c)) {
-      return { ok: false, reason: 'Материалы вне вашей зоны ответственности' };
-    }
+  const resolved = await resolveResponsibles(db, scopes);
+  for (const s of scopes) {
+    const r = resolved.get(scopeKey(s));
+    // Никто не назначен ни на одном уровне — область свободна для всех внутренних ролей.
+    if (!r || r.assignedUserId == null) continue;
+    if (r.assignedUserId === userId || r.effectiveUserId === userId) continue;
+    return { ok: false, reason: 'Материалы вне вашей зоны ответственности' };
   }
   return { ok: true };
 }

@@ -77,7 +77,7 @@ export function PurchasesRegistryTab() {
   });
   const cancelMut = useMutation({
     mutationFn: (id: string) => api.post(`/supplier-orders/${id}/cancel`, {}),
-    onSuccess: () => { message.success('Закупка отменена, остаток возвращён в свод'); invalidateRegistry(); },
+    onSuccess: () => { message.success('Заказ отменён, остаток возвращён в свод'); invalidateRegistry(); },
     onError: (e: Error) => message.error(e.message),
   });
 
@@ -149,7 +149,7 @@ export function PurchasesRegistryTab() {
           <Space size={4}>
             {row.tender_url && <a href={row.tender_url} target="_blank" rel="noopener noreferrer"><LinkOutlined /></a>}
             {canCancel && (
-              <ConfirmIconButton tooltip="Отменить закупку" title="Отменить закупку?" description="Остаток материалов вернётся в свод."
+              <ConfirmIconButton tooltip="Отменить заказ" title="Отменить заказ?" description="Остаток материалов вернётся в свод."
                 okText="Отменить" onConfirm={() => cancelMut.mutate(row.id)} icon={<StopOutlined />} type="text" />
             )}
             {canDelete && (

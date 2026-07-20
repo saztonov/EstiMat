@@ -70,8 +70,10 @@ function matchesOne<T>(row: T, v: ColumnFilterValue, spec: ColumnFilterSpec<T>):
     case 'multi': {
       if (v.values.length === 0) return true;
       // Многозначная ячейка — совпало любое из значений (getTexts перекрывает getText).
+      // Предикат тот же, что в collectMultiOptions: пустое значение вариантом не становится,
+      // поэтому и совпадать по нему нельзя (иначе строка недостижима ни одной галочкой).
       if (spec.getTexts) {
-        return spec.getTexts(row).some((t) => t != null && v.values.includes(String(t)));
+        return spec.getTexts(row).some((t) => !!t && v.values.includes(String(t)));
       }
       return v.values.includes(String(spec.getText?.(row) ?? ''));
     }
@@ -142,7 +144,9 @@ export function collectMultiOptions<T>(
     const v = spec.getText?.(r);
     if (v) seen.add(String(v));
   }
+  // Сортируем по ПОДПИСИ, а не по коду: у спек с labelOf (вид заказа, статус, тип заявки)
+  // значения — латинские ключи, и сортировка по ним давала список не по русскому алфавиту.
   return [...seen]
-    .sort((a, b) => a.localeCompare(b, 'ru'))
-    .map((v) => ({ value: v, label: spec.labelOf?.(v) ?? v }));
+    .map((v) => ({ value: v, label: spec.labelOf?.(v) ?? v }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
 }

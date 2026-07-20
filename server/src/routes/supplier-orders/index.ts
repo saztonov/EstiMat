@@ -14,7 +14,9 @@ import { config } from '../../config.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { recordAudit } from '../../lib/audit.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
-import { assertCategoryAccess } from '../../lib/procurement/access.js';
+import { assertOrderAccess } from '../../lib/procurement/access.js';
+import { PROCUREMENT_ASSIGN_ROLES } from '@estimat/shared';
+import type { Pool, PoolClient } from 'pg';
 import { exportSupplierOrderXlsx, SupplierOrderExportError } from '../../lib/supplier-order-export/index.js';
 import { refreshTenderLot } from '../../lib/tender/sync.js';
 import { TenderApiError, TenderNotConfiguredError } from '../../lib/tender/errors.js';
@@ -23,17 +25,15 @@ import { guardedStreamUpload, FileGuardError } from '../../lib/uploads/file-guar
 const FILE_LIMIT = 50 * 1024 * 1024; // 50 МБ на файл предложения
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Все переданные пользователи активны и во внутренней роли (могут быть ответственными).
-// userIds уже дедуплицированы схемой → сравнение count === length корректно. Пустой набор — ок.
+// Кандидат в ответственные: активен и во внутренней роли.
 type PoolClientLike = { query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
-async function assertAssignable(client: PoolClientLike, userIds: string[]): Promise<boolean> {
-  if (userIds.length === 0) return true;
+async function assertAssignableUser(client: PoolClientLike, userId: string): Promise<boolean> {
   const { rows } = await client.query(
-    `SELECT count(*)::int AS n FROM users
-      WHERE id = ANY($1::uuid[]) AND is_active = true AND role IN ('admin','engineer','manager')`,
-    [userIds],
+    `SELECT 1 FROM users
+      WHERE id = $1 AND is_active = true AND role IN ('admin','engineer','manager')`,
+    [userId],
   );
-  return (rows[0]?.n ?? 0) === userIds.length;
+  return rows.length > 0;
 }
 
 /**
@@ -95,12 +95,13 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
               to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
               mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS placed,
               mr.contractor_id, mr.contractor_name,
-              COALESCE((
-                SELECT json_agg(json_build_object('id', u.id, 'full_name', u.full_name) ORDER BY u.full_name, u.id)
-                  FROM material_request_item_responsibles r
-                  JOIN users u ON u.id = r.user_id
-                 WHERE r.request_item_id = mri.id
-              ), '[]') AS assigned_responsibles,
+              -- Ответственный: точечное назначение области перекрывает вид, вид — категорию;
+              -- поверх накладывается активное замещение. Одно правило на весь контур — иначе
+              -- интерфейс показывал бы одного, а право на заказ имел бы другой.
+              COALESCE(pmr.user_id, vpr.assigned_user_id) AS resp_assigned_id,
+              CASE WHEN pmr.user_id IS NOT NULL THEN 'material' ELSE vpr.assigned_source END AS resp_source,
+              COALESCE(msub.deputy_user_id, pmr.user_id, vpr.effective_user_id) AS resp_effective_id,
+              ru.full_name AS resp_effective_name,
               COUNT(*) OVER() AS total_count
          FROM material_request_items mri
          JOIN material_requests mr ON mr.id = mri.request_id
@@ -113,6 +114,19 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
              JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status NOT IN ('cancelled','no_award')
             GROUP BY soi.request_item_id
          ) placed ON placed.request_item_id = mri.id
+         -- Уровни ответственного: материал (по области строки) → вид/категория (вью 0072).
+         LEFT JOIN procurement_material_responsible pmr
+                ON pmr.project_id    IS NOT DISTINCT FROM mr.project_id
+               AND pmr.contractor_id IS NOT DISTINCT FROM mr.contractor_id
+               AND pmr.cost_type_id  IS NOT DISTINCT FROM mri.cost_type_id
+               AND pmr.agg_key = mri.agg_key
+         LEFT JOIN v_procurement_responsible_effective vpr ON vpr.cost_type_id = mri.cost_type_id
+         LEFT JOIN procurement_substitutions msub
+                ON pmr.user_id IS NOT NULL
+               AND msub.principal_user_id = pmr.user_id
+               AND msub.ended_at IS NULL
+               AND (now() AT TIME ZONE 'Europe/Moscow')::date BETWEEN msub.starts_on AND msub.ends_on
+         LEFT JOIN users ru ON ru.id = COALESCE(msub.deputy_user_id, pmr.user_id, vpr.effective_user_id)
         WHERE ${whereSql}
         ORDER BY mr.project_name NULLS LAST, cc.sort_order NULLS LAST, ct.sort_order NULLS LAST,
                  mri.material_name, mri.delivery_date NULLS LAST
@@ -147,17 +161,33 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     );
 
     const total = rows.length ? Number(rows[0].total_count) : 0;
+    const isAdmin = request.currentUser.role === 'admin';
     return {
-      data: rows.map(({ total_count, placed, ...r }) => {
+      data: rows.map(({ total_count, placed, resp_assigned_id, resp_source, resp_effective_id, resp_effective_name, ...r }) => {
         const isSu10 = r.request_type === 'su10';
         const ordered = isSu10 ? Number(placed) : null;
         const remaining = isSu10 ? Number(r.requested) - Number(placed) : null;
-        // Deprecated-поля для незакрытых старых вкладок — первый из отсортированного набора.
-        const first = (r.assigned_responsibles as { id: string; full_name: string }[])[0] ?? null;
+        // Право вести заказ считаем здесь, по тому же правилу, что и assertOrderAccess: раньше
+        // оно дублировалось на клиенте (isEligible) и неизбежно разъехалось бы с сервером.
+        const canOrder = isAdmin
+          ? true
+          : r.cost_type_id == null
+            ? false
+            : resp_assigned_id == null
+              || resp_assigned_id === request.currentUser.id
+              || resp_effective_id === request.currentUser.id;
         return {
           ...r, ordered, remaining,
-          assigned_responsible_id: first?.id ?? null,
-          assigned_responsible_name: first?.full_name ?? null,
+          can_order: canOrder,
+          responsible: resp_effective_id
+            ? { id: resp_effective_id, full_name: resp_effective_name, source: resp_source ?? null }
+            : null,
+          // Deprecated-поля для незакрытых старых вкладок.
+          assigned_responsibles: resp_effective_id
+            ? [{ id: resp_effective_id, full_name: resp_effective_name }]
+            : [],
+          assigned_responsible_id: resp_effective_id ?? null,
+          assigned_responsible_name: resp_effective_name ?? null,
         };
       }),
       meta: { total, limit, offset, truncated: total > rows.length, facets: facetRows[0] },
@@ -165,147 +195,125 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   });
 
   // ============================================================
-  // Ответственные за строку материала (many-to-many, override поверх ответственных по категории).
-  //   Пустой набор — override сброшен: строка снова показывает всех ответственных по категории.
-  //   Назначение информационное: прав формирования закупок (assertCategoryAccess) не меняет.
+  // Ответственный за материал (уровень области, 0071)
+  //   Назначение живёт по области «объект + подрядчик + вид затрат + материал», а НЕ на строке
+  //   заявки: одна связка — один ответственный, и правило автоматически действует на все даты
+  //   поставки материала и на будущие заявки с ним же. Снятие возвращает наследование от вида
+  //   затрат или категории (справочник «Закупки»).
+  //   Назначать может только manager/admin — как и подтверждать поставщика.
   // ============================================================
+  const canAssignResponsible = requireRole(...PROCUREMENT_ASSIGN_ROLES);
 
-  // Полная замена набора ответственных одной строки. Уже назначенных (в т.ч. ставших неактивными)
-  // разрешаем сохранить/снять — валидируем во внутренней роли только ДОБАВЛЯЕМЫХ.
-  async function applySetRowResponsibles(
-    requestItemId: string, userIds: string[], actorId: string,
+  /** Свернуть строки свода в области назначения (строк всегда больше, чем областей). */
+  async function scopesOfItems(db: Pool | PoolClient, requestItemIds: string[]) {
+    const { rows } = await db.query(
+      `SELECT DISTINCT mr.project_id, mr.contractor_id, mri.cost_type_id, mri.agg_key
+         FROM material_request_items mri
+         JOIN material_requests mr ON mr.id = mri.request_id
+        WHERE mri.id = ANY($1::uuid[]) AND mr.status <> 'cancelled'`,
+      [requestItemIds],
+    );
+    return rows.map((r) => ({
+      projectId: r.project_id as string | null,
+      contractorId: r.contractor_id as string | null,
+      costTypeId: r.cost_type_id as string | null,
+      aggKey: r.agg_key as string,
+    }));
+  }
+
+  /** Записать/снять ответственного по областям выбранных строк. */
+  async function applyResponsibleByItems(
+    requestItemIds: string[], userId: string | null, actorId: string,
   ): Promise<{ status: number; body: unknown }> {
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
-      const { rows: itemRows } = await client.query(
-        `SELECT mr.status, mr.estimate_id, mr.project_id
-           FROM material_request_items mri JOIN material_requests mr ON mr.id = mri.request_id
-          WHERE mri.id = $1 FOR UPDATE OF mri`,
-        [requestItemId],
-      );
-      if (!itemRows[0]) { await client.query('ROLLBACK'); return { status: 404, body: { error: 'Позиция не найдена' } }; }
-      if (itemRows[0].status === 'cancelled') { await client.query('ROLLBACK'); return { status: 409, body: { error: 'Заявка отменена' } }; }
-
-      const { rows: cur } = await client.query(
-        `SELECT user_id FROM material_request_item_responsibles WHERE request_item_id = $1`, [requestItemId],
-      );
-      const currentSet = new Set(cur.map((r) => r.user_id as string));
-      const added = userIds.filter((id) => !currentSet.has(id));
-      if (!(await assertAssignable(client, added))) {
+      const scopes = await scopesOfItems(client, requestItemIds);
+      if (scopes.length === 0) {
+        await client.query('ROLLBACK');
+        return { status: 404, body: { error: 'Позиции не найдены или заявки отменены' } };
+      }
+      if (userId && !(await assertAssignableUser(client, userId))) {
         await client.query('ROLLBACK');
         return { status: 400, body: { error: 'Пользователь не может быть ответственным' } };
       }
 
-      // Diff: снять отсутствующих в новом наборе (пустой набор → снять всех: x <> ALL('{}') = true),
-      // добавить новых. Метаданные существующих не трогаем — сохраняем историю назначения.
-      await client.query(
-        `DELETE FROM material_request_item_responsibles WHERE request_item_id = $1 AND user_id <> ALL($2::uuid[])`,
-        [requestItemId, userIds],
-      );
-      if (userIds.length) {
+      const p = scopes.map((s) => s.projectId);
+      const c = scopes.map((s) => s.contractorId);
+      const t = scopes.map((s) => s.costTypeId);
+      const k = scopes.map((s) => s.aggKey);
+
+      if (userId) {
         await client.query(
-          `INSERT INTO material_request_item_responsibles (request_item_id, user_id, assigned_by)
-           SELECT $1, u, $3 FROM unnest($2::uuid[]) u
-           ON CONFLICT (request_item_id, user_id) DO NOTHING`,
-          [requestItemId, userIds, actorId],
+          `INSERT INTO procurement_material_responsible
+                 (project_id, contractor_id, cost_type_id, agg_key, user_id, assigned_by)
+           SELECT p, c, t, k, $5, $6
+             FROM unnest($1::uuid[], $2::uuid[], $3::uuid[], $4::text[]) AS s(p, c, t, k)
+           ON CONFLICT ON CONSTRAINT ux_pmr_scope DO UPDATE
+              SET user_id = EXCLUDED.user_id, assigned_by = EXCLUDED.assigned_by, assigned_at = now()`,
+          [p, c, t, k, userId, actorId],
+        );
+      } else {
+        await client.query(
+          `DELETE FROM procurement_material_responsible r
+             USING unnest($1::uuid[], $2::uuid[], $3::uuid[], $4::text[]) AS s(p, c, t, k)
+            WHERE r.project_id    IS NOT DISTINCT FROM s.p
+              AND r.contractor_id IS NOT DISTINCT FROM s.c
+              AND r.cost_type_id  IS NOT DISTINCT FROM s.t
+              AND r.agg_key = s.k`,
+          [p, c, t, k],
         );
       }
+
       await recordAudit(client, {
-        estimateId: itemRows[0].estimate_id, projectId: itemRows[0].project_id,
-        entityType: 'material_request_item', entityId: requestItemId,
-        action: 'material.responsible.set', userId: actorId, changes: { userIds },
+        estimateId: null, entityType: 'procurement_responsibles', entityId: userId ?? actorId,
+        action: 'material.responsible.set', userId: actorId,
+        changes: { userId, scopes: scopes.length, items: requestItemIds.length },
       });
-      const { rows: result } = await client.query(
-        `SELECT u.id, u.full_name FROM material_request_item_responsibles r JOIN users u ON u.id = r.user_id
-          WHERE r.request_item_id = $1 ORDER BY u.full_name, u.id`,
-        [requestItemId],
-      );
       await client.query('COMMIT');
-      return { status: 200, body: { data: { requestItemId, responsibles: result } } };
+      return { status: 200, body: { data: { scopes: scopes.length, items: requestItemIds.length } } };
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
   }
 
-  // Массовое назначение на набор строк узла дерева. 'add' — добавить выбранных ко всем (текущих
-  // не трогает); 'replace' — заменить набор (userIds=[] = массовый сброс). «Всё или ничего»:
-  // существование/статус позиций проверяем ОТДЕЛЬНЫМ SELECT (не по числу вставок).
-  async function applyBulkResponsibles(
-    requestItemIds: string[], userIds: string[], mode: 'add' | 'replace', actorId: string,
-  ): Promise<{ status: number; body: unknown }> {
-    // Потолок произведения строк×пользователей — защита от разрастания одной операции.
-    if (requestItemIds.length * Math.max(userIds.length, 1) > 20000) {
-      return { status: 400, body: { error: 'Слишком большой набор — сузьте выбор' } };
-    }
-    const client = await fastify.pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows: found } = await client.query(
-        `SELECT mr.status FROM material_request_items mri JOIN material_requests mr ON mr.id = mri.request_id
-          WHERE mri.id = ANY($1::uuid[]) FOR UPDATE OF mri`,
-        [requestItemIds],
-      );
-      if (found.length !== requestItemIds.length) {
-        await client.query('ROLLBACK'); return { status: 404, body: { error: 'Часть позиций не найдена' } };
-      }
-      if (found.some((r) => r.status === 'cancelled')) {
-        await client.query('ROLLBACK'); return { status: 409, body: { error: 'Среди позиций есть отменённые заявки' } };
-      }
-      if (!(await assertAssignable(client, userIds))) {
-        await client.query('ROLLBACK'); return { status: 400, body: { error: 'Пользователь не может быть ответственным' } };
-      }
-      if (mode === 'replace') {
-        await client.query(
-          `DELETE FROM material_request_item_responsibles
-            WHERE request_item_id = ANY($1::uuid[]) AND user_id <> ALL($2::uuid[])`,
-          [requestItemIds, userIds],
-        );
-      }
-      if (userIds.length) {
-        await client.query(
-          `INSERT INTO material_request_item_responsibles (request_item_id, user_id, assigned_by)
-           SELECT i, u, $3 FROM unnest($1::uuid[]) i CROSS JOIN unnest($2::uuid[]) u
-           ON CONFLICT (request_item_id, user_id) DO NOTHING`,
-          [requestItemIds, userIds, actorId],
-        );
-      }
-      await recordAudit(client, {
-        estimateId: null, entityType: 'material_request_item', entityId: requestItemIds[0]!,
-        action: 'material.responsible.bulk_set', userId: actorId,
-        changes: { userIds, mode, count: requestItemIds.length, requestItemIds },
-      });
-      await client.query('COMMIT');
-      return { status: 200, body: { data: { updated: requestItemIds.length } } };
-    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
-  }
+  // PUT /materials/:requestItemId/responsibles — назначить/снять по области строки.
+  // Тело сохраняет форму { userIds } ради совместимости клиента; берётся первый элемент, потому
+  // что ответственный теперь один (пустой массив = снять).
+  fastify.put<{ Params: { requestItemId: string } }>(
+    '/materials/:requestItemId/responsibles',
+    { preHandler: [canAssignResponsible] },
+    async (request, reply) => {
+      const { userIds } = setMaterialResponsiblesSchema.parse(request.body);
+      const { requestItemId } = request.params;
+      if (!UUID_RE.test(requestItemId)) return reply.status(400).send({ error: 'Некорректный идентификатор позиции' });
+      if (userIds.length > 1) return reply.status(400).send({ error: 'У материала один ответственный — обновите страницу' });
+      const r = await applyResponsibleByItems([requestItemId], userIds[0] ?? null, request.currentUser.id);
+      return reply.status(r.status).send(r.body);
+    },
+  );
 
-  // PUT /materials/:requestItemId/responsibles — заменить набор ответственных строки.
-  fastify.put<{ Params: { requestItemId: string } }>('/materials/:requestItemId/responsibles', async (request, reply) => {
-    const { userIds } = setMaterialResponsiblesSchema.parse(request.body);
-    const { requestItemId } = request.params;
-    if (!UUID_RE.test(requestItemId)) return reply.status(400).send({ error: 'Некорректный идентификатор позиции' });
-    const r = await applySetRowResponsibles(requestItemId, userIds, request.currentUser.id);
+  // PATCH /materials/responsibles — массово по областям выделенных строк.
+  fastify.patch('/materials/responsibles', { preHandler: [canAssignResponsible] }, async (request, reply) => {
+    const { requestItemIds, userIds } = bulkSetMaterialResponsiblesSchema.parse(request.body);
+    if (userIds.length > 1) return reply.status(400).send({ error: 'У материала один ответственный — обновите страницу' });
+    const r = await applyResponsibleByItems(requestItemIds, userIds[0] ?? null, request.currentUser.id);
     return reply.status(r.status).send(r.body);
   });
 
-  // PATCH /materials/responsibles — массовое (add/replace) на набор строк узла дерева.
-  fastify.patch('/materials/responsibles', async (request, reply) => {
-    const { requestItemIds, userIds, mode } = bulkSetMaterialResponsiblesSchema.parse(request.body);
-    const r = await applyBulkResponsibles(requestItemIds, userIds, mode, request.currentUser.id);
-    return reply.status(r.status).send(r.body);
-  });
-
-  // Legacy (на один релиз, для незакрытых старых вкладок): прежние одиночный/массовый маршруты
-  // «один ответственный». userId → набор [userId] (или [] при null = сброс), семантика replace.
-  fastify.patch<{ Params: { requestItemId: string } }>('/materials/:requestItemId/responsible', async (request, reply) => {
-    const { userId } = assignMaterialResponsibleSchema.parse(request.body);
-    const { requestItemId } = request.params;
-    if (!UUID_RE.test(requestItemId)) return reply.status(400).send({ error: 'Некорректный идентификатор позиции' });
-    const r = await applySetRowResponsibles(requestItemId, userId ? [userId] : [], request.currentUser.id);
-    return reply.status(r.status).send(r.body);
-  });
-  fastify.patch('/materials/responsible', async (request, reply) => {
+  // Legacy (на один релиз, для незакрытых старых вкладок): одиночный/массовый «один ответственный».
+  fastify.patch<{ Params: { requestItemId: string } }>(
+    '/materials/:requestItemId/responsible',
+    { preHandler: [canAssignResponsible] },
+    async (request, reply) => {
+      const { userId } = assignMaterialResponsibleSchema.parse(request.body);
+      const { requestItemId } = request.params;
+      if (!UUID_RE.test(requestItemId)) return reply.status(400).send({ error: 'Некорректный идентификатор позиции' });
+      const r = await applyResponsibleByItems([requestItemId], userId, request.currentUser.id);
+      return reply.status(r.status).send(r.body);
+    },
+  );
+  fastify.patch('/materials/responsible', { preHandler: [canAssignResponsible] }, async (request, reply) => {
     const { requestItemIds, userId } = bulkAssignMaterialResponsibleSchema.parse(request.body);
-    const r = await applyBulkResponsibles([...new Set(requestItemIds)], userId ? [userId] : [], 'replace', request.currentUser.id);
+    const r = await applyResponsibleByItems([...new Set(requestItemIds)], userId, request.currentUser.id);
     return reply.status(r.status).send(r.body);
   });
 
@@ -421,13 +429,22 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Разграничение по зонам ответственности (справочник «Закупки»): формировать заказ по
-      // категории может только её ответственный или админ (fallback — категория без ответственных).
-      const access = await assertCategoryAccess(
+      // Разграничение по зонам ответственности (справочник «Закупки»): вести заказ по области
+      // (объект+подрядчик+вид затрат+материал) может её ответственный, его заместитель или админ.
+      // Fallback — область без назначений на всех трёх уровнях доступна всем внутренним ролям.
+      const access = await assertOrderAccess(
         client,
         user.id,
         user.role,
-        body.items.map((it) => srcMap.get(it.requestItemId)!.category_id ?? null),
+        body.items.map((it) => {
+          const r = srcMap.get(it.requestItemId)!;
+          return {
+            projectId: r.project_id ?? null,
+            contractorId: r.contractor_id ?? null,
+            costTypeId: r.cost_type_id ?? null,
+            aggKey: r.agg_key as string,
+          };
+        }),
       );
       if (!access.ok) {
         await client.query('ROLLBACK');
