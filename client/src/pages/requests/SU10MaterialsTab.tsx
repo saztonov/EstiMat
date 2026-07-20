@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Select, Table, Button, Space, Empty, Tag, Tooltip, Badge, Alert, Dropdown, App } from 'antd';
-import { ShoppingCartOutlined, ReloadOutlined, FilterOutlined, DownOutlined } from '@ant-design/icons';
+import { Select, Table, Button, Space, Empty, Tag, Tooltip, Badge, Alert, Dropdown, App, Modal, Typography } from 'antd';
+import { ShoppingCartOutlined, ReloadOutlined, FilterOutlined, DownOutlined, TeamOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { MATERIAL_REQUEST_TYPES, MATERIAL_REQUEST_TYPE_LABELS, MATERIAL_REQUEST_TYPE_SHORT_LABELS } from '@estimat/shared';
+import {
+  MATERIAL_REQUEST_TYPES, MATERIAL_REQUEST_TYPE_LABELS, MATERIAL_REQUEST_TYPE_SHORT_LABELS,
+  PROCUREMENT_ASSIGN_ROLES,
+} from '@estimat/shared';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { usePersistedState } from '../../hooks/usePersistedState';
@@ -18,39 +21,87 @@ import {
 import { ColumnSettingsButton } from '../../components/table/ColumnSettingsButton';
 import { materialsColumnsStore, MATERIALS_COLUMN_DEFS } from './columns/materialsColumns';
 import { ResponsibleSelect } from './ResponsibleSelect';
+import { MaterialScheduleModal } from './MaterialScheduleModal';
 import { round4, requestNumber } from './requestConstants';
 import { SupplierOrderModal } from './SupplierOrderModal';
 import { TenderCreateModal } from './TenderCreateModal';
 import { RequestDetailModal } from './RequestDetailModal';
-import type { Su10MaterialRow, MaterialsFacets, CategoryResponsibles, AssignableUser } from './types';
+import type { Su10MaterialGroupRow, Su10MaterialRow, MaterialsFacets, AssignableUser } from './types';
+
+const { Text } = Typography;
 
 const EPS = 1e-6;
 const KEY = 'estimat:requests-materials:';
 const fmtRuDate = (d: string) => { const [y, m, dd] = d.split('-'); return `${dd}.${m}.${y}`; };
 
-type MaterialTableRow = GroupRow<Su10MaterialRow>;
+type MaterialTableRow = GroupRow<Su10MaterialGroupRow>;
 const GROUPABLE = new Set(MATERIALS_COLUMN_DEFS.filter((d) => d.groupable).map((d) => d.key));
 
-// Групповое добавление ответственных узлу дерева: накопить выбор и добавить одним запросом.
-function GroupResponsibleAssign({ assignable, disabled, onAdd }: {
+/**
+ * Развернуть схлопнутую строку в исходные позиции заявок для модалок заказа и тендера: они
+ * работают по request_item_id. Берём только позиции с положительным остатком — заказывать
+ * перезаказанную дату нечего, а сервер всё равно отклонил бы её проверкой остатка.
+ */
+function expandItems(rows: Su10MaterialGroupRow[]): Su10MaterialRow[] {
+  const out: Su10MaterialRow[] = [];
+  for (const g of rows) {
+    for (const it of g.items) {
+      const requested = Number(it.requested);
+      const placed = Number(it.placed);
+      const remaining = requested - placed;
+      if (remaining <= EPS) continue;
+      out.push({
+        request_item_id: it.request_item_id,
+        request_id: it.request_id,
+        request_no: it.request_no,
+        request_type: g.request_type,
+        status: g.status,
+        project_id: g.project_id,
+        project_name: g.project_name,
+        project_code: g.project_code,
+        cost_type_id: g.cost_type_id,
+        cost_type_name: g.cost_type_name,
+        category_id: g.category_id,
+        category_name: g.category_name,
+        category_sort: g.category_sort,
+        cost_type_sort: g.cost_type_sort,
+        material_id: g.material_id,
+        material_name: g.material_name,
+        unit: g.unit,
+        agg_key: g.agg_key,
+        delivery_date: it.delivery_date,
+        requested,
+        ordered: placed,
+        remaining,
+        contractor_id: g.contractor_id,
+        contractor_name: g.contractor_name,
+        assigned_responsibles: g.responsible ? [{ id: g.responsible.id, full_name: g.responsible.full_name ?? '' }] : [],
+      });
+    }
+  }
+  return out;
+}
+
+/** Назначение ответственного всему узлу дерева. Ответственный один — режим «добавить» не нужен. */
+function GroupResponsibleAssign({ assignable, disabled, onAssign }: {
   assignable: AssignableUser[];
   disabled: boolean;
-  onAdd: (userIds: string[]) => void;
+  onAssign: (userId: string) => void;
 }) {
-  const [picked, setPicked] = useState<string[]>([]);
+  const [picked, setPicked] = useState<string | undefined>();
   return (
     <Space size={4} onClick={(e) => e.stopPropagation()}>
       <Select
-        mode="multiple" size="small" style={{ width: 220 }} variant="filled" showSearch
-        maxTagCount="responsive" placeholder="Добавить ответств." disabled={disabled}
+        size="small" style={{ width: 200 }} variant="filled" showSearch
+        placeholder="Назначить ответств." disabled={disabled}
         value={picked}
         options={assignable.map((u) => ({ value: u.id, label: u.full_name }))}
         optionFilterProp="label"
         onChange={setPicked}
       />
-      <Button size="small" type="primary" disabled={disabled || picked.length === 0}
-        onClick={() => { onAdd(picked); setPicked([]); }}>
-        Добавить{picked.length ? ` ${picked.length}` : ''}
+      <Button size="small" type="primary" disabled={disabled || !picked}
+        onClick={() => { if (picked) { onAssign(picked); setPicked(undefined); } }}>
+        Назначить
       </Button>
     </Space>
   );
@@ -58,17 +109,22 @@ function GroupResponsibleAssign({ assignable, disabled, onAdd }: {
 
 /**
  * Вкладка «Материалы» (снабжение): свод материалов заявок с настраиваемыми столбцами, отборами и
- * группировкой прямо в заголовках. Дерево строится по отмеченным столбцам в порядке настроек.
- * При активном отборе или группировке грузится весь набор (all=1, потолок 5000, meta.truncated) —
- * тогда отборы и дерево считаются на клиенте. Ответственного за строку можно назначить конкретного
- * (override), иначе показываются все по категории вида работ. Заказ поставщику формируется из su10.
+ * группировкой прямо в заголовках.
+ *
+ * Строка — ОДИН материал в рамках объекта, подрядчика и вида затрат: исходные позиции заявок
+ * развёрнуты по датам поставки, и сервер схлопывает их обратно. Даты и номера заявок доступны
+ * в модалке графика по клику на материал.
+ *
+ * Ответственный тоже один на строку и приходит уже разрешённым (точечное назначение → вид →
+ * категория, с учётом замещения). Право вести заказ считает сервер (can_order) — раньше это
+ * правило дублировалось здесь и разъезжалось со серверным.
  */
 export function SU10MaterialsTab() {
   const { message, modal } = App.useApp();
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
-  const isAdmin = user?.role === 'admin';
-  const canAssign = user?.role === 'admin' || user?.role === 'engineer' || user?.role === 'manager';
+  // Назначать ответственных может только руководитель — как и подтверждать поставщика.
+  const canAssign = PROCUREMENT_ASSIGN_ROLES.includes(user?.role as never);
 
   const [projectId, setProjectId] = usePersistedState<string | undefined>(`${KEY}projectId`, undefined);
   const [contractorId, setContractorId] = usePersistedState<string | undefined>(`${KEY}contractorId`, undefined);
@@ -83,6 +139,9 @@ export function SU10MaterialsTab() {
   const [action, setAction] = useState<'order' | 'tender' | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [openRequestId, setOpenRequestId] = useState<string | null>(null);
+  const [scheduleRow, setScheduleRow] = useState<Su10MaterialGroupRow | null>(null);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignPick, setAssignPick] = useState<string | undefined>();
 
   // Настройки столбцов (порядок/видимость/уровни дерева) — в localStorage.
   const order = materialsColumnsStore.useStore((s) => s.order);
@@ -91,41 +150,17 @@ export function SU10MaterialsTab() {
   const toggleGroupBy = materialsColumnsStore.useStore((s) => s.toggleGroupBy);
   const prefs = materialsColumnsStore.resolve(order, hidden);
 
-  // Зоны ответственности (справочник «Закупки») + кандидаты в ответственные.
-  const responsiblesQ = useQuery({
-    queryKey: ['procurement-responsibles'],
-    queryFn: () => api.get<{ data: CategoryResponsibles[] }>('/procurement/responsibles'),
-  });
   const assignableQ = useQuery({
     queryKey: ['procurement-assignable-users'],
     queryFn: () => api.get<{ data: AssignableUser[] }>('/procurement/assignable-users'),
     enabled: canAssign,
   });
   const assignable = assignableQ.data?.data ?? [];
-  const responsiblesReady = responsiblesQ.isSuccess;
 
-  const { myCategoryIds, categoriesWithResp, respByCategory, respIdsByCategory } = useMemo(() => {
-    const mine = new Set<string>();
-    const withResp = new Set<string>();
-    const byCat = new Map<string, string[]>();
-    const idsByCat = new Map<string, string[]>();
-    for (const c of responsiblesQ.data?.data ?? []) {
-      if (c.responsibles.length > 0) withResp.add(c.id);
-      byCat.set(c.id, c.responsibles.map((r) => r.full_name));
-      idsByCat.set(c.id, c.responsibles.map((r) => r.id));
-      if (user && c.responsibles.some((r) => r.id === user.id)) mine.add(c.id);
-    }
-    return { myCategoryIds: mine, categoriesWithResp: withResp, respByCategory: byCat, respIdsByCategory: idsByCat };
-  }, [responsiblesQ.data, user]);
+  // Эффективный ответственный строки — для отбора и группировки по столбцу.
+  const respText = (r: Su10MaterialGroupRow): string => r.responsible?.full_name ?? '';
 
-  // Эффективные ответственные строки (для отбора и группировки по столбцу): override или все по категории.
-  const respText = (r: Su10MaterialRow): string =>
-    r.assigned_responsibles.length
-      ? r.assigned_responsibles.map((x) => x.full_name).join(', ')
-      : (r.category_id ? (respByCategory.get(r.category_id) ?? []).join(', ') : '');
-
-  // Уровни дерева — из отмеченных «Группировать» видимых столбцов в порядке настроек.
-  const levelMap = useMemo<Record<string, GroupLevel<Su10MaterialRow> | undefined>>(() => ({
+  const levelMap = useMemo<Record<string, GroupLevel<Su10MaterialGroupRow> | undefined>>(() => ({
     project: {
       key: 'project', idOf: (r) => r.project_id ?? 'none',
       labelOf: (r) => (r.project_name ? `${r.project_code ? `${r.project_code} · ` : ''}${r.project_name}` : '— Без объекта'),
@@ -137,54 +172,43 @@ export function SU10MaterialsTab() {
       cmp: (a, b) => (a.contractor_name || '').localeCompare(b.contractor_name || '', 'ru'),
     },
     resp: {
-      // Детерминированный ключ: отсортированный набор назначенных id, иначе категория, иначе none.
-      key: 'resp', idOf: (r) => (r.assigned_responsibles.length
-        ? r.assigned_responsibles.map((x) => x.id).slice().sort().join('+')
-        : (r.category_id ? `cat:${r.category_id}` : 'none')),
+      key: 'resp', idOf: (r) => r.responsible?.id ?? 'none',
       labelOf: (r) => respText(r) || '— не назначены',
-    },
-    req: {
-      key: 'req', idOf: (r) => r.request_id,
-      labelOf: (r) => `№ ${r.request_no ?? '—'} · ${r.project_code || r.project_name || 'без объекта'}`,
-      cmp: (a, b) => (a.project_name || '').localeCompare(b.project_name || '', 'ru') || (a.request_no ?? 0) - (b.request_no ?? 0),
     },
     category: {
       key: 'category', idOf: (r) => r.category_id ?? 'none',
       labelOf: (r) => r.category_name || '— Без категории',
       cmp: (a, b) => (a.category_sort ?? 9999) - (b.category_sort ?? 9999) || (a.category_name || '').localeCompare(b.category_name || '', 'ru'),
     },
-  }), [respByCategory]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), []);
 
   const levels = levelsFromOrder(prefs.order, groupBy, prefs.hidden, levelMap);
   const treeMode = levels.length > 0;
-  const anyColFilter = hasActiveColumnFilters(colFilters, prefs.hidden);
-  // Отбор/дерево считаются на клиенте по всему набору → грузим all=1. peek — открыт дропдаун
-  // отбора (нужны варианты multi со всего набора).
-  const needFull = treeMode || anyColFilter || peek;
+
+  // Отбор и дерево строятся по всему набору → грузим all=1, когда они активны.
+  const needFull = peek || treeMode || hasActiveColumnFilters(colFilters, prefs.hidden);
+
+  const qs = useMemo(() => {
+    const p = new URLSearchParams();
+    if (projectId) p.set('projectId', projectId);
+    if (contractorId) p.set('contractorId', contractorId);
+    if (requestType) p.set('requestType', requestType);
+    if (categoryId) p.set('categoryId', categoryId);
+    if (needFull) p.set('all', '1');
+    else { p.set('limit', String(limit)); p.set('offset', String(offset)); }
+    return p.toString();
+  }, [projectId, contractorId, requestType, categoryId, needFull, limit, offset]);
 
   const materialsQ = useQuery({
-    queryKey: [
-      'su10-materials', projectId ?? '', contractorId ?? '', requestType ?? '', categoryId ?? '',
-      needFull ? 'all' : limit, needFull ? 0 : offset,
-    ],
-    queryFn: () => {
-      const p = new URLSearchParams();
-      if (needFull) p.set('all', '1');
-      else { p.set('limit', String(limit)); p.set('offset', String(offset)); }
-      if (projectId) p.set('projectId', projectId);
-      if (contractorId) p.set('contractorId', contractorId);
-      if (requestType) p.set('requestType', requestType);
-      if (categoryId) p.set('categoryId', categoryId);
-      return api.get<{ data: Su10MaterialRow[]; meta: { total: number; truncated?: boolean; facets: MaterialsFacets } }>(
-        `/supplier-orders/materials?${p.toString()}`,
-      );
-    },
-    refetchOnWindowFocus: true,
+    queryKey: ['su10-materials', qs],
+    queryFn: () => api.get<{
+      data: Su10MaterialGroupRow[];
+      meta: { total: number; truncated: boolean; facets: MaterialsFacets };
+    }>(`/supplier-orders/materials?${qs}`),
   });
-
   const rows = materialsQ.data?.data ?? [];
   const total = materialsQ.data?.meta.total ?? 0;
-  const truncated = (materialsQ.data?.meta.truncated ?? false) && needFull;
+  const truncated = materialsQ.data?.meta.truncated ?? false;
   const facets = materialsQ.data?.meta.facets;
 
   useEffect(() => {
@@ -195,15 +219,17 @@ export function SU10MaterialsTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [materialsQ.isSuccess, facets]);
 
-  function isEligible(r: Su10MaterialRow): boolean {
-    if (!responsiblesReady) return false;
-    if (r.request_type !== 'su10') return false;
-    if (r.remaining == null || r.remaining <= EPS) return false;
-    if (!r.project_id) return false;
-    if (isAdmin) return true;
-    if (!r.category_id) return false;
-    return myCategoryIds.has(r.category_id) || !categoriesWithResp.has(r.category_id);
-  }
+  /** Можно ли включить строку в заказ. Право приходит с сервера, здесь — только состояние строки. */
+  const canOrder = (r: Su10MaterialGroupRow) =>
+    r.can_order && r.request_type === 'su10' && (r.remaining ?? 0) > EPS && !!r.project_id;
+
+  /**
+   * Можно ли отметить строку чекбоксом. Шире, чем canOrder: руководитель отмечает строки и ради
+   * назначения ответственного, в том числе полностью заказанные. Прежняя блокировка «только один
+   * объект» была правилом заказа, протёкшим в общий выбор, — из-за неё нельзя было назначить
+   * ответственного сразу на два объекта.
+   */
+  const canSelect = (r: Su10MaterialGroupRow) => canOrder(r) || canAssign;
 
   function resetSelection() { setSelected(new Set()); }
   function changeFilter<T>(setter: (v: T) => void, v: T) { setter(v); setOffset(0); resetSelection(); }
@@ -212,22 +238,23 @@ export function SU10MaterialsTab() {
   }
   function changeGroup(key: string, on: boolean) { toggleGroupBy(key, on); setOffset(0); resetSelection(); }
 
-  // Клиентский отбор строк (по всему набору) — до группировки.
   const filterSpecs = useMemo<Record<
     'name' | 'project' | 'contractor' | 'resp' | 'req' | 'unit' | 'delivery' | 'requested' | 'remaining' | 'category',
-    ColumnFilterSpec<Su10MaterialRow>
+    ColumnFilterSpec<Su10MaterialGroupRow>
   >>(() => ({
     name: { kind: 'text', getText: (r) => r.material_name },
     project: { kind: 'multi', getText: (r) => r.project_name },
     contractor: { kind: 'multi', getText: (r) => r.contractor_name },
-    resp: { kind: 'text', getText: respText },
-    req: { kind: 'text', getText: (r) => requestNumber(r.project_code, r.request_no ?? 0) },
+    // Список ФИО с поиском — раньше это было поле ввода, и выбрать ответственного было нельзя.
+    resp: { kind: 'multi', getText: (r) => r.responsible?.full_name ?? '' },
+    // Многозначные ячейки схлопнутой строки: совпадение по любой заявке / любой дате.
+    req: { kind: 'multi', getTexts: (r) => r.requests.map((q) => requestNumber(r.project_code, q.no ?? 0)) },
     unit: { kind: 'multi', getText: (r) => r.unit },
-    delivery: { kind: 'dateRange', getDate: (r) => r.delivery_date },
+    delivery: { kind: 'dateRange', getDates: (r) => r.items.map((i) => i.delivery_date) },
     requested: { kind: 'numRange', getNum: (r) => r.requested },
     remaining: { kind: 'numRange', getNum: (r) => r.remaining },
     category: { kind: 'multi', getText: (r) => r.category_name },
-  }), [respByCategory]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), []);
 
   const filtered = useMemo(
     () => applyColumnFilters(rows, colFilters, filterSpecs, prefs.hidden),
@@ -235,12 +262,7 @@ export function SU10MaterialsTab() {
   );
 
   const tableData = useMemo<MaterialTableRow[]>(
-    () => (treeMode
-      ? groupRows(filtered, levels, (items) => ({
-          requested: items.reduce((s, x) => s + Number(x.requested), 0),
-          remaining: items.reduce((s, x) => s + (x.remaining ?? 0), 0),
-        }))
-      : filtered),
+    () => (treeMode ? groupRows(filtered, levels) : filtered),
     [filtered, treeMode, levels],
   );
 
@@ -255,144 +277,206 @@ export function SU10MaterialsTab() {
   useEffect(() => {
     setSelected((prev) => {
       if (prev.size === 0) return prev;
-      const next = new Set([...prev].filter((id) => {
-        const r = rows.find((x) => x.request_item_id === id);
-        return r && isEligible(r);
-      }));
+      const next = new Set([...prev].filter((k) => rows.some((r) => r.row_key === k && canSelect(r))));
       return next.size === prev.size ? prev : next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, responsiblesReady, myCategoryIds]);
+  }, [rows]);
 
-  const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.request_item_id)), [rows, selected]);
-  const lockedProjectId = selectedRows[0]?.project_id ?? null;
+  const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.row_key)), [rows, selected]);
+  const orderableRows = useMemo(() => selectedRows.filter(canOrder), [selectedRows]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Заказ формируется по одному объекту; для назначения ответственного это ограничение не нужно.
+  const orderProjectIds = new Set(orderableRows.map((r) => r.project_id));
+  const orderProjectId = orderProjectIds.size === 1 ? [...orderProjectIds][0] ?? null : null;
   const hiddenActiveCount = (requestType ? 1 : 0) + (categoryId ? 1 : 0);
 
-  // Назначение ответственных (несколько на строку). Замена набора одной строки — одним запросом.
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['su10-materials'] });
+
+  // Назначение ответственного по области строки: сервер сам развернёт его на все даты материала
+  // и на будущие заявки с ним же.
   const setMut = useMutation({
-    mutationFn: (v: { id: string; userIds: string[] }) =>
-      api.put(`/supplier-orders/materials/${v.id}/responsibles`, { userIds: v.userIds }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['su10-materials'] }),
-    onError: (e: Error) => message.error(e.message),
-  });
-  const bulkSetMut = useMutation({
-    mutationFn: (v: { ids: string[]; userIds: string[]; mode: 'add' | 'replace' }) =>
-      api.patch('/supplier-orders/materials/responsibles', { requestItemIds: v.ids, userIds: v.userIds, mode: v.mode }),
-    onSuccess: (_d, v) => { message.success(`Ответственные обновлены: ${v.ids.length} поз.`); qc.invalidateQueries({ queryKey: ['su10-materials'] }); },
+    mutationFn: (v: { requestItemId: string; userId: string | null }) =>
+      api.put(`/supplier-orders/materials/${v.requestItemId}/responsibles`, {
+        userIds: v.userId ? [v.userId] : [],
+      }),
+    onSuccess: invalidate,
     onError: (e: Error) => message.error(e.message),
   });
 
-  // Групповое: добавить выбранных ответственных ко всем строкам узла (текущих не трогает).
-  function assignGroup(node: GroupNode<Su10MaterialRow>, userIds: string[]) {
-    if (userIds.length === 0) return;
-    const ids = node.items.map((i) => i.request_item_id);
+  const bulkSetMut = useMutation({
+    mutationFn: (v: { ids: string[]; userId: string | null }) =>
+      api.patch('/supplier-orders/materials/responsibles', {
+        requestItemIds: v.ids, userIds: v.userId ? [v.userId] : [], mode: 'replace',
+      }),
+    onSuccess: (_d, v) => {
+      message.success(v.userId ? 'Ответственный назначен' : 'Ответственный снят');
+      invalidate();
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  /** Все позиции выделенных строк — по ним сервер вычислит области назначения. */
+  const selectedItemIds = () => selectedRows.flatMap((r) => r.items.map((i) => i.request_item_id));
+
+  function assignSelected(userId: string | null) {
+    const ids = selectedItemIds();
+    if (!ids.length) return;
+    const materials = selectedRows.length;
+    const target = userId ? assignable.find((u) => u.id === userId)?.full_name ?? '' : null;
     modal.confirm({
-      title: 'Добавить ответственных группе',
-      content: `Добавить выбранных (${userIds.length}) ко всем ${ids.length} позициям «${node.label}»?`,
-      okText: 'Добавить',
+      title: userId ? 'Назначить ответственного' : 'Снять ответственного',
+      content: userId
+        ? `${target} станет ответственным за ${materials} материал(ов). Назначение действует на все даты поставки и на будущие заявки с этими материалами.`
+        : `С ${materials} материал(ов) будет снято назначение — ответственный вернётся из справочника «Закупки».`,
+      okText: userId ? 'Назначить' : 'Снять',
       cancelText: 'Отмена',
-      onOk: () => bulkSetMut.mutateAsync({ ids, userIds, mode: 'add' }),
+      onOk: async () => {
+        await bulkSetMut.mutateAsync({ ids, userId });
+        setAssignOpen(false);
+        setAssignPick(undefined);
+      },
     });
   }
 
-  // Колонки (рендер листа; групповые строки перекрываются applyGroupSpan).
-  const hf = (key: string, spec: ColumnFilterSpec<Su10MaterialRow>) => ({
-    ...headerFilterCol<Su10MaterialRow>({
+  function assignGroup(node: GroupNode<Su10MaterialGroupRow>, userId: string) {
+    const ids = node.items.flatMap((i) => i.items.map((x) => x.request_item_id));
+    modal.confirm({
+      title: 'Назначить ответственного группе',
+      content: `Назначить выбранного на все ${node.items.length} материал(ов) узла «${node.label}»?`,
+      okText: 'Назначить',
+      cancelText: 'Отмена',
+      onOk: () => bulkSetMut.mutateAsync({ ids, userId }),
+    });
+  }
+
+  const hf = (key: string, spec: ColumnFilterSpec<Su10MaterialGroupRow>) => ({
+    ...headerFilterCol<Su10MaterialGroupRow>({
       spec, value: colFilters[key], rows, onChange: (v) => changeColFilter(key, v),
       group: GROUPABLE.has(key) ? { active: groupBy.includes(key), onToggle: (on) => changeGroup(key, on) } : undefined,
     }),
     onFilterDropdownOpenChange: (open: boolean) => { if (open) setPeek(true); },
   });
-  const leaf = (r: MaterialTableRow) => r as Su10MaterialRow;
+  const leaf = (r: MaterialTableRow) => r as Su10MaterialGroupRow;
 
   const leafColumns: ColumnsType<MaterialTableRow> = [
     {
-      title: 'Материал', key: 'name', width: 340, ...hf('name', filterSpecs.name),
+      title: 'Материал', key: 'name', width: 320, ...hf('name', filterSpecs.name),
       render: (_v, r) => {
         const row = leaf(r);
         return (
-          <Space size={4}>
-            {row.material_name}
-            <Tag>{MATERIAL_REQUEST_TYPE_SHORT_LABELS[row.request_type as keyof typeof MATERIAL_REQUEST_TYPE_SHORT_LABELS] ?? row.request_type}</Tag>
+          <Space size={4} style={{ minWidth: 0 }}>
+            <Tooltip title="Показать график поставок">
+              <a onClick={(e) => { e.stopPropagation(); setScheduleRow(row); }}>{row.material_name}</a>
+            </Tooltip>
+            <Text type="secondary" style={{ fontSize: 12 }}>· {row.unit}</Text>
+            {/* Тег вида заявки нужен, только когда показаны все виды: при фильтре «СУ-10» он шум. */}
+            {!requestType && (
+              <Tag>{MATERIAL_REQUEST_TYPE_SHORT_LABELS[row.request_type as keyof typeof MATERIAL_REQUEST_TYPE_SHORT_LABELS] ?? row.request_type}</Tag>
+            )}
           </Space>
         );
       },
     },
     {
-      title: 'Объект', key: 'project', width: 200, ...hf('project', filterSpecs.project),
+      title: 'Объект', key: 'project', width: 170, ellipsis: { showTitle: false }, ...hf('project', filterSpecs.project),
       render: (_v, r) => {
         const row = leaf(r);
-        return row.project_name ? `${row.project_code ? `${row.project_code} · ` : ''}${row.project_name}` : '—';
+        const text = row.project_name ? `${row.project_code ? `${row.project_code} · ` : ''}${row.project_name}` : '—';
+        return <Tooltip title={text}>{text}</Tooltip>;
       },
     },
     { title: 'Ед.', key: 'unit', width: 70, ...hf('unit', filterSpecs.unit), render: (_v, r) => leaf(r).unit },
     {
-      title: 'Подрядчик', key: 'contractor', width: 160, ...hf('contractor', filterSpecs.contractor),
-      render: (_v, r) => leaf(r).contractor_name ?? '—',
+      title: 'Подрядчик', key: 'contractor', width: 150, ellipsis: { showTitle: false }, ...hf('contractor', filterSpecs.contractor),
+      render: (_v, r) => <Tooltip title={leaf(r).contractor_name ?? '—'}>{leaf(r).contractor_name ?? '—'}</Tooltip>,
     },
     {
-      title: 'Заявка', key: 'req', width: 110, ...hf('req', filterSpecs.req),
+      title: 'Заявка', key: 'req', width: 105, ...hf('req', filterSpecs.req),
       render: (_v, r) => {
         const row = leaf(r);
-        return row.request_no ? <a onClick={(e) => { e.stopPropagation(); setOpenRequestId(row.request_id); }}>{requestNumber(row.project_code, row.request_no)}</a> : '—';
+        if (!row.requests.length) return '—';
+        const [first, ...rest] = row.requests;
+        const label = requestNumber(row.project_code, first!.no ?? 0);
+        const link = <a onClick={(e) => { e.stopPropagation(); setOpenRequestId(first!.id); }}>{label}</a>;
+        if (!rest.length) return link;
+        const all = row.requests.map((q) => requestNumber(row.project_code, q.no ?? 0)).join(', ');
+        return <Tooltip title={all}><Space size={2}>{link}<Text type="secondary">+{rest.length}</Text></Space></Tooltip>;
       },
     },
     {
-      title: 'Ответственный', key: 'resp', width: 210, ...hf('resp', filterSpecs.resp),
+      title: 'Ответственный', key: 'resp', width: 190, ...hf('resp', filterSpecs.resp),
       render: (_v, r) => {
         const row = leaf(r);
-        const catNames = row.category_id ? respByCategory.get(row.category_id) ?? [] : [];
-        const catIds = row.category_id ? respIdsByCategory.get(row.category_id) ?? [] : [];
         return (
           <ResponsibleSelect
-            value={row.assigned_responsibles.map((x) => x.id)}
-            assignedUsers={row.assigned_responsibles}
-            categoryNames={catNames}
-            categoryIds={catIds}
+            value={row.responsible?.id ?? null}
+            valueName={row.responsible?.full_name ?? null}
+            source={row.responsible?.source ?? null}
             assignable={assignable}
-            assignableReady={assignableQ.isSuccess}
             canAssign={canAssign}
-            saving={setMut.isPending && setMut.variables?.id === row.request_item_id}
-            onSave={(userIds) => setMut.mutate({ id: row.request_item_id, userIds })}
+            saving={setMut.isPending && setMut.variables?.requestItemId === row.items[0]?.request_item_id}
+            onSave={(userId) => {
+              const first = row.items[0]?.request_item_id;
+              if (first) setMut.mutate({ requestItemId: first, userId });
+            }}
           />
         );
       },
     },
     {
-      title: 'Дата поставки', key: 'delivery', width: 130, ...hf('delivery', filterSpecs.delivery),
-      render: (_v, r) => { const v = leaf(r).delivery_date; return v ? fmtRuDate(v) : <span style={{ color: '#bfbfbf' }}>—</span>; },
-    },
-    {
-      title: 'Запрошено', key: 'requested', width: 110, align: 'right', ...hf('requested', filterSpecs.requested),
-      render: (_v, r) => round4(leaf(r).requested),
-    },
-    {
-      title: 'Осталось заказать', key: 'remaining', width: 140, align: 'right', ...hf('remaining', filterSpecs.remaining),
+      title: 'Поставка', key: 'delivery', width: 110, ...hf('delivery', filterSpecs.delivery),
       render: (_v, r) => {
-        const v = leaf(r).remaining;
-        return v == null ? <span style={{ color: '#bfbfbf' }}>не применяется</span>
-          : <strong style={{ color: v > EPS ? '#1677ff' : '#bfbfbf' }}>{round4(v)}</strong>;
+        const row = leaf(r);
+        const dates = row.items.map((i) => i.delivery_date).filter(Boolean) as string[];
+        if (!dates.length) return <span style={{ color: '#bfbfbf' }}>—</span>;
+        if (dates.length === 1) return fmtRuDate(dates[0]!);
+        return (
+          <Tooltip title={dates.map(fmtRuDate).join(', ')}>
+            <a onClick={(e) => { e.stopPropagation(); setScheduleRow(row); }}>{dates.length} дат</a>
+          </Tooltip>
+        );
       },
     },
     {
-      title: 'Категория', key: 'category', width: 200, ...hf('category', filterSpecs.category),
+      title: 'Запрошено', key: 'requested', width: 95, align: 'right', ...hf('requested', filterSpecs.requested),
+      render: (_v, r) => round4(leaf(r).requested),
+    },
+    {
+      title: 'Осталось заказать', key: 'remaining', width: 115, align: 'right', ...hf('remaining', filterSpecs.remaining),
+      render: (_v, r) => {
+        const row = leaf(r);
+        const v = row.remaining;
+        if (v == null) return <span style={{ color: '#bfbfbf' }}>не применяется</span>;
+        return (
+          <Space size={4}>
+            <strong style={{ color: v > EPS ? '#1677ff' : '#bfbfbf' }}>{round4(v)}</strong>
+            {row.has_overplaced && (
+              <Tooltip title={`Заказано сверх заявленного: ${round4(row.overplaced)}`}>
+                <Tag color="red" style={{ margin: 0 }}>перезаказ</Tag>
+              </Tooltip>
+            )}
+          </Space>
+        );
+      },
+    },
+    {
+      title: 'Категория', key: 'category', width: 170, ellipsis: { showTitle: false }, ...hf('category', filterSpecs.category),
       render: (_v, r) => leaf(r).category_name ?? '—',
     },
   ];
 
-  // Групповая строка: подпись в первом видимом столбце + компактное назначение всей группе.
-  const renderGroup = (node: GroupNode<Su10MaterialRow>) => (
+  const renderGroup = (node: GroupNode<Su10MaterialGroupRow>) => (
     <Space size={8} onClick={(e) => e.stopPropagation()}>
       <strong>
         {node.label}{' '}
-        <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· {node.count} поз., запрошено {round4(node.agg.requested ?? 0)}</span>
+        <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· {node.count} поз.</span>
       </strong>
       {canAssign && (
         <Tooltip title={truncated ? 'Набор усечён — сузьте фильтры, чтобы назначить всей группе' : ''}>
           <GroupResponsibleAssign
             assignable={assignable}
             disabled={truncated}
-            onAdd={(userIds) => assignGroup(node, userIds)}
+            onAssign={(userId) => assignGroup(node, userId)}
           />
         </Tooltip>
       )}
@@ -431,9 +515,26 @@ export function SU10MaterialsTab() {
           </Button>
         </Badge>
         <div style={{ flex: 1 }} />
-        <Tooltip title={!lockedProjectId && selected.size > 0 ? 'Материалы без объекта — заказ не сформировать' : ''}>
+
+        {canAssign && (
+          <Tooltip title={truncated ? 'Набор усечён — сузьте фильтры' : ''}>
+            <Button
+              icon={<TeamOutlined />}
+              disabled={selected.size === 0 || truncated}
+              onClick={() => setAssignOpen(true)}
+            >
+              Ответственный{selected.size > 0 ? ` (${selected.size})` : ''}
+            </Button>
+          </Tooltip>
+        )}
+
+        <Tooltip title={
+          orderableRows.length === 0 ? ''
+            : orderProjectIds.size > 1 ? 'Выбраны материалы разных объектов — заказ формируется по одному'
+              : !orderProjectId ? 'Материалы без объекта — заказ не сформировать' : ''
+        }>
           <Dropdown
-            disabled={selectedRows.length === 0 || !lockedProjectId}
+            disabled={orderableRows.length === 0 || !orderProjectId}
             menu={{
               items: [
                 { key: 'order', icon: <ShoppingCartOutlined />, label: 'Заказ поставщику' },
@@ -443,7 +544,7 @@ export function SU10MaterialsTab() {
             }}
           >
             <Button type="primary" icon={<ShoppingCartOutlined />}>
-              Заказ{selectedRows.length > 0 ? ` (${selectedRows.length})` : ''} <DownOutlined />
+              Заказ{orderableRows.length > 0 ? ` (${orderableRows.length})` : ''} <DownOutlined />
             </Button>
           </Dropdown>
         </Tooltip>
@@ -464,22 +565,19 @@ export function SU10MaterialsTab() {
             optionFilterProp="label"
             options={(facets?.categories ?? []).map((c) => ({ value: c.id, label: c.name ?? '—' }))}
           />
-          {viewCount > 0 && (
-            <Tag>Отборы/группировка в заголовках: {viewCount}</Tag>
-          )}
+          {viewCount > 0 && <Tag>Отборы/группировка в заголовках: {viewCount}</Tag>}
         </div>
       )}
 
       {truncated && (
-        <Alert
-          type="warning" showIcon style={{ marginBottom: 8 }}
-          message={`Показаны первые ${rows.length} из ${total}. Отборы и дерево строятся по показанным позициям — сузьте фильтр (объект, подрядчик, категория).`}
-        />
+        <Alert type="warning" showIcon style={{ marginBottom: 8, flexShrink: 0 }}
+          message={`Показаны первые ${rows.length} из ${total}. Отборы и дерево строятся по показанным — сузьте фильтры сверху.`} />
       )}
 
       <div className="table-page-wrapper">
         <Table<MaterialTableRow>
-          rowKey={(r) => (isGroupRow(r) ? r.key : r.request_item_id)}
+          className="estimat-compact estimat-th-nowrap"
+          rowKey={(r) => (isGroupRow(r) ? r.key : r.row_key)}
           size="small"
           loading={materialsQ.isLoading}
           dataSource={tableData}
@@ -493,7 +591,7 @@ export function SU10MaterialsTab() {
             getCheckboxProps: (r) =>
               isGroupRow(r)
                 ? { disabled: true, style: { display: 'none' } }
-                : { disabled: !isEligible(r) || (selected.size > 0 && !!lockedProjectId && r.project_id !== lockedProjectId) },
+                : { disabled: !canSelect(r) },
           }}
           expandable={treeMode ? {
             expandedRowKeys: expandedKeys,
@@ -511,25 +609,53 @@ export function SU10MaterialsTab() {
                   resetSelection();
                 },
               }}
-          scroll={{ x: 1400, y: 'flex' }}
+          scroll={{ x: 1060, y: 'flex' }}
         />
       </div>
 
-      {action === 'order' && lockedProjectId && (
+      {/* Массовое назначение: выбор сотрудника, затем подтверждение с охватом */}
+      <Modal
+        open={assignOpen}
+        title="Ответственный за выбранные материалы"
+        onCancel={() => { setAssignOpen(false); setAssignPick(undefined); }}
+        footer={[
+          <Button key="clear" danger onClick={() => assignSelected(null)}>Снять ответственного</Button>,
+          <Button key="cancel" onClick={() => { setAssignOpen(false); setAssignPick(undefined); }}>Отмена</Button>,
+          <Button key="ok" type="primary" disabled={!assignPick} onClick={() => assignSelected(assignPick ?? null)}>
+            Назначить
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={8}>
+          <Text type="secondary">
+            Выбрано материалов: {selectedRows.length}. Назначение действует на все даты поставки
+            и на будущие заявки с этими материалами у того же объекта и подрядчика.
+          </Text>
+          <Select
+            showSearch style={{ width: '100%' }} placeholder="Выберите сотрудника"
+            value={assignPick} onChange={setAssignPick}
+            optionFilterProp="label"
+            options={assignable.map((u) => ({ value: u.id, label: u.full_name }))}
+          />
+        </Space>
+      </Modal>
+
+      {action === 'order' && orderProjectId && (
         <SupplierOrderModal
-          create={{ projectId: lockedProjectId, rows: selectedRows }}
+          create={{ projectId: orderProjectId, rows: expandItems(orderableRows) }}
           onClose={() => { setAction(null); resetSelection(); materialsQ.refetch(); }}
           onChanged={() => materialsQ.refetch()}
         />
       )}
-      {action === 'tender' && lockedProjectId && (
+      {action === 'tender' && orderProjectId && (
         <TenderCreateModal
-          projectId={lockedProjectId}
-          rows={selectedRows}
+          projectId={orderProjectId}
+          rows={expandItems(orderableRows)}
           onClose={() => setAction(null)}
           onDone={() => { setAction(null); resetSelection(); materialsQ.refetch(); }}
         />
       )}
+      {scheduleRow && <MaterialScheduleModal row={scheduleRow} onClose={() => setScheduleRow(null)} />}
       <RequestDetailModal id={openRequestId} onClose={() => setOpenRequestId(null)} />
     </div>
   );

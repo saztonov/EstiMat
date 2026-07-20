@@ -85,51 +85,85 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     const whereSql = where.join(' AND ');
 
     const dataValues = [...values, limit, offset];
+    // Схлопывание строк: одна строка на область «объект + подрядчик + вид затрат + материал»
+    // (плюс тип заявки, чтобы давальческие и подрядные не склеивались). Исходные позиции
+    // развёрнуты по датам поставки (0060), из-за чего один материал давал N строк.
+    //
+    // Агрегируем ДО LIMIT/OFFSET: клиентское схлопывание исказило бы meta.total и номера страниц.
+    // COUNT(*) OVER() после GROUP BY считает уже схлопнутые строки, поэтому total остаётся верным.
     const { rows } = await fastify.pool.query(
-      `SELECT mri.id AS request_item_id, mri.request_id, mr.request_no, mr.request_type, mr.status,
-              mr.project_id, mr.project_name, p.code AS project_code,
-              mri.cost_type_id, ct.name AS cost_type_name,
-              cc.id AS category_id, cc.name AS category_name,
-              cc.sort_order AS category_sort, ct.sort_order AS cost_type_sort,
-              mri.material_id, mri.material_name, mri.unit, mri.agg_key,
-              to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
-              mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS placed,
-              mr.contractor_id, mr.contractor_name,
-              -- Ответственный: точечное назначение области перекрывает вид, вид — категорию;
-              -- поверх накладывается активное замещение. Одно правило на весь контур — иначе
-              -- интерфейс показывал бы одного, а право на заказ имел бы другой.
-              COALESCE(pmr.user_id, vpr.assigned_user_id) AS resp_assigned_id,
-              CASE WHEN pmr.user_id IS NOT NULL THEN 'material' ELSE vpr.assigned_source END AS resp_source,
-              COALESCE(msub.deputy_user_id, pmr.user_id, vpr.effective_user_id) AS resp_effective_id,
-              ru.full_name AS resp_effective_name,
+      `WITH base AS (
+         SELECT mri.id AS request_item_id, mri.request_id, mr.request_no, mr.request_type, mr.status,
+                mr.project_id, mr.project_name, p.code AS project_code,
+                mri.cost_type_id, ct.name AS cost_type_name,
+                cc.id AS category_id, cc.name AS category_name,
+                cc.sort_order AS category_sort, ct.sort_order AS cost_type_sort,
+                mri.material_id, mri.material_name, mri.unit, mri.agg_key,
+                to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
+                mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS placed,
+                mr.contractor_id, mr.contractor_name,
+                -- Ответственный: точечное назначение области перекрывает вид, вид — категорию;
+                -- поверх накладывается активное замещение. Одно правило на весь контур — иначе
+                -- интерфейс показывал бы одного, а право на заказ имел бы другой.
+                COALESCE(pmr.user_id, vpr.assigned_user_id) AS resp_assigned_id,
+                CASE WHEN pmr.user_id IS NOT NULL THEN 'material' ELSE vpr.assigned_source END AS resp_source,
+                COALESCE(msub.deputy_user_id, pmr.user_id, vpr.effective_user_id) AS resp_effective_id,
+                ru.full_name AS resp_effective_name
+           FROM material_request_items mri
+           JOIN material_requests mr ON mr.id = mri.request_id
+           LEFT JOIN projects p ON p.id = mr.project_id
+           LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
+           LEFT JOIN cost_categories cc ON cc.id = ct.category_id
+           LEFT JOIN (
+             SELECT soi.request_item_id, SUM(soi.quantity) AS qty
+               FROM supplier_order_items soi
+               JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status NOT IN ('cancelled','no_award')
+              GROUP BY soi.request_item_id
+           ) placed ON placed.request_item_id = mri.id
+           -- Уровни ответственного: материал (по области строки) → вид/категория (вью 0072).
+           LEFT JOIN procurement_material_responsible pmr
+                  ON pmr.project_id    IS NOT DISTINCT FROM mr.project_id
+                 AND pmr.contractor_id IS NOT DISTINCT FROM mr.contractor_id
+                 AND pmr.cost_type_id  IS NOT DISTINCT FROM mri.cost_type_id
+                 AND pmr.agg_key = mri.agg_key
+           LEFT JOIN v_procurement_responsible_effective vpr ON vpr.cost_type_id = mri.cost_type_id
+           LEFT JOIN procurement_substitutions msub
+                  ON pmr.user_id IS NOT NULL
+                 AND msub.principal_user_id = pmr.user_id
+                 AND msub.ended_at IS NULL
+                 AND (now() AT TIME ZONE 'Europe/Moscow')::date BETWEEN msub.starts_on AND msub.ends_on
+           LEFT JOIN users ru ON ru.id = COALESCE(msub.deputy_user_id, pmr.user_id, vpr.effective_user_id)
+          WHERE ${whereSql}
+       )
+       SELECT project_id, project_name, project_code, contractor_id, contractor_name,
+              cost_type_id, cost_type_name, category_id, category_name, category_sort, cost_type_sort,
+              unit, agg_key, request_type,
+              -- Имя и id материала берём MIN: при текстовом agg_key регистр и пробелы в разных
+              -- заявках могут различаться, ключ при этом один (та же идиома, что в GET /:id).
+              MIN(material_name) AS material_name,
+              MIN(material_id::text)::uuid AS material_id,
+              SUM(requested)::numeric AS requested,
+              SUM(placed)::numeric   AS placed,
+              -- Остаток к заказу считаем ПО ПОЗИЦИЯМ, а не как разницу сумм: после разрешения
+              -- правки объёмов одна дата может быть перезаказана, другая — недозаказана, и
+              -- простая разница взаимно погасила бы их, показав «заказывать нечего».
+              SUM(GREATEST(requested - placed, 0))::numeric AS available,
+              SUM(GREATEST(placed - requested, 0))::numeric AS overplaced,
+              MIN(resp_assigned_id::text)::uuid  AS resp_assigned_id,
+              MIN(resp_source)                   AS resp_source,
+              MIN(resp_effective_id::text)::uuid AS resp_effective_id,
+              MIN(resp_effective_name)           AS resp_effective_name,
+              json_agg(json_build_object(
+                'request_item_id', request_item_id, 'request_id', request_id, 'request_no', request_no,
+                'delivery_date', delivery_date, 'requested', requested, 'placed', placed
+              ) ORDER BY delivery_date NULLS LAST, request_item_id) AS items,
               COUNT(*) OVER() AS total_count
-         FROM material_request_items mri
-         JOIN material_requests mr ON mr.id = mri.request_id
-         LEFT JOIN projects p ON p.id = mr.project_id
-         LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
-         LEFT JOIN cost_categories cc ON cc.id = ct.category_id
-         LEFT JOIN (
-           SELECT soi.request_item_id, SUM(soi.quantity) AS qty
-             FROM supplier_order_items soi
-             JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status NOT IN ('cancelled','no_award')
-            GROUP BY soi.request_item_id
-         ) placed ON placed.request_item_id = mri.id
-         -- Уровни ответственного: материал (по области строки) → вид/категория (вью 0072).
-         LEFT JOIN procurement_material_responsible pmr
-                ON pmr.project_id    IS NOT DISTINCT FROM mr.project_id
-               AND pmr.contractor_id IS NOT DISTINCT FROM mr.contractor_id
-               AND pmr.cost_type_id  IS NOT DISTINCT FROM mri.cost_type_id
-               AND pmr.agg_key = mri.agg_key
-         LEFT JOIN v_procurement_responsible_effective vpr ON vpr.cost_type_id = mri.cost_type_id
-         LEFT JOIN procurement_substitutions msub
-                ON pmr.user_id IS NOT NULL
-               AND msub.principal_user_id = pmr.user_id
-               AND msub.ended_at IS NULL
-               AND (now() AT TIME ZONE 'Europe/Moscow')::date BETWEEN msub.starts_on AND msub.ends_on
-         LEFT JOIN users ru ON ru.id = COALESCE(msub.deputy_user_id, pmr.user_id, vpr.effective_user_id)
-        WHERE ${whereSql}
-        ORDER BY mr.project_name NULLS LAST, cc.sort_order NULLS LAST, ct.sort_order NULLS LAST,
-                 mri.material_name, mri.delivery_date NULLS LAST
+         FROM base
+        GROUP BY project_id, project_name, project_code, contractor_id, contractor_name,
+                 cost_type_id, cost_type_name, category_id, category_name, category_sort, cost_type_sort,
+                 unit, agg_key, request_type
+        ORDER BY project_name NULLS LAST, category_sort NULLS LAST, cost_type_sort NULLS LAST,
+                 MIN(material_name)
         LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
       dataValues,
     );
@@ -163,10 +197,12 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     const total = rows.length ? Number(rows[0].total_count) : 0;
     const isAdmin = request.currentUser.role === 'admin';
     return {
-      data: rows.map(({ total_count, placed, resp_assigned_id, resp_source, resp_effective_id, resp_effective_name, ...r }) => {
+      data: rows.map(({
+        total_count, placed, available, overplaced, items,
+        resp_assigned_id, resp_source, resp_effective_id, resp_effective_name, ...r
+      }) => {
         const isSu10 = r.request_type === 'su10';
-        const ordered = isSu10 ? Number(placed) : null;
-        const remaining = isSu10 ? Number(r.requested) - Number(placed) : null;
+        const list = (items ?? []) as { request_item_id: string; request_id: string; request_no: number | null }[];
         // Право вести заказ считаем здесь, по тому же правилу, что и assertOrderAccess: раньше
         // оно дублировалось на клиенте (isEligible) и неизбежно разъехалось бы с сервером.
         const canOrder = isAdmin
@@ -176,18 +212,25 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
             : resp_assigned_id == null
               || resp_assigned_id === request.currentUser.id
               || resp_effective_id === request.currentUser.id;
+        // Заявки схлопнутой строки: столбец «Заявка» стал многозначным.
+        const seen = new Map<string, { id: string; no: number | null }>();
+        for (const it of list) if (!seen.has(it.request_id)) seen.set(it.request_id, { id: it.request_id, no: it.request_no });
         return {
-          ...r, ordered, remaining,
+          ...r,
+          // Стабильный ключ строки таблицы (области), заменяет request_item_id.
+          row_key: [r.project_id ?? '', r.contractor_id ?? '', r.cost_type_id ?? '', r.agg_key].join('|'),
+          items: list,
+          requests: [...seen.values()],
+          ordered: isSu10 ? Number(placed) : null,
+          // remaining — «сколько ещё можно заказать»: считается по позициям, поэтому перезаказ
+          // по одной дате не гасит недозаказ по другой.
+          remaining: isSu10 ? Number(available) : null,
+          overplaced: isSu10 ? Number(overplaced) : 0,
+          has_overplaced: isSu10 && Number(overplaced) > 0,
           can_order: canOrder,
           responsible: resp_effective_id
             ? { id: resp_effective_id, full_name: resp_effective_name, source: resp_source ?? null }
             : null,
-          // Deprecated-поля для незакрытых старых вкладок.
-          assigned_responsibles: resp_effective_id
-            ? [{ id: resp_effective_id, full_name: resp_effective_name }]
-            : [],
-          assigned_responsible_id: resp_effective_id ?? null,
-          assigned_responsible_name: resp_effective_name ?? null,
         };
       }),
       meta: { total, limit, offset, truncated: total > rows.length, facets: facetRows[0] },

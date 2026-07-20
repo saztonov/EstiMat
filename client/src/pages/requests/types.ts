@@ -143,6 +143,56 @@ export interface RequestDetail extends RequestRow {
 
 // Строка свода материалов (исходная позиция заявки). Для su10 — 1:1 с формированием лота;
 // у прочих видов размещение не применяется (ordered/remaining = null).
+/**
+ * Строка свода «Материалы» — ОДИН материал в рамках объекта, подрядчика и вида затрат.
+ * Исходные позиции заявок развёрнуты по датам поставки, поэтому под строкой их несколько
+ * (items); столбцы «Заявка» и «Поставка» из-за этого многозначны.
+ */
+export interface Su10MaterialGroupRow {
+  /** Ключ области — он же rowKey таблицы (заменил request_item_id). */
+  row_key: string;
+  /** Исходные позиции заявок под строкой: даты поставки и их количества. */
+  items: {
+    request_item_id: string;
+    request_id: string;
+    request_no: number | null;
+    delivery_date: string | null;
+    requested: string | number;
+    placed: string | number;
+  }[];
+  /** Заявки, из которых собрана строка (для столбца «Заявка»). */
+  requests: { id: string; no: number | null }[];
+  request_type: string;
+  status: string;
+  project_id: string | null;
+  project_name: string | null;
+  project_code: string | null;
+  cost_type_id: string | null;
+  cost_type_name: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  category_sort: number | null;
+  cost_type_sort: number | null;
+  material_id: string | null;
+  material_name: string;
+  unit: string;
+  agg_key: string;
+  requested: string | number;
+  ordered: number | null;
+  /** Сколько ещё можно заказать (сумма положительных остатков позиций). */
+  remaining: number | null;
+  /** Сколько заказано сверх заявленного — следствие правки объёмов после формирования заказа. */
+  overplaced: number;
+  has_overplaced: boolean;
+  contractor_id: string | null;
+  contractor_name: string | null;
+  /** Право вести заказ по этой области — считает сервер тем же правилом, что и при создании. */
+  can_order: boolean;
+  /** Эффективный ответственный: точечный → вид → категория, с учётом замещения. */
+  responsible: { id: string; full_name: string | null; source: 'material' | 'type' | 'category' | null } | null;
+}
+
+/** @deprecated Строка-позиция (до схлопывания по датам). Используется модалками заказа и тендера. */
 export interface Su10MaterialRow {
   request_item_id: string;
   request_id: string;

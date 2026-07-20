@@ -1,101 +1,63 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Select } from 'antd';
+import { Select, Tooltip } from 'antd';
 import type { AssignableUser } from './types';
 
-// Ячейка «Ответственный» свода материалов: назначить нескольких ответственных (override) либо
-// показать всех по категории вида работ. В списке сначала назначенные по этой категории, затем
-// остальные активные внутренние пользователи. Пусто (нет override и нет категорийных) — «не назначены».
-//
-// Изменения набора накапливаются в локальном черновике и сохраняются ОДНИМ запросом по закрытию
-// выпадающего списка (устраняет гонки параллельных сохранений при быстром выборе нескольких).
-// Удаление тега/очистка при закрытом списке сохраняется сразу (одно действие — один запрос).
-
+/**
+ * Ячейка «Ответственный» свода материалов: ОДИН сотрудник на материал в рамках объекта,
+ * подрядчика и вида затрат.
+ *
+ * Значение приходит уже разрешённым с сервера (точечное назначение → вид затрат → категория,
+ * плюс активное замещение), поэтому здесь нет ни наследования, ни множественного набора —
+ * компонент только показывает эффективного ответственного и отправляет новый выбор.
+ *
+ * Источник назначения виден в подсказке: «из справочника» читается иначе, чем назначенный вручную.
+ */
 interface Props {
-  /** Текущие назначенные (id). */
-  value: string[];
-  /** Назначенные пользователи (id + ФИО) — чтобы отрисовать теги даже для отсутствующих в assignable (неактивных). */
-  assignedUsers: { id: string; full_name: string }[];
-  /** Все ответственные по категории вида работ (для дефолтного показа). */
-  categoryNames: string[];
-  /** id ответственных по категории (для порядка опций). */
-  categoryIds: string[];
-  /** Кандидаты (/procurement/assignable-users). */
+  value: string | null;
+  valueName: string | null;
+  /** Откуда пришло назначение: точечное, по виду затрат или по категории. */
+  source: 'material' | 'type' | 'category' | null;
   assignable: AssignableUser[];
-  /** Список кандидатов загружен — только тогда отсутствующего в нём помечаем «(неактивен)». */
-  assignableReady?: boolean;
-  /** Может ли пользователь назначать (внутренние роли). */
   canAssign: boolean;
-  onSave: (userIds: string[]) => void;
   saving?: boolean;
+  onSave: (userId: string | null) => void;
 }
 
-const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+const SOURCE_HINT: Record<'material' | 'type' | 'category', string> = {
+  material: 'Назначен на этот материал',
+  type: 'Унаследован от вида затрат (справочник «Закупки»)',
+  category: 'Унаследован от категории затрат (справочник «Закупки»)',
+};
 
-export function ResponsibleSelect({
-  value, assignedUsers, categoryNames, categoryIds, assignable, assignableReady, canAssign, onSave, saving,
-}: Props) {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<string[]>(value);
-  // Пока список закрыт — держим черновик синхронным с внешним значением (после сохранения/рефетча).
-  useEffect(() => { if (!open) setDraft(value); }, [value, open]);
-
-  const options = useMemo(() => {
-    const inCat = new Set(categoryIds);
-    const assignedInCat = assignable.filter((u) => inCat.has(u.id));
-    const others = assignable.filter((u) => !inCat.has(u.id));
-    const assignableIds = new Set(assignable.map((u) => u.id));
-    const toOpt = (u: { id: string; full_name: string }) => ({ value: u.id, label: u.full_name });
-    // Назначенные, отсутствующие в списке кандидатов (неактивные) — добавим, чтобы тег отобразился.
-    const missing = assignedUsers.filter((u) => !assignableIds.has(u.id));
-    const groups = [];
-    if (missing.length) {
-      groups.push({
-        label: 'Текущие',
-        options: missing.map((u) => ({ value: u.id, label: assignableReady ? `${u.full_name} (неактивен)` : u.full_name })),
-      });
-    }
-    if (assignedInCat.length) groups.push({ label: 'По виду', options: assignedInCat.map(toOpt) });
-    if (others.length) groups.push({ label: 'Остальные', options: others.map(toOpt) });
-    return groups;
-  }, [assignable, assignableReady, categoryIds, assignedUsers]);
-
-  // Только просмотр (нет права назначать): текст.
+export function ResponsibleSelect({ value, valueName, source, assignable, canAssign, saving, onSave }: Props) {
+  // Только просмотр: инженер видит ответственного, но менять его может лишь руководитель.
   if (!canAssign) {
-    if (assignedUsers.length) return <>{assignedUsers.map((u) => u.full_name).join(', ')}</>;
-    return categoryNames.length
-      ? <>{categoryNames.join(', ')}</>
-      : <span style={{ color: '#bfbfbf' }}>не назначены</span>;
+    if (!valueName) return <span style={{ color: '#bfbfbf' }}>не назначен</span>;
+    return source ? <Tooltip title={SOURCE_HINT[source]}>{valueName}</Tooltip> : <>{valueName}</>;
   }
 
-  const placeholder = categoryNames.length ? categoryNames.join(', ') : 'не назначены';
+  // Назначенный мог стать неактивным — тогда его нет в списке кандидатов, и без этой опции
+  // тег отрисовался бы как «сырой» uuid.
+  const options = assignable.map((u) => ({ value: u.id, label: u.full_name }));
+  if (value && valueName && !assignable.some((u) => u.id === value)) {
+    options.unshift({ value, label: `${valueName} (неактивен)` });
+  }
 
-  return (
+  const select = (
     <Select
-      mode="multiple"
       size="small"
       style={{ width: '100%', minWidth: 150 }}
       variant="borderless"
       allowClear
       showSearch
       loading={saving}
-      maxTagCount="responsive"
-      value={draft}
-      placeholder={<span style={{ color: '#8c8c8c' }}>{placeholder}</span>}
+      value={value ?? undefined}
+      placeholder={<span style={{ color: '#bfbfbf' }}>не назначен</span>}
       options={options}
       optionFilterProp="label"
-      filterOption={(input, option) => String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
-      onChange={(vals: string[]) => {
-        setDraft(vals);
-        // Удаление тега / очистка при закрытом списке — сохраняем сразу (одно действие — один запрос).
-        if (!open && !sameSet(vals, value)) onSave(vals);
-      }}
-      open={open}
-      onDropdownVisibleChange={(o) => {
-        setOpen(o);
-        if (o) setDraft(value);
-        else if (!sameSet(draft, value)) onSave(draft); // накопленный набор — одним запросом
-      }}
+      onChange={(v) => onSave(v ?? null)}
       onClick={(e) => e.stopPropagation()}
     />
   );
+
+  return source && source !== 'material' ? <Tooltip title={SOURCE_HINT[source]}>{select}</Tooltip> : select;
 }

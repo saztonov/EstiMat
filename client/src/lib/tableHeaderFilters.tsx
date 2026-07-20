@@ -51,6 +51,9 @@ function TextFilter({ value, onApply, close }: {
   );
 }
 
+/** Потолок рендера вариантов: список ФИО или материалов бывает в тысячи строк. */
+const MULTI_RENDER_CAP = 200;
+
 function MultiFilter({ value, options, onApply, close }: {
   value?: ColumnFilterValue;
   options: { value: string; label: string }[];
@@ -59,12 +62,33 @@ function MultiFilter({ value, options, onApply, close }: {
 }) {
   const outer = value?.kind === 'multi' ? value.values : [];
   const [draft, setDraft] = useState<string[]>(outer);
+  const [q, setQ] = useState('');
   useEffect(() => setDraft(outer), [outer.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Поиск фильтрует ПОЛНЫЙ список, и только результат урезается до потолка рендера: усечение
+  // до фильтрации прятало бы совпадения, ради которых поиск и нужен.
+  const needle = q.trim().toLowerCase();
+  const matched = needle ? options.filter((o) => o.label.toLowerCase().includes(needle)) : options;
+  const shown = matched.slice(0, MULTI_RENDER_CAP);
+
+  // ОК отдаёт ВЕСЬ draft, включая скрытые поиском отметки: иначе ввод в поиске молча снимал бы
+  // ранее выбранные значения.
   const apply = () => { onApply(draft.length ? { kind: 'multi', values: draft } : undefined); close(); };
+  const toggleVisible = (on: boolean) => setDraft((d) => (on
+    ? [...new Set([...d, ...matched.map((o) => o.value)])]
+    : d.filter((v) => !matched.some((o) => o.value === v))));
+
   return (
     <>
-      <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
-        {options.map((o) => (
+      {options.length > 8 && (
+        <Input
+          allowClear size="small" placeholder="Поиск" value={q}
+          onChange={(e) => setQ(e.target.value)}
+          style={{ marginBottom: 6, width: 220 }}
+        />
+      )}
+      <div style={{ maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+        {shown.map((o) => (
           <Checkbox
             key={o.value}
             checked={draft.includes(o.value)}
@@ -75,11 +99,22 @@ function MultiFilter({ value, options, onApply, close }: {
             {o.label}
           </Checkbox>
         ))}
-        {options.length === 0 && <span style={{ color: '#bfbfbf' }}>Нет значений</span>}
+        {matched.length === 0 && <span style={{ color: '#bfbfbf' }}>Ничего не найдено</span>}
+        {matched.length > MULTI_RENDER_CAP && (
+          <span style={{ color: '#bfbfbf', fontSize: 12 }}>
+            Показаны первые {MULTI_RENDER_CAP} из {matched.length} — уточните поиск
+          </span>
+        )}
       </div>
       <Space>
         <Button type="primary" size="small" onClick={apply}>ОК</Button>
-        <Button size="small" onClick={() => { setDraft([]); onApply(undefined); close(); }}>Сброс</Button>
+        <Button size="small" onClick={() => { setDraft([]); setQ(''); onApply(undefined); close(); }}>Сброс</Button>
+        {matched.length > 1 && (
+          <>
+            <Button type="link" size="small" onClick={() => toggleVisible(true)}>Все</Button>
+            <Button type="link" size="small" onClick={() => toggleVisible(false)}>Снять</Button>
+          </>
+        )}
       </Space>
     </>
   );
