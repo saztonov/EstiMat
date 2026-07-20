@@ -12,10 +12,21 @@ export interface ColumnFilterSpec<T> {
   kind: ColumnFilterValue['kind'];
   /** text: строка для поиска по вхождению; multi: значение варианта. */
   getText?: (r: T) => string | null | undefined;
+  /**
+   * multi: НЕСКОЛЬКО значений одной ячейки (подрядчики заказа, номера заявок схлопнутой строки).
+   * Строка проходит отбор, если совпало ЛЮБОЕ из них; варианты собираются из всех значений.
+   * Задан — перекрывает getText.
+   */
+  getTexts?: (r: T) => (string | null | undefined)[];
   /** multi: подпись варианта (по умолчанию — само значение). */
   labelOf?: (value: string) => string;
   /** dateRange: ISO-дата/timestamp ячейки. */
   getDate?: (r: T) => string | null | undefined;
+  /**
+   * dateRange: НЕСКОЛЬКО дат одной ячейки (график поставок схлопнутой строки).
+   * Строка проходит, если в диапазон попала ЛЮБАЯ дата. Задан — перекрывает getDate.
+   */
+  getDates?: (r: T) => (string | null | undefined)[];
   /** numRange: числовое значение ячейки. */
   getNum?: (r: T) => number | string | null | undefined;
   /** multi: фиксированный набор вариантов (иначе собирается из строк). */
@@ -58,14 +69,23 @@ function matchesOne<T>(row: T, v: ColumnFilterValue, spec: ColumnFilterSpec<T>):
     }
     case 'multi': {
       if (v.values.length === 0) return true;
+      // Многозначная ячейка — совпало любое из значений (getTexts перекрывает getText).
+      if (spec.getTexts) {
+        return spec.getTexts(row).some((t) => t != null && v.values.includes(String(t)));
+      }
       return v.values.includes(String(spec.getText?.(row) ?? ''));
     }
     case 'dateRange': {
-      const day = dayOf(spec.getDate?.(row));
-      if (!day) return false;
-      if (v.from && day < v.from) return false;
-      if (v.to && day > v.to) return false;
-      return true;
+      const inRange = (iso: string | null | undefined) => {
+        const day = dayOf(iso);
+        if (!day) return false;
+        if (v.from && day < v.from) return false;
+        if (v.to && day > v.to) return false;
+        return true;
+      };
+      // Несколько дат в ячейке (график поставок) — попала любая.
+      if (spec.getDates) return spec.getDates(row).some(inRange);
+      return inRange(spec.getDate?.(row));
     }
     case 'numRange': {
       const raw = spec.getNum?.(row);
@@ -114,6 +134,11 @@ export function collectMultiOptions<T>(
   if (spec.options) return spec.options;
   const seen = new Set<string>();
   for (const r of rows) {
+    // Многозначная ячейка даёт по варианту на каждое значение (getTexts перекрывает getText).
+    if (spec.getTexts) {
+      for (const t of spec.getTexts(r)) if (t) seen.add(String(t));
+      continue;
+    }
     const v = spec.getText?.(r);
     if (v) seen.add(String(v));
   }

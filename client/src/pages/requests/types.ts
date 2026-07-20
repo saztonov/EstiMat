@@ -340,7 +340,7 @@ export interface SupplierOrderDetail extends SupplierLotRow {
   deliverySchedule: OrderDeliveryEntry[];
 }
 
-// Строка единого реестра «Закупки».
+// Строка единого реестра «Заказы».
 export interface RegistryRow {
   kind_tag: 'supplier_order' | 'tender' | 'rp_order' | 'direct_order';
   id: string;
@@ -349,6 +349,8 @@ export interface RegistryRow {
   project_name: string | null;
   number: string;
   supplier_name: string | null;
+  /** Подрядчики заказа: у заказа поставщику их может быть несколько (позиции из разных заявок). */
+  contractors: string[];
   amount: string | number | null;
   status: string;
   tender_status: string | null;

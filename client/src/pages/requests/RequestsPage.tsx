@@ -6,7 +6,7 @@ import { SU10MaterialsTab } from './SU10MaterialsTab';
 import { PurchasesRegistryTab } from './PurchasesRegistryTab';
 
 /**
- * Раздел «Заявки» — пульт снабжения: реестры заявок, материалов, закупок и РП.
+ * Раздел «Заявки» — пульт снабжения: реестры заявок, материалов, заказов и РП.
  * Открыт только внутренним ролям (RoleRoute в App.tsx); свои заявки подрядчик видит
  * в разделе «Подрядчики».
  */
@@ -30,7 +30,9 @@ export function RequestsPage() {
         items={[
           { key: 'requests', label: 'Заявки', children: <RequestsListTab /> },
           { key: 'materials', label: 'Материалы', children: <SU10MaterialsTab /> },
-          { key: 'lots', label: 'Закупки', children: <PurchasesRegistryTab /> },
+          // Ключ 'lots' исторический и НЕ меняется: он сохранён в localStorage (usePersistedTab),
+          // и при смене activeKey не совпал бы ни с одним items[].key — раздел открылся бы пустым.
+          { key: 'lots', label: 'Заказы', children: <PurchasesRegistryTab /> },
           { key: 'rp-registry', label: 'Реестр РП', children: <RpRegistryTab /> },
         ]}
       />

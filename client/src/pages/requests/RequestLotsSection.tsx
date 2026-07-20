@@ -24,7 +24,7 @@ interface Coverage { requested: string | number; placed: string | number; awarde
 interface ByRequest { lots: OrderBrief[]; coverage: Coverage; projectId: string | null }
 
 /**
- * Секция карточки su10-заявки «Закупки» (обзор): в какие заказы вошли материалы + сводка покрытия.
+ * Секция карточки su10-заявки «Заказы» (обзор): в какие заказы вошли материалы + сводка покрытия.
  * Формирование заказа — только со вкладки «Материалы»; отсюда заказ можно открыть и вести.
  */
 export function RequestLotsSection({ requestId }: { requestId: string }) {

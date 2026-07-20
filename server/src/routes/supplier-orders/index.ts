@@ -1402,8 +1402,17 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
            so.id, 'order'::text AS link_kind, so.project_id, so.project_name,
            'З-' || lpad(COALESCE(so.order_no, 0)::text, 3, '0') AS number,
            so.supplier_name, so.amount, so.sourcing_status AS status,
-           so.tender_status, so.tender_url, so.created_at, so.created_by
+           so.tender_status, so.tender_url, so.created_at, so.created_by,
+           COALESCE(soc.names, '{}')::text[] AS contractors
            FROM supplier_orders so
+           -- Подрядчики заказа: у sourcing-заказа их может быть несколько (позиции из разных
+           -- заявок). LATERAL, а не предагрегация с GROUP BY: коррелированный подзапрос идёт по
+           -- ведущему столбцу ux_soi_order_request_item(order_id, request_item_id).
+           LEFT JOIN LATERAL (
+             SELECT array_agg(DISTINCT soi.contractor_name ORDER BY soi.contractor_name) AS names
+               FROM supplier_order_items soi
+              WHERE soi.order_id = so.id AND soi.contractor_name IS NOT NULL
+           ) soc ON true
           WHERE so.kind = 'sourcing'
          UNION ALL
          SELECT
@@ -1411,7 +1420,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
            mr.id, 'request'::text AS link_kind, mr.project_id, mr.project_name,
            COALESCE(p.code, '') || '-' || lpad(COALESCE(mr.request_no, 0)::text, 2, '0') AS number,
            so.supplier_name, so.amount, mr.status,
-           NULL::text AS tender_status, NULL::text AS tender_url, so.created_at, NULL::uuid AS created_by
+           NULL::text AS tender_status, NULL::text AS tender_url, so.created_at, NULL::uuid AS created_by,
+           CASE WHEN mr.contractor_name IS NULL THEN '{}'::text[] ELSE ARRAY[mr.contractor_name] END AS contractors
            FROM supplier_orders so
            JOIN material_requests mr ON mr.id = so.request_id
            LEFT JOIN projects p ON p.id = mr.project_id

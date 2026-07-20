@@ -111,6 +111,55 @@ test('отборы: варианты multi собираются из строк 
   assert.deepEqual(opts, [{ value: 'rp', label: 'RP' }, { value: 'su10', label: 'SU10' }]);
 });
 
+// Многозначные ячейки: подрядчики заказа (реестр) и даты графика схлопнутой строки материалов.
+interface MultiRow { name: string; contractors: string[]; dates: (string | null)[] }
+const MULTI_SPECS: Record<'contractor' | 'delivery', ColumnFilterSpec<MultiRow>> = {
+  contractor: { kind: 'multi', getTexts: (r) => r.contractors },
+  delivery: { kind: 'dateRange', getDates: (r) => r.dates },
+};
+const MULTI_ROWS: MultiRow[] = [
+  { name: 'Заказ А', contractors: ['Альфа', 'Бета'], dates: ['2026-07-01', '2026-08-20'] },
+  { name: 'Заказ Б', contractors: ['Бета'], dates: ['2026-09-15'] },
+  { name: 'Заказ В', contractors: [], dates: [] },
+];
+
+test('отборы: многозначная ячейка проходит по любому из значений', () => {
+  // Заказ с подрядчиками {Альфа, Бета} находится и по «Альфа», и по «Бета».
+  assert.deepEqual(
+    applyColumnFilters(MULTI_ROWS, { contractor: { kind: 'multi', values: ['Альфа'] } }, MULTI_SPECS).map((r) => r.name),
+    ['Заказ А'],
+  );
+  assert.deepEqual(
+    applyColumnFilters(MULTI_ROWS, { contractor: { kind: 'multi', values: ['Бета'] } }, MULTI_SPECS).map((r) => r.name),
+    ['Заказ А', 'Заказ Б'],
+  );
+  // Пустой массив значений строку не пропускает.
+  assert.deepEqual(
+    applyColumnFilters(MULTI_ROWS, { contractor: { kind: 'multi', values: ['Гамма'] } }, MULTI_SPECS).map((r) => r.name),
+    [],
+  );
+});
+
+test('отборы: варианты multi собираются из всех значений многозначной ячейки', () => {
+  assert.deepEqual(
+    collectMultiOptions(MULTI_ROWS, MULTI_SPECS.contractor),
+    [{ value: 'Альфа', label: 'Альфа' }, { value: 'Бета', label: 'Бета' }],
+  );
+});
+
+test('отборы: диапазон дат ловит любую дату графика', () => {
+  // Вторая дата заказа А попадает в диапазон — строка проходит.
+  assert.deepEqual(
+    applyColumnFilters(MULTI_ROWS, { delivery: { kind: 'dateRange', from: '2026-08-01', to: '2026-08-31' } }, MULTI_SPECS).map((r) => r.name),
+    ['Заказ А'],
+  );
+  // Строка без дат отсеивается, как и при одиночном getDate.
+  assert.deepEqual(
+    applyColumnFilters(MULTI_ROWS, { delivery: { kind: 'dateRange', from: '2026-01-01' } }, MULTI_SPECS).map((r) => r.name),
+    ['Заказ А', 'Заказ Б'],
+  );
+});
+
 // ---------- группировка ----------
 
 interface GRow { id: string; project: string; contractor: string; qty: number }

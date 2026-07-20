@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Table, Select, Space, Empty, Tag, Alert, App } from 'antd';
+import { Table, Select, Space, Empty, Tag, Alert, App, Tooltip } from 'antd';
 import { LinkOutlined, DeleteOutlined, StopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -34,7 +34,14 @@ function statusLabel(r: RegistryRow): string {
   return REQUEST_STATUS_LABELS[r.status as RequestStatus] ?? r.status;
 }
 
-/** Единый реестр закупок: заказ поставщику / тендер / заказ по РП / заказ поставщиком. */
+// Подрядчики заказа: у заказа поставщику их может быть несколько (позиции из разных заявок).
+function renderContractors(names: string[]) {
+  if (!names?.length) return '—';
+  if (names.length === 1) return names[0];
+  return <Tooltip title={names.join(', ')}>{`${names[0]} и ещё ${names.length - 1}`}</Tooltip>;
+}
+
+/** Единый реестр заказов: заказ поставщику / тендер / заказ по РП / заказ поставщиком. */
 export function PurchasesRegistryTab() {
   const { message } = App.useApp();
   const qc = useQueryClient();
@@ -107,6 +114,8 @@ export function PurchasesRegistryTab() {
     kind: { kind: 'multi' as const, getText: (r: RegistryRow) => r.kind_tag, labelOf: (v: string) => PURCHASE_KIND_LABELS[v as PurchaseKind] ?? v },
     no: { kind: 'text' as const, getText: (r: RegistryRow) => r.number },
     project: { kind: 'multi' as const, getText: (r: RegistryRow) => r.project_name },
+    // Многозначная ячейка: заказ с подрядчиками {А, Б} находится и по А, и по Б.
+    contractor: { kind: 'multi' as const, getTexts: (r: RegistryRow) => r.contractors ?? [] },
     supplier: { kind: 'multi' as const, getText: (r: RegistryRow) => r.supplier_name },
     amount: { kind: 'numRange' as const, getNum: (r: RegistryRow) => r.amount },
     status: { kind: 'multi' as const, getText: (r: RegistryRow) => statusLabel(r) },
@@ -124,6 +133,7 @@ export function PurchasesRegistryTab() {
     { title: 'Вид', key: 'kind', width: 170, ...gt.hf('kind', filterSpecs.kind), render: (_v, r) => { const v = leaf(r).kind_tag; return <Tag color={KIND_COLOR[v]}>{PURCHASE_KIND_LABELS[v]}</Tag>; } },
     { title: '№', key: 'no', width: 110, ...gt.hf('no', filterSpecs.no), render: (_v, r) => <a onClick={(e) => { e.stopPropagation(); openRow(leaf(r)); }}>{leaf(r).number}</a> },
     { title: 'Объект', key: 'project', ...gt.hf('project', filterSpecs.project), render: (_v, r) => leaf(r).project_name ?? '—' },
+    { title: 'Подрядчик', key: 'contractor', width: 180, ...gt.hf('contractor', filterSpecs.contractor), render: (_v, r) => renderContractors(leaf(r).contractors ?? []) },
     { title: 'Поставщик', key: 'supplier', ...gt.hf('supplier', filterSpecs.supplier), render: (_v, r) => leaf(r).supplier_name ?? '—' },
     { title: 'Сумма', key: 'amount', width: 130, align: 'right', ...gt.hf('amount', filterSpecs.amount), render: (_v, r) => money(leaf(r).amount) },
     { title: 'Статус', key: 'status', width: 160, ...gt.hf('status', filterSpecs.status), render: (_v, r) => <Tag>{statusLabel(leaf(r))}</Tag> },
@@ -186,11 +196,11 @@ export function PurchasesRegistryTab() {
           dataSource={tableData}
           expandable={gt.expandable}
           onRow={(r) => (isGroupRow(r) ? {} : { onClick: () => openRow(leaf(r)), style: { cursor: 'pointer' } })}
-          locale={{ emptyText: <Empty description="Закупок пока нет. Заказ формируется из материалов заявок СУ-10 на вкладке «Материалы»." /> }}
+          locale={{ emptyText: <Empty description="Заказов пока нет. Заказ формируется из материалов заявок СУ-10 на вкладке «Материалы»." /> }}
           pagination={needFull
             ? { ...DEFAULT_PAGINATION }
             : { ...DEFAULT_PAGINATION, current: page, pageSize, total, onChange: (p, ps) => { setPage(p); setPageSize(ps); } }}
-          scroll={{ x: 900, y: 'flex' }}
+          scroll={{ x: 1080, y: 'flex' }}
         />
       </div>
       {openOrderId && <SupplierOrderModal orderId={openOrderId} onClose={() => setOpenOrderId(undefined)} />}

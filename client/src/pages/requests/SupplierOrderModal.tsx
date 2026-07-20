@@ -327,7 +327,7 @@ function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: st
 
 // ---- Этап «Состав» (forming): состав + запрос КП + добавление поставщиков ----
 // Приём счетов/КП и выбор победителя здесь недоступны — только после начала сбора
-// предложений (sourcing), т.е. при открытии заказа из вкладки «Закупки».
+// предложений (sourcing), т.е. при открытии заказа из вкладки «Заказы».
 function FormingStage({
   order, fromMaterials, onFreezeExport, onReExport, moreMenu, onRemoveItem, refetch,
 }: {
@@ -415,7 +415,7 @@ function FormingStage({
                 <Table rowKey="id" size="small" pagination={false} dataSource={order.offers} columns={offerCols} style={{ marginTop: 8 }}
                   locale={{ emptyText: <Empty description="Добавьте поставщиков, которым отправлен запрос КП" /> }} scroll={{ x: 500 }} />
                 <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
-                  Приём счетов/КП и выбор победителя — после начала сбора предложений (открыть заказ на вкладке «Закупки»).
+                  Приём счетов/КП и выбор победителя — после начала сбора предложений (открыть заказ на вкладке «Заказы»).
                 </div>
               </>
             ),
