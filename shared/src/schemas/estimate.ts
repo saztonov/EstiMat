@@ -195,6 +195,63 @@ export const clearItemContractorsSchema = z.object({
   contractorId: z.string().uuid().nullable().optional(),
 });
 
+// === Массовое назначение подрядчика (поповер «Назначение подрядчика») ===
+// Область задаётся самим itemIds: клиент присылает строки, ВИДИМЫЕ после его фильтров.
+// Отдельный лимит: у крупного вида работ строк бывает больше 1000 (потолок assignItemIds).
+const bulkAssignItemIds = z
+  .array(z.string().uuid())
+  .min(1, 'Не выбрано ни одной строки')
+  .max(2000, 'Слишком много строк за одно назначение')
+  .transform((ids) => [...new Set(ids)]);
+
+// Сколько объёма отдаём подрядчику. «Весь объём» (whole) пишет assigned_qty/assigned_percent = NULL:
+// после снятия чужих назначений остатка как понятия не остаётся, и абсолютное число в карточке
+// («Подрядчик · 145.5») вместо «весь объём» только путало бы. Построчное назначение живёт по
+// прежним правилам (остаток/процент/объём) — см. assignItemContractorsSchema.
+export const bulkAssignAllocationSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('whole') }),
+  z.object({
+    type: z.literal('percent'),
+    percent: z.number().positive('Процент должен быть > 0').max(100, 'Процент не больше 100'),
+  }),
+]);
+
+export const bulkAssignItemContractorsSchema = z.object({
+  estimateId: z.string().uuid(),
+  contractorId: z.string().uuid(),
+  itemIds: bulkAssignItemIds,
+  // replace — снять с этих строк ДРУГИХ подрядчиков и назначить выбранного («на весь вид»,
+  //   «на несколько работ»); unassigned_only — тронуть только строки вообще без назначений
+  //   («назначить на новые»). Набор строк один и тот же, различается обращение с занятыми.
+  strategy: z.enum(['replace', 'unassigned_only']),
+  allocation: bulkAssignAllocationSchema,
+});
+
+// Почему строка не была тронута. Текст подставляет клиент — сервер отдаёт код.
+export const assignBlockReasonSchema = z.enum([
+  'material_requests', // связь позиции заявки со строкой известна точно
+  'material_requests_legacy', // связи нет: заявка старая → блокируем весь вид работ подрядчика
+]);
+
+export const assignBlockedItemSchema = z.object({
+  itemId: z.string().uuid(),
+  // Один объект на СТРОКУ со списком её защищённых подрядчиков: иначе счётчик пропущенных
+  // строк разошёлся бы с длиной списка (на строке бывает несколько подрядчиков).
+  contractors: z.array(
+    z.object({ contractorId: z.string().uuid(), contractorName: z.string().nullable() }),
+  ),
+  reason: assignBlockReasonSchema,
+});
+
+export const bulkAssignResultSchema = z.object({
+  assigned: z.number().int(), // строк получили назначение
+  replacedRows: z.number().int(), // строк, где сняты чужие назначения (для текста в интерфейсе)
+  replacedAssignments: z.number().int(), // снятых записей назначений (для диагностики)
+  skipped: z.number().int(), // не подошли под strategy
+  missingItemIds: z.array(z.string().uuid()), // строк уже нет в смете — их удалили при открытом поповере
+  blocked: z.array(assignBlockedItemSchema),
+});
+
 export const estimateSchema = z.object({
   id: z.string().uuid(),
   projectId: z.string().uuid(),
@@ -219,6 +276,11 @@ export type EstimateMaterialStatus = z.infer<typeof estimateMaterialStatusSchema
 export type SetEstimateContractorInput = z.infer<typeof setEstimateContractorSchema>;
 export type AssignItemContractorsInput = z.infer<typeof assignItemContractorsSchema>;
 export type ClearItemContractorsInput = z.infer<typeof clearItemContractorsSchema>;
+export type BulkAssignAllocation = z.infer<typeof bulkAssignAllocationSchema>;
+export type BulkAssignItemContractorsInput = z.infer<typeof bulkAssignItemContractorsSchema>;
+export type AssignBlockReason = z.infer<typeof assignBlockReasonSchema>;
+export type AssignBlockedItem = z.infer<typeof assignBlockedItemSchema>;
+export type BulkAssignResult = z.infer<typeof bulkAssignResultSchema>;
 export type BulkDeleteEstimateItemsInput = z.infer<typeof bulkDeleteEstimateItemsSchema>;
 export type BulkConfirmEstimateItemsInput = z.infer<typeof bulkConfirmEstimateItemsSchema>;
 export type ReorderEstimateItemsInput = z.infer<typeof reorderEstimateItemsSchema>;

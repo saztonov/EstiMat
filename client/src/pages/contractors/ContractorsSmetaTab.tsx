@@ -1,11 +1,9 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   App,
   Button,
   Checkbox,
   Empty,
-  InputNumber,
-  Popover,
   Select,
   Space,
   Table,
@@ -17,13 +15,14 @@ import {
   CaretRightOutlined,
   CaretDownOutlined,
   DownOutlined,
+  LockOutlined,
   UpOutlined,
-  UserOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { Organization } from '@estimat/shared';
+import type { BulkAssignResult, Organization, VorMark, VorMarksMap } from '@estimat/shared';
 import { api, apiFetch } from '../../services/api';
 import { CostTypeGroupBlock } from '../estimates/components/CostTypeGroupBlock';
+import { VorListModal } from '../estimates/components/VorListModal';
 import {
   buildCostTypeGroups,
   formatMoney,
@@ -41,6 +40,11 @@ import {
 } from '../estimates/components/LocationBadges';
 import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
 import { useContractorLocationFilter } from './useContractorLocationFilter';
+import { RowAssignPopover } from './assign/RowAssignPopover';
+import { GroupAssignPopover } from './assign/GroupAssignPopover';
+import { GroupSelectionBar } from './assign/GroupSelectionBar';
+import { countUnassigned, useAssignPlan } from './assign/useAssignPlan';
+import { allocationLabel, type AssignInput, type BulkAssignDraft } from './assign/types';
 
 interface Props {
   estimateId: string;
@@ -60,109 +64,11 @@ interface Props {
 const NO_CATEGORY = '__none__';
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
 
-type AssignMode = 'remainder' | 'percent' | 'qty';
-// Параметры назначения без itemIds (их подставляет вызывающий: строка или весь вид работ).
-type AssignInput =
-  | { mode: 'remainder'; contractorId: string }
-  | { mode: 'percent'; contractorId: string; percent: number }
-  | { mode: 'qty'; contractorId: string; qty: number };
-
 // Подпись подрядчика строки с его объёмом/долей.
 function contractorLabel(c: ItemContractor) {
   if (c.assigned_percent != null) return `${c.contractor_name ?? '—'} · ${num(c.assigned_percent)}%`;
   if (c.assigned_qty != null) return `${c.contractor_name ?? '—'} · ${num(c.assigned_qty)}`;
   return `${c.contractor_name ?? '—'} · весь объём`;
-}
-
-// Поповер назначения подрядчика (на строку или на весь вид работ).
-function AssignPopover({
-  contractorOptions,
-  onAssign,
-  allowQty,
-  trigger,
-}: {
-  contractorOptions: { value: string; label: string }[];
-  onAssign: (input: AssignInput) => Promise<unknown>;
-  allowQty: boolean;
-  trigger: ReactNode;
-}) {
-  const { message } = App.useApp();
-  const [open, setOpen] = useState(false);
-  const [contractorId, setContractorId] = useState<string | undefined>();
-  const [mode, setMode] = useState<AssignMode>('remainder');
-  const [percent, setPercent] = useState(100);
-  const [qty, setQty] = useState(0);
-  const [busy, setBusy] = useState(false);
-
-  const modeOptions = [
-    { value: 'remainder', label: 'Весь остаток' },
-    { value: 'percent', label: 'Процент' },
-    ...(allowQty ? [{ value: 'qty', label: 'Объём' }] : []),
-  ];
-
-  const submit = async () => {
-    if (!contractorId) return message.warning('Выберите подрядчика');
-    const input: AssignInput =
-      mode === 'percent'
-        ? { mode, contractorId, percent }
-        : mode === 'qty'
-          ? { mode, contractorId, qty }
-          : { mode: 'remainder', contractorId };
-    setBusy(true);
-    try {
-      await onAssign(input);
-      setOpen(false);
-      setContractorId(undefined);
-    } catch {
-      /* ошибку покажет мутация */
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Popover
-      trigger="click"
-      open={open}
-      onOpenChange={setOpen}
-      title="Назначить исполнителя"
-      content={
-        <Space direction="vertical" style={{ width: 260 }} size={8}>
-          <Select
-            placeholder="Подрядчик"
-            style={{ width: '100%' }}
-            value={contractorId}
-            onChange={setContractorId}
-            options={contractorOptions}
-            showSearch
-            optionFilterProp="label"
-          />
-          <Select
-            style={{ width: '100%' }}
-            value={mode}
-            onChange={(v) => setMode(v as AssignMode)}
-            options={modeOptions}
-          />
-          {mode === 'percent' && (
-            <InputNumber min={0.01} max={100} value={percent} onChange={(v) => setPercent(v ?? 0)} addonAfter="%" style={{ width: '100%' }} />
-          )}
-          {mode === 'qty' && (
-            <InputNumber min={0.01} value={qty} onChange={(v) => setQty(v ?? 0)} placeholder="Объём" style={{ width: '100%' }} />
-          )}
-          <Space>
-            <Button type="primary" size="small" loading={busy} onClick={submit}>
-              Назначить
-            </Button>
-            <Button size="small" onClick={() => setOpen(false)}>
-              Отмена
-            </Button>
-          </Space>
-        </Space>
-      }
-    >
-      {trigger}
-    </Popover>
-  );
 }
 
 export function ContractorsSmetaTab({
@@ -176,7 +82,7 @@ export function ContractorsSmetaTab({
   zoneIndex,
   onChanged,
 }: Props) {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
@@ -210,6 +116,27 @@ export function ContractorsSmetaTab({
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
   }, [items]);
+
+  // Отметки ВОР строк — тот же ключ, что на «Смете»: кэш общий, переход между разделами не
+  // даёт лишнего запроса. Подрядчику ВОР закрыт (роут для его роли не открыт), поэтому не
+  // запрашиваем вовсе. Назначение подрядчика в снимок ВОР не входит (contentHash по составу
+  // строки), поэтому после мутаций назначений этот ключ инвалидировать НЕ нужно.
+  const { data: vorMarks } = useQuery({
+    queryKey: ['estimate-vor-marks', estimateId],
+    queryFn: () =>
+      api.get<{ data: VorMarksMap }>(`/estimates/${estimateId}/vors/marks`).then((r) => r.data),
+    enabled: !viewerIsContractor && !!estimateId,
+  });
+  // undefined только у подрядчика: по !!vorByItem блок решает ширину колонки раскрытия, и
+  // пустая-но-заданная карта не даёт ширине «прыгнуть» после догрузки отметок.
+  const vorByItem = useMemo(
+    () => (viewerIsContractor ? undefined : new Map<string, VorMark>(Object.entries(vorMarks ?? {}))),
+    [viewerIsContractor, vorMarks],
+  );
+  const [vorListOpen, setVorListOpen] = useState(false);
+  // Клик по метке «В» — открыть список ВОР сметы. Конкретный ВОР не подсвечиваем: агрегатная
+  // отметка не хранит его id (как и на «Смете»).
+  const openVorList = useCallback(() => setVorListOpen(true), []);
 
   // Локационный отбор раздела (корпус/этажи/тип) — своё состояние, не связано со страницей «Смета».
   const {
@@ -281,12 +208,250 @@ export function ContractorsSmetaTab({
 
   const doAssign = (input: AssignInput, itemIds: string[]) => assignMutation.mutateAsync({ ...input, itemIds });
 
+  // Массовое назначение: применяется частично и возвращает отчёт (что перезаписано, что
+  // пропущено из-за заявок). Сообщение об итоге строит вызывающий — оно зависит от отчёта.
+  const bulkAssignMutation = useMutation({
+    mutationFn: (v: BulkAssignDraft & { itemIds: string[]; strategy: 'replace' | 'unassigned_only' }) =>
+      api
+        .post<{ data: BulkAssignResult }>('/contractors/assignments/bulk', {
+          estimateId,
+          contractorId: v.contractorId,
+          itemIds: v.itemIds,
+          strategy: v.strategy,
+          allocation: v.allocation,
+        })
+        .then((r) => r.data),
+    onSuccess: () => onChanged(),
+    onError: (e: Error) => message.error(e.message),
+  });
+
   const typeKey = (g: CostTypeGroup) => g.costTypeId ?? NO_CATEGORY;
+
+  // ── Режим отметки строк («назначить на несколько работ») ──
+  // Живёт ровно в одном виде работ: назначать «через весь экран» смысла нет, а панель действий
+  // должна стоять рядом с отмеченными строками.
+  const [selectSession, setSelectSession] = useState<(BulkAssignDraft & { typeKey: string }) | null>(null);
+  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set());
+  const exitSelect = useCallback(() => {
+    setSelectSession(null);
+    setSelectedWorkIds(new Set());
+  }, []);
+  const toggleWork = useCallback(
+    (id: string, selected: boolean) =>
+      setSelectedWorkIds((prev) => {
+        const n = new Set(prev);
+        if (selected) n.add(id);
+        else n.delete(id);
+        return n;
+      }),
+    [],
+  );
+
+  // Смена отбора меняет набор видимых строк — режим гасим целиком: назначать можно только на
+  // то, что видно. Завязка именно на значения фильтров, а НЕ на visibleItems/groups: последние
+  // пересоздаются на каждом refetch (в т.ч. по фокусу окна) и убивали бы режим на ровном месте.
+  useEffect(() => {
+    exitSelect();
+  }, [onlyUnassigned, filterContractorIds, filterByLocation, exitSelect]);
+
+  const buildPlan = useAssignPlan();
+
+  // Итог массового назначения: сначала факт, потом причины пропусков.
+  const reportBulkResult = useCallback(
+    (res: BulkAssignResult, works: EstimateItem[]) => {
+      const nameById = new Map(works.map((w) => [w.id, w.description]));
+      if (res.assigned === 0) {
+        message.warning(
+          res.blocked.length > 0
+            ? 'Назначать нечего: все строки защищены заявками'
+            : 'Назначать нечего: подходящих строк нет',
+        );
+        return;
+      }
+      const parts = [`назначено строк: ${res.assigned}`];
+      if (res.replacedRows > 0) parts.push(`перезаписано: ${res.replacedRows}`);
+      if (res.blocked.length > 0) parts.push(`пропущено: ${res.blocked.length}`);
+      message.success(parts.join(' · '));
+
+      if (res.blocked.length > 0) {
+        const shown = res.blocked.slice(0, 20);
+        modal.info({
+          title: 'Назначено не на все строки',
+          width: 520,
+          content: (
+            <div>
+              <p style={{ marginTop: 0 }}>
+                По этим строкам подрядчик уже оформил заявку на материалы — исполнитель у них не
+                менялся.
+              </p>
+              <ul style={{ paddingLeft: 18, margin: 0 }}>
+                {shown.map((b) => (
+                  <li key={b.itemId}>
+                    {nameById.get(b.itemId) ?? 'Строка сметы'}
+                    {b.contractors.length > 0 && (
+                      <span style={{ color: '#8c8c8c' }}>
+                        {' '}
+                        — {b.contractors.map((c) => c.contractorName ?? '—').join(', ')}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {res.blocked.length > shown.length && (
+                <p style={{ marginBottom: 0, color: '#8c8c8c' }}>
+                  …и ещё {res.blocked.length - shown.length}
+                </p>
+              )}
+            </div>
+          ),
+        });
+      }
+    },
+    [message, modal],
+  );
+
+  // Назначение на вид работ целиком либо только на строки без подрядчика.
+  const runGroupAssign = useCallback(
+    async (group: CostTypeGroup, scope: 'all' | 'new', draft: BulkAssignDraft) => {
+      const plan = buildPlan(group.works, draft.contractorId, scope);
+      if (plan.targets.length === 0 && plan.locked.length === 0) {
+        message.warning('Подходящих строк нет');
+        return;
+      }
+      const itemIds = [...plan.targets, ...plan.locked].map((w) => w.id);
+
+      const run = async () => {
+        const res = await bulkAssignMutation.mutateAsync({
+          ...draft,
+          itemIds,
+          strategy: scope === 'new' ? 'unassigned_only' : 'replace',
+        });
+        reportBulkResult(res, group.works);
+      };
+
+      // Диалог только когда есть что затирать или пропускать — иначе он лишний.
+      if (plan.replaceCount === 0 && plan.locked.length === 0) return run();
+
+      const contractorName =
+        contractorOptions.find((o) => o.value === draft.contractorId)?.label ?? 'подрядчика';
+      modal.confirm({
+        title: scope === 'new' ? 'Назначить на новые строки?' : 'Назначить на весь вид работ?',
+        width: 520,
+        okText: plan.replaceCount > 0 ? 'Назначить и перезаписать' : 'Назначить',
+        okButtonProps: { danger: plan.replaceCount > 0 },
+        cancelText: 'Отмена',
+        content: (
+          <div>
+            <div>Вид работ: «{group.costTypeName ?? 'Без вида работ'}»</div>
+            <div>
+              Подрядчик: {contractorName} · {allocationLabel(draft.allocation)}
+            </div>
+            <div>Строк в назначении: {plan.targets.length}</div>
+            {plan.replaceCount > 0 && (
+              <div>Будет перезаписано у других подрядчиков: {plan.replaceCount}</div>
+            )}
+            {plan.locked.length > 0 && (
+              <div>Защищено заявками — пропустим: {plan.locked.length}</div>
+            )}
+            {plan.replaceCount > 0 && (
+              <p style={{ marginBottom: 0, marginTop: 8 }}>
+                Текущие подрядчики этих строк будут сняты.
+              </p>
+            )}
+          </div>
+        ),
+        onOk: run,
+      });
+    },
+    [buildPlan, bulkAssignMutation, contractorOptions, message, modal, reportBulkResult],
+  );
+
+  // Назначение на строки, отмеченные галочками.
+  const runSelectedAssign = useCallback(
+    async (group: CostTypeGroup) => {
+      if (!selectSession) return;
+      // Отмеченная строка могла исчезнуть из-за refetch — сверяемся с текущими видимыми.
+      const visible = new Map(group.works.map((w) => [w.id, w]));
+      const picked = [...selectedWorkIds].map((id) => visible.get(id)).filter((w): w is EstimateItem => !!w);
+      if (picked.length === 0) {
+        message.warning('Отмеченные строки больше не видны — отметьте заново');
+        return;
+      }
+      const plan = buildPlan(picked, selectSession.contractorId, 'all');
+      const itemIds = picked.map((w) => w.id);
+
+      const run = async () => {
+        const res = await bulkAssignMutation.mutateAsync({
+          contractorId: selectSession.contractorId,
+          allocation: selectSession.allocation,
+          itemIds,
+          strategy: 'replace',
+        });
+        reportBulkResult(res, group.works);
+        exitSelect();
+      };
+
+      if (plan.replaceCount === 0 && plan.locked.length === 0) return run();
+
+      modal.confirm({
+        title: 'Перезаписать назначения?',
+        width: 520,
+        okText: plan.replaceCount > 0 ? 'Назначить и перезаписать' : 'Назначить',
+        okButtonProps: { danger: plan.replaceCount > 0 },
+        cancelText: 'Отмена',
+        content: (
+          <div>
+            <div>Отмечено строк: {picked.length}</div>
+            {plan.replaceCount > 0 && (
+              <div>Из них назначены другим подрядчикам: {plan.replaceCount} — их назначения будут сняты</div>
+            )}
+            {plan.locked.length > 0 && <div>Защищено заявками — пропустим: {plan.locked.length}</div>}
+          </div>
+        ),
+        onOk: run,
+      });
+    },
+    [
+      selectSession,
+      selectedWorkIds,
+      buildPlan,
+      bulkAssignMutation,
+      message,
+      modal,
+      reportBulkResult,
+      exitSelect,
+    ],
+  );
+
+  // Вход в режим отметки: разворачиваем вид и его категорию — иначе отмечать было бы нечего.
+  const startSelect = (group: CostTypeGroup, draft: BulkAssignDraft) => {
+    const key = typeKey(group);
+    setCollapsedTypes((p) => {
+      const n = new Set(p);
+      n.delete(key);
+      return n;
+    });
+    setCollapsedCats((p) => {
+      const n = new Set(p);
+      n.delete(group.costCategoryId ?? NO_CATEGORY);
+      return n;
+    });
+    setSelectedWorkIds(new Set());
+    setSelectSession({ ...draft, typeKey: key });
+  };
+
   const toggleCat = (id: string) =>
     setCollapsedCats((prev) => {
       const n = new Set(prev);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
+      if (n.has(id)) {
+        n.delete(id);
+      } else {
+        n.add(id);
+        // Свернули категорию с активным режимом отметки — блок уходит из DOM, режим остался бы
+        // включённым «вслепую».
+        if (selectSession && groups.some((g) => (g.costCategoryId ?? NO_CATEGORY) === id && typeKey(g) === selectSession.typeKey))
+          exitSelect();
+      }
       return n;
     });
   const toggleType = (id: string | null) =>
@@ -304,6 +469,7 @@ export function ContractorsSmetaTab({
   const collapseAll = () => {
     setCollapsedCats(new Set(groups.map((g) => g.costCategoryId ?? NO_CATEGORY)));
     setCollapsedTypes(new Set(groups.map(typeKey)));
+    exitSelect(); // все блоки свёрнуты — отмечать больше нечего
   };
 
   // Сумма по набору видов работ (работы + их материалы).
@@ -316,20 +482,31 @@ export function ContractorsSmetaTab({
 
   // Ячейка «Исполнитель»: чипы подрядчиков + статус остатка. Клик по всему блоку — назначение.
   const renderExecutor = (it: EstimateItem) => {
-    const chips = (it.item_contractors ?? []).map((c) => (
-      <Tag
-        color="purple"
-        key={c.contractor_id}
-        closable={canAssign}
-        onClose={(e) => {
-          e.preventDefault();
-          e.stopPropagation(); // снятие подрядчика «крестиком» не должно открывать поповер
-          clearMutation.mutate({ itemIds: [it.id], contractorId: c.contractor_id });
-        }}
-      >
-        {contractorLabel(c)}
-      </Tag>
-    ));
+    const lockedIds = it.request_locked_contractor_ids ?? [];
+    const chips = (it.item_contractors ?? []).map((c) => {
+      // По строке уже заказаны материалы у этого подрядчика — снять его нельзя (сервер ответит
+      // 409). Прячем крестик и объясняем причину, чтобы запрет не выглядел поломкой.
+      const locked = lockedIds.includes(c.contractor_id);
+      return (
+        <Tooltip
+          key={c.contractor_id}
+          title={locked ? 'По этой строке оформлена заявка на материалы — исполнителя не снять' : undefined}
+        >
+          <Tag
+            color="purple"
+            icon={locked ? <LockOutlined /> : undefined}
+            closable={canAssign && !locked}
+            onClose={(e) => {
+              e.preventDefault();
+              e.stopPropagation(); // снятие подрядчика «крестиком» не должно открывать поповер
+              clearMutation.mutate({ itemIds: [it.id], contractorId: c.contractor_id });
+            }}
+          >
+            {contractorLabel(c)}
+          </Tag>
+        </Tooltip>
+      );
+    });
     const remaining = num(it.remaining_qty ?? it.quantity);
     let status: ReactNode;
     if (it.over_assigned) status = <Tag color="red">превышение</Tag>;
@@ -351,9 +528,8 @@ export function ContractorsSmetaTab({
     if (!canAssign) return content;
 
     return (
-      <AssignPopover
+      <RowAssignPopover
         contractorOptions={contractorOptions}
-        allowQty
         onAssign={(input) => doAssign(input, [it.id])}
         trigger={
           <div style={{ cursor: 'pointer' }} title="Назначить исполнителя">
@@ -529,20 +705,34 @@ export function ContractorsSmetaTab({
                     // назначения подрядчиков сервер выводит из itemIds и его не требуют.
                     estimateId={estimateId}
                     showPrices={showPrices}
+                    vorByItem={vorByItem}
+                    onOpenVor={openVorList}
                     leadingColumns={executorColumn}
+                    selectWorksMode={canAssign && selectSession?.typeKey === typeKey(group)}
+                    selectedWorkIds={selectedWorkIds}
+                    onToggleWork={toggleWork}
                     headerExtra={
-                      canAssign ? (
-                        <AssignPopover
+                      !canAssign ? undefined : selectSession?.typeKey === typeKey(group) ? (
+                        <GroupSelectionBar
+                          draft={selectSession}
+                          onDraftChange={(d) => setSelectSession({ ...d, typeKey: selectSession.typeKey })}
+                          selectedCount={selectedWorkIds.size}
                           contractorOptions={contractorOptions}
-                          allowQty={false}
-                          onAssign={(input) => doAssign(input, group.works.map((w) => w.id))}
-                          trigger={
-                            <Button type="link" size="small" icon={<UserOutlined />}>
-                              на весь вид
-                            </Button>
-                          }
+                          busy={bulkAssignMutation.isPending}
+                          onSelectAll={() => setSelectedWorkIds(new Set(group.works.map((w) => w.id)))}
+                          onClear={() => setSelectedWorkIds(new Set())}
+                          onAssign={() => void runSelectedAssign(group)}
+                          onCancel={exitSelect}
                         />
-                      ) : undefined
+                      ) : (
+                        <GroupAssignPopover
+                          contractorOptions={contractorOptions}
+                          totalCount={group.works.length}
+                          unassignedCount={countUnassigned(group.works)}
+                          onAssign={(scope, draft) => runGroupAssign(group, scope, draft)}
+                          onStartSelect={(draft) => startSelect(group, draft)}
+                        />
+                      )
                     }
                   />
                 ))}
@@ -552,6 +742,16 @@ export function ContractorsSmetaTab({
         );
       })}
       </div>
+
+      {/* Список ВОР по клику на метку «В». Только просмотр: экспорт, переход к фильтрам сметы
+          и удаление ВОР — операции раздела «Смета». */}
+      <VorListModal
+        open={vorListOpen}
+        onClose={() => setVorListOpen(false)}
+        estimateId={estimateId}
+        focusVorId={null}
+        readOnly
+      />
     </div>
   );
 }

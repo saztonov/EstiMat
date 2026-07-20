@@ -178,11 +178,39 @@ export async function buildEstimateDetail(
           [estimateId],
         )
       : null;
-    return { contractors, costTypeCommentRows, costTypeCiphers, itemContractors };
+    // Назначения, защищённые заявками на материалы: по строке уже заказано, поэтому снять или
+    // заменить подрядчика нельзя. Нужны разделу «Подрядчики» — замок на чипе и предпросмотр
+    // массового назначения без второго запроса. Авторитет остаётся за POST /assignments/bulk:
+    // он пересчитывает то же самое под FOR UPDATE, так что слегка устаревшее поле безопасно.
+    const lockedContractors = opts?.includeItemContractors
+      ? await pool.query(
+          `WITH live AS (
+             SELECT mr.id, mr.contractor_id
+               FROM material_requests mr
+              WHERE mr.estimate_id = $1 AND mr.status <> 'cancelled'
+           )
+           SELECT src.item_id, l.contractor_id
+             FROM material_request_item_sources src
+             JOIN material_request_items mri ON mri.id = src.request_item_id
+             JOIN live l ON l.id = mri.request_id
+            WHERE mri.link_resolution IN ('exact', 'reconstructed')
+           UNION
+           -- Позиции без связи (старые заявки): блокируем весь вид работ подрядчика.
+           SELECT ei.id, l.contractor_id
+             FROM material_request_items mri
+             JOIN live l ON l.id = mri.request_id
+             JOIN estimate_items ei
+               ON ei.estimate_id = $1
+              AND ei.cost_type_id IS NOT DISTINCT FROM mri.cost_type_id
+            WHERE mri.link_resolution = 'unresolved'`,
+          [estimateId],
+        )
+      : null;
+    return { contractors, costTypeCommentRows, costTypeCiphers, itemContractors, lockedContractors };
   })();
 
   const [items, materials, rest] = await Promise.all([itemsPromise, materialsPromise, restPromise]);
-  const { contractors, costTypeCommentRows, costTypeCiphers, itemContractors } = rest;
+  const { contractors, costTypeCommentRows, costTypeCiphers, itemContractors, lockedContractors } = rest;
 
   const costTypeCommentCounts: Record<string, number> = {};
   for (const r of costTypeCommentRows.rows) costTypeCommentCounts[r.cost_type_id as string] = r.count as number;
@@ -196,6 +224,7 @@ export async function buildEstimateDetail(
   if (itemContractors) {
     // Распределённый объём, остаток без подрядчика и признак over-assigned по каждой работе.
     const contractorsByItem = bucketBy(itemContractors.rows, (c) => c.item_id as string);
+    const lockedByItem = bucketBy(lockedContractors?.rows ?? [], (r) => r.item_id as string);
 
     itemsOut = items.rows.map((it) => {
       const its = contractorsByItem.get(it.id) ?? [];
@@ -208,6 +237,7 @@ export async function buildEstimateDetail(
         assigned_total: assignedTotal,
         remaining_qty: Math.max(qty - assignedTotal, 0),
         over_assigned: assignedTotal > qty + 1e-6,
+        request_locked_contractor_ids: (lockedByItem.get(it.id) ?? []).map((r) => r.contractor_id as string),
       };
     });
   } else {

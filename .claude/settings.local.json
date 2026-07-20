@@ -16,7 +16,8 @@
       "PowerShell(git add server/src/db/migrations/0007_units.sql shared/src/schemas/unit.ts shared/src/schemas/index.ts server/src/routes/units server/src/app.ts client/src/components/UnitSelect.tsx client/src/pages/references/UnitsPanel.tsx client/src/pages/references/ReferencesPage.tsx client/src/pages/references/MaterialsPanel.tsx client/src/pages/references/RatesPanel.tsx client/src/pages/estimates/components/CostTypeGroupBlock.tsx)",
       "mcp__postgres_smeta__query",
       "PowerShell(npm run -w client typecheck)",
-      "PowerShell(npm run build 2>&1)"
+      "PowerShell(npm run build 2>&1)",
+      "PowerShell(npm run test:tables)"
     ]
   }
 }

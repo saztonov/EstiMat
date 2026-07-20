@@ -35,6 +35,8 @@ export interface CanonicalMaterial {
   materialId: string | null;
   name: string;
   unit: string;
+  /** Строки сметы, из которых свёрнут этот материал (→ material_request_item_sources). */
+  itemIds: string[];
 }
 
 /**
@@ -48,7 +50,7 @@ export async function loadVisibleMaterials(
   contractorId: string,
 ): Promise<Map<string, CanonicalMaterial>> {
   const { rows } = await db.query(
-    `SELECT ei.cost_type_id, em.material_id, em.unit,
+    `SELECT ei.id AS item_id, ei.cost_type_id, em.material_id, em.unit,
             COALESCE(mc.name, em.description, 'Материал') AS name
        FROM estimate_item_contractors eic
        JOIN estimate_items ei     ON ei.id = eic.item_id
@@ -58,20 +60,50 @@ export async function loadVisibleMaterials(
     [estimateId, contractorId],
   );
   const map = new Map<string, CanonicalMaterial>();
+  const sources = new Map<string, Set<string>>();
   for (const r of rows) {
     const costTypeId = r.cost_type_id ?? null;
     const key = aggKey(r.material_id ?? null, r.name, r.unit);
+    const lk = lineKey(costTypeId, key);
     // Один ключ свёртки могут дать несколько строк сметы (разные работы одного вида).
-    // Данные у них совпадают по построению ключа — берём первую.
-    map.set(lineKey(costTypeId, key), {
-      costTypeId,
-      aggKey: key,
-      materialId: r.material_id ?? null,
-      name: r.name,
-      unit: r.unit,
-    });
+    // Данные материала у них совпадают по построению ключа — берём из первой; а вот СПИСОК
+    // строк-источников нужен полностью: на нём держится защита назначений от перезаписи
+    // (material_request_item_sources), поэтому копим его отдельно, а не перезаписываем.
+    if (!map.has(lk)) {
+      map.set(lk, {
+        costTypeId,
+        aggKey: key,
+        materialId: r.material_id ?? null,
+        name: r.name,
+        unit: r.unit,
+        itemIds: [],
+      });
+      sources.set(lk, new Set());
+    }
+    sources.get(lk)!.add(r.item_id as string);
   }
+  for (const [lk, ids] of sources) map.get(lk)!.itemIds = [...ids];
   return map;
+}
+
+/**
+ * Записать связь позиции заявки со строками сметы, из которых она свёрнута.
+ * Вызывается сразу после INSERT позиции — в той же транзакции и из того же канонического
+ * набора, по которому позиция была принята (иначе проверили бы по одному набору, а связали
+ * по другому). Идемпотентно: повтор ничего не ломает.
+ */
+export async function linkRequestItemSources(
+  db: Db,
+  requestItemId: string,
+  itemIds: string[],
+): Promise<void> {
+  if (itemIds.length === 0) return;
+  await db.query(
+    `INSERT INTO material_request_item_sources (request_item_id, item_id)
+     SELECT $1::uuid, x FROM unnest($2::uuid[]) AS x
+     ON CONFLICT DO NOTHING`,
+    [requestItemId, itemIds],
+  );
 }
 
 // Доступ подрядчика к смете объекта (проект назначен его организации). Для заявки от имени

@@ -35,9 +35,14 @@ interface Props {
   // Подсветить/прокрутить к этому ВОР (клик по метке «В» в строке); null — просто список.
   focusVorId: string | null;
   // «Перейти»: применить сохранённый снимок фильтров к смете и закрыть модалку.
-  onApplyFilters: (snapshot: VorFilterSnapshot) => void;
+  // Не нужен в режиме readOnly — там кнопки нет.
+  onApplyFilters?: (snapshot: VorFilterSnapshot) => void;
   // «Экспорт в Excel»: открыть модалку экспорта (список остаётся открытым под ней).
-  onExport: () => void;
+  onExport?: () => void;
+  /** Только просмотр (раздел «Подрядчики»): без экспорта, перехода к фильтрам сметы и удаления.
+   *  Эти действия принадлежат разделу «Смета» — здесь список открывают, чтобы посмотреть ВОР
+   *  строки и при необходимости скачать файл. */
+  readOnly?: boolean;
 }
 
 const VOLUME_LABEL: Record<VorFilterSnapshot['volumeType'], string> = {
@@ -89,7 +94,15 @@ function filtersShort(f: VorFilterSnapshot): string {
 
 // Модалка «Созданные ВОР»: история выгрузок сметы. Открыть/скачать файл-снимок, перейти
 // (применить сохранённые фильтры к смете), удалить.
-export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFilters, onExport }: Props) {
+export function VorListModal({
+  open,
+  onClose,
+  estimateId,
+  focusVorId,
+  onApplyFilters,
+  onExport,
+  readOnly = false,
+}: Props) {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const { getColumnSearchProps } = useColumnSearch<EstimateVor>();
@@ -204,20 +217,22 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
               onClick={() => setDiffVor({ id: r.id, name: r.name })}
             />
           </Tooltip>
-          <Tooltip title="Применить фильтры этого ВОР к смете">
-            <Button
-              type="text"
-              size="small"
-              icon={<LoginOutlined />}
-              onClick={() => {
-                onApplyFilters(r.filters);
-                onClose();
-              }}
-            >
-              Перейти
-            </Button>
-          </Tooltip>
-          {r.canDelete && (
+          {onApplyFilters && (
+            <Tooltip title="Применить фильтры этого ВОР к смете">
+              <Button
+                type="text"
+                size="small"
+                icon={<LoginOutlined />}
+                onClick={() => {
+                  onApplyFilters(r.filters);
+                  onClose();
+                }}
+              >
+                Перейти
+              </Button>
+            </Tooltip>
+          )}
+          {!readOnly && r.canDelete && (
             <ConfirmIconButton
               tooltip="Удалить"
               title="Удалить ВОР?"
@@ -236,11 +251,13 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
   return (
     <>
       <Modal title="ВОР" open={open} onCancel={onClose} footer={null} width="90%" style={{ maxWidth: 1100 }} destroyOnClose>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-          <Button type="primary" icon={<FileExcelOutlined />} onClick={onExport}>
-            Экспорт в Excel
-          </Button>
-        </div>
+        {onExport && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+            <Button type="primary" icon={<FileExcelOutlined />} onClick={onExport}>
+              Экспорт в Excel
+            </Button>
+          </div>
+        )}
         <Table<EstimateVor>
           rowKey="id"
           size="small"
@@ -251,7 +268,11 @@ export function VorListModal({ open, onClose, estimateId, focusVorId, onApplyFil
           onRow={(r) => ({
             style: r.id === focusVorId ? { background: '#fff7e6' } : undefined,
           })}
-          locale={{ emptyText: 'Пока нет ВОР. Создайте первый через «Экспорт в Excel».' }}
+          locale={{
+            emptyText: readOnly
+              ? 'По этой смете ещё нет ВОР.'
+              : 'Пока нет ВОР. Создайте первый через «Экспорт в Excel».',
+          }}
         />
       </Modal>
       <VorPreviewModal

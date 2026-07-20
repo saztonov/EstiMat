@@ -22,9 +22,9 @@ import {
 } from '@estimat/shared';
 import {
   assertContractorEstimateAccess,
-  visibleMaterialKeys,
   loadVisibleMaterials,
   lockEstimateRequests,
+  linkRequestItemSources,
   lineKey,
   appendRequestAudit,
 } from '../../lib/material-requests/access.js';
@@ -404,8 +404,15 @@ export default async function requestRoutes(fastify: FastifyInstance) {
           stale.push({ lineKey: key, reason: 'not_visible' });
           return null;
         }
-        // Имя/единица/material_id — из сметы, а не из тела запроса.
-        return { ...l, name: canon.name, unit: canon.unit, materialId: canon.materialId };
+        // Имя/единица/material_id — из сметы, а не из тела запроса. itemIds — оттуда же:
+        // на них строится защита назначений подрядчика от перезаписи.
+        return {
+          ...l,
+          name: canon.name,
+          unit: canon.unit,
+          materialId: canon.materialId,
+          itemIds: canon.itemIds,
+        };
       });
       if (stale.length > 0) {
         await client.query('ROLLBACK');
@@ -460,12 +467,17 @@ export default async function requestRoutes(fastify: FastifyInstance) {
             ? l.deliverySchedule.map((s) => ({ quantity: s.quantity, deliveryDate: s.deliveryDate }))
             : [{ quantity: l.quantity, deliveryDate: null as string | null }];
         for (const s of schedule) {
-          await client.query(
+          const { rows: itemRows } = await client.query(
             `INSERT INTO material_request_items
-               (request_id, cost_type_id, agg_key, material_id, material_name, unit, quantity, delivery_date)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+               (request_id, cost_type_id, agg_key, material_id, material_name, unit, quantity, delivery_date,
+                link_resolution)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'exact')
+             RETURNING id`,
             [requestId, l.costTypeId, l.aggKey, l.materialId, l.name, l.unit, s.quantity, s.deliveryDate],
           );
+          // Разворот по датам поставки дробит позицию по срокам, а не по строкам сметы —
+          // каждая дочерняя позиция ссылается на тот же полный набор строк-источников.
+          await linkRequestItemSources(client, itemRows[0].id as string, l.itemIds);
         }
       }
 
@@ -696,10 +708,15 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
+        // Тот же advisory-lock, что берёт создание заявки: пересборка позиций меняет состав
+        // заказанного, а значит и защиту назначений подрядчика. Без него массовое назначение
+        // в разделе «Подрядчики» может пройти между проверкой защиты и пересборкой и осиротить
+        // заявку. Берётся ПЕРВЫМ после BEGIN — до любых row-lock (порядок захвата един во всех путях).
+        if (mr.estimate_id) await lockEstimateRequests(client, mr.estimate_id);
 
         // Правка позиций (опционально): пересобрать по видимым материалам.
         if (body.lines && mr.estimate_id) {
-          const visible = await visibleMaterialKeys(client, mr.estimate_id, user.orgId!);
+          const visible = await loadVisibleMaterials(client, mr.estimate_id, user.orgId!);
           const lines = body.lines.filter((l) => l.quantity > 0 && visible.has(lineKey(l.costTypeId, l.aggKey)));
           if (lines.length === 0) {
             await client.query('ROLLBACK');
@@ -738,11 +755,21 @@ export default async function requestRoutes(fastify: FastifyInstance) {
                 ? l.deliverySchedule.map((s) => ({ quantity: s.quantity, deliveryDate: s.deliveryDate }))
                 : [{ quantity: l.quantity, deliveryDate: null as string | null }];
             for (const s of schedule) {
-              await client.query(
+              const { rows: itemRows } = await client.query(
                 `INSERT INTO material_request_items
-                   (request_id, cost_type_id, agg_key, material_id, material_name, unit, quantity, delivery_date)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                   (request_id, cost_type_id, agg_key, material_id, material_name, unit, quantity, delivery_date,
+                    link_resolution)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'exact')
+                 RETURNING id`,
                 [mr.id, l.costTypeId, l.aggKey, l.materialId, l.name, l.unit, s.quantity, s.deliveryDate],
+              );
+              // Связь со строками сметы пересчитывается из текущей сводки, а не переносится
+              // снимком (в отличие от ответственных ниже): ответственный — человеческое решение,
+              // а состав строк-источников производен от сметы и должен отражать её сейчас.
+              await linkRequestItemSources(
+                client,
+                itemRows[0].id as string,
+                visible.get(lineKey(l.costTypeId, l.aggKey))?.itemIds ?? [],
               );
               newKeys.push({ costTypeId: l.costTypeId, aggKey: l.aggKey, deliveryDate: s.deliveryDate });
             }

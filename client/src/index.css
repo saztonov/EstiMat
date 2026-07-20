@@ -427,7 +427,8 @@ html, body, #root {
     overflow-x: auto;
   }
   .contractors-smeta .ant-table-content > table {
-    min-width: 880px;
+    /* 880 + 32: колонка раскрытия несёт слот метки «В» (56 → 88). */
+    min-width: 912px;
   }
 }
 

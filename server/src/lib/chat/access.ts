@@ -22,9 +22,14 @@ export function isAdmin(user: ChatUser): boolean {
   return user.role === 'admin';
 }
 
-/** Полный доступ ко всем сметам/чатам: админ и инженер-сметчик. */
+/**
+ * Полный доступ ко всем сметам/чатам: админ, инженер-сметчик и руководитель.
+ * Руководитель уравнен в правах с инженером — иначе он видел бы смету через GET /estimates/:id
+ * (там членство в объекте не проверяется), но получал бы 403 на отметках ВОР и прочих путях,
+ * которые ходят сюда.
+ */
 export function hasFullEstimateAccess(user: ChatUser): boolean {
-  return user.role === 'admin' || user.role === 'engineer';
+  return user.role === 'admin' || user.role === 'engineer' || user.role === 'manager';
 }
 
 /**

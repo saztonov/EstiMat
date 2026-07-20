@@ -11,8 +11,11 @@ import {
   ITEMS_CANONICAL_ORDER_BY,
 } from '../../lib/estimate-detail.js';
 import { assertEstimateAccess, ChatAccessError, isContractor } from '../../lib/chat/access.js';
+import { lockEstimateRequests } from '../../lib/material-requests/access.js';
+import { loadScopeRows, planBulkAssign, allocationValues } from '../../lib/contractors/bulk-assign.js';
 import {
   assignItemContractorsSchema,
+  bulkAssignItemContractorsSchema,
   clearItemContractorsSchema,
   type AssignItemContractorsInput,
 } from '@estimat/shared';
@@ -219,7 +222,7 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
   // ============================================================
   fastify.post(
     '/assignments',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const body = assignItemContractorsSchema.parse(request.body) as AssignItemContractorsInput;
       const userId = request.currentUser.id;
@@ -371,42 +374,246 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
   );
 
   // ============================================================
+  // POST /api/contractors/assignments/bulk — массовое назначение с перезаписью
+  //
+  // Отличие от POST /assignments: применяется ЧАСТИЧНО и возвращает отчёт. Строки, по которым
+  // подрядчик уже заказал материалы, пропускаются — снять или заменить его нельзя, иначе заявка
+  // осталась бы без сметного основания. Изменение доли того же подрядчика защитой не запрещено.
+  //
+  // Область задаётся itemIds: клиент присылает строки, видимые после его фильтров.
+  // ============================================================
+  fastify.post(
+    '/assignments/bulk',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request) => {
+      const body = bulkAssignItemContractorsSchema.parse(request.body);
+      const userId = request.currentUser.id;
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        // ПЕРВЫМ после BEGIN, до row-lock: этот же advisory-lock берут создание и пересборка
+        // заявки. Без него заявка может появиться между проверкой защиты и снятием назначения.
+        await lockEstimateRequests(client, body.estimateId);
+
+        // Строки сметы под замок. Фильтр по смете обязателен: иначе можно затереть назначения
+        // чужой сметы, передав её id. ORDER BY id — детерминированный порядок захвата (защита
+        // от дедлока с другими путями, которые лочат те же строки).
+        const locked = await client.query(
+          `SELECT id FROM estimate_items
+            WHERE id = ANY($1::uuid[]) AND estimate_id = $2::uuid
+            ORDER BY id
+              FOR UPDATE`,
+          [body.itemIds, body.estimateId],
+        );
+        const foundIds = new Set(locked.rows.map((r) => r.id as string));
+        // Строку могли удалить, пока был открыт поповер, — это не ошибка запроса.
+        const missingItemIds = body.itemIds.filter((id) => !foundIds.has(id));
+        const scopeIds = body.itemIds.filter((id) => foundIds.has(id));
+
+        const rows = await loadScopeRows(client, {
+          estimateId: body.estimateId,
+          itemIds: scopeIds,
+          targetContractorId: body.contractorId,
+        });
+        const plan = planBulkAssign(rows, body.strategy);
+
+        // Снятие чужих — строго ДО вставки: validate_item_contractor() (0020) запрещает
+        // «весь объём», пока на строке есть другой подрядчик.
+        let removedRows: Record<string, unknown>[] = [];
+        if (plan.removeItemIds.length > 0) {
+          const res = await client.query(
+            `DELETE FROM estimate_item_contractors
+              WHERE item_id = ANY($1::uuid[]) AND contractor_id <> $2::uuid
+              RETURNING *`,
+            [plan.removeItemIds, body.contractorId],
+          );
+          removedRows = res.rows;
+        }
+
+        // Назначение одним запросом, а не в цикле: при 2000 строк построчные вставки дали бы
+        // тысячи round-trip. Переполнение объёма здесь невозможно — чужие уже сняты.
+        const { qty, percent } = allocationValues(body.allocation);
+        let assignedRows: Record<string, unknown>[] = [];
+        if (plan.assignItemIds.length > 0) {
+          const res = await client.query(
+            `INSERT INTO estimate_item_contractors
+               (item_id, estimate_id, contractor_id, assigned_qty, assigned_percent, assigned_by)
+             SELECT x, $2::uuid, $3::uuid, $4::numeric, $5::numeric, $6::uuid
+               FROM unnest($1::uuid[]) AS x
+             ON CONFLICT (item_id, contractor_id)
+               DO UPDATE SET assigned_qty = EXCLUDED.assigned_qty,
+                             assigned_percent = EXCLUDED.assigned_percent,
+                             assigned_by = EXCLUDED.assigned_by,
+                             updated_at = now()
+             RETURNING *`,
+            [plan.assignItemIds, body.estimateId, body.contractorId, qty, percent, userId],
+          );
+          assignedRows = res.rows;
+
+          // Объект сметы становится видимым подрядчику в его кабинете (как в POST /assignments).
+          await client.query(
+            `INSERT INTO project_contractors (project_id, contractor_id, assigned_by)
+             SELECT DISTINCT e.project_id, $2::uuid, $3::uuid
+               FROM estimates e
+              WHERE e.id = $1::uuid AND e.project_id IS NOT NULL
+             ON CONFLICT (project_id, contractor_id) DO NOTHING`,
+            [body.estimateId, body.contractorId, userId],
+          );
+        }
+
+        // Аудит чанками: recordAuditBatch кладёт 9 параметров на запись, а строк тут до 2000.
+        const auditInputs = [
+          ...removedRows.map((r) => ({
+            estimateId: r.estimate_id as string,
+            entityType: 'estimate_item_contractor',
+            entityId: r.id as string,
+            action: 'delete',
+            userId,
+            changes: { before: r, reason: 'bulk_replace' },
+          })),
+          ...assignedRows.map((r) => ({
+            estimateId: r.estimate_id as string,
+            entityType: 'estimate_item_contractor',
+            entityId: r.id as string,
+            action: 'update',
+            userId,
+            changes: { after: r, reason: 'bulk_assign' },
+          })),
+        ];
+        for (let i = 0; i < auditInputs.length; i += 500) {
+          await recordAuditBatch(client, auditInputs.slice(i, i + 500));
+        }
+
+        await client.query('COMMIT');
+
+        // Одно событие, даже если были снятия: пара cleared+set вызвала бы двойной рефетч
+        // у всех подписчиков сметы.
+        if (assignedRows.length > 0 || removedRows.length > 0) {
+          const projectId = await loadProjectId(fastify.pool, body.estimateId);
+          await emitEstimateChanged(fastify, 'contractor_set', body.estimateId, projectId, userId);
+        }
+
+        return {
+          data: {
+            assigned: assignedRows.length,
+            replacedRows: plan.replacedRows,
+            replacedAssignments: removedRows.length,
+            skipped: plan.skipped,
+            missingItemIds,
+            blocked: plan.blocked,
+          },
+        };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // ============================================================
   // DELETE /api/contractors/assignments — снять подрядчика(ов) со строк
+  //
+  // Снятие защищено так же, как перезапись в /assignments/bulk: если по строке подрядчик уже
+  // заказал материалы, снять его нельзя — иначе заявка осталась бы без сметного основания.
   // ============================================================
   fastify.delete(
     '/assignments',
-    { preHandler: [requireRole('admin', 'engineer')] },
-    async (request) => {
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
       const body = clearItemContractorsSchema.parse(request.body);
       const userId = request.currentUser.id;
-      const values: unknown[] = [body.itemIds];
-      let sql = 'DELETE FROM estimate_item_contractors WHERE item_id = ANY($1)';
-      if (body.contractorId) {
-        values.push(body.contractorId);
-        sql += ` AND contractor_id = $${values.length}`;
-      }
-      sql += ' RETURNING *';
-      const { rows } = await fastify.pool.query(sql, values);
-      if (rows.length === 0) return { data: { cleared: 0 } };
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
 
-      await recordAuditBatch(
-        fastify.pool,
-        rows.map((r) => ({
-          estimateId: r.estimate_id as string,
-          entityType: 'estimate_item_contractor',
-          entityId: r.id as string,
-          action: 'delete',
-          userId,
-          changes: { before: r },
-        })),
-      );
+        // Смета строк — нужна и для advisory-lock, и для скоупа защиты. Строки одного запроса
+        // всегда принадлежат одной смете (клиент снимает подрядчика в пределах открытой сметы).
+        const est = await client.query(
+          `SELECT DISTINCT estimate_id FROM estimate_items WHERE id = ANY($1::uuid[])`,
+          [body.itemIds],
+        );
+        if (est.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return { data: { cleared: 0, blocked: [] } };
+        }
+        if (est.rows.length > 1) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Строки принадлежат разным сметам' });
+        }
+        const estimateId = est.rows[0].estimate_id as string;
+        await lockEstimateRequests(client, estimateId);
 
-      const estimateIds = [...new Set(rows.map((r) => r.estimate_id as string))];
-      for (const eid of estimateIds) {
-        const projectId = await loadProjectId(fastify.pool, eid);
-        await emitEstimateChanged(fastify, 'contractor_cleared', eid, projectId, userId);
+        await client.query(
+          `SELECT id FROM estimate_items WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`,
+          [body.itemIds],
+        );
+
+        // targetContractorId = null: при снятии «чужими» считаются все подрядчики строки,
+        // включая того, кого снимают.
+        const scope = await loadScopeRows(client, {
+          estimateId,
+          itemIds: body.itemIds,
+          targetContractorId: null,
+        });
+        const blocked = scope
+          .filter((r) => r.lockedLinked.length > 0 || r.lockedLegacy.length > 0)
+          .filter((r) => {
+            // Снимаем конкретного подрядчика — блокирует только его собственная заявка.
+            if (!body.contractorId) return true;
+            const held = [...r.lockedLinked, ...r.lockedLegacy];
+            return held.some((c) => c.contractorId === body.contractorId);
+          });
+        const blockedIds = new Set(blocked.map((r) => r.itemId));
+        const clearableIds = body.itemIds.filter((id) => !blockedIds.has(id));
+
+        if (clearableIds.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({
+            error: 'По этим строкам уже оформлена заявка на материалы — снять исполнителя нельзя',
+            code: 'ASSIGNMENT_LOCKED_BY_REQUESTS',
+          });
+        }
+
+        const values: unknown[] = [clearableIds];
+        let sql = 'DELETE FROM estimate_item_contractors WHERE item_id = ANY($1::uuid[])';
+        if (body.contractorId) {
+          values.push(body.contractorId);
+          sql += ` AND contractor_id = $${values.length}`;
+        }
+        sql += ' RETURNING *';
+        const { rows } = await client.query(sql, values);
+        if (rows.length === 0) {
+          await client.query('ROLLBACK');
+          return { data: { cleared: 0, blocked: [] } };
+        }
+
+        for (let i = 0; i < rows.length; i += 500) {
+          await recordAuditBatch(
+            client,
+            rows.slice(i, i + 500).map((r) => ({
+              estimateId: r.estimate_id as string,
+              entityType: 'estimate_item_contractor',
+              entityId: r.id as string,
+              action: 'delete',
+              userId,
+              changes: { before: r },
+            })),
+          );
+        }
+
+        await client.query('COMMIT');
+
+        const projectId = await loadProjectId(fastify.pool, estimateId);
+        await emitEstimateChanged(fastify, 'contractor_cleared', estimateId, projectId, userId);
+        return { data: { cleared: rows.length, blocked: blocked.map((r) => r.itemId) } };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
       }
-      return { data: { cleared: rows.length } };
     },
   );
 }

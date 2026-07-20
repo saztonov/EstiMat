@@ -69,6 +69,9 @@ interface Props {
   onToggleMaterial?: (id: string, selected: boolean) => void;
   /** Режим массового удаления: добавляет чекбоксы у работ и скрывает действия строк. */
   deleteMode?: boolean;
+  /** Отметка работ БЕЗ прав редактирования (раздел «Подрядчики»: назначение на несколько работ).
+   *  В отличие от deleteMode не скрывает действия строк, не гасит DnD и не трогает шифры РД. */
+  selectWorksMode?: boolean;
   selectedWorkIds?: Set<string>;
   onToggleWork?: (id: string, selected: boolean) => void;
   onSetContractor?: (costTypeId: string, contractorId: string) => void;
@@ -196,6 +199,7 @@ function CostTypeGroupBlockImpl({
   selectedIds,
   onToggleMaterial,
   deleteMode = false,
+  selectWorksMode = false,
   selectedWorkIds,
   onToggleWork,
   onSetContractor = noop,
@@ -429,9 +433,12 @@ function CostTypeGroupBlockImpl({
     (s, c) => s + (typeof c.width === 'number' ? c.width : 0),
     0,
   );
+  // Колонка раскрытия шире, когда в ней есть слот метки «В» (30px + отступ). Одна константа
+  // на ширину колонки и на отступ раскрытых материалов — иначе отступ разъедется.
+  const expandColumnWidth = vorByItem ? 88 : 56;
   // Когда есть лидирующие колонки, раскрытые материалы выравниваем под колонку «Наименование
-  // работы»: ширина лидирующих колонок + колонка раскрытия (56) + «№» (36). На «Смете» — 0.
-  const materialsIndent = leadingWidth ? leadingWidth + 56 + 36 : 0;
+  // работы»: ширина лидирующих колонок + колонка раскрытия + «№» (36). На «Смете» — 0.
+  const materialsIndent = leadingWidth ? leadingWidth + expandColumnWidth + 36 : 0;
 
   // Ctx-объект строится ВНУТРИ колбэка useMemo (не снаружи) — свежие замыкания
   // commit/selectRate/setWorkExpanded/isWorkExpanded захватываются в тот же момент, что и раньше.
@@ -475,12 +482,12 @@ function CostTypeGroupBlockImpl({
       expandedRowKeys: effectiveExpandedKeys,
       onExpand: (expanded, record) => setWorkExpanded(record.id, expanded),
       rowExpandable: (r) => r.id !== DRAFT_ID,
-      columnWidth: vorByItem ? 88 : 56,
+      columnWidth: expandColumnWidth,
       // Кастомная иконка раскрытия: штатная кнопка «+/−» + число материалов работы,
       // чтобы по свёрнутой строке было видно, есть ли материалы и сколько их.
       expandIcon: ({ expanded, onExpand, record }) => {
-        // Слот метки «В» слева от «+» — только на «Смете» (передан vorByItem); в разделе
-        // подрядчиков колонку не расширяем.
+        // Слот метки «В» слева от «+» — везде, где передан vorByItem («Смета» и раздел
+        // «Подрядчики»). Ширина колонки и отступ материалов согласованы expandColumnWidth.
         const hasVorSlot = !!vorByItem;
         if (record.id === DRAFT_ID) {
           return <span style={{ display: 'inline-block', width: hasVorSlot ? 47 : 17 }} />;
@@ -560,6 +567,7 @@ function CostTypeGroupBlockImpl({
     }),
     [
       effectiveExpandedKeys, materialsControlled, onWorkExpandChange, materialsIndent,
+      expandColumnWidth,
       useLazyMaterials, scrollRootRef, editable, showPrices,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onReassignMaterial,
       allWorks, selectionMode, selectedIds, onToggleMaterial, deleteMode, selectedWorkIds,
@@ -669,7 +677,7 @@ function CostTypeGroupBlockImpl({
               .join(' ')
           }
           rowSelection={
-            deleteMode && editable && !editing
+            (deleteMode && editable && !editing) || selectWorksMode
               ? {
                   selectedRowKeys: group.works.filter((w) => selectedWorkIds?.has(w.id)).map((w) => w.id) as Key[],
                   onChange: (keys: Key[]) => {

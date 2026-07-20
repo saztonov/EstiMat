@@ -140,6 +140,10 @@ export interface EstimateItem {
   assigned_total?: number;
   remaining_qty?: number;
   over_assigned?: boolean;
+  /** Подрядчики строки, чьи назначения защищены заявками: по строке уже заказаны материалы,
+   *  снять или заменить их нельзя. Авторитет — ответ сервера при назначении; здесь это
+   *  разметка интерфейса (замок на чипе) и предпросмотр без второго запроса. */
+  request_locked_contractor_ids?: string[];
   // Вид подрядчика (его строки из /contractors/my-items): объём, назначенный его организации.
   my_effective_qty?: string | number | null;
   my_assigned_qty?: string | null;

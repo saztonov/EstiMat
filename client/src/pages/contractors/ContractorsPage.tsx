@@ -150,7 +150,8 @@ export function ContractorsPage() {
   const [searchParams] = useSearchParams();
   const role = useAuthStore((s) => s.user?.role);
   const viewerIsContractor = role === 'contractor';
-  const canAssign = role === 'admin' || role === 'engineer';
+  // Руководитель уравнен в правах с инженером-сметчиком: назначает подрядчиков и видит цены.
+  const canAssign = role === 'admin' || role === 'engineer' || role === 'manager';
   const [tab, setTab] = usePersistedTab('estimat:contractors-tab', 'smeta');
 
   // Вкладка из ссылки (вход «Новая заявка» из раздела «Заявки») — один раз при открытии и только
