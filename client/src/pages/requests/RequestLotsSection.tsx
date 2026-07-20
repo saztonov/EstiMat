@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Table, Space, Typography, Empty } from 'antd';
+import { Table, Space, Typography, Empty, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -52,9 +52,14 @@ export function RequestLotsSection({ requestId }: { requestId: string }) {
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="small">
       {cov && (
-        <Text type="secondary">
-          Запрошено: {round4(cov.requested)} · В заказах: {round4(cov.placed)} · Оформлено: {round4(cov.awarded)}
-        </Text>
+        <Space size={6} wrap>
+          <Text type="secondary">
+            Запрошено: {round4(cov.requested)} · В заказах: {round4(cov.placed)} · Оформлено: {round4(cov.awarded)}
+          </Text>
+          {/* Объём заявки можно уменьшить ниже уже размещённого — тогда покрытие превышает
+              запрошенное, и это должно быть видно, а не спрятано в арифметике. */}
+          {Number(cov.placed) > Number(cov.requested) && <Tag color="red">перезаказ</Tag>}
+        </Space>
       )}
       {orders.length === 0 ? (
         <Empty description="Материалы заявки ещё не включены в заказы. Заказ формируется на вкладке «Материалы»." />

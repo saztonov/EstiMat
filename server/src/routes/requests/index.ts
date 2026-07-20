@@ -7,6 +7,7 @@ import { isContractor, assertEstimateAccess, ChatAccessError } from '../../lib/c
 import {
   createRequestSchema,
   requestRevisionSchema,
+  editRequestItemsSchema,
   completeRevisionSchema,
   validateSu10Schedule,
   directSupplierSchema,
@@ -235,11 +236,24 @@ export default async function requestRoutes(fastify: FastifyInstance) {
 
     const [items, files, order, revisions, history] = await Promise.all([
       fastify.pool.query(
-        `SELECT mri.material_name AS name, mri.unit, mri.quantity, mri.agg_key,
+        // id нужен модалке правки объёмов, placed — чтобы показать «в заказах» без второго
+        // запроса, quantity_* — для подсветки изменённых строк и подсказки «было столько».
+        `SELECT mri.id, mri.material_name AS name, mri.unit, mri.quantity, mri.agg_key,
                 to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
-                ct.name AS cost_type_name
+                ct.name AS cost_type_name,
+                mri.quantity_original, mri.quantity_changed_at,
+                qcu.full_name AS quantity_changed_by_name,
+                COALESCE(pl.qty, 0)::numeric AS placed
            FROM material_request_items mri
            LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
+           LEFT JOIN users qcu ON qcu.id = mri.quantity_changed_by
+           LEFT JOIN (
+             SELECT soi.request_item_id, SUM(soi.quantity) AS qty
+               FROM supplier_order_items soi
+               JOIN supplier_orders so ON so.id = soi.order_id
+                                      AND so.sourcing_status NOT IN ('cancelled','no_award')
+              GROUP BY soi.request_item_id
+           ) pl ON pl.request_item_id = mri.id
           WHERE mri.request_id = $1
           ORDER BY ct.name NULLS LAST, mri.material_name, mri.delivery_date NULLS LAST`,
         [mr.id],
@@ -816,6 +830,166 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         const status = await recalcRequestStatus(client, mr.id, user.id);
         await client.query('COMMIT');
         return { data: { id: mr.id, status } };
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // ============================================================
+  // PATCH /:id/items — правка объёмов позиций снабжением (без изменения состава)
+  // ============================================================
+  //
+  // Меняется ТОЛЬКО quantity существующих строк, через UPDATE. Это принципиально: доработка
+  // (revision-complete) удаляет и пересоздаёт позиции, из-за чего её запрещает hasActiveAllocations
+  // (supplier_order_items.request_item_id имеет ON DELETE SET NULL — лоты осиротели бы). При
+  // UPDATE идентификаторы строк живут, связь с заказами цела, поэтому этот гард здесь НЕ нужен
+  // и добавлять его «по аналогии» не следует.
+  //
+  // Добавление и удаление материалов остаются за доработкой — граница явная и защищаемая.
+  fastify.patch<{ Params: { id: string } }>(
+    '/:id/items',
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
+    async (request, reply) => {
+      const user = request.currentUser;
+      const body = editRequestItemsSchema.parse(request.body);
+      const res = await loadScoped(request.params.id, user);
+      if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+      const mr = res.row;
+
+      // Дубли в запросе привели бы к неопределённому порядку записи одного и того же id.
+      const ids = body.items.map((i) => i.itemId);
+      if (new Set(ids).size !== ids.length) {
+        return reply.status(400).send({ error: 'Позиция указана дважды' });
+      }
+
+      // Статусный гард: у «Оплаты по РП» после rp_forming реквизиты ушли в PayHub — менять
+      // объёмы поздно; остальные маршруты правятся до поставки.
+      const editable = mr.request_type === 'own_supplier'
+        ? mr.status === 'in_work'
+        : ['in_work', 'supplier_selected'].includes(mr.status);
+      if (!editable) {
+        return reply.status(409).send({ error: 'Объёмы этой заявки сейчас менять нельзя' });
+      }
+      if (body.expectedVersion !== mr.row_version) {
+        return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
+      }
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // ORDER BY id — тот же порядок захвата, что в POST /supplier-orders (FOR UPDATE OF mri):
+        // единый порядок исключает дедлок между правкой заявки и формированием заказа.
+        const { rows: locked } = await client.query(
+          `SELECT id, material_name, quantity::numeric AS quantity
+             FROM material_request_items
+            WHERE id = ANY($1::uuid[]) AND request_id = $2
+            ORDER BY id
+            FOR UPDATE`,
+          [ids, mr.id],
+        );
+        if (locked.length !== ids.length) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Позиция не найдена в этой заявке' });
+        }
+
+        // Размещённое в заказах: всего (для предупреждения) и в замороженных лотах отдельно —
+        // «уже в закупке/оформлены» требуют более жёсткого подтверждения.
+        const { rows: placedRows } = await client.query(
+          `SELECT soi.request_item_id,
+                  SUM(soi.quantity)::numeric AS placed,
+                  COALESCE(SUM(soi.quantity) FILTER (WHERE so.sourcing_status = ANY($2::text[])), 0)::numeric AS frozen
+             FROM supplier_order_items soi
+             JOIN supplier_orders so ON so.id = soi.order_id
+                                    AND so.sourcing_status NOT IN ('cancelled','no_award')
+            WHERE soi.request_item_id = ANY($1::uuid[])
+            GROUP BY soi.request_item_id`,
+          [ids, [...FROZEN_LOT_STATUSES]],
+        );
+        const placedMap = new Map(placedRows.map((r) => [r.request_item_id as string, r]));
+        const nameMap = new Map(locked.map((r) => [r.id as string, r.material_name as string]));
+
+        const overplaced = body.items
+          .map((it) => {
+            const p = placedMap.get(it.itemId);
+            return {
+              itemId: it.itemId,
+              name: nameMap.get(it.itemId) ?? '',
+              placed: Number(p?.placed ?? 0),
+              frozenPlaced: Number(p?.frozen ?? 0),
+              newQuantity: it.quantity,
+            };
+          })
+          .filter((x) => x.newQuantity < x.placed);
+
+        if (overplaced.length && !body.acknowledgeOverplaced) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({
+            error: 'По части материалов заказано больше нового объёма',
+            overplaced,
+          });
+        }
+
+        // Обновляем только реально изменившиеся строки; сравнение в SQL numeric — без потери
+        // точности через JS Number. quantity_original фиксирует ПЕРВЫЙ объём, а не предыдущий.
+        const { rows: updated } = await client.query(
+          `UPDATE material_request_items mri
+              SET quantity = v.q::numeric,
+                  quantity_original = COALESCE(mri.quantity_original, mri.quantity),
+                  quantity_changed_at = now(),
+                  quantity_changed_by = $3
+             FROM unnest($1::uuid[], $2::numeric[]) AS v(id, q)
+            WHERE mri.id = v.id AND mri.quantity <> v.q::numeric
+        RETURNING mri.id, mri.material_name, mri.quantity::numeric AS quantity,
+                  mri.quantity_original::numeric AS was`,
+          [ids, body.items.map((i) => String(i.quantity)), user.id],
+        );
+        if (updated.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Изменений нет' });
+        }
+
+        // Версия заявки: статус не меняем, поэтому не atomicSetStatus, а та же формула OCC.
+        const { rowCount } = await client.query(
+          `UPDATE material_requests SET row_version = row_version + 1, updated_at = now()
+            WHERE id = $1 AND row_version = $2`,
+          [mr.id, body.expectedVersion],
+        );
+        if (rowCount !== 1) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
+        }
+
+        await appendRequestAudit(client, {
+          requestId: mr.id,
+          action: 'items_quantity_updated',
+          userId: user.id,
+          changes: {
+            comment: body.comment,
+            // Количества строками — как и всюду в финансовой части, без потери точности.
+            items: updated.map((r) => ({
+              itemId: r.id,
+              name: r.material_name,
+              from: String(r.was),
+              to: String(r.quantity),
+              placed: String(placedMap.get(r.id as string)?.placed ?? 0),
+            })),
+            overplaced: overplaced.length
+              ? overplaced.map((o) => ({ ...o, newQuantity: String(o.newQuantity) }))
+              : undefined,
+          },
+          estimateId: mr.estimate_id,
+          projectId: mr.project_id,
+        });
+
+        // Покрытие изменилось: заявка могла стать полностью закрытой заказами (или наоборот).
+        const status = await recalcRequestStatus(client, mr.id, user.id);
+        await client.query('COMMIT');
+        return { data: { id: mr.id, status, rowVersion: body.expectedVersion + 1, updated: updated.length } };
       } catch (e) {
         await client.query('ROLLBACK');
         throw e;

@@ -22,6 +22,10 @@ import { RequestStatusTag, RequestTypeTag, money, round4 } from './requestConsta
 import { RpFormModal } from './RpFormModal';
 import { RpSendModal } from './RpSendModal';
 import { OrderEditModal } from './OrderEditModal';
+import { RequestItemsEditModal } from './RequestItemsEditModal';
+import { HistoryChanges } from './HistoryChangesView';
+import { TableLegend } from '../../components/table/TableLegend';
+import { ROW_HIGHLIGHTS } from '../../lib/rowHighlights';
 import { RequestLotsSection } from './RequestLotsSection';
 import { DeliveryGantt, type GanttMaterial } from '../contractors/DeliveryGantt';
 import { CommentsChat } from './CommentsChat';
@@ -47,6 +51,7 @@ const ACTION_LABELS: Record<string, string> = {
   file_removed: 'Удалён файл',
   file_rejected: 'Документ вычеркнут',
   file_restored: 'Документ восстановлен',
+  items_quantity_updated: 'Изменены объёмы',
 };
 
 /**
@@ -68,6 +73,7 @@ export function RequestDetailContent(
   const [rpFormOpen, setRpFormOpen] = useState(false);
   const [rpSendOpen, setRpSendOpen] = useState(false);
   const [orderEditOpen, setOrderEditOpen] = useState(false);
+  const [itemsEditOpen, setItemsEditOpen] = useState(false);
   const [docFiles, setDocFiles] = useState<UploadItem[]>([]);
   const [preview, setPreview] = useState<{ fileId: string; fileName: string; mimeType: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -206,11 +212,33 @@ export function RequestDetailContent(
   const uploadDocOptions = (isSupply ? REQUEST_DOC_TYPES : RP_APPLICATION_DOC_TYPES)
     .map((d) => ({ value: d, label: REQUEST_DOC_TYPE_LABELS[d as RequestDocType] }));
 
+  // Правка объёмов: снабжение может уточнить количества, не трогая состав заявки.
+  const canEditItems = isSupply && (isOwnSupplier
+    ? r.status === 'in_work'
+    : ['in_work', 'supplier_selected'].includes(r.status));
+  const hasQtyEdits = r.items.some((it) => !!it.quantity_changed_at);
+
+  /** Подсказка «было столько · кто · когда» у изменённого количества. */
+  const qtyCell = (v: number | string, it: RequestItem) => {
+    if (!it.quantity_changed_at) return round4(v);
+    const was = round4(it.quantity_original ?? v);
+    const who = it.quantity_changed_by_name ?? 'снабжение';
+    const when = new Date(it.quantity_changed_at).toLocaleDateString('ru-RU');
+    return (
+      <Tooltip title={`Было ${was} · ${who} · ${when}`}>
+        <Space size={4}>
+          {round4(v)}
+          <Tag color="gold" style={{ margin: 0 }}>изм.</Tag>
+        </Space>
+      </Tooltip>
+    );
+  };
+
   const itemCols: ColumnsType<RequestItem> = [
     { title: '№', key: 'idx', width: 50, render: (_, __, i) => i + 1 },
     { title: 'Наименование', dataIndex: 'name', key: 'name' },
     { title: 'Ед.изм.', dataIndex: 'unit', key: 'unit', width: 90 },
-    { title: 'Кол-во', dataIndex: 'quantity', key: 'quantity', width: 110, align: 'right', render: (v) => round4(v) },
+    { title: 'Кол-во', dataIndex: 'quantity', key: 'quantity', width: 140, align: 'right', render: qtyCell },
     { title: 'Вид работ', dataIndex: 'cost_type_name', key: 'cost_type_name', render: (v: string | null) => v || '—' },
   ];
 
@@ -218,13 +246,15 @@ export function RequestDetailContent(
   const fmtRuDate = (d: string) => { const [y, m, dd] = d.split('-'); return `${dd}.${m}.${y}`; };
   const hasSchedule = r.request_type === 'su10' && r.items.some((it) => !!it.delivery_date);
   const scheduleGroups = (() => {
-    const map = new Map<string, { name: string; unit: string; cost_type_name: string | null; totalQty: number; entries: { date: string | null; qty: number }[] }>();
+    const map = new Map<string, { name: string; unit: string; cost_type_name: string | null; totalQty: number; entries: { date: string | null; qty: number; item: RequestItem }[] }>();
     for (const it of r.items) {
       const key = it.agg_key || `${it.name}|${it.unit}`;
       let g = map.get(key);
       if (!g) { g = { name: it.name, unit: it.unit, cost_type_name: it.cost_type_name, totalQty: 0, entries: [] }; map.set(key, g); }
       g.totalQty += Number(it.quantity);
-      g.entries.push({ date: it.delivery_date, qty: Number(it.quantity) });
+      // Тащим саму позицию: в графике ячейки объединены rowSpan, и подсветку строки видно плохо —
+      // отметку об изменении объёма показываем прямо в количестве конкретной даты.
+      g.entries.push({ date: it.delivery_date, qty: Number(it.quantity), item: it });
     }
     return [...map.values()];
   })();
@@ -237,7 +267,7 @@ export function RequestDetailContent(
     { title: 'Ед.изм.', key: 'unit', width: 90, onCell: spanCell, render: (_, row) => row.group.unit },
     { title: 'Общее кол-во', key: 'total', width: 120, align: 'right', onCell: spanCell, render: (_, row) => round4(row.group.totalQty) },
     { title: 'Дата поставки', key: 'date', width: 140, render: (_, row) => (row.entry.date ? fmtRuDate(row.entry.date) : '—') },
-    { title: 'Кол-во', key: 'qty', width: 110, align: 'right', render: (_, row) => round4(row.entry.qty) },
+    { title: 'Кол-во', key: 'qty', width: 140, align: 'right', render: (_, row) => qtyCell(row.entry.qty, row.entry.item) },
     { title: 'Вид работ', key: 'cost_type_name', onCell: spanCell, render: (_, row) => row.group.cost_type_name || '—' },
   ];
   const ganttMaterials: GanttMaterial[] = scheduleGroups.map((g, i) => ({
@@ -309,8 +339,11 @@ export function RequestDetailContent(
               key: 'materials',
               label: 'Материалы',
               children: (
-                <Table rowKey="rowId" size="small" pagination={false} bordered
-                  columns={scheduleItemCols} dataSource={scheduleRows} scroll={{ x: 700 }} />
+                <>
+                  <Table rowKey="rowId" size="small" pagination={false} bordered
+                    columns={scheduleItemCols} dataSource={scheduleRows} scroll={{ x: 700 }} />
+                  {hasQtyEdits && <TableLegend items={[ROW_HIGHLIGHTS.qtyChanged]} style={{ marginTop: 8 }} />}
+                </>
               ),
             },
             {
@@ -321,8 +354,12 @@ export function RequestDetailContent(
           ]}
         />
       ) : (
-        <Table<RequestItem> rowKey={(_, i) => String(i)} size="small" pagination={false}
-          columns={itemCols} dataSource={r.items} scroll={{ x: 600 }} />
+        <>
+          <Table<RequestItem> rowKey="id" size="small" pagination={false}
+            columns={itemCols} dataSource={r.items} scroll={{ x: 600 }}
+            rowClassName={(it) => (it.quantity_changed_at ? ROW_HIGHLIGHTS.qtyChanged.className : '')} />
+          {hasQtyEdits && <TableLegend items={[ROW_HIGHLIGHTS.qtyChanged]} style={{ marginTop: 8 }} />}
+        </>
       ),
     },
     ...(r.request_type === 'su10' && isSupply ? [{
@@ -368,6 +405,8 @@ export function RequestDetailContent(
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {h.actor_name || 'Система'} · {new Date(h.created_at).toLocaleString('ru-RU')}
               </Text>
+              {/* Комментарии и подробности сервер писал всегда, но раньше они не отображались. */}
+              <HistoryChanges action={h.action} changes={h.changes} />
             </Space>
           ),
         }))} />
@@ -470,6 +509,9 @@ export function RequestDetailContent(
           {canRevisionStd && <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>}
           {canRevisionComplete && <Button type="primary" loading={busy} onClick={completeRevision}>Отправить доработку</Button>}
           {canEditOrder && <Button icon={<EditOutlined />} onClick={() => setOrderEditOpen(true)}>Редактировать</Button>}
+          {canEditItems && (
+            <Button icon={<EditOutlined />} onClick={() => setItemsEditOpen(true)}>Изменить объёмы</Button>
+          )}
           {canCancel && (
             <Popconfirm title="Отменить заявку?" okText="Отменить" cancelText="Нет"
               okButtonProps={{ danger: true }} onConfirm={cancelRequest}>
@@ -533,6 +575,17 @@ export function RequestDetailContent(
       <RpFormModal open={rpFormOpen} requestId={id} requestNumber={r.number} onClose={() => setRpFormOpen(false)} />
 
       <OrderEditModal open={orderEditOpen} requestId={id} requestNumber={r.number} onClose={() => setOrderEditOpen(false)} />
+
+      {itemsEditOpen && (
+        <RequestItemsEditModal
+          requestId={id}
+          requestType={r.request_type}
+          items={r.items}
+          rowVersion={r.row_version}
+          onClose={() => setItemsEditOpen(false)}
+          onSaved={invalidate}
+        />
+      )}
 
       {preview && (
         <FilePreviewModal

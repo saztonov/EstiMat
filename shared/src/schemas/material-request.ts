@@ -94,6 +94,25 @@ export const requestRevisionSchema = z.object({
 });
 export type RequestRevisionInput = z.infer<typeof requestRevisionSchema>;
 
+/**
+ * Правка объёмов позиций заявки снабжением (без изменения состава).
+ *
+ * quantity.positive() согласовано с CHECK (quantity > 0) на таблице: обнулить позицию нельзя,
+ * её удаление — это доработка. expectedVersion обязателен: правка идёт параллельно с
+ * формированием заказов, и «кто последний, тот и прав» здесь недопустимо.
+ * acknowledgeOverplaced — подтверждение, что объём опускается ниже уже заказанного.
+ */
+export const editRequestItemsSchema = z.object({
+  items: z.array(z.object({
+    itemId: z.string().uuid(),
+    quantity: z.number().positive(),
+  })).min(1),
+  comment: z.string().trim().min(1, 'Укажите причину изменения').max(2000),
+  acknowledgeOverplaced: z.boolean().optional(),
+  expectedVersion: z.number().int().nonnegative(),
+});
+export type EditRequestItemsInput = z.infer<typeof editRequestItemsSchema>;
+
 // Проверка графика поставки строк su10 (общая для создания и завершения доработки): у каждой
 // строки непустой график, даты уникальны, сумма по датам равна количеству. Возвращает текст
 // ошибки или null. На сервере тип заявки берётся из БД, поэтому проверка вызывается отдельно.

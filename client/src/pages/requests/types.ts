@@ -1,6 +1,7 @@
 import type { RequestStatus } from '@estimat/shared';
 
 export interface RequestItem {
+  id: string;
   name: string;
   unit: string;
   quantity: number | string;
@@ -8,6 +9,12 @@ export interface RequestItem {
   agg_key: string;
   /** Дата поставки строки (график СУ-10); null — материал без графика. */
   delivery_date: string | null;
+  /** Сколько этой позиции уже размещено в активных заказах поставщику. */
+  placed?: number | string;
+  /** Объём на момент ПЕРВОЙ правки снабжением (null — объём не менялся). */
+  quantity_original?: number | string | null;
+  quantity_changed_at?: string | null;
+  quantity_changed_by_name?: string | null;
 }
 
 export interface RequestFile {
