@@ -5,6 +5,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import {
   formLotSchema, startProcurementSchema, awardSchema, mapTenderUnit,
   upsertOfferSchema, offerFileMetaSchema, finalizeOrderSchema,
+  approveOrderSchema, rejectApprovalSchema,
   putOrderDeliveryScheduleSchema,
   assignMaterialResponsibleSchema, bulkAssignMaterialResponsibleSchema,
   setMaterialResponsiblesSchema, bulkSetMaterialResponsiblesSchema,
@@ -15,7 +16,7 @@ import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { recordAudit } from '../../lib/audit.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
 import { assertOrderAccess } from '../../lib/procurement/access.js';
-import { PROCUREMENT_ASSIGN_ROLES } from '@estimat/shared';
+import { PROCUREMENT_ASSIGN_ROLES, type Role } from '@estimat/shared';
 import type { Pool, PoolClient } from 'pg';
 import { exportSupplierOrderXlsx, SupplierOrderExportError } from '../../lib/supplier-order-export/index.js';
 import { refreshTenderLot } from '../../lib/tender/sync.js';
@@ -1261,21 +1262,14 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       let quoteId: string | null = null;
 
       if (body.source === 'manual') {
-        if (lot.procurement_method !== 'manual') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Заказ закупается через тендер' }); }
-        if (!body.quoteId) { await client.query('ROLLBACK'); return reply.status(400).send({ error: 'Не выбрано КП' }); }
-        const { rows: oRows } = await client.query(
-          `SELECT * FROM supplier_order_offers WHERE id = $1 AND order_id = $2`,
-          [body.quoteId, lot.id],
-        );
-        const offer = oRows[0];
-        if (!offer) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'КП не найдено' }); }
-        if (offer.currency !== 'RUB') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Валюта КП не поддерживается (только RUB)' }); }
-        supplierName = offer.supplier_name;
-        supplierInn = offer.supplier_inn;
-        supplierId = offer.supplier_id;
-        amount = String(offer.amount);
-        quoteId = offer.id;
-      } else {
+        // Ручное присуждение закрыто: оно присуждало поставщика напрямую, минуя согласование
+        // руководителем. Путь один — submit-approval → approve.
+        await client.query('ROLLBACK');
+        return reply.status(409).send({
+          error: 'Поставщика по КП подтверждает руководитель — отправьте заказ на согласование',
+        });
+      }
+      {
         // tender: победитель определён площадкой; сервер резолвит ставку из сохранённых результатов.
         if (lot.procurement_method !== 'tender') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Заказ закупается по почте' }); }
         if (lot.tender_status !== 'finished') { await client.query('ROLLBACK'); return reply.status(409).send({ error: 'Тендер ещё не завершён' }); }
@@ -1333,18 +1327,116 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   });
 
   // ============================================================
-  // POST /:id/finalize — оформить победителя с ценами (manual): sourcing → awarded (атомарно).
-  //   Победитель — предложение с ответом 'received' и приложенным документом. Цены вводятся ПО АГРЕГАТУ
-  //   материала (agg_key). Итог считается в SQL numeric (построчное округление до копеек), amount = ИТОГО > 0.
+  // Согласование поставщика руководителем (manual-канал)
   // ============================================================
-  fastify.post<{ Params: { id: string } }>('/:id/finalize', async (request, reply) => {
-    const user = request.currentUser;
-    const body = finalizeOrderSchema.parse(request.body);
+  //
+  // Инженер выбирает победителя и вводит цены → submit-approval переводит заказ в 'approval'
+  // (состав и резерв заморожены) → руководитель подтверждает (approve → 'awarded') или отклоняет
+  // (reject-approval → 'sourcing' с сохранением предложения).
+  //
+  // Оба прежних пути присуждения закрыты: публичный /finalize отвечает 409, а manual-ветка
+  // /award — тоже 409. Иначе согласование обходилось бы одним HTTP-запросом.
+
+  const canApprove = requireRole(...PROCUREMENT_ASSIGN_ROLES);
+
+  /**
+   * Зона ответственности для уже созданного заказа: области берём из его позиций.
+   * Раньше проверка стояла только при создании, и правку состава, поставщиков и отправку
+   * на согласование мог делать любой внутренний пользователь.
+   */
+  async function assertOrderAccessForOrder(
+    client: PoolClient,
+    user: { id: string; role: Role },
+    orderId: string,
+  ) {
+    const { rows } = await client.query(
+      `SELECT DISTINCT mr.project_id, mr.contractor_id, mri.cost_type_id, mri.agg_key
+         FROM supplier_order_items soi
+         JOIN material_request_items mri ON mri.id = soi.request_item_id
+         JOIN material_requests mr ON mr.id = mri.request_id
+        WHERE soi.order_id = $1`,
+      [orderId],
+    );
+    return assertOrderAccess(client, user.id, user.role, rows.map((r) => ({
+      projectId: r.project_id as string | null,
+      contractorId: r.contractor_id as string | null,
+      costTypeId: r.cost_type_id as string | null,
+      aggKey: r.agg_key as string,
+    })));
+  }
+
+  /**
+   * Общая часть оформления: проверка победителя, сверка множества agg_key, запись цен и расчёт
+   * итоговой суммы в SQL numeric. Возвращает данные победителя и сумму либо готовый ответ с ошибкой.
+   */
+  async function applyWinnerProposal(
+    client: PoolClient,
+    order: { id: string; project_id: string | null },
+    body: {
+      winnerOfferId: string; vatRate: string; paymentType: string;
+      lines: { aggKey: string; unitPrice: string; warrantyMonths?: number | null }[];
+    },
+  ): Promise<
+    | { ok: true; winner: Record<string, unknown>; amount: string }
+    | { ok: false; status: number; error: string }
+  > {
     const aggKeys = body.lines.map((l) => l.aggKey);
     if (new Set(aggKeys).size !== aggKeys.length) {
-      return reply.status(400).send({ error: 'Дублирующиеся материалы в ценах' });
+      return { ok: false, status: 400, error: 'Дублирующиеся материалы в ценах' };
     }
     const rate = MANUAL_VAT_RATE_VALUE[body.vatRate as ManualVatRate];
+
+    // Победитель: принадлежит заказу, ответ получен, документ приложен.
+    const { rows: wRows } = await client.query(
+      `SELECT id, supplier_id, supplier_name, supplier_inn, response_status, file_key
+         FROM supplier_order_offers WHERE id = $1 AND order_id = $2 FOR UPDATE`,
+      [body.winnerOfferId, order.id],
+    );
+    const winner = wRows[0];
+    if (!winner) return { ok: false, status: 404, error: 'Победитель не найден' };
+    if (winner.response_status !== 'received' || !winner.file_key) {
+      return { ok: false, status: 409, error: 'Победителем можно выбрать только поставщика с полученным предложением и приложенным документом' };
+    }
+
+    // Цены должны покрывать ВСЕ агрегаты заказа (точное совпадение множеств agg_key).
+    const { rows: orderKeys } = await client.query(
+      `SELECT DISTINCT agg_key FROM supplier_order_items WHERE order_id = $1`,
+      [order.id],
+    );
+    const orderSet = new Set(orderKeys.map((r) => r.agg_key as string));
+    if (orderSet.size !== aggKeys.length || aggKeys.some((k) => !orderSet.has(k))) {
+      return { ok: false, status: 400, error: 'Заполните цены по всем материалам заказа' };
+    }
+
+    await client.query('DELETE FROM supplier_order_price_lines WHERE order_id = $1', [order.id]);
+    await client.query(
+      `INSERT INTO supplier_order_price_lines (order_id, agg_key, unit_price, warranty_months)
+       SELECT $1, k, p, w FROM unnest($2::text[], $3::numeric[], $4::int[]) AS t(k, p, w)`,
+      [order.id, aggKeys, body.lines.map((l) => l.unitPrice), body.lines.map((l) => l.warrantyMonths ?? null)],
+    );
+
+    // ИТОГО в SQL numeric: построчно net=ROUND(кол-во×цена,2), НДС=ROUND(net×ставка,2), итого=net+НДС.
+    const { rows: totRows } = await client.query(
+      `WITH agg AS (
+         SELECT agg_key, SUM(quantity) AS qty FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key
+       ), line AS (
+         SELECT ROUND(a.qty * pl.unit_price, 2) AS net
+           FROM agg a JOIN supplier_order_price_lines pl ON pl.order_id = $1 AND pl.agg_key = a.agg_key
+       )
+       SELECT COALESCE(SUM(net + ROUND(net * $2::numeric, 2)), 0)::numeric(15,2) AS total FROM line`,
+      [order.id, rate],
+    );
+    const amount: string = String(totRows[0].total);
+    if (Number(amount) <= 0) {
+      return { ok: false, status: 400, error: 'Итоговая сумма заказа должна быть больше нуля' };
+    }
+    return { ok: true, winner, amount };
+  }
+
+  // POST /:id/submit-approval — отправить выбранного поставщика на согласование.
+  fastify.post<{ Params: { id: string } }>('/:id/submit-approval', async (request, reply) => {
+    const user = request.currentUser;
+    const body = finalizeOrderSchema.parse(request.body);
 
     const client = await fastify.pool.connect();
     try {
@@ -1358,81 +1450,41 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       if (!order) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       if (order.sourcing_status !== 'sourcing' || order.procurement_method === 'tender') {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Оформить можно только заказ в стадии сбора предложений' });
+        return reply.status(409).send({ error: 'Отправить на согласование можно только заказ в стадии сбора предложений' });
       }
       if (body.expectedVersion != null && body.expectedVersion !== order.row_version) {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: order.row_version });
       }
 
-      // Победитель: принадлежит заказу, ответ получен, документ приложен.
-      const { rows: wRows } = await client.query(
-        `SELECT id, supplier_id, supplier_name, supplier_inn, response_status, file_key
-           FROM supplier_order_offers WHERE id = $1 AND order_id = $2 FOR UPDATE`,
-        [body.winnerOfferId, order.id],
-      );
-      const winner = wRows[0];
-      if (!winner) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Победитель не найден' }); }
-      if (winner.response_status !== 'received' || !winner.file_key) {
-        await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Победителем можно выбрать только поставщика с полученным предложением и приложенным документом' });
-      }
+      const access = await assertOrderAccessForOrder(client, user, order.id);
+      if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
 
-      // Цены должны покрывать ВСЕ агрегаты заказа (точное совпадение множеств agg_key).
-      const { rows: orderKeys } = await client.query(
-        `SELECT DISTINCT agg_key FROM supplier_order_items WHERE order_id = $1`,
-        [order.id],
-      );
-      const orderSet = new Set(orderKeys.map((r) => r.agg_key as string));
-      if (orderSet.size !== aggKeys.length || aggKeys.some((k) => !orderSet.has(k))) {
-        await client.query('ROLLBACK');
-        return reply.status(400).send({ error: 'Заполните цены по всем материалам заказа' });
-      }
+      const applied = await applyWinnerProposal(client, order, body);
+      if (!applied.ok) { await client.query('ROLLBACK'); return reply.status(applied.status).send({ error: applied.error }); }
+      const { winner, amount } = applied;
 
-      // Записываем цены победителя по агрегату.
-      await client.query('DELETE FROM supplier_order_price_lines WHERE order_id = $1', [order.id]);
-      await client.query(
-        `INSERT INTO supplier_order_price_lines (order_id, agg_key, unit_price, warranty_months)
-         SELECT $1, k, p, w FROM unnest($2::text[], $3::numeric[], $4::int[]) AS t(k, p, w)`,
-        [order.id, aggKeys, body.lines.map((l) => l.unitPrice), body.lines.map((l) => l.warrantyMonths ?? null)],
-      );
-
-      // ИТОГО в SQL numeric: построчно net=ROUND(кол-во×цена,2), НДС=ROUND(net×ставка,2), итого=net+НДС.
-      const { rows: totRows } = await client.query(
-        `WITH agg AS (
-           SELECT agg_key, SUM(quantity) AS qty FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key
-         ), line AS (
-           SELECT ROUND(a.qty * pl.unit_price, 2) AS net
-             FROM agg a JOIN supplier_order_price_lines pl ON pl.order_id = $1 AND pl.agg_key = a.agg_key
-         )
-         SELECT COALESCE(SUM(net + ROUND(net * $2::numeric, 2)), 0)::numeric(15,2) AS total FROM line`,
-        [order.id, rate],
-      );
-      const amount: string = String(totRows[0].total);
-      if (Number(amount) <= 0) {
-        await client.query('ROLLBACK');
-        return reply.status(400).send({ error: 'Итоговая сумма заказа должна быть больше нуля' });
-      }
-
+      // Предложение фиксируем в proposed_offer_id; awarded_* останутся пустыми до подтверждения,
+      // поэтому supplier_orders_awarded_fields_check продолжает работать как страховка.
       await client.query(
         `UPDATE supplier_orders
-            SET sourcing_status = 'awarded', vat_rate = $2, payment_type = $3,
+            SET sourcing_status = 'approval', vat_rate = $2, payment_type = $3,
                 supplier_id = $4, supplier_name = $5, supplier_inn = $6, amount = $7,
-                award_source = 'manual', awarded_quote_id = $8, awarded_at = now(), awarded_by = $9,
+                proposed_offer_id = $8, approval_requested_at = now(), approval_requested_by = $9,
+                approval_comment = NULL, approved_at = NULL, approved_by = NULL,
                 row_version = row_version + 1, updated_at = now()
           WHERE id = $1`,
-        [order.id, body.vatRate, body.paymentType, winner.supplier_id, winner.supplier_name, winner.supplier_inn,
-         amount, winner.id, user.id],
+        [order.id, body.vatRate, body.paymentType, winner.supplier_id, winner.supplier_name,
+         winner.supplier_inn, amount, winner.id, user.id],
       );
       await appendOrderAudit(client, {
-        orderId: order.id, action: 'finalized', userId: user.id,
+        orderId: order.id, action: 'approval_requested', userId: user.id,
         changes: { vatRate: body.vatRate, paymentType: body.paymentType, amount, supplierName: winner.supplier_name },
         projectId: order.project_id,
       });
-      const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [order.id]);
-      for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, user.id);
+      // recalcRequestStatus не вызываем: покрытие заявок не изменилось — заказ ещё не присуждён.
       await client.query('COMMIT');
-      return { data: { id: order.id, sourcingStatus: 'awarded', amount, supplierName: winner.supplier_name } };
+      return { data: { id: order.id, sourcingStatus: 'approval', amount, supplierName: winner.supplier_name } };
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -1441,13 +1493,123 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // POST /:id/approve — подтвердить поставщика (руководитель).
+  fastify.post<{ Params: { id: string } }>('/:id/approve', { preHandler: [canApprove] }, async (request, reply) => {
+    const user = request.currentUser;
+    const body = approveOrderSchema.parse(request.body);
+
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT id, project_id, sourcing_status, row_version, proposed_offer_id, approval_requested_by
+           FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        [request.params.id],
+      );
+      const order = rows[0];
+      if (!order) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      if (order.sourcing_status !== 'approval') {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Подтвердить можно только заказ на согласовании' });
+      }
+      if (body.expectedVersion != null && body.expectedVersion !== order.row_version) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: order.row_version });
+      }
+
+      // awarded_by — кто присудил: акт присуждения и есть подтверждение, поэтому это согласующий.
+      // Автор предложения сохранён отдельно в approval_requested_by.
+      await client.query(
+        `UPDATE supplier_orders
+            SET sourcing_status = 'awarded', award_source = 'manual',
+                awarded_quote_id = proposed_offer_id, awarded_at = now(), awarded_by = $2,
+                approved_at = now(), approved_by = $2, approval_comment = $3,
+                row_version = row_version + 1, updated_at = now()
+          WHERE id = $1`,
+        [order.id, user.id, body.comment ?? null],
+      );
+      await appendOrderAudit(client, {
+        orderId: order.id, action: 'approved', userId: user.id,
+        changes: { comment: body.comment ?? null, requestedBy: order.approval_requested_by },
+        projectId: order.project_id,
+      });
+      // Заказ присуждён — покрытие заявок изменилось (su10 переходят в «Выбран поставщик»).
+      const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [order.id]);
+      for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, user.id);
+      await client.query('COMMIT');
+      return { data: { id: order.id, sourcingStatus: 'awarded' } };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  });
+
+  // POST /:id/reject-approval — отклонить с комментарием (руководитель).
+  fastify.post<{ Params: { id: string } }>('/:id/reject-approval', { preHandler: [canApprove] }, async (request, reply) => {
+    const user = request.currentUser;
+    const body = rejectApprovalSchema.parse(request.body);
+
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT id, project_id, sourcing_status, row_version FROM supplier_orders
+          WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        [request.params.id],
+      );
+      const order = rows[0];
+      if (!order) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      if (order.sourcing_status !== 'approval') {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Отклонить можно только заказ на согласовании' });
+      }
+      if (body.expectedVersion != null && body.expectedVersion !== order.row_version) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: order.row_version });
+      }
+
+      // Возврат в сбор предложений. Поставщик, сумма, цены и proposed_offer_id СОХРАНЯЮТСЯ:
+      // инженер правит своё предложение, а не набирает его заново.
+      await client.query(
+        `UPDATE supplier_orders
+            SET sourcing_status = 'sourcing', approval_comment = $2,
+                approved_at = NULL, approved_by = NULL,
+                row_version = row_version + 1, updated_at = now()
+          WHERE id = $1`,
+        [order.id, body.comment],
+      );
+      await appendOrderAudit(client, {
+        orderId: order.id, action: 'approval_rejected', userId: user.id,
+        changes: { comment: body.comment }, projectId: order.project_id,
+      });
+      await client.query('COMMIT');
+      return { data: { id: order.id, sourcingStatus: 'sourcing' } };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  });
+
+  // POST /:id/finalize — DEPRECATED. Прямое присуждение в обход согласования закрыто.
+  // Отвечаем 409, а не 404: у пользователя со старой вкладкой должно быть понятное объяснение.
+  fastify.post<{ Params: { id: string } }>('/:id/finalize', async (_request, reply) =>
+    reply.status(409).send({ error: 'Поставщика теперь подтверждает руководитель — обновите страницу' }));
+
+
   // ============================================================
   // GET /registry — единый реестр закупок (4 вида: заказ поставщику / тендер / заказ по РП / заказ
   //   поставщиком). Один скан supplier_orders (kind='sourcing' + kind='direct' JOIN заявок). Read-only.
   // ============================================================
-  fastify.get<{ Querystring: { projectId?: string; type?: string; limit?: string; offset?: string; all?: string } }>('/registry', async (request) => {
+  fastify.get<{ Querystring: { projectId?: string; type?: string; limit?: string; offset?: string; all?: string; awaitingApproval?: string } }>('/registry', async (request) => {
     const q = request.query;
     const projectId = q.projectId || null;
+    // Очередь согласования фильтруем на СЕРВЕРЕ: клиентский фильтр по загруженной странице
+    // не показал бы заказы за её пределами, а руководителю нужны все.
+    const awaitingApproval = q.awaitingApproval === '1';
     const types = q.type ? q.type.split(',').map((s) => s.trim()).filter(Boolean) : null;
     // all=1 — весь набор для отборов/дерева на клиенте (потолок + meta.truncated, как в /materials).
     const REGISTRY_ALL_CAP = 5000;
@@ -1493,9 +1655,10 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
          FROM reg
         WHERE ($1::uuid IS NULL OR reg.project_id = $1)
           AND ($2::text[] IS NULL OR reg.kind_tag = ANY($2))
+          AND ($5::boolean IS NOT TRUE OR (reg.link_kind = 'order' AND reg.status = 'approval'))
         ORDER BY reg.created_at DESC
         LIMIT $3 OFFSET $4`,
-      [projectId, types, limit, offset],
+      [projectId, types, limit, offset, awaitingApproval],
     );
     const total = rows[0] ? Number(rows[0].total) : 0;
     return { data: rows.map(({ total: _t, ...r }) => r), meta: { total, truncated: groupAll && total > rows.length } };
@@ -1600,8 +1763,16 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   // GET /:id — карточка заказа (позиции, агрегаты, заявки-источники, поставщики-предложения, цены, тендер)
   // ============================================================
   fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
+    // ФИО акторов согласования: SELECT * отдаёт только идентификаторы, а карточка показывает,
+    // кто отправил предложение и кто его подтвердил.
     const { rows } = await fastify.pool.query(
-      `SELECT * FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
+      `SELECT so.*,
+              ru.full_name AS approval_requested_by_name,
+              au.full_name AS approved_by_name
+         FROM supplier_orders so
+         LEFT JOIN users ru ON ru.id = so.approval_requested_by
+         LEFT JOIN users au ON au.id = so.approved_by
+        WHERE so.id = $1 AND so.kind = 'sourcing'`,
       [request.params.id],
     );
     const lot = rows[0];

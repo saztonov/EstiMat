@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { Table, Select, Space, Empty, Tag, Alert, App, Tooltip } from 'antd';
+import { Table, Select, Space, Empty, Tag, Alert, App, Tooltip, Checkbox } from 'antd';
 import { LinkOutlined, DeleteOutlined, StopOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   PURCHASE_KINDS, PURCHASE_KIND_LABELS,
-  SOURCING_STATUS_LABELS, REQUEST_STATUS_LABELS,
+  SOURCING_STATUS_LABELS, REQUEST_STATUS_LABELS, PROCUREMENT_ASSIGN_ROLES,
   type PurchaseKind, type SourcingStatus, type RequestStatus,
 } from '@estimat/shared';
 import { api } from '../../services/api';
@@ -47,8 +47,10 @@ export function PurchasesRegistryTab() {
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'admin';
+  const canApprove = PROCUREMENT_ASSIGN_ROLES.includes(user?.role as never);
   const [projectId, setProjectId] = useState<string | undefined>();
   const [types, setTypes] = useState<PurchaseKind[]>([]);
+  const [awaiting, setAwaiting] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [colFilters, setColFilters] = useState<ColumnFilters>({});
@@ -85,13 +87,14 @@ export function PurchasesRegistryTab() {
     const p = new URLSearchParams();
     if (projectId) p.set('projectId', projectId);
     if (types.length) p.set('type', types.join(','));
+    if (awaiting) p.set('awaitingApproval', '1');
     if (needFull) p.set('all', '1');
     else { p.set('limit', String(pageSize)); p.set('offset', String((page - 1) * pageSize)); }
     return p.toString();
-  }, [projectId, types, page, pageSize, needFull]);
+  }, [projectId, types, page, pageSize, needFull, awaiting]);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['purchases-registry', projectId ?? '', types.join(','), needFull ? 'all' : page, needFull ? 0 : pageSize],
+    queryKey: ['purchases-registry', projectId ?? '', types.join(','), awaiting, needFull ? 'all' : page, needFull ? 0 : pageSize],
     queryFn: () => api.get<{ data: RegistryRow[]; meta: { total: number; truncated?: boolean } }>(`/supplier-orders/registry?${qs}`),
   });
   const rows = data?.data ?? [];
@@ -179,6 +182,12 @@ export function PurchasesRegistryTab() {
         <Select allowClear mode="multiple" placeholder="Все виды" style={{ minWidth: 260 }}
           value={types} onChange={(v) => { setTypes(v); setPage(1); }}
           options={PURCHASE_KINDS.map((k) => ({ value: k, label: PURCHASE_KIND_LABELS[k] }))} />
+        {/* Очередь согласования: фильтр серверный, иначе заказы за пределами страницы не видны. */}
+        {canApprove && (
+          <Checkbox checked={awaiting} onChange={(e) => { setAwaiting(e.target.checked); setPage(1); }}>
+            Ожидают согласования
+          </Checkbox>
+        )}
         <div style={{ marginLeft: 'auto' }}>
           <ColumnSettingsButton store={purchasesRegistryColumnsStore} />
         </div>

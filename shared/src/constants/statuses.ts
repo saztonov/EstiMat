@@ -178,6 +178,7 @@ export const PAYMENT_REQUEST_STATUS_LABELS: Record<PaymentRequestStatus, string>
 export const SOURCING_STATUSES = [
   'forming',
   'sourcing',
+  'approval',
   'awarded',
   'cancel_pending',
   'cancelled',
@@ -188,6 +189,7 @@ export type SourcingStatus = (typeof SOURCING_STATUSES)[number];
 export const SOURCING_STATUS_LABELS: Record<SourcingStatus, string> = {
   forming: 'Формируется',
   sourcing: 'Сбор предложений',
+  approval: 'На согласовании',
   awarded: 'Поставщик выбран',
   cancel_pending: 'Отмена тендера',
   cancelled: 'Отменён',
@@ -197,6 +199,7 @@ export const SOURCING_STATUS_LABELS: Record<SourcingStatus, string> = {
 export const SOURCING_STATUS_TONE: Record<SourcingStatus, 'info' | 'warning' | 'accent' | 'success' | 'done'> = {
   forming: 'info',
   sourcing: 'accent',
+  approval: 'warning',
   awarded: 'success',
   cancel_pending: 'warning',
   cancelled: 'done',

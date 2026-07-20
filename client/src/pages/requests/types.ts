@@ -441,6 +441,18 @@ export interface SupplierOrderDetail extends SupplierLotRow {
   tender_last_error: string | null;
   tender_sync_status: string | null;
   tender_deadline_at: string | null;
+  /** Согласование поставщика: кто отправил предложение и когда. */
+  approval_requested_at: string | null;
+  approval_requested_by: string | null;
+  approval_requested_by_name: string | null;
+  /** Кто подтвердил (или NULL, если решение ещё не принято либо было отклонение). */
+  approved_at: string | null;
+  approved_by: string | null;
+  approved_by_name: string | null;
+  /** Комментарий решения: при отклонении — что исправить, при подтверждении — необязателен. */
+  approval_comment: string | null;
+  /** Выбранное предложение до присуждения; при отклонении сохраняется. */
+  proposed_offer_id: string | null;
   items: SupplierLotItem[];
   aggItems: OrderAggItem[];
   sources: SupplierLotSource[];

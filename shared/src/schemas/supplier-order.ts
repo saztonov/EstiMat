@@ -142,6 +142,22 @@ export const finalizeOrderSchema = z.object({
 });
 export type FinalizeOrderInput = z.infer<typeof finalizeOrderSchema>;
 
+// ===== Согласование поставщика руководителем =====
+
+/** Подтверждение выбранного поставщика. Комментарий необязателен — решение и так фиксируется. */
+export const approveOrderSchema = z.object({
+  comment: z.string().max(2000).nullish(),
+  expectedVersion: z.number().int().nonnegative().optional(),
+});
+export type ApproveOrderInput = z.infer<typeof approveOrderSchema>;
+
+/** Отклонение: комментарий обязателен — инженеру нужно понимать, что исправлять. */
+export const rejectApprovalSchema = z.object({
+  comment: z.string().trim().min(1, 'Укажите причину отклонения').max(2000),
+  expectedVersion: z.number().int().nonnegative().optional(),
+});
+export type RejectApprovalInput = z.infer<typeof rejectApprovalSchema>;
+
 // ===== Назначение ответственного за материал (override поверх ответственных по категории) =====
 
 // Назначить/сбросить ответственного за одну строку свода материалов. userId=null — сброс

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   Modal, Steps, Tabs, Table, Button, Space, Input, InputNumber, Select, Radio, Tag, Empty, Divider,
-  Popconfirm, Dropdown, Upload, Alert, Descriptions, App,
+  Popconfirm, Dropdown, Upload, Alert, Descriptions, App, Form, Typography,
 } from 'antd';
 import {
   ShoppingCartOutlined, DownloadOutlined, UploadOutlined, DeleteOutlined, TrophyOutlined,
@@ -13,11 +13,16 @@ import {
   MANUAL_VAT_RATES, MANUAL_VAT_RATE_LABELS, MANUAL_VAT_RATE_VALUE,
   PAYMENT_TYPES, PAYMENT_TYPE_LABELS,
   OFFER_RESPONSE_STATUS_LABELS, OFFER_DOC_TYPE_LABELS,
+  PROCUREMENT_ASSIGN_ROLES,
   type ManualVatRate, type PaymentType,
 } from '@estimat/shared';
 import { api } from '../../services/api';
+import { useAuthStore } from '../../store/authStore';
+import { modalWidth } from '../../lib/modalWidth';
 import { money, round4 } from './requestConstants';
 import { DeliveryGantt, type GanttMaterial } from '../contractors/DeliveryGantt';
+
+const { Text } = Typography;
 import { OrderScheduleEditor, validateOrderSchedule, type OrderScheduleLine, type OrderScheduleValue } from './OrderScheduleEditor';
 import type { Su10MaterialRow, SupplierLotRow, SupplierOrderDetail, OrderOffer, OrderAggItem } from './types';
 
@@ -233,7 +238,8 @@ function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: st
   const number = `З-${String(order.order_no ?? 0).padStart(3, '0')}`;
   const isTender = order.procurement_method === 'tender';
   const status = order.sourcing_status;
-  const stepIndex = status === 'forming' ? 0 : status === 'awarded' ? 2 : 1;
+  // Шаги: Состав → Поставщики → Оформление. Согласование и присуждение — последний шаг.
+  const stepIndex = status === 'forming' ? 0 : (status === 'awarded' || status === 'approval') ? 2 : 1;
 
   async function freezeAndExport() {
     try {
@@ -316,7 +322,24 @@ function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: st
       )}
 
       {/* ===== Оформлен (awarded) — read-only ===== */}
-      {!isTender && status === 'awarded' && <AwardedView order={order} number={number} />}
+      {!isTender && status === 'approval' && (
+        <ApprovalStage order={order} number={number} onDone={refetch} />
+      )}
+
+      {!isTender && status === 'awarded' && (
+        <>
+          <ProposalView order={order} />
+          {(order.approved_by_name || order.approval_comment) && (
+            <Alert
+              type="success" showIcon style={{ marginTop: 12 }}
+              message={order.approved_by_name
+                ? `Согласовал: ${order.approved_by_name}${order.approved_at ? ` · ${new Date(order.approved_at).toLocaleDateString('ru-RU')}` : ''}`
+                : 'Поставщик согласован'}
+              description={order.approval_comment ?? undefined}
+            />
+          )}
+        </>
+      )}
 
       {(status === 'cancelled' || status === 'no_award') && (
         <Alert type="warning" showIcon message="Заказ завершён без поставщика — материалы возвращены в свод" />
@@ -498,8 +521,9 @@ function SourcingStages({
     onError: (e: Error) => message.error(e.message),
   });
 
+  // Прямое присуждение закрыто: предложение уходит руководителю на согласование.
   const finalize = useMutation({
-    mutationFn: (body: unknown) => api.post(`/supplier-orders/${order.id}/finalize`, body),
+    mutationFn: (body: unknown) => api.post(`/supplier-orders/${order.id}/submit-approval`, body),
     onSuccess: () => { message.success('Заказ оформлен'); refetch(); onClose(); },
     onError: (e: Error) => message.error(e.message),
   });
@@ -582,6 +606,9 @@ function SourcingStages({
     },
   ];
 
+  // Отклонённое предложение возвращается сюда: показываем причину, чтобы было что исправлять.
+  const rejected = !!order.approval_comment && !order.approved_at;
+
   function submitFinalize() {
     if (!winnerId) return message.warning('Выберите победителя');
     const lines = order.aggItems.map((a) => ({ aggKey: a.agg_key, unitPrice: priceOf(a.agg_key).price, warrantyMonths: priceOf(a.agg_key).warranty }));
@@ -607,6 +634,14 @@ function SourcingStages({
 
       {winnerId && (
         <>
+          {rejected && (
+            <Alert
+              type="warning" showIcon style={{ marginTop: 12 }}
+              message="Отклонено руководителем"
+              description={order.approval_comment}
+            />
+          )}
+
           <Divider orientation="left" plain>Оформление победителя</Divider>
           <Space style={{ marginBottom: 12 }} size="large">
             <span>НДС: <Select value={vatRate} onChange={setVatRate} style={{ width: 130 }}
@@ -623,7 +658,7 @@ function SourcingStages({
             )}
           />
           <div style={{ textAlign: 'right', marginTop: 16 }}>
-            <Button type="primary" loading={finalize.isPending} onClick={submitFinalize}>Оформить заказ</Button>
+            <Button type="primary" loading={finalize.isPending} onClick={submitFinalize}>Отправить на согласование</Button>
           </div>
         </>
       )}
@@ -716,8 +751,99 @@ function AddSupplierModal({
   );
 }
 
-// ---- Read-only после оформления ----
-function AwardedView({ order, number }: { order: SupplierOrderDetail; number: string }) {
+/**
+ * Этап согласования: руководитель видит предложение инженера и принимает решение.
+ * Разметка предложения общая с оформленным заказом (ProposalView) — это одни и те же условия,
+ * только до и после подтверждения.
+ */
+function ApprovalStage({ order, number, onDone }: {
+  order: SupplierOrderDetail;
+  number: string;
+  onDone: () => void;
+}) {
+  const { message } = App.useApp();
+  const role = useAuthStore((s) => s.user?.role);
+  const canAct = PROCUREMENT_ASSIGN_ROLES.includes(role as never);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectForm] = Form.useForm<{ comment: string }>();
+
+  const act = useMutation({
+    mutationFn: (v: { url: string; body: unknown }) => api.post(v.url, v.body),
+    onSuccess: () => onDone(),
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  async function submitReject() {
+    const v = await rejectForm.validateFields();
+    await act.mutateAsync({
+      url: `/supplier-orders/${order.id}/reject-approval`,
+      body: { comment: v.comment, expectedVersion: order.row_version },
+    });
+    setRejectOpen(false);
+    rejectForm.resetFields();
+  }
+
+  return (
+    <>
+      <Alert
+        type="warning" showIcon style={{ marginBottom: 12 }}
+        message="Заказ ждёт подтверждения руководителя"
+        description={order.approval_requested_by_name
+          ? `Отправил: ${order.approval_requested_by_name}${order.approval_requested_at ? ` · ${new Date(order.approval_requested_at).toLocaleString('ru-RU')}` : ''}`
+          : undefined}
+      />
+
+      <ProposalView order={order} />
+
+      <Space style={{ marginTop: 12 }}>
+        {canAct ? (
+          <>
+            <Popconfirm
+              title="Подтвердить поставщика?"
+              description="Заказ будет присуждён на этих условиях."
+              okText="Подтвердить" cancelText="Отмена"
+              onConfirm={() => act.mutate({
+                url: `/supplier-orders/${order.id}/approve`,
+                body: { expectedVersion: order.row_version },
+              })}
+            >
+              <Button type="primary" loading={act.isPending}>Подтвердить</Button>
+            </Popconfirm>
+            <Button danger onClick={() => setRejectOpen(true)}>Отклонить</Button>
+          </>
+        ) : (
+          <Text type="secondary">Подтверждение доступно руководителю.</Text>
+        )}
+      </Space>
+
+      <Modal
+        title={`Отклонить предложение по заказу ${number}`}
+        open={rejectOpen}
+        onCancel={() => setRejectOpen(false)}
+        onOk={submitReject}
+        confirmLoading={act.isPending}
+        okText="Отклонить"
+        okButtonProps={{ danger: true }}
+        width={modalWidth(480)}
+      >
+        <Form form={rejectForm} layout="vertical">
+          <Form.Item
+            name="comment" label="Что не так"
+            rules={[{ required: true, whitespace: true, message: 'Укажите причину отклонения' }]}
+          >
+            <Input.TextArea rows={3} maxLength={2000} />
+          </Form.Item>
+        </Form>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          Заказ вернётся к сбору предложений. Поставщик и цены сохранятся — инженер сможет их поправить.
+        </Text>
+      </Modal>
+    </>
+  );
+}
+
+// ---- Условия предложения: общий вид для согласования и присуждённого заказа ----
+function ProposalView({ order }: { order: SupplierOrderDetail }) {
   const rate = order.vat_rate ? Number(MANUAL_VAT_RATE_VALUE[order.vat_rate as ManualVatRate]) : 0;
   const priceByKey = new Map(order.priceLines.map((p) => [p.agg_key, p]));
   const cols: ColumnsType<OrderAggItem> = [
