@@ -239,15 +239,27 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       fastify.pool.query(
         // id нужен модалке правки объёмов, placed — чтобы показать «в заказах» без второго
         // запроса, quantity_* — для подсветки изменённых строк и подсказки «было столько».
+        //
+        // quantity_* берутся из ПОСЛЕДНЕЙ правки в истории, а не из денормализованных колонок
+        // позиции: те хранили ПЕРВЫЙ объём, и подсказка после второй правки показывала «было 10»,
+        // хотя предыдущим значением было 8. Колонки удалены (0076) — источник теперь один.
         `SELECT mri.id, mri.material_name AS name, mri.unit, mri.quantity, mri.agg_key,
                 to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
                 ct.name AS cost_type_name,
-                mri.quantity_original, mri.quantity_changed_at,
-                qcu.full_name AS quantity_changed_by_name,
+                q.quantity_from AS quantity_original,
+                q.changed_at    AS quantity_changed_at,
+                qcu.full_name   AS quantity_changed_by_name,
                 COALESCE(pl.qty, 0)::numeric AS placed
            FROM material_request_items mri
            LEFT JOIN cost_types ct ON ct.id = mri.cost_type_id
-           LEFT JOIN users qcu ON qcu.id = mri.quantity_changed_by
+           LEFT JOIN LATERAL (
+             SELECT e.quantity_from, e.changed_at, e.changed_by
+               FROM material_request_quantity_edits e
+              WHERE e.request_item_id = mri.id
+              ORDER BY e.changed_at DESC, e.id DESC
+              LIMIT 1
+           ) q ON true
+           LEFT JOIN users qcu ON qcu.id = q.changed_by
            LEFT JOIN (
              SELECT soi.request_item_id, SUM(soi.quantity) AS qty
                FROM supplier_order_items soi
@@ -285,10 +297,23 @@ export default async function requestRoutes(fastify: FastifyInstance) {
           WHERE r.request_id = $1 ORDER BY r.requested_at`,
         [mr.id],
       ),
+      // Подробности правок объёмов подмешиваются из material_request_quantity_edits, а не из
+      // самой записи журнала: массив items там больше не хранится (одно хранилище вместо трёх),
+      // иначе такие записи в ленте стали бы пустыми. Форма changes.items для клиента прежняя.
       fastify.pool.query(
-        `SELECT a.action, a.changes, a.created_at, u.full_name AS actor_name
+        `SELECT a.action, a.created_at, u.full_name AS actor_name,
+                CASE WHEN e.items IS NULL THEN a.changes
+                     ELSE a.changes || jsonb_build_object('items', e.items) END AS changes
            FROM audit_log a
            LEFT JOIN users u ON u.id = a.user_id
+           LEFT JOIN LATERAL (
+             SELECT jsonb_agg(jsonb_build_object(
+                      'itemId', q.request_item_id, 'name', q.material_name,
+                      'from', q.quantity_from::text, 'to', q.quantity_to::text)
+                    ORDER BY q.material_name) AS items
+               FROM material_request_quantity_edits q
+              WHERE q.audit_id = a.id
+           ) e ON true
           WHERE a.entity_type = 'material_request' AND a.entity_id = $1
           ORDER BY a.created_at`,
         [mr.id],
@@ -942,18 +967,19 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         }
 
         // Обновляем только реально изменившиеся строки; сравнение в SQL numeric — без потери
-        // точности через JS Number. quantity_original фиксирует ПЕРВЫЙ объём, а не предыдущий.
+        // точности через JS Number.
+        //
+        // «Было» берём из locked (строки прочитаны и заблокированы ДО обновления), а не из
+        // RETURNING: прежняя реализация возвращала quantity_original, которое фиксирует ПЕРВЫЙ
+        // объём, а не предыдущий — со второй правки история показывала «10 → 6» вместо «8 → 6».
+        const wasMap = new Map(locked.map((r) => [r.id as string, String(r.quantity)]));
         const { rows: updated } = await client.query(
           `UPDATE material_request_items mri
-              SET quantity = v.q::numeric,
-                  quantity_original = COALESCE(mri.quantity_original, mri.quantity),
-                  quantity_changed_at = now(),
-                  quantity_changed_by = $3
+              SET quantity = v.q::numeric
              FROM unnest($1::uuid[], $2::numeric[]) AS v(id, q)
             WHERE mri.id = v.id AND mri.quantity <> v.q::numeric
-        RETURNING mri.id, mri.material_name, mri.quantity::numeric AS quantity,
-                  mri.quantity_original::numeric AS was`,
-          [ids, body.items.map((i) => String(i.quantity)), user.id],
+        RETURNING mri.id, mri.material_name, mri.quantity::numeric AS quantity`,
+          [ids, body.items.map((i) => String(i.quantity))],
         );
         if (updated.length === 0) {
           await client.query('ROLLBACK');
@@ -971,20 +997,15 @@ export default async function requestRoutes(fastify: FastifyInstance) {
           return reply.status(409).send({ error: 'Заявка изменена, обновите страницу', rowVersion: mr.row_version });
         }
 
-        await appendRequestAudit(client, {
+        // Запись журнала = ОПЕРАЦИЯ. Построчные подробности больше в неё не кладём — они уходят
+        // в material_request_quantity_edits и подмешиваются обратно при чтении истории. Здесь
+        // остаётся то, что относится к операции целиком: причина и признак перезаказа.
+        const auditId = await appendRequestAudit(client, {
           requestId: mr.id,
           action: 'items_quantity_updated',
           userId: user.id,
           changes: {
             comment: body.comment,
-            // Количества строками — как и всюду в финансовой части, без потери точности.
-            items: updated.map((r) => ({
-              itemId: r.id,
-              name: r.material_name,
-              from: String(r.was),
-              to: String(r.quantity),
-              placed: String(placedMap.get(r.id as string)?.placed ?? 0),
-            })),
             overplaced: overplaced.length
               ? overplaced.map((o) => ({ ...o, newQuantity: String(o.newQuantity) }))
               : undefined,
@@ -992,6 +1013,24 @@ export default async function requestRoutes(fastify: FastifyInstance) {
           estimateId: mr.estimate_id,
           projectId: mr.project_id,
         });
+
+        // Количества строками — как и всюду в финансовой части, без потери точности через Number.
+        await client.query(
+          `INSERT INTO material_request_quantity_edits
+                 (audit_id, request_item_id, request_id, material_name, quantity_from, quantity_to, changed_by)
+           SELECT $1, v.item_id, $2, v.name, v.q_from::numeric, v.q_to::numeric, $3
+             FROM unnest($4::uuid[], $5::text[], $6::text[], $7::text[]) AS v(item_id, name, q_from, q_to)
+           -- Указываем КОЛОНКИ, а не имя ограничения: уникальность задана индексом, а
+           -- ON CONFLICT ON CONSTRAINT принимает только настоящий constraint.
+           ON CONFLICT (audit_id, request_item_id) DO NOTHING`,
+          [
+            auditId, mr.id, user.id,
+            updated.map((r) => r.id),
+            updated.map((r) => r.material_name),
+            updated.map((r) => wasMap.get(r.id as string) ?? String(r.quantity)),
+            updated.map((r) => String(r.quantity)),
+          ],
+        );
 
         // Покрытие изменилось: заявка могла стать полностью закрытой заказами (или наоборот).
         const status = await recalcRequestStatus(client, mr.id, user.id);

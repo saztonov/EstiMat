@@ -142,10 +142,12 @@ export async function appendRequestAudit(
     estimateId?: string | null;
     projectId?: string | null;
   },
-): Promise<void> {
-  await db.query(
+  // Возвращает id записи журнала: он же — идентификатор пользовательской ОПЕРАЦИИ, к которой
+  // привязываются построчные подробности (material_request_quantity_edits).
+): Promise<string> {
+  const { rows } = await db.query(
     `INSERT INTO audit_log (entity_type, entity_id, action, user_id, changes, estimate_id, project_id)
-     VALUES ('material_request', $1, $2, $3, $4, $5, $6)`,
+     VALUES ('material_request', $1, $2, $3, $4, $5, $6) RETURNING id`,
     [
       params.requestId,
       params.action,
@@ -155,4 +157,5 @@ export async function appendRequestAudit(
       params.projectId ?? null,
     ],
   );
+  return rows[0].id as string;
 }
