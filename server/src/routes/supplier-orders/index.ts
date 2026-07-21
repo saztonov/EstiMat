@@ -15,7 +15,7 @@ import { config } from '../../config.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { recordAudit } from '../../lib/audit.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
-import { assertOrderAccess, assertOrderAccessForOrder } from '../../lib/procurement/access.js';
+import { assertOrderAccess, assertOrderAccessForOrder, decideOrderAccess } from '../../lib/procurement/access.js';
 import { resolveResponsibles, scopeKey } from '../../lib/procurement/responsibles.js';
 import { PROCUREMENT_ASSIGN_ROLES, type Role } from '@estimat/shared';
 import type { Pool, PoolClient } from 'pg';
@@ -180,7 +180,6 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     );
 
     const total = rows.length ? Number(rows[0].total_count) : 0;
-    const isAdmin = request.currentUser.role === 'admin';
 
     // Ответственные — одним запросом по областям уже схлопнутых строк. resolveResponsibles сам
     // дедуплицирует области: разные типы заявок с одним материалом делят одно назначение.
@@ -202,15 +201,16 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         const respAssignedId = resp?.assignedUserId ?? null;
         const respEffectiveId = resp?.effectiveUserId ?? null;
         const list = (items ?? []) as { request_item_id: string; request_id: string; request_no: number | null }[];
-        // Право вести заказ считаем здесь, по тому же правилу, что и assertOrderAccess: раньше
-        // оно дублировалось на клиенте (isEligible) и неизбежно разъехалось бы с сервером.
-        const canOrder = isAdmin
-          ? true
-          : r.cost_type_id == null
-            ? false
-            : respAssignedId == null
-              || respAssignedId === request.currentUser.id
-              || respEffectiveId === request.currentUser.id;
+        // Право вести заказ считает ТОТ ЖЕ предикат, что и мутации, а не его пересказ: копия
+        // правила, стоявшая здесь, признавала оверрайд только за admin, и руководитель вне своей
+        // зоны получал can_order = false — строку нельзя было отметить, хотя сама мутация его
+        // пропускала. Теперь расхождение невозможно конструктивно.
+        const canOrder = decideOrderAccess({
+          role: request.currentUser.role,
+          userId: request.currentUser.id,
+          verdicts: [{ assignedUserId: respAssignedId, effectiveUserId: respEffectiveId }],
+          hasScopeWithoutCostType: r.cost_type_id == null,
+        }).ok;
         // Заявки схлопнутой строки: столбец «Заявка» стал многозначным.
         const seen = new Map<string, { id: string; no: number | null }>();
         for (const it of list) if (!seen.has(it.request_id)) seen.set(it.request_id, { id: it.request_id, no: it.request_no });

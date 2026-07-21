@@ -15,6 +15,8 @@ export interface TableColumnsState {
   setHidden: (key: string, hidden: boolean) => void;
   setOrder: (order: string[]) => void;
   toggleGroupBy: (key: string, on: boolean) => void;
+  /** Снять всю группировку, не трогая порядок и видимость столбцов (кнопка «Сбросить иерархию»). */
+  clearGroupBy: () => void;
   /** «По умолчанию»: исходный порядок/видимость из defs + плоский вид. */
   reset: () => void;
 }
@@ -41,6 +43,7 @@ function createStore(key: string, defaultOrder: string[], version: number) {
         setOrder: (order) => set({ order }),
         toggleGroupBy: (k, on) =>
           set((s) => ({ groupBy: on ? (s.groupBy.includes(k) ? s.groupBy : [...s.groupBy, k]) : s.groupBy.filter((g) => g !== k) })),
+        clearGroupBy: () => set({ groupBy: [] }),
         reset: () => set({ order: [...defaultOrder], hidden: {}, groupBy: [] }),
       }),
       { name: key, version },

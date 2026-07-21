@@ -339,6 +339,8 @@ export interface SupplierLotItem {
   material_name: string;
   unit: string;
   quantity: string | number;
+  /** Ключ материала: по нему ведётся график поставок и считается дозаказ в существующий заказ. */
+  agg_key: string;
   contractor_id: string | null;
   contractor_name: string | null;
   request_no: number | null;

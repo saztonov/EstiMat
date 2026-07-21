@@ -17,7 +17,8 @@
       "mcp__postgres_smeta__query",
       "PowerShell(npm run -w client typecheck)",
       "PowerShell(npm run build 2>&1)",
-      "PowerShell(npm run test:tables)"
+      "PowerShell(npm run test:tables)",
+      "PowerShell(npx tsc --noEmit -p client/tsconfig.json)"
     ]
   }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Select, Table, Button, Space, Empty, Tag, Tooltip, Badge, Alert, Dropdown, App, Modal, Typography } from 'antd';
-import { ShoppingCartOutlined, ReloadOutlined, FilterOutlined, DownOutlined, TeamOutlined } from '@ant-design/icons';
+import { Select, Table, Button, Space, Empty, Tag, Tooltip, Badge, Alert, Dropdown, App, Modal, Typography, Popover } from 'antd';
+import { ShoppingCartOutlined, ReloadOutlined, FilterOutlined, DownOutlined, TeamOutlined, ClearOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -130,6 +130,7 @@ export function SU10MaterialsTab() {
   const [contractorId, setContractorId] = usePersistedState<string | undefined>(`${KEY}contractorId`, undefined);
   const [requestType, setRequestType] = usePersistedState<string | undefined>(`${KEY}requestType`, 'su10');
   const [categoryId, setCategoryId] = usePersistedState<string | undefined>(`${KEY}categoryId`, undefined);
+  const [assigned, setAssigned] = usePersistedState<'all' | 'mine'>(`${KEY}assigned`, 'all');
   const [filtersOpen, setFiltersOpen] = usePersistedState<boolean>(`${KEY}filtersOpen`, false);
   const [limit, setLimit] = useState(100);
   const [offset, setOffset] = useState(0);
@@ -148,6 +149,7 @@ export function SU10MaterialsTab() {
   const hidden = materialsColumnsStore.useStore((s) => s.hidden);
   const groupBy = materialsColumnsStore.useStore((s) => s.groupBy);
   const toggleGroupBy = materialsColumnsStore.useStore((s) => s.toggleGroupBy);
+  const clearGroupBy = materialsColumnsStore.useStore((s) => s.clearGroupBy);
   const prefs = materialsColumnsStore.resolve(order, hidden);
 
   const assignableQ = useQuery({
@@ -185,8 +187,9 @@ export function SU10MaterialsTab() {
   const levels = levelsFromOrder(prefs.order, groupBy, prefs.hidden, levelMap);
   const treeMode = levels.length > 0;
 
-  // Отбор и дерево строятся по всему набору → грузим all=1, когда они активны.
-  const needFull = peek || treeMode || hasActiveColumnFilters(colFilters, prefs.hidden);
+  // Отбор и дерево строятся по всему набору → грузим all=1, когда они активны. «Назначенные мне»
+  // тоже отбирается на клиенте, поэтому без полного набора он резал бы только текущую страницу.
+  const needFull = peek || treeMode || assigned === 'mine' || hasActiveColumnFilters(colFilters, prefs.hidden);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -246,7 +249,9 @@ export function SU10MaterialsTab() {
     project: { kind: 'multi', getText: (r) => r.project_name },
     contractor: { kind: 'multi', getText: (r) => r.contractor_name },
     // Список ФИО с поиском — раньше это было поле ввода, и выбрать ответственного было нельзя.
-    resp: { kind: 'multi', getText: (r) => r.responsible?.full_name ?? '' },
+    // emptyLabel добавляет вариант для строк без ответственного: без него они не попадали ни в
+    // один вариант и отобрать их можно было только группировкой.
+    resp: { kind: 'multi', getText: (r) => r.responsible?.full_name ?? '', emptyLabel: '— не назначены' },
     // Многозначные ячейки схлопнутой строки: совпадение по любой заявке / любой дате.
     req: { kind: 'multi', getTexts: (r) => r.requests.map((q) => requestNumber(r.project_code, q.no ?? 0)) },
     unit: { kind: 'multi', getText: (r) => r.unit },
@@ -256,10 +261,12 @@ export function SU10MaterialsTab() {
     category: { kind: 'multi', getText: (r) => r.category_name },
   }), []);
 
-  const filtered = useMemo(
-    () => applyColumnFilters(rows, colFilters, filterSpecs, prefs.hidden),
-    [rows, colFilters, filterSpecs, prefs.hidden],
-  );
+  const filtered = useMemo(() => {
+    const byColumns = applyColumnFilters(rows, colFilters, filterSpecs, prefs.hidden);
+    // «Назначенные мне» — по эффективному ответственному, то есть с учётом замещения: заместитель
+    // в свой период видит здесь и то, что ведёт за коллегу.
+    return assigned === 'mine' ? byColumns.filter((r) => r.responsible?.id === user?.id) : byColumns;
+  }, [rows, colFilters, filterSpecs, prefs.hidden, assigned, user?.id]);
 
   const tableData = useMemo<MaterialTableRow[]>(
     () => (treeMode ? groupRows(filtered, levels) : filtered),
@@ -288,7 +295,31 @@ export function SU10MaterialsTab() {
   // Заказ формируется по одному объекту; для назначения ответственного это ограничение не нужно.
   const orderProjectIds = new Set(orderableRows.map((r) => r.project_id));
   const orderProjectId = orderProjectIds.size === 1 ? [...orderProjectIds][0] ?? null : null;
-  const hiddenActiveCount = (requestType ? 1 : 0) + (categoryId ? 1 : 0);
+  const hiddenActiveCount = (requestType ? 1 : 0) + (categoryId ? 1 : 0) + (assigned === 'mine' ? 1 : 0);
+
+  // Что вообще можно сбросить: сюда входят и скрытые за кнопкой «Фильтры» отборы, иначе кнопка
+  // выглядела бы неактивной при действующем, но не видном фильтре.
+  const filtersDirty =
+    !!projectId || !!contractorId || !!categoryId || requestType !== 'su10'
+    || assigned === 'mine' || hasActiveColumnFilters(colFilters, prefs.hidden);
+
+  function resetFilters() {
+    setProjectId(undefined);
+    setContractorId(undefined);
+    setCategoryId(undefined);
+    setRequestType('su10'); // дефолт вкладки, а не «все виды»: свод снабжения ведётся по СУ-10
+    setAssigned('all');
+    setColFilters({});
+    setOffset(0);
+    resetSelection();
+  }
+
+  function resetHierarchy() {
+    clearGroupBy();
+    setExpandedKeys([]);
+    setOffset(0);
+    resetSelection();
+  }
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['su10-materials'] });
 
@@ -514,6 +545,24 @@ export function SU10MaterialsTab() {
             Фильтры
           </Button>
         </Badge>
+        <Popover
+          trigger="click"
+          placement="bottomLeft"
+          content={
+            <Space direction="vertical" size={4} style={{ minWidth: 180 }}>
+              <Button type="text" block style={{ textAlign: 'left' }} disabled={!filtersDirty} onClick={resetFilters}>
+                Сбросить фильтры
+              </Button>
+              <Button type="text" block style={{ textAlign: 'left' }} disabled={groupBy.length === 0} onClick={resetHierarchy}>
+                Сбросить иерархию
+              </Button>
+            </Space>
+          }
+        >
+          <Tooltip title="Сброс">
+            <Button icon={<ClearOutlined />} aria-label="Сброс" />
+          </Tooltip>
+        </Popover>
         <div style={{ flex: 1 }} />
 
         {canAssign && (
@@ -564,6 +613,14 @@ export function SU10MaterialsTab() {
             value={categoryId} onChange={(v) => changeFilter(setCategoryId, v)}
             optionFilterProp="label"
             options={(facets?.categories ?? []).map((c) => ({ value: c.id, label: c.name ?? '—' }))}
+          />
+          <Select
+            style={{ width: 190 }}
+            value={assigned} onChange={(v) => changeFilter(setAssigned, v)}
+            options={[
+              { value: 'all', label: 'Все ответственные' },
+              { value: 'mine', label: 'Назначенные мне' },
+            ]}
           />
           {viewCount > 0 && <Tag>Отборы/группировка в заголовках: {viewCount}</Tag>}
         </div>

@@ -1,5 +1,6 @@
 import { Card, Tabs } from 'antd';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
+import { VersionHistoryButton } from '../../components/VersionHistoryButton';
 import { RequestsListTab } from './RequestsListTab';
 import { RpRegistryTab } from './RpRegistryTab';
 import { SU10MaterialsTab } from './SU10MaterialsTab';
@@ -16,6 +17,7 @@ export function RequestsPage() {
   return (
     <Card
       title="Заявки"
+      extra={<VersionHistoryButton />}
       className="estimat-tabs-card"
       style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
       styles={{

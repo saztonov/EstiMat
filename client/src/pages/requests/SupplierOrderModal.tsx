@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
-  Modal, Steps, Tabs, Table, Button, Space, Input, InputNumber, Select, Radio, Tag, Empty, Divider,
+  Modal, Steps, Tabs, Table, Button, Space, Input, InputNumber, Select, Radio, Tag, Empty, Divider, Spin,
   Popconfirm, Dropdown, Upload, Alert, Descriptions, App, Form, Typography,
 } from 'antd';
 import {
@@ -23,7 +23,15 @@ import { money, round4 } from './requestConstants';
 import { DeliveryGantt, type GanttMaterial } from '../contractors/DeliveryGantt';
 
 const { Text } = Typography;
-import { OrderScheduleEditor, validateOrderSchedule, type OrderScheduleLine, type OrderScheduleValue } from './OrderScheduleEditor';
+import { OrderScheduleEditor } from './OrderScheduleEditor';
+import {
+  validateOrderSchedule,
+  type OrderScheduleLine, type OrderScheduleValue, type ScheduleMeta,
+} from './orderSchedule';
+import {
+  capacitiesOf, aggregateScheduleLines, prefillFromRows, mergeSchedulePrefill, normalizeSchedule,
+  distributeToRequestItems,
+} from './orderDistribution';
 import type { Su10MaterialRow, SupplierLotRow, SupplierOrderDetail, OrderOffer, OrderAggItem } from './types';
 
 const RESP_COLOR: Record<string, string> = { pending: 'default', received: 'green', no_response: 'warning' };
@@ -74,135 +82,176 @@ function CreateStep({
   const [mode, setMode] = useState<'new' | 'existing'>('new');
   const [title, setTitle] = useState('');
   const [orderId, setOrderId] = useState<string | undefined>();
-  const [draft, setDraft] = useState<Map<string, number>>(new Map());
   const [schedule, setSchedule] = useState<OrderScheduleValue[]>([]);
+  const [meta, setMeta] = useState<ScheduleMeta>({ incomplete: [], excluded: [] });
+  // Идентификатор идемпотентности живёт всё время окна: раньше он генерировался внутри mutationFn,
+  // и повтор после сетевого таймаута создавал ВТОРОЙ заказ вместо повторной записи того же.
+  const [clientRequestId] = useState(() => crypto.randomUUID());
 
   const ordersQ = useQuery({
     queryKey: ['supplier-lots', 'forming', projectId],
     queryFn: () => api.get<{ data: SupplierLotRow[] }>(`/supplier-orders?projectId=${projectId}&status=forming`),
   });
 
-  const rowByItemId = useMemo(() => new Map(rows.map((r) => [r.request_item_id, r])), [rows]);
+  // Дозаказ: нужен текущий состав заказа. Сервер сверяет график по ВСЕМУ заказу и пишет позиции
+  // абсолютным количеством, поэтому без этих данных дозаказ либо ловил 400, либо затирал объём.
+  const appendId = mode === 'existing' ? orderId : undefined;
+  const orderQ = useQuery({
+    queryKey: ['supplier-order', appendId],
+    queryFn: () => api.get<{ data: SupplierOrderDetail }>(`/supplier-orders/${appendId}`),
+    enabled: !!appendId,
+  });
+  const existing = appendId ? orderQ.data?.data : undefined;
 
-  const items = useMemo(
-    () => rows.map((r) => ({
-      requestItemId: r.request_item_id,
-      name: r.material_name,
-      unit: r.unit,
-      contractor: r.contractor_name ?? '—',
-      remaining: r.remaining ?? 0,
-      quantity: draft.get(r.request_item_id) ?? (r.remaining ?? 0),
-    })),
-    [rows, draft],
+  const selectedIds = useMemo(() => new Set(rows.map((r) => r.request_item_id)), [rows]);
+
+  /** Уже размещённое ЭТИМИ ЖЕ позициями — переносится в отправляемое количество. */
+  const carryByItemId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of existing?.items ?? []) {
+      if (it.request_item_id && selectedIds.has(it.request_item_id)) {
+        m.set(it.request_item_id, (m.get(it.request_item_id) ?? 0) + Number(it.quantity));
+      }
+    }
+    return m;
+  }, [existing, selectedIds]);
+
+  /** Размещённое ЧУЖИМИ позициями заказа: их не перезаписываем, но график обязан их покрыть. */
+  const baseByAggKey = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of existing?.items ?? []) {
+      if (!it.request_item_id || !selectedIds.has(it.request_item_id)) {
+        m.set(it.agg_key, (m.get(it.agg_key) ?? 0) + Number(it.quantity));
+      }
+    }
+    return m;
+  }, [existing, selectedIds]);
+
+  const caps = useMemo(() => capacitiesOf(rows, carryByItemId), [rows, carryByItemId]);
+  const scheduleLines = useMemo(
+    () => aggregateScheduleLines(rows, caps, baseByAggKey),
+    [rows, caps, baseByAggKey],
   );
+  const nameOf = (aggKey: string) => scheduleLines.find((l) => l.aggKey === aggKey)?.name ?? 'материал';
 
-  // Материалы графика — агрегат по agg_key; количество = сумма выбранного «В заказ».
-  const scheduleLines: OrderScheduleLine[] = useMemo(() => {
-    const map = new Map<string, OrderScheduleLine>();
-    for (const it of items) {
-      const r = rowByItemId.get(it.requestItemId);
-      if (!r) continue;
-      const cur = map.get(r.agg_key);
-      if (cur) cur.quantity += it.quantity;
-      else map.set(r.agg_key, { aggKey: r.agg_key, name: r.material_name, unit: r.unit, quantity: it.quantity });
-    }
-    return [...map.values()];
-  }, [items, rowByItemId]);
-
-  // Предзаполнение графиком заявки: даты строк с выбранным количеством, свёрнутые по agg_key.
+  // Предзаполнение: график заявки по новым позициям, поверх уже сохранённого графика заказа.
   const initialSchedule = useMemo(() => {
-    const acc = new Map<string, Map<string, number>>();
-    for (const it of items) {
-      const r = rowByItemId.get(it.requestItemId);
-      if (!r || !r.delivery_date || it.quantity <= 0) continue;
-      const byDate = acc.get(r.agg_key) ?? new Map<string, number>();
-      byDate.set(r.delivery_date, (byDate.get(r.delivery_date) ?? 0) + it.quantity);
-      acc.set(r.agg_key, byDate);
+    const fresh = prefillFromRows(rows, caps);
+    if (!existing?.deliverySchedule?.length) return fresh;
+    const saved: Record<string, { deliveryDate: string | null; quantity: number }[]> = {};
+    for (const s of existing.deliverySchedule) {
+      (saved[s.agg_key] ??= []).push({ deliveryDate: s.delivery_date, quantity: Number(s.quantity) });
     }
-    const out: Record<string, { deliveryDate: string; quantity: number }[]> = {};
-    for (const [k, m] of acc) out[k] = [...m.entries()].map(([deliveryDate, quantity]) => ({ deliveryDate, quantity }));
-    return out;
-  }, [items, rowByItemId]);
+    return mergeSchedulePrefill(saved, fresh);
+  }, [rows, caps, existing]);
+
+  // Материал одного agg_key может прийти от разных подрядчиков: график ведётся по материалу, а
+  // разложение по их позициям считается автоматически — предупреждаем, чтобы это не выглядело
+  // произвольным.
+  const mixedContractors = useMemo(() => {
+    const byKey = new Map<string, Set<string>>();
+    for (const r of rows) {
+      const set = byKey.get(r.agg_key) ?? new Set<string>();
+      set.add(r.contractor_id ?? '—');
+      byKey.set(r.agg_key, set);
+    }
+    return [...byKey.values()].some((s) => s.size > 1);
+  }, [rows]);
 
   const submit = useMutation({
-    mutationFn: () => api.post<{ data: { id: string } }>('/supplier-orders', {
-      projectId,
-      orderId: mode === 'existing' ? orderId : undefined,
-      title: mode === 'new' ? title.trim() || undefined : undefined,
-      clientRequestId: crypto.randomUUID(),
-      items: items.map((it) => ({ requestItemId: it.requestItemId, quantity: it.quantity })),
-      deliverySchedule: schedule,
-    }),
+    mutationFn: (payload: { items: { requestItemId: string; quantity: number }[]; deliverySchedule: OrderScheduleValue[] }) =>
+      api.post<{ data: { id: string } }>('/supplier-orders', {
+        projectId,
+        orderId: mode === 'existing' ? orderId : undefined,
+        title: mode === 'new' ? title.trim() || undefined : undefined,
+        clientRequestId,
+        items: payload.items,
+        deliverySchedule: payload.deliverySchedule,
+      }),
     onSuccess: (res) => { message.success('Заказ сформирован'); onCreated(res.data.id); },
     onError: (e: Error) => message.error(e.message),
   });
 
   function onOk() {
     if (mode === 'existing' && !orderId) return message.warning('Выберите заказ');
-    if (items.some((it) => it.quantity <= 0 || it.quantity > it.remaining + 1e-9)) {
-      return message.warning('Количество должно быть в пределах остатка');
+    if (appendId && orderQ.isLoading) return message.warning('Состав заказа ещё загружается');
+    if (meta.incomplete.length) {
+      return message.warning(`Укажите дату поставки: ${nameOf(meta.incomplete[0]!)}`);
     }
-    const schedErr = validateOrderSchedule(scheduleLines, schedule);
-    if (schedErr) return message.warning(schedErr);
-    submit.mutate();
-  }
+    const active = scheduleLines.filter((l) => !meta.excluded.includes(l.aggKey));
+    if (!active.length) return message.warning('Все материалы исключены — заказывать нечего');
 
-  const columns: ColumnsType<(typeof items)[number]> = [
-    { title: 'Материал', dataIndex: 'name', key: 'name' },
-    { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
-    { title: 'Подрядчик', dataIndex: 'contractor', key: 'contractor', width: 160 },
-    { title: 'Остаток', dataIndex: 'remaining', key: 'remaining', width: 90, align: 'right', render: (v: number) => round4(v) },
-    {
-      title: 'В заказ', key: 'qty', width: 120, align: 'right',
-      render: (_, it) => (
-        <InputNumber
-          min={0} max={it.remaining} value={it.quantity} style={{ width: 100 }}
-          onChange={(v) => setDraft((prev) => new Map(prev).set(it.requestItemId, Number(v ?? 0)))}
-        />
-      ),
-    },
-  ];
+    const sched = normalizeSchedule(schedule);
+    const err = validateOrderSchedule(active, sched, 'atMost');
+    if (err) return message.warning(err);
+
+    // Опуститься ниже уже размещённого чужими позициями нельзя: их UPSERT не тронет, а график
+    // заменяется целиком — сервер отверг бы такой заказ сверкой суммы.
+    for (const l of active) {
+      const base = baseByAggKey.get(l.aggKey) ?? 0;
+      const sum = sched.find((s) => s.aggKey === l.aggKey)?.entries.reduce((s2, e) => s2 + e.quantity, 0) ?? 0;
+      if (base - sum > 1e-6) {
+        return message.warning(`В заказе уже размещено ${round4(base)} — меньше указать нельзя: ${l.name}`);
+      }
+    }
+
+    const { items, unassigned } = distributeToRequestItems(caps, sched, baseByAggKey);
+    if (unassigned.length) {
+      return message.warning('Количество превышает остаток по заявкам — уменьшите объём в графике');
+    }
+    if (!items.length) return message.warning('Укажите количество хотя бы по одному материалу');
+    submit.mutate({ items, deliverySchedule: sched });
+  }
 
   return (
     <Modal
-      open title="Заказ поставщику — состав" width={820}
+      open title="Заказ поставщику — график поставок"
+      width="80vw" style={{ maxWidth: 1600, top: 40 }}
+      styles={{ body: { height: '70vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
       onCancel={onCancel} onOk={onOk} okText="Создать заказ" confirmLoading={submit.isPending}
     >
-      <Tabs
-        items={[
-          {
-            key: 'items',
-            label: 'Состав',
-            children: (
-              <>
-                <Radio.Group
-                  value={mode} onChange={(e) => setMode(e.target.value)} style={{ marginBottom: 12 }} optionType="button"
-                  options={[{ value: 'new', label: 'Новый заказ' }, { value: 'existing', label: 'Добавить в существующий' }]}
-                />
-                {mode === 'new' ? (
-                  <Input placeholder="Название заказа (необязательно)" value={title} onChange={(e) => setTitle(e.target.value)} style={{ marginBottom: 12 }} />
-                ) : (
-                  <Select
-                    placeholder="Выберите формируемый заказ" style={{ width: '100%', marginBottom: 12 }}
-                    value={orderId} onChange={setOrderId} loading={ordersQ.isLoading}
-                    options={(ordersQ.data?.data ?? []).map((l) => ({
-                      value: l.id,
-                      label: `З-${String(l.order_no ?? 0).padStart(3, '0')}${l.title ? ` · ${l.title}` : ''} (${l.items_count} поз.)`,
-                    }))}
-                    notFoundContent="Формируемых заказов нет"
-                  />
-                )}
-                <Table rowKey="requestItemId" size="small" pagination={false} dataSource={items} columns={columns} scroll={{ y: 320 }} />
-              </>
-            ),
-          },
-          {
-            key: 'schedule',
-            label: 'График поставок',
-            children: <OrderScheduleEditor lines={scheduleLines} initial={initialSchedule} onChange={setSchedule} />,
-          },
-        ]}
+      <Radio.Group
+        value={mode} onChange={(e) => setMode(e.target.value)} style={{ marginBottom: 12 }} optionType="button"
+        options={[{ value: 'new', label: 'Новый заказ' }, { value: 'existing', label: 'Добавить в существующий' }]}
       />
+      {mode === 'new' ? (
+        <Input
+          placeholder="Название заказа (необязательно)" value={title}
+          onChange={(e) => setTitle(e.target.value)} style={{ marginBottom: 12 }}
+        />
+      ) : (
+        <Select
+          placeholder="Выберите формируемый заказ" style={{ width: '100%', marginBottom: 12 }}
+          value={orderId} onChange={setOrderId} loading={ordersQ.isLoading}
+          options={(ordersQ.data?.data ?? []).map((l) => ({
+            value: l.id,
+            label: `З-${String(l.order_no ?? 0).padStart(3, '0')}${l.title ? ` · ${l.title}` : ''} (${l.items_count} поз.)`,
+          }))}
+          notFoundContent="Формируемых заказов нет"
+        />
+      )}
+      {mixedContractors && (
+        <Alert
+          type="info" showIcon style={{ marginBottom: 8 }}
+          message="Материал заявлен несколькими подрядчиками — объём распределится между их позициями автоматически, начиная с ближайших дат поставки."
+        />
+      )}
+      {appendId && !existing ? (
+        // Редактор монтируем только с полными данными: своё состояние он синхронизирует по набору
+        // материалов, и подгрузка ёмкостей «под ним» не дошла бы до уже созданных строк графика.
+        <div style={{ padding: 32, textAlign: 'center' }}><Spin tip="Загружаем состав заказа" /></div>
+      ) : (
+        <OrderScheduleEditor
+          // Смена заказа меняет ёмкости и предзаполнение — состояние графика начинается заново.
+          key={appendId ?? 'new'}
+          lines={scheduleLines}
+          initial={initialSchedule}
+          onChange={(v, m) => { setSchedule(v); setMeta(m); }}
+          allowPartial
+          totalLabel="Остаток по заявке"
+          tableScrollY="calc(70vh - 300px)"
+        />
+      )}
     </Modal>
   );
 }

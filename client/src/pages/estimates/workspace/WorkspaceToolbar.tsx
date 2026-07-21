@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Badge, Button, Popover, Switch, Tooltip, Typography } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -6,13 +6,12 @@ import {
   RobotOutlined,
   AppstoreOutlined,
   LayoutOutlined,
-  HistoryOutlined,
 } from '@ant-design/icons';
 import type { EstimateDetail } from '../components/types';
 import { formatMoney } from '../components/types';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { useIsMobile, useIsPhone } from '../../../hooks/useMediaQuery';
-import { VersionHistoryDrawer } from './VersionHistoryDrawer';
+import { VersionHistoryButton } from '../../../components/VersionHistoryButton';
 
 interface Props {
   estimate: EstimateDetail;
@@ -50,7 +49,6 @@ export function WorkspaceToolbar({
   groupCount,
   onBack,
 }: Props) {
-  const [versionsOpen, setVersionsOpen] = useState(false);
   const { visibility, toggleArea, setRefsDrawerOpen } = useWorkspaceLayoutStore();
   const isMobile = useIsMobile();
   const isPhone = useIsPhone();
@@ -109,15 +107,7 @@ export function WorkspaceToolbar({
         </>
       )}
 
-      <Tooltip title="История версий">
-        <Button
-          type="text"
-          icon={<HistoryOutlined />}
-          aria-label="История версий"
-          onClick={() => setVersionsOpen(true)}
-        />
-      </Tooltip>
-      <VersionHistoryDrawer open={versionsOpen} onClose={() => setVersionsOpen(false)} />
+      <VersionHistoryButton />
 
       {isMobile ? (
         // Мобильный режим: ИИ-панель недоступна, поповер «Панели» скрыт;

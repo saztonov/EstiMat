@@ -1,5 +1,5 @@
 import { Drawer, Timeline, Typography } from 'antd';
-import { APP_VERSION, CHANGELOG } from '../../../changelog';
+import { APP_VERSION, CHANGELOG } from '../changelog';
 
 interface Props {
   open: boolean;

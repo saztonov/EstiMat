@@ -5,7 +5,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ColumnsType } from 'antd/es/table';
 import { applyColumnPrefs, resolveColumnPrefs, type ColumnDef } from './columnPrefs';
-import { applyColumnFilters, hasActiveColumnFilters, collectMultiOptions, type ColumnFilterSpec } from './columnFilters';
+import {
+  applyColumnFilters, hasActiveColumnFilters, collectMultiOptions, EMPTY_FILTER_VALUE,
+  type ColumnFilterSpec,
+} from './columnFilters';
 import { collectGroupKeys, groupRows, isGroupRow, levelsFromOrder, type GroupLevel } from './tableGrouping';
 
 // ---------- resolveColumnPrefs ----------
@@ -161,13 +164,67 @@ test('отборы: варианты сортируются по подписи,
   );
 });
 
-test('отборы: пустое значение не создаёт вариант и не совпадает', () => {
+test('отборы: без emptyLabel пустое значение не создаёт вариант и не совпадает', () => {
   // Предикаты в collectMultiOptions и matchesOne должны совпадать, иначе строка с '' стала бы
   // недостижимой: она проходила бы отбор, но галочки для неё в списке не было бы.
   const rows = [{ names: ['Альфа'] }, { names: [''] }];
   const spec: ColumnFilterSpec<{ names: string[] }> = { kind: 'multi', getTexts: (r) => r.names };
   assert.deepEqual(collectMultiOptions(rows, spec), [{ value: 'Альфа', label: 'Альфа' }]);
   assert.equal(applyColumnFilters(rows, { c: { kind: 'multi', values: [''] } }, { c: spec }).length, 0);
+});
+
+// emptyLabel: строки с пустой ячейкой (материал без ответственного) становятся отбираемыми.
+interface RespRow { name: string; resp: string }
+const RESP_ROWS: RespRow[] = [
+  { name: 'Геотекстиль', resp: 'Иванов' },
+  { name: 'Гидроизоляция', resp: '' },
+  { name: 'Герметик', resp: 'Петров' },
+];
+const RESP_SPEC: ColumnFilterSpec<RespRow> = {
+  kind: 'multi', getText: (r) => r.resp, emptyLabel: '— не назначены',
+};
+
+test('отборы: emptyLabel добавляет ровно один вариант «пусто», и он первый', () => {
+  const opts = collectMultiOptions(RESP_ROWS, RESP_SPEC);
+  assert.deepEqual(opts, [
+    { value: EMPTY_FILTER_VALUE, label: '— не назначены' },
+    { value: 'Иванов', label: 'Иванов' },
+    { value: 'Петров', label: 'Петров' },
+  ]);
+  // Без единой пустой строки варианта «пусто» быть не должно.
+  assert.deepEqual(
+    collectMultiOptions([{ name: 'X', resp: 'Иванов' }], RESP_SPEC),
+    [{ value: 'Иванов', label: 'Иванов' }],
+  );
+});
+
+test('отборы: выбор «пусто» возвращает только строки с пустой ячейкой', () => {
+  const filters = { resp: { kind: 'multi' as const, values: [EMPTY_FILTER_VALUE] } };
+  assert.deepEqual(
+    applyColumnFilters(RESP_ROWS, filters, { resp: RESP_SPEC }).map((r) => r.name),
+    ['Гидроизоляция'],
+  );
+});
+
+test('отборы: «пусто» и конкретное значение выбираются вместе', () => {
+  const filters = { resp: { kind: 'multi' as const, values: [EMPTY_FILTER_VALUE, 'Петров'] } };
+  assert.deepEqual(
+    applyColumnFilters(RESP_ROWS, filters, { resp: RESP_SPEC }).map((r) => r.name),
+    ['Гидроизоляция', 'Герметик'],
+  );
+});
+
+test('отборы: многозначная ячейка с пустым массивом попадает в «пусто»', () => {
+  // Заказ В из MULTI_ROWS — без подрядчиков вовсе.
+  const spec: ColumnFilterSpec<MultiRow> = { ...MULTI_SPECS.contractor, emptyLabel: '— без подрядчика' };
+  assert.deepEqual(collectMultiOptions(MULTI_ROWS, spec)[0], {
+    value: EMPTY_FILTER_VALUE, label: '— без подрядчика',
+  });
+  assert.deepEqual(
+    applyColumnFilters(MULTI_ROWS, { contractor: { kind: 'multi', values: [EMPTY_FILTER_VALUE] } }, { contractor: spec })
+      .map((r) => r.name),
+    ['Заказ В'],
+  );
 });
 
 test('отборы: диапазон дат ловит любую дату графика', () => {

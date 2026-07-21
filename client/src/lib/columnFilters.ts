@@ -2,6 +2,13 @@
 // применение к строкам. Отборы работают по полному загруженному набору (режим all=1), поэтому
 // фильтрация — на клиенте, до группировки. UI-дропдауны — в tableHeaderFilters.tsx.
 
+/**
+ * Сентинел варианта «пустая ячейка». Управляющий символ U+0000 не встречается в тексте из БД,
+ * поэтому совпасть с реальным значением не может. Сравнение по нему в matchesOne всё равно
+ * идёт отдельной ветвью (по факту пустоты, а не по строке) — сентинел только помечает выбор.
+ */
+export const EMPTY_FILTER_VALUE = '\u0000empty';
+
 export type ColumnFilterValue =
   | { kind: 'text'; value: string }
   | { kind: 'multi'; values: string[] }
@@ -31,6 +38,12 @@ export interface ColumnFilterSpec<T> {
   getNum?: (r: T) => number | string | null | undefined;
   /** multi: фиксированный набор вариантов (иначе собирается из строк). */
   options?: { value: string; label: string }[];
+  /**
+   * multi: подпись варианта «пустая ячейка» (например «— не назначены»). Без неё пустые значения
+   * вариантом не становятся и отобрать их нельзя — это и было причиной, по которой строки без
+   * ответственного оставались недостижимы фильтром.
+   */
+  emptyLabel?: string;
 }
 
 export type ColumnFilters = Record<string, ColumnFilterValue | undefined>;
@@ -70,12 +83,14 @@ function matchesOne<T>(row: T, v: ColumnFilterValue, spec: ColumnFilterSpec<T>):
     case 'multi': {
       if (v.values.length === 0) return true;
       // Многозначная ячейка — совпало любое из значений (getTexts перекрывает getText).
-      // Предикат тот же, что в collectMultiOptions: пустое значение вариантом не становится,
-      // поэтому и совпадать по нему нельзя (иначе строка недостижима ни одной галочкой).
-      if (spec.getTexts) {
-        return spec.getTexts(row).some((t) => !!t && v.values.includes(String(t)));
-      }
-      return v.values.includes(String(spec.getText?.(row) ?? ''));
+      const vals = (spec.getTexts ? spec.getTexts(row) : [spec.getText?.(row)])
+        .filter((t): t is string => !!t)
+        .map(String);
+      // Пустая ячейка проверяется ПО ФАКТУ пустоты, а не сравнением с сентинелом: так значение
+      // из данных не может случайно совпасть с EMPTY_FILTER_VALUE. Предикат тот же, что в
+      // collectMultiOptions — вариант «пусто» существует, только если спека объявила emptyLabel.
+      if (vals.length === 0) return v.values.includes(EMPTY_FILTER_VALUE);
+      return vals.some((t) => v.values.includes(t));
     }
     case 'dateRange': {
       const inRange = (iso: string | null | undefined) => {
@@ -135,18 +150,20 @@ export function collectMultiOptions<T>(
 ): { value: string; label: string }[] {
   if (spec.options) return spec.options;
   const seen = new Set<string>();
+  let hasEmpty = false;
   for (const r of rows) {
     // Многозначная ячейка даёт по варианту на каждое значение (getTexts перекрывает getText).
-    if (spec.getTexts) {
-      for (const t of spec.getTexts(r)) if (t) seen.add(String(t));
-      continue;
-    }
-    const v = spec.getText?.(r);
-    if (v) seen.add(String(v));
+    const vals = (spec.getTexts ? spec.getTexts(r) : [spec.getText?.(r)]).filter((t) => !!t);
+    if (vals.length === 0) { hasEmpty = true; continue; }
+    for (const t of vals) seen.add(String(t));
   }
   // Сортируем по ПОДПИСИ, а не по коду: у спек с labelOf (вид заказа, статус, тип заявки)
   // значения — латинские ключи, и сортировка по ним давала список не по русскому алфавиту.
-  return [...seen]
+  const out = [...seen]
     .map((v) => ({ value: v, label: spec.labelOf?.(v) ?? v }))
     .sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+  // «Пусто» — первым и вне сортировки: это не значение в одном ряду с остальными, а отдельная
+  // категория, и искать её в середине алфавитного списка ФИО пришлось бы глазами.
+  if (hasEmpty && spec.emptyLabel) out.unshift({ value: EMPTY_FILTER_VALUE, label: spec.emptyLabel });
+  return out;
 }
