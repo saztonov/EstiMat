@@ -15,7 +15,7 @@ import { config } from '../../config.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { recordAudit } from '../../lib/audit.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
-import { assertOrderAccess } from '../../lib/procurement/access.js';
+import { assertOrderAccess, assertOrderAccessForOrder } from '../../lib/procurement/access.js';
 import { resolveResponsibles, scopeKey } from '../../lib/procurement/responsibles.js';
 import { PROCUREMENT_ASSIGN_ROLES, type Role } from '@estimat/shared';
 import type { Pool, PoolClient } from 'pg';
@@ -444,6 +444,17 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // Доступ к УЖЕ СУЩЕСТВУЮЩЕМУ заказу. Проверка ниже (по областям добавляемых материалов)
+      // его не покрывает: обе ветки выше — и явный orderId, и повтор по clientRequestId —
+      // возвращают чужой заказ, в который позиции дописываются UPSERT'ом. Без этой проверки
+      // инженер дописывал бы материалы своей зоны в заказ, который вести не вправе.
+      // Для только что созданного заказа правило пустого заказа пропускает создателя.
+      const orderAccess = await assertOrderAccessForOrder(client, user, orderId);
+      if (!orderAccess.ok) {
+        await client.query('ROLLBACK');
+        return reply.status(403).send({ error: orderAccess.reason });
+      }
+
       // --- Блокировка исходных строк (И1, стабильный порядок по id) + снимки для позиций лота ---
       const { rows: src } = await client.query(
         `SELECT mri.id, mri.request_id, mri.cost_type_id, mri.agg_key, mri.material_id, mri.material_name,
@@ -642,10 +653,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
-      if (user.role !== 'admin' && lot.created_by !== user.id) {
-        await client.query('ROLLBACK');
-        return reply.status(403).send({ error: 'Изменять состав заказа может только его создатель или администратор' });
-      }
+      const access = await assertOrderAccessForOrder(client, user, lot.id);
+      if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Заказ зафиксирован — состав менять нельзя' });
@@ -686,10 +695,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
-      if (user.role !== 'admin' && lot.created_by !== user.id) {
-        await client.query('ROLLBACK');
-        return reply.status(403).send({ error: 'Изменять график заказа может только его создатель или администратор' });
-      }
+      const access = await assertOrderAccessForOrder(client, user, lot.id);
+      if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Заказ зафиксирован — график менять нельзя' });
@@ -764,10 +771,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
-      if (user.role !== 'admin' && lot.created_by !== user.id) {
-        await client.query('ROLLBACK');
-        return reply.status(403).send({ error: 'Удалить заказ может только его создатель или администратор' });
-      }
+      const access = await assertOrderAccessForOrder(client, user, lot.id);
+      if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Удалить можно только формируемый заказ' });
@@ -812,6 +817,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      const access = await assertOrderAccessForOrder(client, user, lot.id);
+      if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
       if (['cancelled', 'cancel_pending', 'awarded', 'no_award'].includes(lot.sourcing_status)) {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Заказ уже нельзя отменить' });
@@ -893,6 +900,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      const access = await assertOrderAccessForOrder(client, user, lot.id);
+      if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Заказ уже в закупке' });
@@ -936,6 +945,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      const access = await assertOrderAccessForOrder(client, user, lot.id);
+      if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
       if (lot.sourcing_status !== 'forming') {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Заказ уже в закупке' });
@@ -1063,6 +1074,10 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       [request.params.id],
     );
     if (!rows[0]) return reply.status(404).send({ error: 'Заказ не найден' });
+    // Обновление тендера — мутация, а не чтение: refreshTenderLot пишет статус, результаты и может
+    // перевести заказ в отменённый, пересчитав статусы заявок.
+    const access = await assertOrderAccessForOrder(fastify.pool, request.currentUser, request.params.id);
+    if (!access.ok) return reply.status(403).send({ error: access.reason });
     if (!rows[0].tender_portal_id) return reply.status(409).send({ error: 'Тендер по заказу не создан' });
     try {
       await refreshTenderLot(fastify, request.params.id);
@@ -1096,12 +1111,51 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   });
 
   // Заказ доступен для работы с поставщиками: стадия сбора предложений (sourcing), не тендер.
-  async function loadOfferableOrder(id: string) {
-    const { rows } = await fastify.pool.query(
-      `SELECT id, sourcing_status, procurement_method, project_id FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
+  //
+  // Читаем через переданный db, а не через пул: у маршрутов ниже проверка стадии, проверка зоны и
+  // сама запись обязаны идти по ОДНОМУ соединению внутри транзакции. Иначе между «прочитали статус
+  // sourcing» и «вставили предложение» заказ успевал уйти на согласование, и предложение
+  // добавлялось в замороженный заказ.
+  async function loadOfferableOrder(db: Pool | PoolClient, id: string, lock = false) {
+    const { rows } = await db.query(
+      `SELECT id, sourcing_status, procurement_method, project_id FROM supplier_orders
+        WHERE id = $1 AND kind = 'sourcing'${lock ? ' FOR UPDATE' : ''}`,
       [id],
     );
     return rows[0] as { id: string; sourcing_status: string; procurement_method: string | null; project_id: string | null } | undefined;
+  }
+
+  /**
+   * Общая обвязка маршрутов предложений: транзакция, блокировка заказа, стадия, зона.
+   * Тело получает уже проверенный заказ и тот же клиент; ошибки внутри откатывают всё.
+   */
+  async function withOfferableOrder(
+    orderId: string,
+    user: { id: string; role: Role },
+    verb: string,
+    reply: { status(c: number): { send(b: unknown): unknown } },
+    body: (client: PoolClient, order: { id: string; project_id: string | null }) => Promise<unknown>,
+  ): Promise<unknown> {
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const order = await loadOfferableOrder(client, orderId, true);
+      if (!order) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      if (!['forming', 'sourcing'].includes(order.sourcing_status) || order.procurement_method === 'tender') {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: `${verb} можно только по формируемому заказу или заказу в стадии сбора предложений` });
+      }
+      const access = await assertOrderAccessForOrder(client, user, order.id);
+      if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
+      const result = await body(client, order);
+      await client.query('COMMIT');
+      return result;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   // ============================================================
@@ -1110,60 +1164,53 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/:id/offers', async (request, reply) => {
     const user = request.currentUser;
     const body = upsertOfferSchema.parse(request.body);
-    const order = await loadOfferableOrder(request.params.id);
-    if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
-    if (!['forming', 'sourcing'].includes(order.sourcing_status) || order.procurement_method === 'tender') {
-      return reply.status(409).send({ error: 'Поставщиков можно добавлять только по формируемому заказу или заказу в стадии сбора предложений' });
-    }
-    const { rows: ins } = await fastify.pool.query(
-      `INSERT INTO supplier_order_offers
-         (order_id, supplier_id, supplier_name, supplier_inn, amount, currency, response_status, terms, note, created_by)
-       VALUES ($1,$2,$3,$4,$5,'RUB',$6,$7,$8,$9) RETURNING id`,
-      [order.id, body.supplierId ?? null, body.supplierName, body.supplierInn ?? null, body.amount ?? null,
-       body.responseStatus ?? 'pending', body.terms ?? null, body.note ?? null, user.id],
-    );
-    await appendOrderAudit(fastify.pool, { orderId: order.id, action: 'offer_added', userId: user.id, changes: { supplierName: body.supplierName }, projectId: order.project_id });
-    return reply.status(201).send({ data: { id: ins[0].id } });
+    return withOfferableOrder(request.params.id, user, 'Добавлять поставщиков', reply, async (client, order) => {
+      const { rows: ins } = await client.query(
+        `INSERT INTO supplier_order_offers
+           (order_id, supplier_id, supplier_name, supplier_inn, amount, currency, response_status, terms, note, created_by)
+         VALUES ($1,$2,$3,$4,$5,'RUB',$6,$7,$8,$9) RETURNING id`,
+        [order.id, body.supplierId ?? null, body.supplierName, body.supplierInn ?? null, body.amount ?? null,
+         body.responseStatus ?? 'pending', body.terms ?? null, body.note ?? null, user.id],
+      );
+      await appendOrderAudit(client, { orderId: order.id, action: 'offer_added', userId: user.id, changes: { supplierName: body.supplierName }, projectId: order.project_id });
+      return reply.status(201).send({ data: { id: ins[0].id } });
+    });
   });
 
   // PATCH /:id/offers/:offerId — правка поставщика (имя/ИНН/сумма/статус ответа), пока не оформлен.
   fastify.patch<{ Params: { id: string; offerId: string } }>('/:id/offers/:offerId', async (request, reply) => {
-    const user = request.currentUser;
     const body = upsertOfferSchema.parse(request.body);
-    const order = await loadOfferableOrder(request.params.id);
-    if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
-    if (!['forming', 'sourcing'].includes(order.sourcing_status) || order.procurement_method === 'tender') {
-      return reply.status(409).send({ error: 'Поставщиков можно менять только по формируемому заказу или заказу в стадии сбора предложений' });
-    }
-    const { rowCount } = await fastify.pool.query(
-      `UPDATE supplier_order_offers
-          SET supplier_id = $3, supplier_name = $4, supplier_inn = $5, amount = $6,
-              response_status = COALESCE($7, response_status), terms = $8, note = $9
-        WHERE id = $1 AND order_id = $2`,
-      [request.params.offerId, order.id, body.supplierId ?? null, body.supplierName, body.supplierInn ?? null,
-       body.amount ?? null, body.responseStatus ?? null, body.terms ?? null, body.note ?? null],
-    );
-    if (!rowCount) return reply.status(404).send({ error: 'Предложение не найдено' });
-    return { data: { ok: true } };
+    return withOfferableOrder(request.params.id, request.currentUser, 'Менять поставщиков', reply, async (client, order) => {
+      const { rowCount } = await client.query(
+        `UPDATE supplier_order_offers
+            SET supplier_id = $3, supplier_name = $4, supplier_inn = $5, amount = $6,
+                response_status = COALESCE($7, response_status), terms = $8, note = $9
+          WHERE id = $1 AND order_id = $2`,
+        [request.params.offerId, order.id, body.supplierId ?? null, body.supplierName, body.supplierInn ?? null,
+         body.amount ?? null, body.responseStatus ?? null, body.terms ?? null, body.note ?? null],
+      );
+      if (!rowCount) return reply.status(404).send({ error: 'Предложение не найдено' });
+      return { data: { ok: true } };
+    });
   });
 
   // DELETE /:id/offers/:offerId — убрать поставщика (пока заказ не оформлен); S3-объект чистим.
   fastify.delete<{ Params: { id: string; offerId: string } }>('/:id/offers/:offerId', async (request, reply) => {
-    const { rows } = await fastify.pool.query(
-      `SELECT sourcing_status, procurement_method FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
-      [request.params.id],
-    );
-    if (!rows[0]) return reply.status(404).send({ error: 'Заказ не найден' });
-    if (!['forming', 'sourcing'].includes(rows[0].sourcing_status) || rows[0].procurement_method === 'tender') {
-      return reply.status(409).send({ error: 'Убрать поставщика можно только по формируемому заказу или заказу в стадии сбора предложений' });
-    }
-    const { rows: del } = await fastify.pool.query(
-      `DELETE FROM supplier_order_offers WHERE id = $1 AND order_id = $2 RETURNING file_key`,
-      [request.params.offerId, request.params.id],
-    );
-    if (!del[0]) return reply.status(404).send({ error: 'Предложение не найдено' });
-    if (del[0].file_key && fastify.storage) await fastify.storage.deleteObject(del[0].file_key).catch(() => {});
-    return { data: { ok: true } };
+    // Ключ собираем в объект, а не в let: присваивание из колбэка сужение типов не отменяет,
+    // и проверка «if (orphanKey)» после вызова читалась бы компилятором как заведомо ложная.
+    const orphan: { key: string | null } = { key: null };
+    const result = await withOfferableOrder(request.params.id, request.currentUser, 'Убирать поставщиков', reply, async (client, order) => {
+      const { rows: del } = await client.query(
+        `DELETE FROM supplier_order_offers WHERE id = $1 AND order_id = $2 RETURNING file_key`,
+        [request.params.offerId, order.id],
+      );
+      if (!del[0]) return reply.status(404).send({ error: 'Предложение не найдено' });
+      orphan.key = del[0].file_key ?? null;
+      return { data: { ok: true } };
+    });
+    // Объект в S3 удаляем ПОСЛЕ коммита: откат транзакции не вернул бы уже удалённый файл.
+    if (orphan.key && fastify.storage) await fastify.storage.deleteObject(orphan.key).catch(() => {});
+    return result;
   });
 
   // ============================================================
@@ -1174,11 +1221,17 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     '/:id/offers/:offerId/file',
     async (request, reply) => {
       const user = request.currentUser;
-      const order = await loadOfferableOrder(request.params.id);
+      // Транзакцию через потоковую загрузку не тянем — соединение висело бы всё время передачи
+      // файла. Поэтому проверка идёт ДВАЖДЫ: здесь, чтобы не принимать заведомо лишние 50 МБ,
+      // и ещё раз перед записью в БД (ниже) — за время загрузки заказ мог уйти на согласование
+      // или сменить ответственного.
+      const order = await loadOfferableOrder(fastify.pool, request.params.id);
       if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
       if (order.sourcing_status !== 'sourcing' || order.procurement_method === 'tender') {
         return reply.status(409).send({ error: 'Документы поставщиков — только по заказу в стадии сбора предложений' });
       }
+      const preAccess = await assertOrderAccessForOrder(fastify.pool, user, order.id);
+      if (!preAccess.ok) return reply.status(403).send({ error: preAccess.reason });
       if (!fastify.storage) return reply.status(503).send({ error: 'Хранилище файлов не настроено' });
       const { documentType } = offerFileMetaSchema.parse({ documentType: request.query.documentType });
       const { rows: oRows } = await fastify.pool.query(
@@ -1196,17 +1249,36 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           await fastify.storage.deleteObject(meta.key);
           return reply.status(400).send({ error: 'Файл больше 50 МБ' });
         }
+        // Повторная проверка вместе с записью, на одном соединении в транзакции.
+        const client = await fastify.pool.connect();
         try {
-          await fastify.pool.query(
+          await client.query('BEGIN');
+          const fresh = await loadOfferableOrder(client, order.id, true);
+          if (!fresh || fresh.sourcing_status !== 'sourcing' || fresh.procurement_method === 'tender') {
+            await client.query('ROLLBACK');
+            await fastify.storage.deleteObject(meta.key).catch(() => {});
+            return reply.status(409).send({ error: 'Заказ изменился, пока загружался файл — документ не сохранён' });
+          }
+          const access = await assertOrderAccessForOrder(client, user, order.id);
+          if (!access.ok) {
+            await client.query('ROLLBACK');
+            await fastify.storage.deleteObject(meta.key).catch(() => {});
+            return reply.status(403).send({ error: access.reason });
+          }
+          await client.query(
             `UPDATE supplier_order_offers
                 SET file_key = $3, file_name = $4, mime_type = $5, checksum = $6, file_size = $7,
                     document_type = $8, response_status = 'received'
               WHERE id = $1 AND order_id = $2`,
             [request.params.offerId, order.id, meta.key, meta.safeName, meta.mime, meta.checksum, meta.size, documentType],
           );
+          await client.query('COMMIT');
         } catch (dbErr) {
+          await client.query('ROLLBACK').catch(() => {});
           await fastify.storage.deleteObject(meta.key).catch(() => {});
           throw dbErr;
+        } finally {
+          client.release();
         }
         // Успешная замена — удаляем прежний объект.
         if (prevKey && prevKey !== meta.key) await fastify.storage.deleteObject(prevKey).catch(() => {});
@@ -1344,32 +1416,6 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   // /award — тоже 409. Иначе согласование обходилось бы одним HTTP-запросом.
 
   const canApprove = requireRole(...PROCUREMENT_ASSIGN_ROLES);
-
-  /**
-   * Зона ответственности для уже созданного заказа: области берём из его позиций.
-   * Раньше проверка стояла только при создании, и правку состава, поставщиков и отправку
-   * на согласование мог делать любой внутренний пользователь.
-   */
-  async function assertOrderAccessForOrder(
-    client: PoolClient,
-    user: { id: string; role: Role },
-    orderId: string,
-  ) {
-    const { rows } = await client.query(
-      `SELECT DISTINCT mr.project_id, mr.contractor_id, mri.cost_type_id, mri.agg_key
-         FROM supplier_order_items soi
-         JOIN material_request_items mri ON mri.id = soi.request_item_id
-         JOIN material_requests mr ON mr.id = mri.request_id
-        WHERE soi.order_id = $1`,
-      [orderId],
-    );
-    return assertOrderAccess(client, user.id, user.role, rows.map((r) => ({
-      projectId: r.project_id as string | null,
-      contractorId: r.contractor_id as string | null,
-      costTypeId: r.cost_type_id as string | null,
-      aggKey: r.agg_key as string,
-    })));
-  }
 
   /**
    * Общая часть оформления: проверка победителя, сверка множества agg_key, запись цен и расчёт
