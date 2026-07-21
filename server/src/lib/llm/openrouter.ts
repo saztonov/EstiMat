@@ -158,6 +158,11 @@ export interface OpenRouterClientOptions {
   callBudgetMs?: number;
   /** Наблюдатель за попытками. Его исключения на вызов не влияют. */
   observer?: (attempt: HttpAttemptInfo) => void;
+  /**
+   * Дополнительные поля тела запроса, специфичные для провайдера (например `plugins` OpenRouter
+   * для выбора парсера PDF). Мержатся в тело последними.
+   */
+  extraBody?: Record<string, unknown>;
 }
 
 /** Описание инструмента (function calling), формат OpenAI/OpenRouter. */
@@ -177,10 +182,25 @@ export interface ToolCall {
   function: { name: string; arguments: string };
 }
 
-/** Сообщение в диалоге (включая ответы инструментов). */
+/**
+ * Часть мультимодального сообщения (OpenAI-совместимый формат).
+ *
+ * Нужна там, где модели отдают не только текст: счёт поставщика приходит картинкой или PDF.
+ * Изображения — image_url с data-URI, документы — file-часть; какой парсер применить к PDF,
+ * решает вызывающий через extraBody (низкоуровневый клиент про счета ничего не знает).
+ */
+export type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'auto' | 'low' | 'high' } }
+  | { type: 'file'; file: { filename: string; file_data: string } };
+
+/**
+ * Сообщение, ОТПРАВЛЯЕМОЕ модели (включая ответы инструментов).
+ * content — строка либо набор частей; строковая форма остаётся основной.
+ */
 export interface ChatTurnMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string | null;
+  content: string | ChatContentPart[] | null;
   tool_calls?: ToolCall[];
   /** Для role='tool': к какому вызову относится результат. */
   tool_call_id?: string;
@@ -188,8 +208,19 @@ export interface ChatTurnMessage {
   name?: string;
 }
 
+/**
+ * Сообщение, ПОЛУЧЕННОЕ от модели. Отдельный тип от ChatTurnMessage сознательно: ответ всегда
+ * текстовый, и если бы результат наследовал расширенный content, каждый потребитель (чат,
+ * извлечение, группировка) получил бы `string | ChatContentPart[]` и перестал компилироваться.
+ */
+export interface ChatAssistantMessage {
+  role: 'assistant';
+  content: string | null;
+  tool_calls?: ToolCall[];
+}
+
 export interface ChatWithToolsResult {
-  message: ChatTurnMessage;
+  message: ChatAssistantMessage;
   /** 'stop' | 'tool_calls' | 'length' | ... */
   finishReason: string;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
@@ -232,6 +263,9 @@ export async function chatWithTools(
     body.tools = tools;
     body.tool_choice = 'auto';
   }
+  // Провайдер-специфичные поля (например выбор парсера PDF) задаёт вызывающий: клиент остаётся
+  // нейтральным транспортом и не должен знать ни про счета, ни про стоимость движков распознавания.
+  if (opts.extraBody) Object.assign(body, opts.extraBody);
 
   const notify = (info: HttpAttemptInfo) => {
     try {

@@ -12,7 +12,10 @@
  * расход токенов и история HTTP-попыток. Собрать это позже нельзя — /no_think дописывается
  * здесь, а X-Request-Id свой у каждой попытки.
  */
-import { chatWithTools, LlmTimeoutError, type ChatTurnMessage, type HttpAttemptInfo } from './openrouter.js';
+import {
+  chatWithTools, LlmTimeoutError,
+  type ChatTurnMessage, type ChatContentPart, type HttpAttemptInfo,
+} from './openrouter.js';
 import type { ResolvedEndpoint } from './endpoint.js';
 import { assertAllowedLmUrl } from './url-guard.js';
 
@@ -32,6 +35,8 @@ export interface ChatJsonOptions {
   idempotencyKey?: string;
   /** Режим Qwen без рассуждений: /no_think в system и user (чувствительно к позиции). */
   noThink?: boolean;
+  /** Провайдер-специфичные поля тела (например выбор парсера PDF у OpenRouter). */
+  extraBody?: Record<string, unknown>;
 }
 
 /** Что реально ушло в модель и что она ответила — для журнала. */
@@ -71,18 +76,52 @@ export class LlmCallError extends Error {
   }
 }
 
+/** Размер data-URI в килобайтах — по длине base64, точность здесь не нужна. */
+const dataUriKb = (uri: string) => Math.round((uri.length * 3) / 4 / 1024);
+
+/**
+ * Текстовая выжимка мультимодального сообщения для журнала: сами байты файла не пишем (см. вызов),
+ * но должно быть видно, ЧТО именно ушло в модель.
+ */
+export function summarizeParts(parts: ChatContentPart[]): string {
+  return parts
+    .map((p) => {
+      if (p.type === 'text') return p.text;
+      if (p.type === 'image_url') {
+        const url = p.image_url.url;
+        return url.startsWith('data:')
+          ? `[изображение: ${url.slice(5, url.indexOf(';')) || 'image'}, ~${dataUriKb(url)} КБ]`
+          : `[изображение: ${url}]`;
+      }
+      return `[файл: ${p.file.filename}, ~${dataUriKb(p.file.file_data)} КБ]`;
+    })
+    .join('\n');
+}
+
 /** Отправить system+user и вернуть ответ модели с метаданными. Разбор JSON — на стороне вызывающего. */
-export async function chatJsonOnce(opts: ChatJsonOptions, system: string, user: string): Promise<ChatJsonResult> {
+export async function chatJsonOnce(
+  opts: ChatJsonOptions,
+  system: string,
+  user: string | ChatContentPart[],
+): Promise<ChatJsonResult> {
   const { endpoint: ep } = opts;
   // Адрес LM Studio приходит из БД, а мы отправляем на него env-токен: проверяем перед вызовом,
   // а не только при сохранении настройки.
   if (ep.isLmStudio) assertAllowedLmUrl(ep.baseUrl);
 
   const sentSystem = opts.noThink ? `${system}\n\n/no_think` : system;
-  const sentUser = opts.noThink ? `${user}\n\n/no_think` : user;
+  // Мультимодальное сообщение: /no_think дописываем отдельной текстовой частью, а в журнал кладём
+  // ВЫЖИМКУ. Base64 файла в журнале бесполезен для разбора и мгновенно упирается в лимит текста
+  // (1 МиБ), вытесняя сам промпт — то есть ровно то, ради чего журнал и заведён.
+  const userParts = typeof user === 'string' ? null : user;
+  const userContent: string | ChatContentPart[] = userParts
+    ? (opts.noThink ? [...userParts, { type: 'text' as const, text: '/no_think' }] : userParts)
+    : (opts.noThink ? `${user as string}\n\n/no_think` : (user as string));
+  const sentUser = userParts ? summarizeParts(userContent as ChatContentPart[]) : (userContent as string);
+
   const messages: ChatTurnMessage[] = [
     { role: 'system', content: sentSystem },
-    { role: 'user', content: sentUser },
+    { role: 'user', content: userContent },
   ];
 
   const attempts: HttpAttemptInfo[] = [];
@@ -102,6 +141,7 @@ export async function chatJsonOnce(opts: ChatJsonOptions, system: string, user: 
         attemptTimeoutMs: opts.attemptTimeoutMs,
         callBudgetMs: opts.callBudgetMs,
         observer: (a) => attempts.push(a),
+        extraBody: opts.extraBody,
       },
       messages,
       [],
