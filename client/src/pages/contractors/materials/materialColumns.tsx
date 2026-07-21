@@ -137,7 +137,10 @@ export function buildMaterialColumns({
     {
       title: 'Местоположение',
       key: 'location',
-      width: 237,
+      // 356 ≈ 237×1.5. Бейджи зон, этажей и типов переносились по одному в строку и растили строку
+      // в высоту, тогда как «Материал» — единственная колонка без ширины — забирал весь остаток и
+      // пустовал. Ширину добираем именно у него.
+      width: 356,
       render: (_, m) => (
         <LocationBadgesRow zoneNames={m.zoneNames} floorsLabel={m.floorsLabel} typeLabels={m.typeLabels} />
       ),
