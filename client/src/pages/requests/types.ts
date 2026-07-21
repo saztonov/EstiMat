@@ -425,6 +425,32 @@ export interface OrderPriceLine {
   warranty_months: number | null;
 }
 
+/**
+ * Счёт заказа — платёжный документ выбранного поставщика. Их несколько: правка состава или смена
+ * поставщика требуют нового счёта, а прежний не удаляется, а замещается (superseded_at).
+ */
+export interface OrderInvoice {
+  id: string;
+  /** Ревизия заказа, под которую счёт выставлен. */
+  invoice_revision: number;
+  invoice_no: string | null;
+  /** YYYY-MM-DD. */
+  invoice_date: string | null;
+  amount: string | number | null;
+  vat_amount: string | number | null;
+  supplier_name: string | null;
+  supplier_inn: string | null;
+  /** 'manual' — введено руками, 'llm' — распознано, 'llm_edited' — распознано и выверено. */
+  source: 'manual' | 'llm' | 'llm_edited';
+  file_name: string | null;
+  file_size: number | string | null;
+  note: string | null;
+  superseded_at: string | null;
+  superseded_reason: 'composition_changed' | 'award_revoked' | 'replaced' | null;
+  created_at: string;
+  uploaded_by_name: string | null;
+}
+
 // Строка графика поставки заказа (по агрегату материала). delivery_date — YYYY-MM-DD.
 export interface OrderDeliveryEntry {
   agg_key: string;
@@ -455,12 +481,19 @@ export interface SupplierOrderDetail extends SupplierLotRow {
   approval_comment: string | null;
   /** Выбранное предложение до присуждения; при отклонении сохраняется. */
   proposed_offer_id: string | null;
+  /** Заметка снабжения о заказе. Не входит в закупочный контракт — правится отдельным запросом. */
+  comment: string | null;
+  /** Растёт при каждом изменении, требующем нового счёта (правка состава, смена поставщика). */
+  invoice_revision: number;
+  /** Присуждённый заказ изменился, а счёт под новую ревизию ещё не приложен. */
+  needs_new_invoice: boolean;
   items: SupplierLotItem[];
   aggItems: OrderAggItem[];
   sources: SupplierLotSource[];
   offers: OrderOffer[];
   priceLines: OrderPriceLine[];
   deliverySchedule: OrderDeliveryEntry[];
+  invoices: OrderInvoice[];
 }
 
 // Строка единого реестра «Заказы».

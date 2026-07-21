@@ -142,6 +142,33 @@ export const finalizeOrderSchema = z.object({
 });
 export type FinalizeOrderInput = z.infer<typeof finalizeOrderSchema>;
 
+// ===== Комментарий снабжения к заказу =====
+
+/**
+ * Заметка о заказе в целом. Сохраняется отдельным запросом и НЕ несёт expectedVersion: комментарий
+ * не входит в закупочный контракт, поэтому не конфликтует с параллельной правкой цен или графика.
+ * null — очистить.
+ */
+export const patchOrderCommentSchema = z.object({
+  comment: z.string().max(2000).nullable(),
+});
+export type PatchOrderCommentInput = z.infer<typeof patchOrderCommentSchema>;
+
+// ===== Счета заказа (платёжные документы выбранного поставщика) =====
+
+/**
+ * Реквизиты счёта: вводятся вручную либо приезжают из распознавания и правятся человеком.
+ * Все поля необязательны — счёт можно приложить сразу, а реквизиты заполнить позже.
+ */
+export const upsertInvoiceSchema = z.object({
+  invoiceNo: z.string().trim().max(100).nullish(),
+  invoiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата в формате YYYY-MM-DD').nullish(),
+  amount: money2.nullish(),
+  vatAmount: money2.nullish(),
+  note: z.string().max(1000).nullish(),
+});
+export type UpsertInvoiceInput = z.infer<typeof upsertInvoiceSchema>;
+
 // ===== Согласование поставщика руководителем =====
 
 /** Подтверждение выбранного поставщика. Комментарий необязателен — решение и так фиксируется. */

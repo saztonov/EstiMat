@@ -6,7 +6,7 @@ import {
   formLotSchema, startProcurementSchema, awardSchema, mapTenderUnit,
   upsertOfferSchema, offerFileMetaSchema, finalizeOrderSchema,
   approveOrderSchema, rejectApprovalSchema,
-  putOrderDeliveryScheduleSchema,
+  putOrderDeliveryScheduleSchema, patchOrderCommentSchema,
   assignMaterialResponsibleSchema, bulkAssignMaterialResponsibleSchema,
   setMaterialResponsiblesSchema, bulkSetMaterialResponsiblesSchema,
   type ManualVatRate,
@@ -18,6 +18,7 @@ import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
 import { recalcOrderAmount } from '../../lib/supplier-orders/pricing.js';
 import { replaceSchedule } from '../../lib/supplier-orders/schedule.js';
 import { assertRemainingFits } from '../../lib/supplier-orders/allocation.js';
+import supplierOrderInvoiceRoutes from './invoices.js';
 import { assertOrderAccess, assertOrderAccessForOrder, decideOrderAccess } from '../../lib/procurement/access.js';
 import { resolveResponsibles, scopeKey } from '../../lib/procurement/responsibles.js';
 import { PROCUREMENT_ASSIGN_ROLES, type Role } from '@estimat/shared';
@@ -53,6 +54,10 @@ async function assertAssignableUser(client: PoolClientLike, userId: string): Pro
 export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
   fastify.addHook('preHandler', requireRole('admin', 'engineer', 'manager'));
+
+  // Счета заказа — отдельным файлом (0078): index.ts и без них почти 1900 строк.
+  // Префикс и хуки авторизации наследуются от этого роутера.
+  await fastify.register(supplierOrderInvoiceRoutes);
 
   // ============================================================
   // GET /materials — свод материалов заявок (все виды) с фильтрами и серверной пагинацией.
@@ -1235,6 +1240,11 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
 
   // GET /:id/offers/:offerId/file — download-proxy документа поставщика (S3-ключ наружу не отдаём).
   fastify.get<{ Params: { id: string; offerId: string } }>('/:id/offers/:offerId/file', async (request, reply) => {
+    // Зона ответственности проверяется и на скачивании: без неё документ поставщика по чужой
+    // закупке был доступен любой внутренней роли — общей аутентификации для коммерческой тайны мало.
+    const access = await assertOrderAccessForOrder(fastify.pool, request.currentUser, request.params.id);
+    if (!access.ok) return reply.status(403).send({ error: access.reason });
+
     const { rows } = await fastify.pool.query(
       `SELECT file_key, file_name, mime_type FROM supplier_order_offers WHERE id = $1 AND order_id = $2`,
       [request.params.offerId, request.params.id],
@@ -1746,6 +1756,43 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   // ============================================================
   // GET /:id — карточка заказа (позиции, агрегаты, заявки-источники, поставщики-предложения, цены, тендер)
   // ============================================================
+  // ============================================================
+  // PATCH /:id/comment — заметка снабжения о заказе.
+  //   Отдельный роут, а не часть общей правки: комментарий не входит в закупочный контракт, поэтому
+  //   НЕ бампает row_version — иначе правка заметки роняла бы expectedVersion в чужой открытой форме
+  //   цен или графика. По той же причине здесь нет expectedVersion: конфликтовать не с чем.
+  // ============================================================
+  fastify.patch<{ Params: { id: string } }>('/:id/comment', async (request, reply) => {
+    const user = request.currentUser;
+    const body = patchOrderCommentSchema.parse(request.body);
+    const next = body.comment?.trim() ? body.comment.trim() : null;
+
+    const { rows } = await fastify.pool.query(
+      `SELECT id, project_id, sourcing_status, comment FROM supplier_orders WHERE id = $1 AND kind = 'sourcing'`,
+      [request.params.id],
+    );
+    const order = rows[0];
+    if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
+    if (['cancelled', 'no_award'].includes(order.sourcing_status)) {
+      return reply.status(409).send({ error: 'Заказ завершён — комментарий менять нельзя' });
+    }
+    const access = await assertOrderAccessForOrder(fastify.pool, user, order.id);
+    if (!access.ok) return reply.status(403).send({ error: access.reason });
+
+    // Запись без фактического изменения не должна плодить записи в журнале.
+    if ((order.comment ?? null) === next) return { data: { comment: next } };
+
+    await fastify.pool.query(
+      `UPDATE supplier_orders SET comment = $2, updated_at = now() WHERE id = $1`,
+      [order.id, next],
+    );
+    await appendOrderAudit(fastify.pool, {
+      orderId: order.id, action: 'comment_changed', userId: user.id,
+      changes: { from: order.comment ?? null, to: next }, projectId: order.project_id,
+    });
+    return { data: { comment: next } };
+  });
+
   fastify.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
     // ФИО акторов согласования: SELECT * отдаёт только идентификаторы, а карточка показывает,
     // кто отправил предложение и кто его подтвердил.
@@ -1762,7 +1809,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     const lot = rows[0];
     if (!lot) return reply.status(404).send({ error: 'Заказ не найден' });
 
-    const [items, aggItems, sources, offers, priceLines, deliverySchedule] = await Promise.all([
+    const [items, aggItems, sources, offers, priceLines, deliverySchedule, invoices] = await Promise.all([
       fastify.pool.query(
         `SELECT id, request_id, request_item_id, material_id, material_name, unit, quantity, agg_key,
                 contractor_id, contractor_name, request_no, cost_type_name, cost_category_name,
@@ -1801,7 +1848,29 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           ORDER BY agg_key, delivery_date`,
         [lot.id],
       ),
+      // Счета заказа (0078). Действующие идут первыми; ключ S3 наружу не отдаём.
+      fastify.pool.query(
+        `SELECT i.id, i.invoice_revision, i.invoice_no, to_char(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
+                i.amount, i.vat_amount, i.supplier_name, i.supplier_inn, i.source,
+                i.file_name, i.file_size, i.note, i.superseded_at, i.superseded_reason, i.created_at,
+                u.full_name AS uploaded_by_name
+           FROM supplier_order_invoices i
+           LEFT JOIN users u ON u.id = i.uploaded_by
+          WHERE i.order_id = $1
+          ORDER BY i.superseded_at NULLS FIRST, i.created_at DESC`,
+        [lot.id],
+      ),
     ]);
+
+    // «Нужен новый счёт» ВЫЧИСЛЯЕМ, а не храним флагом: флаг пришлось бы гасить в трёх местах
+    // (загрузка счёта, отмена, смена поставщика), и любой пропуск оставил бы вечное предупреждение.
+    const needsNewInvoice =
+      lot.sourcing_status === 'awarded'
+      && Number(lot.invoice_revision ?? 1) > 1
+      && !invoices.rows.some(
+        (i) => i.superseded_at == null && Number(i.invoice_revision) >= Number(lot.invoice_revision ?? 1),
+      );
+
     return {
       data: {
         ...lot,
@@ -1811,6 +1880,8 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         offers: offers.rows,
         priceLines: priceLines.rows,
         deliverySchedule: deliverySchedule.rows,
+        invoices: invoices.rows,
+        needs_new_invoice: needsNewInvoice,
       },
     };
   });
