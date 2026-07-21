@@ -1402,6 +1402,11 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // Стадии, на которых заказ открыт для работы с поставщиками: набор предложений идёт и по ещё
+  // формируемому заказу. Держим одним списком — маршрут загрузки файла проверяет его отдельно
+  // (транзакцию через потоковую загрузку не протянуть), и расходиться эти проверки не должны.
+  const OFFERABLE_STATUSES = ['forming', 'sourcing'];
+
   // Заказ доступен для работы с поставщиками: стадия сбора предложений (sourcing), не тендер.
   //
   // Читаем через переданный db, а не через пул: у маршрутов ниже проверка стадии, проверка зоны и
@@ -1433,7 +1438,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       await client.query('BEGIN');
       const order = await loadOfferableOrder(client, orderId, true);
       if (!order) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
-      if (!['forming', 'sourcing'].includes(order.sourcing_status) || order.procurement_method === 'tender') {
+      if (!OFFERABLE_STATUSES.includes(order.sourcing_status) || order.procurement_method === 'tender') {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: `${verb} можно только по формируемому заказу или заказу в стадии сбора предложений` });
       }
@@ -1452,6 +1457,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
 
   // ============================================================
   // POST /:id/offers — добавить поставщика-предложение (manual, стадия сбора; сумма необязательна)
+  //   Свободная форма: название и привязка к справочнику необязательны, достаточно комментария.
   // ============================================================
   fastify.post<{ Params: { id: string } }>('/:id/offers', async (request, reply) => {
     const user = request.currentUser;
@@ -1461,10 +1467,12 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         `INSERT INTO supplier_order_offers
            (order_id, supplier_id, supplier_name, supplier_inn, amount, currency, response_status, terms, note, created_by)
          VALUES ($1,$2,$3,$4,$5,'RUB',$6,$7,$8,$9) RETURNING id`,
-        [order.id, body.supplierId ?? null, body.supplierName, body.supplierInn ?? null, body.amount ?? null,
+        [order.id, body.supplierId ?? null, body.supplierName ?? null, body.supplierInn ?? null, body.amount ?? null,
          body.responseStatus ?? 'pending', body.terms ?? null, body.note ?? null, user.id],
       );
-      await appendOrderAudit(client, { orderId: order.id, action: 'offer_added', userId: user.id, changes: { supplierName: body.supplierName }, projectId: order.project_id });
+      // Безымянную строку в журнале опознают по комментарию — иначе запись «добавлен поставщик»
+      // была бы про никого.
+      await appendOrderAudit(client, { orderId: order.id, action: 'offer_added', userId: user.id, changes: { supplierName: body.supplierName ?? body.note }, projectId: order.project_id });
       return reply.status(201).send({ data: { id: ins[0].id } });
     });
   });
@@ -1478,7 +1486,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
             SET supplier_id = $3, supplier_name = $4, supplier_inn = $5, amount = $6,
                 response_status = COALESCE($7, response_status), terms = $8, note = $9
           WHERE id = $1 AND order_id = $2`,
-        [request.params.offerId, order.id, body.supplierId ?? null, body.supplierName, body.supplierInn ?? null,
+        [request.params.offerId, order.id, body.supplierId ?? null, body.supplierName ?? null, body.supplierInn ?? null,
          body.amount ?? null, body.responseStatus ?? null, body.terms ?? null, body.note ?? null],
       );
       if (!rowCount) return reply.status(404).send({ error: 'Предложение не найдено' });
@@ -1519,8 +1527,10 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       // или сменить ответственного.
       const order = await loadOfferableOrder(fastify.pool, request.params.id);
       if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
-      if (order.sourcing_status !== 'sourcing' || order.procurement_method === 'tender') {
-        return reply.status(409).send({ error: 'Документы поставщиков — только по заказу в стадии сбора предложений' });
+      // Стадии те же, что у самих предложений: КП нередко приходит раньше, чем состав заказа
+      // окончательно собран, и заставлять держать файл «в столе» до фиксации незачем.
+      if (!OFFERABLE_STATUSES.includes(order.sourcing_status) || order.procurement_method === 'tender') {
+        return reply.status(409).send({ error: 'Документы поставщиков — только по формируемому заказу или заказу в стадии сбора предложений' });
       }
       const preAccess = await assertOrderAccessForOrder(fastify.pool, user, order.id);
       if (!preAccess.ok) return reply.status(403).send({ error: preAccess.reason });
@@ -1546,7 +1556,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         try {
           await client.query('BEGIN');
           const fresh = await loadOfferableOrder(client, order.id, true);
-          if (!fresh || fresh.sourcing_status !== 'sourcing' || fresh.procurement_method === 'tender') {
+          if (!fresh || !OFFERABLE_STATUSES.includes(fresh.sourcing_status) || fresh.procurement_method === 'tender') {
             await client.query('ROLLBACK');
             await fastify.storage.deleteObject(meta.key).catch(() => {});
             return reply.status(409).send({ error: 'Заказ изменился, пока загружался файл — документ не сохранён' });
@@ -1722,7 +1732,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     client: PoolClient,
     order: { id: string; project_id: string | null },
     body: {
-      winnerOfferId: string; vatRate: string; paymentType: string;
+      winnerOfferId: string; winnerSupplierId: string; vatRate: string; paymentType: string;
       lines: { aggKey: string; unitPrice: string; warrantyMonths?: number | null }[];
     },
   ): Promise<
@@ -1745,6 +1755,23 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     if (winner.response_status !== 'received' || !winner.file_key) {
       return { ok: false, status: 409, error: 'Победителем можно выбрать только поставщика с полученным предложением и приложенным документом' };
     }
+
+    // Реквизиты победителя берём из справочника, а не из введённого вручную текста: предложения
+    // набираются свободной формой, а на согласование должен уйти опознаваемый контрагент — по нему
+    // дальше идут счета и оплаты. Заодно строка предложения дополняется этой привязкой.
+    const { rows: sRows } = await client.query(
+      `SELECT id, name, inn FROM organizations WHERE id = $1 AND type = 'supplier' AND is_active`,
+      [body.winnerSupplierId],
+    );
+    const supplier = sRows[0];
+    if (!supplier) return { ok: false, status: 409, error: 'Поставщик-победитель должен быть выбран из справочника' };
+    await client.query(
+      `UPDATE supplier_order_offers SET supplier_id = $2, supplier_name = $3, supplier_inn = $4 WHERE id = $1`,
+      [winner.id, supplier.id, supplier.name, supplier.inn ?? null],
+    );
+    winner.supplier_id = supplier.id;
+    winner.supplier_name = supplier.name;
+    winner.supplier_inn = supplier.inn ?? null;
 
     // Цены должны покрывать ВСЕ агрегаты заказа (точное совпадение множеств agg_key).
     const { rows: orderKeys } = await client.query(

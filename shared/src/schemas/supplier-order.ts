@@ -8,6 +8,12 @@ import { deliveryScheduleEntrySchema } from './material-request.js';
 // Деньги — десятичной строкой (без float): до 13 знаков целой части и ≤2 дробной. Считаем в SQL numeric.
 const money2 = z.string().regex(/^\d{1,13}(\.\d{1,2})?$/, 'Некорректная сумма');
 
+// Пустая или пробельная строка из формы означает «не заполнено», а не значение: приводим её к null
+// ДО остальных проверок. Иначе min(1) отбивал бы пробелы ошибкой, а в БД попадала бы строка,
+// которая выглядит заполненной, но ничего не сообщает.
+const blankToNull = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), schema);
+
 // ===== Вход (клиент → сервер) =====
 
 // Одна позиция лота при формировании: ссылка на исходную строку заявки + итоговое количество
@@ -107,15 +113,27 @@ export const createTenderOrderSchema = z.object({
 });
 export type CreateTenderOrderInput = z.infer<typeof createTenderOrderSchema>;
 
-// Добавить/обновить поставщика-предложение. Сумма НЕОБЯЗАТЕЛЬНА (поставщика можно добавить только с файлом).
+/**
+ * Добавить/обновить поставщика-предложение.
+ *
+ * Свободная форма: ни название, ни привязка к справочнику не обязательны — КП приходят и от
+ * поставщиков, которых в справочнике ещё нет, и такую строку нужно уметь завести одним
+ * комментарием. Требуем лишь, чтобы строка что-то сообщала: название ИЛИ комментарий.
+ * Обязательный выбор из справочника перенесён на победителя (finalizeOrderSchema).
+ *
+ * Сумма тоже необязательна — поставщика можно добавить только с файлом.
+ */
 export const upsertOfferSchema = z.object({
   supplierId: z.string().uuid().nullish(),
-  supplierName: z.string().min(1).max(300),
+  supplierName: blankToNull(z.string().trim().min(1).max(300).nullish()),
   supplierInn: z.string().regex(/^\d{10}(\d{2})?$/, 'ИНН 10 или 12 цифр').nullish(),
   amount: money2.nullish(),
   responseStatus: z.enum(OFFER_RESPONSE_STATUSES).optional(),
   terms: z.string().max(1000).nullish(),
-  note: z.string().max(1000).nullish(),
+  note: blankToNull(z.string().trim().max(1000).nullish()),
+}).refine((v) => v.supplierName != null || v.note != null, {
+  message: 'Укажите название или комментарий',
+  path: ['supplierName'],
 });
 export type UpsertOfferInput = z.infer<typeof upsertOfferSchema>;
 
@@ -132,9 +150,16 @@ export const finalizeLineSchema = z.object({
   warrantyMonths: z.number().int().min(0).max(1200).nullish(),
 });
 
-// «Оформить заказ»: победитель + условия + цены → awarded (атомарно).
+/**
+ * «Оформить заказ»: победитель + условия + цены → awarded (атомарно).
+ *
+ * winnerSupplierId обязателен: предложения собираются свободной формой, но на согласование
+ * руководителю уходит конкретный контрагент из справочника — по нему потом идут счета и оплаты.
+ * Сервер берёт название и ИНН победителя из справочника, а не из введённого вручную текста.
+ */
 export const finalizeOrderSchema = z.object({
   winnerOfferId: z.string().uuid(),
+  winnerSupplierId: z.string().uuid('Выберите поставщика из справочника'),
   vatRate: z.enum(MANUAL_VAT_RATES),
   paymentType: z.enum(PAYMENT_TYPES),
   lines: z.array(finalizeLineSchema).min(1),

@@ -101,20 +101,29 @@ function OrderView({
   // Черновик инициализируется из сохранённого ОДИН раз, при монтировании. Ленивый инициализатор,
   // а не useEffect на order: фоновое обновление после каждой мутации затирало бы несохранённые
   // правки пользователя прямо во время ввода цен.
-  const [draft, setDraft] = useState<WinnerDraft>(() => ({
-    winnerId: order.proposed_offer_id ?? undefined,
-    vatRate: (MANUAL_VAT_RATES as readonly string[]).includes(order.vat_rate ?? '')
-      ? (order.vat_rate as ManualVatRate) : 'vat22',
-    paymentType: (PAYMENT_TYPES as readonly string[]).includes(order.payment_type ?? '')
-      ? (order.payment_type as PaymentType) : 'advance',
-    prices: new Map(order.priceLines.map((p) => [p.agg_key, { price: Number(p.unit_price), warranty: p.warranty_months }])),
-  }));
+  const [draft, setDraft] = useState<WinnerDraft>(() => {
+    // Справочный поставщик восстанавливается из самого предложения: отклонённое возвращается на
+    // доработку уже привязанным, и заставлять выбирать контрагента заново незачем.
+    const proposed = order.offers.find((o) => o.id === order.proposed_offer_id);
+    return {
+      winnerId: order.proposed_offer_id ?? undefined,
+      winnerSupplier: proposed?.supplier_id && proposed.supplier_name
+        ? { id: proposed.supplier_id, name: proposed.supplier_name, inn: proposed.supplier_inn }
+        : undefined,
+      vatRate: (MANUAL_VAT_RATES as readonly string[]).includes(order.vat_rate ?? '')
+        ? (order.vat_rate as ManualVatRate) : 'vat22',
+      paymentType: (PAYMENT_TYPES as readonly string[]).includes(order.payment_type ?? '')
+        ? (order.payment_type as PaymentType) : 'advance',
+      prices: new Map(order.priceLines.map((p) => [p.agg_key, { price: Number(p.unit_price), warranty: p.warranty_months }])),
+    };
+  });
   const patchDraft = (patch: Partial<WinnerDraft>) => setDraft((d) => ({ ...d, ...patch }));
 
   const status = order.sourcing_status;
   const isTender = order.procurement_method === 'tender';
   const editable = isCompositionEditable(order);
-  const canCollectDocs = status === 'sourcing';
+  // Документы поставщиков принимаются и до фиксации состава — после неё открывается выбор победителя.
+  const canChooseWinner = status === 'sourcing';
 
   // Активный блок ВСЕГДА управляемый: после создания заказа и при смене стадии он должен
   // переключиться сам, а модалка при этом не размонтируется — defaultActiveKey сработал бы
@@ -128,7 +137,7 @@ function OrderView({
   // отозвали файл. Ссылка на несуществующее предложение отправилась бы на согласование и была бы
   // отбита сервером — сбрасываем выбор здесь.
   const winnerAlive = draft.winnerId != null && order.offers.some((o) => o.id === draft.winnerId);
-  const safeDraft: WinnerDraft = winnerAlive ? draft : { ...draft, winnerId: undefined };
+  const safeDraft: WinnerDraft = winnerAlive ? draft : { ...draft, winnerId: undefined, winnerSupplier: undefined };
 
   const refetch = () => { refetchOrder(); onChanged(); };
 
@@ -163,6 +172,7 @@ function OrderView({
 
   function onSubmitApproval() {
     if (!safeDraft.winnerId) return message.warning('Выберите победителя');
+    if (!safeDraft.winnerSupplier) return message.warning('Выберите поставщика-победителя из справочника');
     const lines = order.aggItems.map((a) => ({
       aggKey: a.agg_key,
       unitPrice: safeDraft.prices.get(a.agg_key)?.price ?? null,
@@ -171,6 +181,7 @@ function OrderView({
     if (lines.some((l) => l.unitPrice == null)) return message.warning('Укажите цену по всем материалам');
     submitApproval.mutate({
       winnerOfferId: safeDraft.winnerId,
+      winnerSupplierId: safeDraft.winnerSupplier.id,
       vatRate: safeDraft.vatRate,
       paymentType: safeDraft.paymentType,
       lines: lines.map((l) => ({ aggKey: l.aggKey, unitPrice: String(l.unitPrice), warrantyMonths: l.warrantyMonths ?? undefined })),
@@ -304,7 +315,7 @@ function OrderView({
         <ProposalView order={order} />
       ) : (
         <SuppliersBlock
-          order={order} canCollectDocs={canCollectDocs} draft={safeDraft} onDraftChange={patchDraft}
+          order={order} canChooseWinner={canChooseWinner} draft={safeDraft} onDraftChange={patchDraft}
           onSubmitApproval={onSubmitApproval} submitting={submitApproval.isPending} refetch={refetch}
         />
       ),

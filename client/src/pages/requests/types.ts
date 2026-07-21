@@ -395,10 +395,11 @@ export interface SupplierLotDetail extends SupplierLotRow {
 // ===== Заказ поставщику: оформление в одном окне =====
 
 // Поставщик-предложение (список всех, кому отправлен запрос). Документ (КП/счёт) — на строке.
+// Строка заводится свободной формой, поэтому названия может не быть — тогда её опознают по note.
 export interface OrderOffer {
   id: string;
   supplier_id: string | null;
-  supplier_name: string;
+  supplier_name: string | null;
   supplier_inn: string | null;
   amount: string | number | null;
   currency: string;
