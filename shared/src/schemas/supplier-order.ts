@@ -142,6 +142,54 @@ export const finalizeOrderSchema = z.object({
 });
 export type FinalizeOrderInput = z.infer<typeof finalizeOrderSchema>;
 
+// ===== Правка и отмена уже зафиксированного заказа =====
+
+/**
+ * Отмена заказа. Причина обязательна только для ПРИСУЖДЁННОГО заказа (проверка на сервере: у
+ * заказа на более ранних стадиях отменять по сути нечего). Тело целиком необязательно — прежний
+ * клиент шлёт POST /cancel вообще без него, и он не должен сломаться.
+ */
+export const cancelOrderSchema = z.object({
+  reason: z.string().trim().max(2000).optional(),
+  expectedVersion: z.number().int().nonnegative().optional(),
+});
+export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
+
+/**
+ * Отзыв присуждения (смена поставщика): заказ возвращается к сбору предложений.
+ * Причина обязательна — это отмена уже принятого руководителем решения.
+ */
+export const revokeAwardSchema = z.object({
+  reason: z.string().trim().min(1, 'Укажите причину смены поставщика').max(2000),
+  expectedVersion: z.number().int().nonnegative().optional(),
+});
+export type RevokeAwardInput = z.infer<typeof revokeAwardSchema>;
+
+/**
+ * Изменение количества позиции заказа.
+ *
+ * schedule — график по затронутому материалу (agg_key). Не задан → сервер подгонит сам: при
+ * уменьшении списывает с ПОЗДНИХ дат, при увеличении доливает в последнюю. Ближайшие поставки
+ * обычно уже согласованы с поставщиком, поэтому корректно резать хвост.
+ *
+ * Увеличение сверх доступного остатка заявок отклоняется жёстко (инвариант И1) — в отличие от
+ * правки объёмов ЗАЯВКИ, где уменьшение ниже размещённого разрешено с подтверждением.
+ */
+export const patchOrderItemSchema = z.object({
+  quantity: z.number().positive(),
+  reason: z.string().trim().max(2000).optional(),
+  schedule: z.array(deliveryScheduleEntrySchema).optional(),
+  expectedVersion: z.number().int().nonnegative().optional(),
+});
+export type PatchOrderItemInput = z.infer<typeof patchOrderItemSchema>;
+
+/** Удаление позиции из зафиксированного заказа. Тело необязательно (в forming причина не нужна). */
+export const deleteOrderItemSchema = z.object({
+  reason: z.string().trim().max(2000).optional(),
+  expectedVersion: z.number().int().nonnegative().optional(),
+});
+export type DeleteOrderItemInput = z.infer<typeof deleteOrderItemSchema>;
+
 // ===== Комментарий снабжения к заказу =====
 
 /**

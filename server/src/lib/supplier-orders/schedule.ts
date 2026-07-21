@@ -65,3 +65,66 @@ export async function replaceSchedule(
   }
   return { ok: true };
 }
+
+/** Убрать график материала целиком — когда его последняя позиция ушла из заказа. */
+export async function dropScheduleForAgg(client: PoolClient, orderId: string, aggKey: string): Promise<void> {
+  await client.query(
+    `DELETE FROM supplier_order_delivery_schedule WHERE order_id = $1 AND agg_key = $2`,
+    [orderId, aggKey],
+  );
+}
+
+/**
+ * Подогнать график под новое количество материала, когда клиент не прислал свой.
+ *
+ * Уменьшение списывается с ПОЗДНИХ дат, увеличение доливается в последнюю: ближайшие поставки
+ * обычно уже согласованы с поставщиком, поэтому двигать корректно хвост, а не срывать первую
+ * отгрузку. Строки, обнулённые списанием, удаляются — «поставка на 0» смысла не имеет.
+ *
+ * Если графика по материалу нет, он и не создаётся: график необязателен, и молча выдуманная дата
+ * была бы хуже его отсутствия.
+ */
+export async function reconcileScheduleAfterQtyChange(
+  client: PoolClient,
+  orderId: string,
+  aggKey: string,
+  newQty: number,
+): Promise<void> {
+  const { rows } = await client.query(
+    `SELECT id, quantity::numeric AS quantity FROM supplier_order_delivery_schedule
+      WHERE order_id = $1 AND agg_key = $2
+      ORDER BY delivery_date`,
+    [orderId, aggKey],
+  );
+  if (!rows.length) return;
+
+  const current = rows.reduce((s, r) => s + Number(r.quantity), 0);
+  let diff = Number(newQty) - current;
+  if (Math.abs(diff) <= SCHED_EPS) return;
+
+  if (diff > 0) {
+    const last = rows[rows.length - 1]!;
+    await client.query(
+      `UPDATE supplier_order_delivery_schedule SET quantity = quantity + $2 WHERE id = $1`,
+      [last.id, diff],
+    );
+    return;
+  }
+
+  // Списываем с конца: от поздних дат к ранним.
+  let need = -diff;
+  for (let i = rows.length - 1; i >= 0 && need > SCHED_EPS; i--) {
+    const row = rows[i]!;
+    const qty = Number(row.quantity);
+    if (qty <= need + SCHED_EPS) {
+      await client.query('DELETE FROM supplier_order_delivery_schedule WHERE id = $1', [row.id]);
+      need -= qty;
+    } else {
+      await client.query(
+        `UPDATE supplier_order_delivery_schedule SET quantity = quantity - $2 WHERE id = $1`,
+        [row.id, need],
+      );
+      need = 0;
+    }
+  }
+}

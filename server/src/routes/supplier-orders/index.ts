@@ -7,6 +7,7 @@ import {
   upsertOfferSchema, offerFileMetaSchema, finalizeOrderSchema,
   approveOrderSchema, rejectApprovalSchema,
   putOrderDeliveryScheduleSchema, patchOrderCommentSchema,
+  cancelOrderSchema, revokeAwardSchema, patchOrderItemSchema, deleteOrderItemSchema,
   assignMaterialResponsibleSchema, bulkAssignMaterialResponsibleSchema,
   setMaterialResponsiblesSchema, bulkSetMaterialResponsiblesSchema,
   type ManualVatRate,
@@ -16,7 +17,7 @@ import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { recordAudit } from '../../lib/audit.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
 import { recalcOrderAmount } from '../../lib/supplier-orders/pricing.js';
-import { replaceSchedule } from '../../lib/supplier-orders/schedule.js';
+import { replaceSchedule, reconcileScheduleAfterQtyChange, dropScheduleForAgg } from '../../lib/supplier-orders/schedule.js';
 import { assertRemainingFits } from '../../lib/supplier-orders/allocation.js';
 import supplierOrderInvoiceRoutes from './invoices.js';
 import { assertOrderAccess, assertOrderAccessForOrder, decideOrderAccess } from '../../lib/procurement/access.js';
@@ -277,6 +278,71 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   //   Назначать может только manager/admin — как и подтверждать поставщика.
   // ============================================================
   const canAssignResponsible = requireRole(...PROCUREMENT_ASSIGN_ROLES);
+
+  /**
+   * Операции над УЖЕ ПРИСУЖДЁННЫМ заказом (смена поставщика, правка состава): их принимает тот же,
+   * кто подтверждает поставщика — отменяется его собственное решение.
+   */
+  const canManageAwarded = requireRole(...PROCUREMENT_ASSIGN_ROLES);
+
+  /**
+   * Можно ли менять состав заказа на этой стадии и этой ролью.
+   *
+   * 'approval' закрыт для всех сознательно (обоснование из 0074): руководитель видит конкретный
+   * состав и сумму, и менять их под ним нельзя. Присуждённый заказ правит только тот, кто
+   * подтверждал поставщика. Терминальные стадии закрыты — там менять нечего.
+   */
+  function assertCompositionEditable(
+    status: string,
+    role: Role,
+  ): { ok: true } | { ok: false; status: number; error: string } {
+    if (status === 'forming' || status === 'sourcing') return { ok: true };
+    if (status === 'awarded') {
+      return PROCUREMENT_ASSIGN_ROLES.includes(role as never)
+        ? { ok: true }
+        : { ok: false, status: 403, error: 'Менять состав присуждённого заказа может админ или руководитель' };
+    }
+    if (status === 'approval') {
+      return { ok: false, status: 409, error: 'Заказ на согласовании — состав менять нельзя' };
+    }
+    return { ok: false, status: 409, error: 'Заказ завершён — состав менять нельзя' };
+  }
+
+  /**
+   * Финансовые последствия изменения состава: пересчёт суммы и требование нового счёта.
+   *
+   * Сумма считается общим recalcOrderAmount — той же формулой, что при оформлении победителя.
+   * Пока цены не заданы (стадии до оформления), считать нечего и требовать новый счёт не за что.
+   */
+  async function applyCompositionChange(
+    client: PoolClient,
+    lot: { id: string; sourcing_status: string; vat_rate: string | null },
+  ): Promise<{ ok: true; amount: string | null; needsNewInvoice: boolean } | { ok: false; status: number; error: string }> {
+    const priced = lot.sourcing_status === 'awarded' && lot.vat_rate != null;
+    if (!priced) {
+      await client.query(
+        'UPDATE supplier_orders SET row_version = row_version + 1, updated_at = now() WHERE id = $1',
+        [lot.id],
+      );
+      return { ok: true, amount: null, needsNewInvoice: false };
+    }
+
+    const { amount, missingPrices } = await recalcOrderAmount(client, lot.id, lot.vat_rate as ManualVatRate);
+    if (missingPrices.length) {
+      // Цена есть не по всем материалам: молча занизить сумму нельзя, а угадать её — тем более.
+      return { ok: false, status: 409, error: 'Цены заказа неполны — оформите заказ заново' };
+    }
+    // Сумма изменилась → действующий счёт больше ей не соответствует. Заказ при этом остаётся
+    // присуждённым: повторное согласование не требуется, нужен лишь новый документ.
+    await client.query(
+      `UPDATE supplier_orders
+          SET amount = $2, invoice_revision = invoice_revision + 1,
+              row_version = row_version + 1, updated_at = now()
+        WHERE id = $1`,
+      [lot.id, amount],
+    );
+    return { ok: true, amount, needsNewInvoice: true };
+  }
 
   /** Свернуть строки свода в области назначения (строк всегда больше, чем областей). */
   async function scopesOfItems(db: Pool | PoolClient, requestItemIds: string[]) {
@@ -623,31 +689,183 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   // ============================================================
   fastify.delete<{ Params: { id: string; itemId: string } }>('/:id/items/:itemId', async (request, reply) => {
     const user = request.currentUser;
+    const body = deleteOrderItemSchema.parse(request.body ?? {});
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        `SELECT id, project_id, sourcing_status, created_by FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        `SELECT id, project_id, sourcing_status, created_by, row_version, vat_rate
+           FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
         [request.params.id],
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       const access = await assertOrderAccessForOrder(client, user, lot.id);
       if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
-      if (lot.sourcing_status !== 'forming') {
+
+      const gate = assertCompositionEditable(lot.sourcing_status, user.role);
+      if (!gate.ok) { await client.query('ROLLBACK'); return reply.status(gate.status).send({ error: gate.error }); }
+      if (body.expectedVersion != null && body.expectedVersion !== lot.row_version) {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Заказ зафиксирован — состав менять нельзя' });
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: lot.row_version });
       }
+
+      // Пустой заказ существовать не должен: у присуждённого он нарушил бы смысл суммы, у
+      // формируемого — превратился бы в мусор. Убрать всё целиком — это отмена заказа.
+      const { rows: cnt } = await client.query(
+        'SELECT count(*)::int AS n FROM supplier_order_items WHERE order_id = $1', [lot.id],
+      );
+      if (cnt[0].n <= 1) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'В заказе не останется материалов — отмените заказ целиком' });
+      }
+
       const { rows: delRows } = await client.query(
-        `DELETE FROM supplier_order_items WHERE id = $1 AND order_id = $2 RETURNING request_id`,
+        `DELETE FROM supplier_order_items WHERE id = $1 AND order_id = $2
+         RETURNING request_id, agg_key, material_name, quantity::numeric AS quantity`,
         [request.params.itemId, lot.id],
       );
       if (!delRows[0]) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Позиция не найдена' }); }
-      await client.query('UPDATE supplier_orders SET row_version = row_version + 1, updated_at = now() WHERE id = $1', [lot.id]);
-      await appendOrderAudit(client, { orderId: lot.id, action: 'item_removed', userId: user.id, projectId: lot.project_id });
-      if (delRows[0].request_id) await recalcRequestStatus(client, delRows[0].request_id, user.id);
+      const removed = delRows[0];
+
+      // Если это была последняя строка своего материала, его цена и график осиротели: оставленная
+      // ценовая строка сломала бы сверку множеств agg_key при следующем оформлении.
+      const { rows: leftRows } = await client.query(
+        `SELECT COALESCE(SUM(quantity), 0)::numeric AS qty, count(*)::int AS n
+           FROM supplier_order_items WHERE order_id = $1 AND agg_key = $2`,
+        [lot.id, removed.agg_key],
+      );
+      if (leftRows[0].n === 0) {
+        await client.query('DELETE FROM supplier_order_price_lines WHERE order_id = $1 AND agg_key = $2', [lot.id, removed.agg_key]);
+        await dropScheduleForAgg(client, lot.id, removed.agg_key);
+      } else {
+        await reconcileScheduleAfterQtyChange(client, lot.id, removed.agg_key, Number(leftRows[0].qty));
+      }
+
+      const finance = await applyCompositionChange(client, lot);
+      if (!finance.ok) { await client.query('ROLLBACK'); return reply.status(finance.status).send({ error: finance.error }); }
+
+      const auditId = await appendOrderAudit(client, {
+        orderId: lot.id, action: 'item_removed', userId: user.id,
+        changes: {
+          materialName: removed.material_name, quantity: Number(removed.quantity),
+          reason: body.reason ?? null, stage: lot.sourcing_status,
+        },
+        projectId: lot.project_id,
+      });
+      await client.query(
+        `INSERT INTO supplier_order_item_edits
+           (audit_id, order_id, order_item_id, material_name, agg_key, quantity_from, quantity_to, action, changed_by)
+         VALUES ($1,$2,NULL,$3,$4,$5,0,'removed',$6)`,
+        [auditId, lot.id, removed.material_name, removed.agg_key, removed.quantity, user.id],
+      );
+
+      if (removed.request_id) await recalcRequestStatus(client, removed.request_id, user.id);
       await client.query('COMMIT');
-      return { data: { ok: true } };
+      return { data: { ok: true, amount: finance.amount, needsNewInvoice: finance.needsNewInvoice } };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  });
+
+  // ============================================================
+  // PATCH /:id/items/:itemId — изменить количество позиции заказа.
+  //   Увеличение сверх доступного остатка заявок отклоняется жёстко (инвариант И1). Уменьшение
+  //   безопасно: резерв вычисляемый, поэтому освободившийся объём сразу возвращается в свод.
+  // ============================================================
+  fastify.patch<{ Params: { id: string; itemId: string } }>('/:id/items/:itemId', async (request, reply) => {
+    const user = request.currentUser;
+    const body = patchOrderItemSchema.parse(request.body);
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT id, project_id, sourcing_status, row_version, vat_rate
+           FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        [request.params.id],
+      );
+      const lot = rows[0];
+      if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      const access = await assertOrderAccessForOrder(client, user, lot.id);
+      if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
+
+      const gate = assertCompositionEditable(lot.sourcing_status, user.role);
+      if (!gate.ok) { await client.query('ROLLBACK'); return reply.status(gate.status).send({ error: gate.error }); }
+      if (body.expectedVersion != null && body.expectedVersion !== lot.row_version) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: lot.row_version });
+      }
+
+      const { rows: itemRows } = await client.query(
+        `SELECT id, request_id, request_item_id, agg_key, material_name, quantity::numeric AS quantity
+           FROM supplier_order_items WHERE id = $1 AND order_id = $2 FOR UPDATE`,
+        [request.params.itemId, lot.id],
+      );
+      const item = itemRows[0];
+      if (!item) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Позиция не найдена' }); }
+      if (Math.abs(Number(item.quantity) - body.quantity) < 1e-9) {
+        await client.query('ROLLBACK');
+        return reply.status(400).send({ error: 'Количество не изменилось' });
+      }
+
+      // Инвариант И1. Исключаем и сам заказ, и правимую строку: без второго её текущее количество
+      // учлось бы дважды, и любое увеличение отклонялось бы как перезаказ.
+      // При осиротевшей позиции (заявку дорабатывали, request_item_id = NULL) сверять не с чем.
+      if (item.request_item_id) {
+        const viol = await assertRemainingFits(
+          client,
+          [{ requestItemId: item.request_item_id, quantity: body.quantity }],
+          lot.id,
+          item.id,
+        );
+        if (viol.length) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({
+            error: 'Превышен доступный остаток по материалу',
+            items: viol.map((v) => ({ requestItemId: v.requestItemId, name: v.name, remaining: v.remaining, requested: v.requested })),
+          });
+        }
+      }
+
+      await client.query('UPDATE supplier_order_items SET quantity = $2 WHERE id = $1', [item.id, body.quantity]);
+
+      // График: либо прислан клиентом целиком, либо подгоняется автоматически.
+      const { rows: aggRows } = await client.query(
+        `SELECT COALESCE(SUM(quantity), 0)::numeric AS qty FROM supplier_order_items WHERE order_id = $1 AND agg_key = $2`,
+        [lot.id, item.agg_key],
+      );
+      const newAggQty = Number(aggRows[0].qty);
+      if (body.schedule) {
+        const sched = await replaceSchedule(client, lot.id, [{ aggKey: item.agg_key, entries: body.schedule }]);
+        if (!sched.ok) { await client.query('ROLLBACK'); return reply.status(400).send({ error: sched.error }); }
+      } else {
+        await reconcileScheduleAfterQtyChange(client, lot.id, item.agg_key, newAggQty);
+      }
+
+      const finance = await applyCompositionChange(client, lot);
+      if (!finance.ok) { await client.query('ROLLBACK'); return reply.status(finance.status).send({ error: finance.error }); }
+
+      const auditId = await appendOrderAudit(client, {
+        orderId: lot.id, action: 'item_quantity_changed', userId: user.id,
+        changes: {
+          materialName: item.material_name, from: Number(item.quantity), to: body.quantity,
+          reason: body.reason ?? null, stage: lot.sourcing_status,
+        },
+        projectId: lot.project_id,
+      });
+      await client.query(
+        `INSERT INTO supplier_order_item_edits
+           (audit_id, order_id, order_item_id, material_name, agg_key, quantity_from, quantity_to, action, changed_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'quantity_changed',$8)`,
+        [auditId, lot.id, item.id, item.material_name, item.agg_key, item.quantity, body.quantity, user.id],
+      );
+
+      if (item.request_id) await recalcRequestStatus(client, item.request_id, user.id);
+      await client.query('COMMIT');
+      return { data: { ok: true, amount: finance.amount, needsNewInvoice: finance.needsNewInvoice } };
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -753,12 +971,15 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   // ============================================================
   fastify.post<{ Params: { id: string } }>('/:id/cancel', async (request, reply) => {
     const user = request.currentUser;
+    // Прежний клиент шлёт запрос без тела — схема целиком необязательна.
+    const body = cancelOrderSchema.parse(request.body ?? {});
     const client = await fastify.pool.connect();
     let kick = false;
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        `SELECT id, project_id, sourcing_status, procurement_method, tender_portal_id, tender_external_ref
+        `SELECT id, project_id, sourcing_status, procurement_method, tender_portal_id, tender_external_ref,
+                row_version, supplier_name, amount
            FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
         [request.params.id],
       );
@@ -766,9 +987,26 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       const access = await assertOrderAccessForOrder(client, user, lot.id);
       if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
-      if (['cancelled', 'cancel_pending', 'awarded', 'no_award'].includes(lot.sourcing_status)) {
+      if (['cancelled', 'cancel_pending', 'no_award'].includes(lot.sourcing_status)) {
         await client.query('ROLLBACK');
         return reply.status(409).send({ error: 'Заказ уже нельзя отменить' });
+      }
+      // Отмена ПРИСУЖДЁННОГО заказа — отдельное решение: поставщик уже подтверждён руководителем,
+      // поэтому её принимает тот, кто подтверждает, и обязательно с причиной.
+      const wasAwarded = lot.sourcing_status === 'awarded';
+      if (wasAwarded) {
+        if (!PROCUREMENT_ASSIGN_ROLES.includes(user.role as never)) {
+          await client.query('ROLLBACK');
+          return reply.status(403).send({ error: 'Отменить присуждённый заказ может админ или руководитель' });
+        }
+        if (!body.reason) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: 'Укажите причину отмены' });
+        }
+      }
+      if (body.expectedVersion != null && body.expectedVersion !== lot.row_version) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: lot.row_version });
       }
 
       const isTender = lot.procurement_method === 'tender';
@@ -781,20 +1019,30 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         : { rows: [] as unknown[] };
       const createPending = createRows.length > 0;
       // Тендер «живёт» на портале либо ещё создаётся — держим остаток до подтверждения отмены.
-      const holdForTender = isTender && (Boolean(lot.tender_portal_id) || createPending);
+      // ПРИСУЖДЁННЫЙ тендер сюда не попадает: он уже finished, отменять на площадке нечего, а
+      // посланная команда отмены висела бы в ретраях до исчерпания попыток.
+      const holdForTender = isTender && !wasAwarded && (Boolean(lot.tender_portal_id) || createPending);
       const next = holdForTender ? 'cancel_pending' : 'cancelled';
+      const notifyPortal = holdForTender && Boolean(lot.tender_portal_id);
 
       await client.query(
         `UPDATE supplier_orders
             SET sourcing_status = $2,
                 desired_tender_state = CASE WHEN $3::boolean THEN 'cancelled' ELSE desired_tender_state END,
                 tender_next_poll_at = CASE WHEN $4::boolean THEN now() ELSE tender_next_poll_at END,
+                cancelled_at = now(), cancelled_by = $5, cancel_reason = $6,
                 row_version = row_version + 1, updated_at = now()
           WHERE id = $1`,
-        [lot.id, next, isTender, Boolean(lot.tender_portal_id)],
+        [lot.id, next, holdForTender, notifyPortal, user.id, body.reason ?? null],
+      );
+      // Действующие счета теряют силу вместе с заказом.
+      await client.query(
+        `UPDATE supplier_order_invoices SET superseded_at = now(), superseded_reason = 'replaced'
+          WHERE order_id = $1 AND superseded_at IS NULL`,
+        [lot.id],
       );
       // Тендер уже на портале — ставим надёжную команду отмены (идемпотентно по partial-unique).
-      if (lot.tender_portal_id) {
+      if (notifyPortal) {
         const cancelPayload = JSON.stringify({ orderId: lot.id });
         const cancelHash = createHash('sha256').update(`tender.cancel:${lot.id}`).digest('hex');
         await client.query(
@@ -808,10 +1056,21 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           [lot.id, lot.tender_external_ref, cancelPayload, cancelHash],
         );
         kick = true;
-      } else if (createPending) {
+      } else if (holdForTender && createPending) {
         kick = true; // разбудить create-worker, чтобы он перечитал намерение и прервал создание
       }
-      await appendOrderAudit(client, { orderId: lot.id, action: 'cancelled', userId: user.id, changes: { next }, projectId: lot.project_id });
+      await appendOrderAudit(client, {
+        orderId: lot.id, action: 'cancelled', userId: user.id,
+        changes: {
+          next,
+          from: lot.sourcing_status,
+          reason: body.reason ?? null,
+          // У присуждённого заказа фиксируем, что именно отменяется: реестр и история должны
+          // показывать, кто и на какую сумму был выбран.
+          ...(wasAwarded ? { supplierName: lot.supplier_name, amount: lot.amount } : {}),
+        },
+        projectId: lot.project_id,
+      });
       if (next === 'cancelled') {
         const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [lot.id]);
         for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, user.id);
@@ -819,6 +1078,92 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       await client.query('COMMIT');
       if (kick) fastify.outbox.kick();
       return { data: { id: lot.id, sourcingStatus: next } };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  });
+
+  // ============================================================
+  // POST /:id/revoke-award — отозвать присуждение (смена поставщика): awarded → sourcing.
+  //
+  //   Заказ остаётся живым, меняется только поставщик, поэтому материалы НЕ возвращаются в свод:
+  //   'sourcing' входит в FROZEN_LOT_STATUSES, состав по-прежнему занят этим заказом.
+  //
+  //   Поставщик, сумма и признаки присуждения СБРАСЫВАЮТСЯ — в отличие от reject-approval, где они
+  //   сохраняются намеренно. Разница в намерении: там инженер правит СВОЁ предложение, здесь
+  //   поставщика меняют, и оставленное имя показывалось бы в реестре как действующий выбор.
+  //   Предложения и цены остаются: из них выбирается новый победитель.
+  // ============================================================
+  fastify.post<{ Params: { id: string } }>('/:id/revoke-award', { preHandler: [canManageAwarded] }, async (request, reply) => {
+    const user = request.currentUser;
+    const body = revokeAwardSchema.parse(request.body);
+    const client = await fastify.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT id, project_id, sourcing_status, procurement_method, row_version,
+                supplier_name, amount, proposed_offer_id, invoice_revision
+           FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        [request.params.id],
+      );
+      const order = rows[0];
+      if (!order) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
+      if (order.sourcing_status !== 'awarded') {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Сменить поставщика можно только у присуждённого заказа' });
+      }
+      // Тендер отсекаем сознательно: у лота остались бы portal_id и результаты завершённого
+      // тендера, а сам он вернулся бы в ручной сбор — состояние, которого не понимает ни один
+      // существующий обработчик.
+      if (order.procurement_method === 'tender') {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({
+          error: 'Заказ закупался через тендер — отмените его и проведите новую закупку',
+        });
+      }
+      if (body.expectedVersion != null && body.expectedVersion !== order.row_version) {
+        await client.query('ROLLBACK');
+        return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: order.row_version });
+      }
+
+      await client.query(
+        `UPDATE supplier_orders
+            SET sourcing_status = 'sourcing',
+                awarded_at = NULL, awarded_by = NULL, awarded_quote_id = NULL, award_source = NULL,
+                approved_at = NULL, approved_by = NULL,
+                approval_requested_at = NULL, approval_requested_by = NULL, approval_comment = NULL,
+                supplier_id = NULL, supplier_name = NULL, supplier_inn = NULL, amount = NULL,
+                proposed_offer_id = NULL, vat_rate = NULL, payment_type = NULL,
+                invoice_revision = invoice_revision + 1,
+                row_version = row_version + 1, updated_at = now()
+          WHERE id = $1`,
+        [order.id],
+      );
+      // Счёт прежнего поставщика больше не действует.
+      await client.query(
+        `UPDATE supplier_order_invoices SET superseded_at = now(), superseded_reason = 'award_revoked'
+          WHERE order_id = $1 AND superseded_at IS NULL`,
+        [order.id],
+      );
+      await appendOrderAudit(client, {
+        orderId: order.id, action: 'award_revoked', userId: user.id,
+        changes: {
+          reason: body.reason,
+          previousSupplier: order.supplier_name,
+          previousAmount: order.amount,
+          previousOfferId: order.proposed_offer_id,
+        },
+        projectId: order.project_id,
+      });
+      // Покрытие заявок изменилось: заказ больше не присуждён, и su10-заявка должна вернуться из
+      // «Выбран поставщик» в «В работе». Без этого пересчёта она зависла бы навсегда.
+      const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [order.id]);
+      for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, user.id);
+      await client.query('COMMIT');
+      return { data: { id: order.id, sourcingStatus: 'sourcing' } };
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;

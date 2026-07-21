@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { Modal, Collapse, Button, Space, Tag, Alert, Dropdown, App } from 'antd';
-import { DeleteOutlined, MoreOutlined, FileExcelOutlined } from '@ant-design/icons';
+import { Modal, Collapse, Button, Space, Tag, Alert, Dropdown, Input, App } from 'antd';
+import {
+  DeleteOutlined, MoreOutlined, FileExcelOutlined, EditOutlined, SwapOutlined, StopOutlined,
+} from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MANUAL_VAT_RATES, PAYMENT_TYPES, PROCUREMENT_ASSIGN_ROLES,
@@ -14,6 +16,7 @@ import { OrderHeaderBar } from './supplierOrder/OrderHeaderBar';
 import { CompositionBlock } from './supplierOrder/CompositionBlock';
 import { SuppliersBlock, type WinnerDraft } from './supplierOrder/SuppliersBlock';
 import { ApprovalStage } from './supplierOrder/ApprovalStage';
+import { OrderItemsEditModal } from './supplierOrder/OrderItemsEditModal';
 import { ProposalView } from './supplierOrder/ProposalView';
 import { TenderView } from './supplierOrder/TenderView';
 import { primaryActionOf, isCompositionEditable } from './supplierOrder/orderHeader';
@@ -118,6 +121,7 @@ function OrderView({
   const [activeKeys, setActiveKeys] = useState<string[]>(
     () => (justCreated || editable ? ['composition'] : ['suppliers']),
   );
+  const [itemsEditOpen, setItemsEditOpen] = useState(false);
 
   // Победитель мог исчезнуть, пока заказ лежал у руководителя: поставщика убрали или у него
   // отозвали файл. Ссылка на несуществующее предложение отправилась бы на согласование и была бы
@@ -173,16 +177,60 @@ function OrderView({
     });
   }
 
+  // Состав правят до фиксации все, кто ведёт заказ, а после присуждения — только руководитель.
+  const canEditItems = status === 'forming' || status === 'sourcing' || (status === 'awarded' && canApprove);
+  const canCancel = ['forming', 'sourcing', 'approval'].includes(status) || (status === 'awarded' && canApprove);
+  const canRevokeAward = status === 'awarded' && canApprove && !isTender;
+
+  /** Отмена и смена поставщика требуют причины — спрашиваем её в одном месте. */
+  function askReason(opts: {
+    title: string; description: string; okText: string; required: boolean;
+    onConfirm: (reason: string) => Promise<unknown>;
+  }) {
+    let reason = '';
+    Modal.confirm({
+      title: opts.title,
+      width: 520,
+      okText: opts.okText,
+      okButtonProps: { danger: true },
+      cancelText: 'Отмена',
+      content: (
+        <Space direction="vertical" size={8} style={{ width: '100%' }}>
+          <span>{opts.description}</span>
+          <Input.TextArea
+            autoSize={{ minRows: 2, maxRows: 4 }} maxLength={2000}
+            placeholder={opts.required ? 'Причина (обязательно)' : 'Причина (необязательно)'}
+            onChange={(e) => { reason = e.target.value; }}
+          />
+        </Space>
+      ),
+      onOk: async () => {
+        if (opts.required && !reason.trim()) {
+          message.warning('Укажите причину');
+          throw new Error('reason required'); // не закрывать окно
+        }
+        await opts.onConfirm(reason.trim());
+      },
+    });
+  }
+
   const moreMenu = {
     items: [
+      ...(canEditItems && order.items.length > 0
+        ? [{ key: 'items', icon: <EditOutlined />, label: 'Изменить объёмы' }]
+        : []),
+      ...(canRevokeAward
+        ? [{ key: 'revoke', icon: <SwapOutlined />, label: 'Сменить поставщика' }]
+        : []),
       ...(status === 'forming'
         ? [{ key: 'del', danger: true, icon: <DeleteOutlined />, label: 'Удалить черновик' }]
         : []),
-      ...(status === 'sourcing'
-        ? [{ key: 'cancel', danger: true, icon: <DeleteOutlined />, label: 'Отменить заказ' }]
+      ...(canCancel
+        ? [{ key: 'cancel', danger: true, icon: <StopOutlined />, label: 'Отменить заказ' }]
         : []),
     ],
     onClick: ({ key }: { key: string }) => {
+      if (key === 'items') setItemsEditOpen(true);
       if (key === 'del') {
         Modal.confirm({
           title: 'Удалить формируемый заказ?', okText: 'Удалить', okButtonProps: { danger: true },
@@ -190,9 +238,29 @@ function OrderView({
         });
       }
       if (key === 'cancel') {
-        Modal.confirm({
-          title: 'Отменить заказ? Остаток материалов вернётся в свод.', okText: 'Отменить', okButtonProps: { danger: true },
-          onOk: () => api.post(`/supplier-orders/${orderId}/cancel`).then(() => { message.success('Заказ отменён'); onChanged(); onClose(); }).catch((e) => message.error(e.message)),
+        askReason({
+          title: 'Отменить заказ?',
+          description: status === 'awarded'
+            ? 'Поставщик уже согласован. Материалы вернутся в свод и станут доступны для нового заказа.'
+            : 'Остаток материалов вернётся в свод.',
+          okText: 'Отменить заказ',
+          required: status === 'awarded',
+          onConfirm: (reason) => api
+            .post(`/supplier-orders/${orderId}/cancel`, { reason: reason || undefined, expectedVersion: order.row_version })
+            .then(() => { message.success('Заказ отменён'); onChanged(); onClose(); })
+            .catch((e) => { message.error(e.message); throw e; }),
+        });
+      }
+      if (key === 'revoke') {
+        askReason({
+          title: 'Сменить поставщика?',
+          description: 'Заказ вернётся к сбору предложений: состав и материалы сохранятся, поставщика и цены нужно будет выбрать заново.',
+          okText: 'Сменить поставщика',
+          required: true,
+          onConfirm: (reason) => api
+            .post(`/supplier-orders/${orderId}/revoke-award`, { reason, expectedVersion: order.row_version })
+            .then(() => { message.success('Присуждение отозвано — выберите поставщика заново'); setActiveKeys(['suppliers']); refetch(); })
+            .catch((e) => { message.error(e.message); throw e; }),
         });
       }
     },
@@ -300,6 +368,10 @@ function OrderView({
           )}
         </Space>
       </div>
+
+      {itemsEditOpen && (
+        <OrderItemsEditModal order={order} onClose={() => setItemsEditOpen(false)} onSaved={refetch} />
+      )}
     </Modal>
   );
 }
