@@ -67,6 +67,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       limit?: string;
       offset?: string;
       all?: string;
+      withZeroRemaining?: string;
     };
   }>('/materials', async (request) => {
     const q = request.query;
@@ -86,7 +87,12 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     if (q.categoryId) { values.push(q.categoryId); where.push(`cc.id = $${values.length}`); }
     const whereSql = where.join(' AND ');
 
-    const dataValues = [...values, limit, offset];
+    // Полностью заказанные строки по умолчанию скрыты: свод снабжения — рабочий список того, что
+    // ещё предстоит заказать. Отбор серверный, а не клиентский, потому что он включён почти всегда:
+    // на клиенте он либо исказил бы meta.total и номера страниц, либо потребовал бы грузить весь
+    // набор (all=1) каждому пользователю.
+    const withZeroRemaining = q.withZeroRemaining === '1';
+    const dataValues = [...values, withZeroRemaining, limit, offset];
     // Схлопывание строк: одна строка на область «объект + подрядчик + вид затрат + материал»
     // (плюс тип заявки, чтобы давальческие и подрядные не склеивались). Исходные позиции
     // развёрнуты по датам поставки (0060), из-за чего один материал давал N строк.
@@ -147,9 +153,19 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         GROUP BY project_id, project_name, project_code, contractor_id, contractor_name,
                  cost_type_id, cost_type_name, category_id, category_name, category_sort, cost_type_sort,
                  unit, agg_key, request_type
+        -- Отсев полностью заказанных строк. Здесь, а не на клиенте: COUNT(*) OVER() считается ПОСЛЕ
+        -- HAVING, поэтому meta.total и номера страниц остаются верными без единой дополнительной
+        -- строки кода. Два исключения обязательны:
+        --   • не-su10 заявки — размещение к ним не применяется, remaining=null («не применяется»);
+        --   • перезаказ — это аномалия с красным тегом в таблице, и её нельзя прятать по умолчанию
+        --     (после правки объёмов заявки remaining обнуляется, а разобраться со строкой надо).
+        HAVING ($${values.length + 1}::boolean IS TRUE
+                OR request_type <> 'su10'
+                OR SUM(GREATEST(requested - placed, 0)) > 0
+                OR SUM(GREATEST(placed - requested, 0)) > 0)
         ORDER BY project_name NULLS LAST, category_sort NULLS LAST, cost_type_sort NULLS LAST,
                  MIN(material_name)
-        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+        LIMIT $${values.length + 2} OFFSET $${values.length + 3}`,
       dataValues,
     );
 

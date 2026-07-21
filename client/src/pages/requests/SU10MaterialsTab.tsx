@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Select, Table, Button, Space, Empty, Tag, Tooltip, Badge, Alert, Dropdown, App, Modal, Typography, Popover } from 'antd';
+import { Select, Table, Button, Space, Empty, Tag, Tooltip, Badge, Alert, Dropdown, App, Modal, Typography, Popover, Switch } from 'antd';
 import { ShoppingCartOutlined, ReloadOutlined, FilterOutlined, DownOutlined, TeamOutlined, ClearOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -131,6 +131,9 @@ export function SU10MaterialsTab() {
   const [requestType, setRequestType] = usePersistedState<string | undefined>(`${KEY}requestType`, 'su10');
   const [categoryId, setCategoryId] = usePersistedState<string | undefined>(`${KEY}categoryId`, undefined);
   const [assigned, setAssigned] = usePersistedState<'all' | 'mine'>(`${KEY}assigned`, 'all');
+  // Полностью заказанные строки по умолчанию скрыты (дефолт false = «не показывать»). Отбор
+  // серверный, поэтому в needFull он не входит и пагинацию не ломает.
+  const [showZeroRemaining, setShowZeroRemaining] = usePersistedState<boolean>(`${KEY}showZeroRemaining`, false);
   const [filtersOpen, setFiltersOpen] = usePersistedState<boolean>(`${KEY}filtersOpen`, false);
   const [limit, setLimit] = useState(100);
   const [offset, setOffset] = useState(0);
@@ -197,10 +200,11 @@ export function SU10MaterialsTab() {
     if (contractorId) p.set('contractorId', contractorId);
     if (requestType) p.set('requestType', requestType);
     if (categoryId) p.set('categoryId', categoryId);
+    if (showZeroRemaining) p.set('withZeroRemaining', '1');
     if (needFull) p.set('all', '1');
     else { p.set('limit', String(limit)); p.set('offset', String(offset)); }
     return p.toString();
-  }, [projectId, contractorId, requestType, categoryId, needFull, limit, offset]);
+  }, [projectId, contractorId, requestType, categoryId, showZeroRemaining, needFull, limit, offset]);
 
   const materialsQ = useQuery({
     queryKey: ['su10-materials', qs],
@@ -295,13 +299,16 @@ export function SU10MaterialsTab() {
   // Заказ формируется по одному объекту; для назначения ответственного это ограничение не нужно.
   const orderProjectIds = new Set(orderableRows.map((r) => r.project_id));
   const orderProjectId = orderProjectIds.size === 1 ? [...orderProjectIds][0] ?? null : null;
-  const hiddenActiveCount = (requestType ? 1 : 0) + (categoryId ? 1 : 0) + (assigned === 'mine' ? 1 : 0);
+  // Бейдж считает ОТКЛОНЕНИЯ ОТ ДЕФОЛТА, а не «сколько фильтров задано»: показ полностью
+  // заказанных — как раз такое отклонение, и без него неочевидно, почему строк стало больше.
+  const hiddenActiveCount =
+    (requestType ? 1 : 0) + (categoryId ? 1 : 0) + (assigned === 'mine' ? 1 : 0) + (showZeroRemaining ? 1 : 0);
 
   // Что вообще можно сбросить: сюда входят и скрытые за кнопкой «Фильтры» отборы, иначе кнопка
   // выглядела бы неактивной при действующем, но не видном фильтре.
   const filtersDirty =
     !!projectId || !!contractorId || !!categoryId || requestType !== 'su10'
-    || assigned === 'mine' || hasActiveColumnFilters(colFilters, prefs.hidden);
+    || assigned === 'mine' || showZeroRemaining || hasActiveColumnFilters(colFilters, prefs.hidden);
 
   function resetFilters() {
     setProjectId(undefined);
@@ -309,6 +316,7 @@ export function SU10MaterialsTab() {
     setCategoryId(undefined);
     setRequestType('su10'); // дефолт вкладки, а не «все виды»: свод снабжения ведётся по СУ-10
     setAssigned('all');
+    setShowZeroRemaining(false);
     setColFilters({});
     setOffset(0);
     resetSelection();
@@ -622,6 +630,16 @@ export function SU10MaterialsTab() {
               { value: 'mine', label: 'Назначенные мне' },
             ]}
           />
+          {/* changeFilter обязателен: смена набора строк сбрасывает страницу и выделение — иначе
+              на второй странице оказался бы отбор от первой, а в выделении — исчезнувшие строки. */}
+          <Space size={8}>
+            <Switch
+              size="small"
+              checked={showZeroRemaining}
+              onChange={(v) => changeFilter(setShowZeroRemaining, v)}
+            />
+            <span style={{ fontSize: 13, color: '#595959' }}>Показывать материалы с остатком 0</span>
+          </Space>
           {viewCount > 0 && <Tag>Отборы/группировка в заголовках: {viewCount}</Tag>}
         </div>
       )}
