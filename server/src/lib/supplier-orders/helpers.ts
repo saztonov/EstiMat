@@ -18,6 +18,10 @@ export const FROZEN_LOT_STATUSES = ['sourcing', 'approval', 'awarded', 'cancel_p
 // FROZEN_LOT_STATUSES не удаляем — за ними внешний тендер (см. outbox-worker) и/или финансы.
 export const DELETABLE_LOT_STATUSES = ['forming', 'cancelled', 'no_award'] as const;
 
+/**
+ * Записать доменное событие заказа. Возвращает id записи журнала: детализация правки состава
+ * (supplier_order_item_edits) ссылается на операцию, а не дублирует её реквизиты.
+ */
 export async function appendOrderAudit(
   db: Db,
   params: {
@@ -27,10 +31,11 @@ export async function appendOrderAudit(
     changes?: unknown;
     projectId?: string | null;
   },
-): Promise<void> {
-  await db.query(
+): Promise<string> {
+  const { rows } = await db.query(
     `INSERT INTO audit_log (entity_type, entity_id, action, user_id, changes, project_id)
-     VALUES ('supplier_order', $1, $2, $3, $4, $5)`,
+     VALUES ('supplier_order', $1, $2, $3, $4, $5)
+     RETURNING id`,
     [
       params.orderId,
       params.action,
@@ -39,6 +44,7 @@ export async function appendOrderAudit(
       params.projectId ?? null,
     ],
   );
+  return rows[0].id as string;
 }
 
 // Позиции заявки заняты активным лотом (не терминальные cancelled/no_award): доработку/отмену

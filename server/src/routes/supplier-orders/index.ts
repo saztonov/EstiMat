@@ -9,12 +9,15 @@ import {
   putOrderDeliveryScheduleSchema,
   assignMaterialResponsibleSchema, bulkAssignMaterialResponsibleSchema,
   setMaterialResponsiblesSchema, bulkSetMaterialResponsiblesSchema,
-  MANUAL_VAT_RATE_VALUE, type ManualVatRate,
+  type ManualVatRate,
 } from '@estimat/shared';
 import { config } from '../../config.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { recordAudit } from '../../lib/audit.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
+import { recalcOrderAmount } from '../../lib/supplier-orders/pricing.js';
+import { replaceSchedule } from '../../lib/supplier-orders/schedule.js';
+import { assertRemainingFits } from '../../lib/supplier-orders/allocation.js';
 import { assertOrderAccess, assertOrderAccessForOrder, decideOrderAccess } from '../../lib/procurement/access.js';
 import { resolveResponsibles, scopeKey } from '../../lib/procurement/responsibles.js';
 import { PROCUREMENT_ASSIGN_ROLES, type Role } from '@estimat/shared';
@@ -390,7 +393,6 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     const user = request.currentUser;
     const body = formLotSchema.parse(request.body);
     const itemIds = body.items.map((i) => i.requestItemId);
-    const wantQty = body.items.map((i) => String(i.quantity));
 
     const client = await fastify.pool.connect();
     try {
@@ -528,34 +530,21 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: access.reason });
       }
 
-      // --- Проверка остатка в SQL (numeric): want > requested − размещённое в ДРУГИХ активных лотах ---
-      const { rows: viol } = await client.query(
-        `WITH req(request_item_id, want) AS (
-           SELECT * FROM unnest($1::uuid[], $2::numeric[])
-         )
-         SELECT req.request_item_id::text AS request_item_id, mri.material_name,
-                mri.quantity AS requested, COALESCE(pl.qty, 0) AS placed, req.want
-           FROM req
-           JOIN material_request_items mri ON mri.id = req.request_item_id
-           LEFT JOIN (
-             SELECT soi.request_item_id, SUM(soi.quantity) AS qty
-               FROM supplier_order_items soi
-               JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status NOT IN ('cancelled','no_award')
-              WHERE soi.order_id <> $3
-              GROUP BY soi.request_item_id
-           ) pl ON pl.request_item_id = req.request_item_id
-          WHERE req.want > mri.quantity - COALESCE(pl.qty, 0)`,
-        [itemIds, wantQty, orderId],
+      // --- Проверка остатка (инвариант И1): want > requested − размещённое в ДРУГИХ активных лотах ---
+      const viol = await assertRemainingFits(
+        client,
+        body.items.map((it) => ({ requestItemId: it.requestItemId, quantity: it.quantity })),
+        orderId,
       );
       if (viol.length) {
         await client.query('ROLLBACK');
         return reply.status(409).send({
           error: 'Превышен доступный остаток по материалам',
           items: viol.map((v) => ({
-            requestItemId: v.request_item_id,
-            name: v.material_name,
-            remaining: Number(v.requested) - Number(v.placed),
-            requested: Number(v.want),
+            requestItemId: v.requestItemId,
+            name: v.name,
+            remaining: v.remaining,
+            requested: v.requested,
           })),
         });
       }
@@ -583,41 +572,10 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       // даты уникальны) и REPLACE'им по переданным agg_key. Затем предзаполняем снимком дат заявки
       // только те agg_key, у которых графика ещё нет (не затирая ручные правки/только что заданное).
       if (body.deliverySchedule?.length) {
-        const SCHED_EPS = 1e-6;
-        const { rows: aggRows } = await client.query(
-          `SELECT agg_key, SUM(quantity)::numeric AS qty FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key`,
-          [orderId],
-        );
-        const aggQty = new Map<string, number>(aggRows.map((a) => [a.agg_key as string, Number(a.qty)]));
-        for (const line of body.deliverySchedule) {
-          if (!aggQty.has(line.aggKey)) {
-            await client.query('ROLLBACK');
-            return reply.status(400).send({ error: 'График задан по материалу вне состава заказа' });
-          }
-          const dates = line.entries.map((e) => e.deliveryDate);
-          if (new Set(dates).size !== dates.length) {
-            await client.query('ROLLBACK');
-            return reply.status(400).send({ error: 'Даты поставки в графике не должны повторяться' });
-          }
-          const sum = line.entries.reduce((s, e) => s + e.quantity, 0);
-          if (Math.abs(sum - (aggQty.get(line.aggKey) ?? 0)) > SCHED_EPS) {
-            await client.query('ROLLBACK');
-            return reply.status(400).send({ error: 'Сумма графика не совпадает с количеством материала в заказе' });
-          }
-        }
-        await client.query(
-          `DELETE FROM supplier_order_delivery_schedule WHERE order_id = $1 AND agg_key = ANY($2::text[])`,
-          [orderId, body.deliverySchedule.map((l) => l.aggKey)],
-        );
-        for (const line of body.deliverySchedule) {
-          for (const e of line.entries) {
-            await client.query(
-              `INSERT INTO supplier_order_delivery_schedule (order_id, agg_key, delivery_date, quantity)
-               VALUES ($1,$2,$3,$4)
-               ON CONFLICT (order_id, agg_key, delivery_date) DO UPDATE SET quantity = EXCLUDED.quantity`,
-              [orderId, line.aggKey, e.deliveryDate, e.quantity],
-            );
-          }
+        const sched = await replaceSchedule(client, orderId, body.deliverySchedule);
+        if (!sched.ok) {
+          await client.query('ROLLBACK');
+          return reply.status(400).send({ error: sched.error });
         }
       }
       // Авто-prefill снимком дат заявки — только для agg_key, у которых графика ещё нет.
@@ -722,42 +680,10 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
         return reply.status(409).send({ error: 'Заказ изменён, обновите страницу', rowVersion: lot.row_version });
       }
 
-      const SCHED_EPS = 1e-6;
-      const { rows: aggRows } = await client.query(
-        `SELECT agg_key, SUM(quantity)::numeric AS qty FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key`,
-        [lot.id],
-      );
-      const aggQty = new Map<string, number>(aggRows.map((a) => [a.agg_key as string, Number(a.qty)]));
-      for (const line of body.schedule) {
-        if (!aggQty.has(line.aggKey)) {
-          await client.query('ROLLBACK');
-          return reply.status(400).send({ error: 'График задан по материалу вне состава заказа' });
-        }
-        const dates = line.entries.map((e) => e.deliveryDate);
-        if (new Set(dates).size !== dates.length) {
-          await client.query('ROLLBACK');
-          return reply.status(400).send({ error: 'Даты поставки в графике не должны повторяться' });
-        }
-        const sum = line.entries.reduce((s, e) => s + e.quantity, 0);
-        if (Math.abs(sum - (aggQty.get(line.aggKey) ?? 0)) > SCHED_EPS) {
-          await client.query('ROLLBACK');
-          return reply.status(400).send({ error: 'Сумма графика не совпадает с количеством материала в заказе' });
-        }
-      }
-
-      await client.query(
-        `DELETE FROM supplier_order_delivery_schedule WHERE order_id = $1 AND agg_key = ANY($2::text[])`,
-        [lot.id, body.schedule.map((l) => l.aggKey)],
-      );
-      for (const line of body.schedule) {
-        for (const e of line.entries) {
-          await client.query(
-            `INSERT INTO supplier_order_delivery_schedule (order_id, agg_key, delivery_date, quantity)
-             VALUES ($1,$2,$3,$4)
-             ON CONFLICT (order_id, agg_key, delivery_date) DO UPDATE SET quantity = EXCLUDED.quantity`,
-            [lot.id, line.aggKey, e.deliveryDate, e.quantity],
-          );
-        }
+      const sched = await replaceSchedule(client, lot.id, body.schedule);
+      if (!sched.ok) {
+        await client.query('ROLLBACK');
+        return reply.status(400).send({ error: sched.error });
       }
 
       await client.query('UPDATE supplier_orders SET row_version = row_version + 1, updated_at = now() WHERE id = $1', [lot.id]);
@@ -1452,7 +1378,6 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     if (new Set(aggKeys).size !== aggKeys.length) {
       return { ok: false, status: 400, error: 'Дублирующиеся материалы в ценах' };
     }
-    const rate = MANUAL_VAT_RATE_VALUE[body.vatRate as ManualVatRate];
 
     // Победитель: принадлежит заказу, ответ получен, документ приложен.
     const { rows: wRows } = await client.query(
@@ -1483,18 +1408,9 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       [order.id, aggKeys, body.lines.map((l) => l.unitPrice), body.lines.map((l) => l.warrantyMonths ?? null)],
     );
 
-    // ИТОГО в SQL numeric: построчно net=ROUND(кол-во×цена,2), НДС=ROUND(net×ставка,2), итого=net+НДС.
-    const { rows: totRows } = await client.query(
-      `WITH agg AS (
-         SELECT agg_key, SUM(quantity) AS qty FROM supplier_order_items WHERE order_id = $1 GROUP BY agg_key
-       ), line AS (
-         SELECT ROUND(a.qty * pl.unit_price, 2) AS net
-           FROM agg a JOIN supplier_order_price_lines pl ON pl.order_id = $1 AND pl.agg_key = a.agg_key
-       )
-       SELECT COALESCE(SUM(net + ROUND(net * $2::numeric, 2)), 0)::numeric(15,2) AS total FROM line`,
-      [order.id, rate],
-    );
-    const amount: string = String(totRows[0].total);
+    // ИТОГО считает общий recalcOrderAmount: та же формула применяется при правке состава
+    // присуждённого заказа, и держать её в двух местах нельзя (см. lib/supplier-orders/pricing.ts).
+    const { amount } = await recalcOrderAmount(client, order.id, body.vatRate as ManualVatRate);
     if (Number(amount) <= 0) {
       return { ok: false, status: 400, error: 'Итоговая сумма заказа должна быть больше нуля' };
     }

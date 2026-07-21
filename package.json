@@ -9,7 +9,7 @@
     "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client",
     "test:material-grouping": "node --import tsx --test \"shared/src/constants/*.test.ts\" \"client/src/pages/contractors/materials/*.test.ts\" \"server/src/lib/material-grouping/*.test.ts\" \"server/src/lib/llm/*.test.ts\"",
-    "test:tables": "node --import tsx --test \"client/src/lib/*.test.ts\" \"client/src/pages/requests/*.test.ts\" \"server/src/lib/requests/*.test.ts\" \"server/src/lib/contractors/*.test.ts\" \"server/src/lib/procurement/*.test.ts\""
+    "test:tables": "node --import tsx --test \"client/src/lib/*.test.ts\" \"client/src/pages/requests/*.test.ts\" \"server/src/lib/requests/*.test.ts\" \"server/src/lib/contractors/*.test.ts\" \"server/src/lib/procurement/*.test.ts\" \"server/src/lib/supplier-orders/*.test.ts\""
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
