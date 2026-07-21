@@ -16,6 +16,7 @@ import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { recordAudit } from '../../lib/audit.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
 import { assertOrderAccess } from '../../lib/procurement/access.js';
+import { resolveResponsibles, scopeKey } from '../../lib/procurement/responsibles.js';
 import { PROCUREMENT_ASSIGN_ROLES, type Role } from '@estimat/shared';
 import type { Pool, PoolClient } from 'pg';
 import { exportSupplierOrderXlsx, SupplierOrderExportError } from '../../lib/supplier-order-export/index.js';
@@ -92,6 +93,13 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     //
     // Агрегируем ДО LIMIT/OFFSET: клиентское схлопывание исказило бы meta.total и номера страниц.
     // COUNT(*) OVER() после GROUP BY считает уже схлопнутые строки, поэтому total остаётся верным.
+    //
+    // ОТВЕТСТВЕННЫЕ ЗДЕСЬ НЕ ДЖОЙНЯТСЯ. Раньше все три уровня и замещение подмешивались в base,
+    // то есть ДО схлопывания и на каждой дате поставки: любой джойн кратности >1 (два активных
+    // замещения одного человека) удваивал SUM(requested)/SUM(placed), а четыре независимых MIN()
+    // могли вернуть id одного человека и фамилию другого. Резолв вынесен ПОСЛЕ агрегации —
+    // одним вызовом resolveResponsibles по ключам уже схлопнутых строк. Так умножение объёмов
+    // ответственными невозможно конструктивно, а не по договорённости.
     const { rows } = await fastify.pool.query(
       `WITH base AS (
          SELECT mri.id AS request_item_id, mri.request_id, mr.request_no, mr.request_type, mr.status,
@@ -102,14 +110,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
                 mri.material_id, mri.material_name, mri.unit, mri.agg_key,
                 to_char(mri.delivery_date, 'YYYY-MM-DD') AS delivery_date,
                 mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS placed,
-                mr.contractor_id, mr.contractor_name,
-                -- Ответственный: точечное назначение области перекрывает вид, вид — категорию;
-                -- поверх накладывается активное замещение. Одно правило на весь контур — иначе
-                -- интерфейс показывал бы одного, а право на заказ имел бы другой.
-                COALESCE(pmr.user_id, vpr.assigned_user_id) AS resp_assigned_id,
-                CASE WHEN pmr.user_id IS NOT NULL THEN 'material' ELSE vpr.assigned_source END AS resp_source,
-                COALESCE(msub.deputy_user_id, pmr.user_id, vpr.effective_user_id) AS resp_effective_id,
-                ru.full_name AS resp_effective_name
+                mr.contractor_id, mr.contractor_name
            FROM material_request_items mri
            JOIN material_requests mr ON mr.id = mri.request_id
            LEFT JOIN projects p ON p.id = mr.project_id
@@ -121,19 +122,6 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
                JOIN supplier_orders so ON so.id = soi.order_id AND so.sourcing_status NOT IN ('cancelled','no_award')
               GROUP BY soi.request_item_id
            ) placed ON placed.request_item_id = mri.id
-           -- Уровни ответственного: материал (по области строки) → вид/категория (вью 0072).
-           LEFT JOIN procurement_material_responsible pmr
-                  ON pmr.project_id    IS NOT DISTINCT FROM mr.project_id
-                 AND pmr.contractor_id IS NOT DISTINCT FROM mr.contractor_id
-                 AND pmr.cost_type_id  IS NOT DISTINCT FROM mri.cost_type_id
-                 AND pmr.agg_key = mri.agg_key
-           LEFT JOIN v_procurement_responsible_effective vpr ON vpr.cost_type_id = mri.cost_type_id
-           LEFT JOIN procurement_substitutions msub
-                  ON pmr.user_id IS NOT NULL
-                 AND msub.principal_user_id = pmr.user_id
-                 AND msub.ended_at IS NULL
-                 AND (now() AT TIME ZONE 'Europe/Moscow')::date BETWEEN msub.starts_on AND msub.ends_on
-           LEFT JOIN users ru ON ru.id = COALESCE(msub.deputy_user_id, pmr.user_id, vpr.effective_user_id)
           WHERE ${whereSql}
        )
        SELECT project_id, project_name, project_code, contractor_id, contractor_name,
@@ -150,10 +138,6 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
               -- простая разница взаимно погасила бы их, показав «заказывать нечего».
               SUM(GREATEST(requested - placed, 0))::numeric AS available,
               SUM(GREATEST(placed - requested, 0))::numeric AS overplaced,
-              MIN(resp_assigned_id::text)::uuid  AS resp_assigned_id,
-              MIN(resp_source)                   AS resp_source,
-              MIN(resp_effective_id::text)::uuid AS resp_effective_id,
-              MIN(resp_effective_name)           AS resp_effective_name,
               json_agg(json_build_object(
                 'request_item_id', request_item_id, 'request_id', request_id, 'request_no', request_no,
                 'delivery_date', delivery_date, 'requested', requested, 'placed', placed
@@ -197,12 +181,26 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
 
     const total = rows.length ? Number(rows[0].total_count) : 0;
     const isAdmin = request.currentUser.role === 'admin';
+
+    // Ответственные — одним запросом по областям уже схлопнутых строк. resolveResponsibles сам
+    // дедуплицирует области: разные типы заявок с одним материалом делят одно назначение.
+    const responsibles = await resolveResponsibles(
+      fastify.pool,
+      rows.map((r) => ({
+        projectId: r.project_id, contractorId: r.contractor_id,
+        costTypeId: r.cost_type_id, aggKey: r.agg_key,
+      })),
+    );
+
     return {
-      data: rows.map(({
-        total_count, placed, available, overplaced, items,
-        resp_assigned_id, resp_source, resp_effective_id, resp_effective_name, ...r
-      }) => {
+      data: rows.map(({ total_count, placed, available, overplaced, items, ...r }) => {
         const isSu10 = r.request_type === 'su10';
+        const resp = responsibles.get(scopeKey({
+          projectId: r.project_id, contractorId: r.contractor_id,
+          costTypeId: r.cost_type_id, aggKey: r.agg_key,
+        }));
+        const respAssignedId = resp?.assignedUserId ?? null;
+        const respEffectiveId = resp?.effectiveUserId ?? null;
         const list = (items ?? []) as { request_item_id: string; request_id: string; request_no: number | null }[];
         // Право вести заказ считаем здесь, по тому же правилу, что и assertOrderAccess: раньше
         // оно дублировалось на клиенте (isEligible) и неизбежно разъехалось бы с сервером.
@@ -210,16 +208,20 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           ? true
           : r.cost_type_id == null
             ? false
-            : resp_assigned_id == null
-              || resp_assigned_id === request.currentUser.id
-              || resp_effective_id === request.currentUser.id;
+            : respAssignedId == null
+              || respAssignedId === request.currentUser.id
+              || respEffectiveId === request.currentUser.id;
         // Заявки схлопнутой строки: столбец «Заявка» стал многозначным.
         const seen = new Map<string, { id: string; no: number | null }>();
         for (const it of list) if (!seen.has(it.request_id)) seen.set(it.request_id, { id: it.request_id, no: it.request_no });
         return {
           ...r,
-          // Стабильный ключ строки таблицы (области), заменяет request_item_id.
-          row_key: [r.project_id ?? '', r.contractor_id ?? '', r.cost_type_id ?? '', r.agg_key].join('|'),
+          // Стабильный ключ строки таблицы, заменяет request_item_id. Тип заявки входит в ключ,
+          // потому что входит в GROUP BY: без него давальческая и подрядная строки одного
+          // материала получали ОДИН ключ — React путал их при выделении и раскрытии.
+          // Область ответственного при этом типа заявки не содержит намеренно: один материал на
+          // объекте у подрядчика — один ответственный, независимо от того, как заявлен.
+          row_key: [r.project_id ?? '', r.contractor_id ?? '', r.cost_type_id ?? '', r.agg_key, r.request_type ?? ''].join('|'),
           items: list,
           requests: [...seen.values()],
           ordered: isSu10 ? Number(placed) : null,
@@ -229,12 +231,16 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
           overplaced: isSu10 ? Number(overplaced) : 0,
           has_overplaced: isSu10 && Number(overplaced) > 0,
           can_order: canOrder,
-          responsible: resp_effective_id
-            ? { id: resp_effective_id, full_name: resp_effective_name, source: resp_source ?? null }
+          responsible: respEffectiveId
+            ? { id: respEffectiveId, full_name: resp?.effectiveName ?? null, source: resp?.source ?? null }
             : null,
         };
       }),
-      meta: { total, limit, offset, truncated: total > rows.length, facets: facetRows[0] },
+      // truncated — «набор УСЕЧЁН потолком», а не «есть следующая страница»: флаг гейтит массовые
+      // операции, которым нужен полный набор. В постраничном режиме total > rows.length всегда,
+      // поэтому без groupAll флаг блокировал бы назначение ответственных на любой выборке крупнее
+      // страницы. Тот же guard стоит в GET /registry.
+      meta: { total, limit, offset, truncated: groupAll && total > rows.length, facets: facetRows[0] },
     };
   });
 

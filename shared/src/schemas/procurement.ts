@@ -93,14 +93,6 @@ export const createSubstitutionSchema = z.object({
 });
 export type CreateSubstitutionInput = z.infer<typeof createSubstitutionSchema>;
 
-export const updateSubstitutionSchema = z.object({
-  deputyUserId: z.string().uuid().optional(),
-  startsOn: dateString.optional(),
-  endsOn: dateString.optional(),
-  reason: z.string().max(300).nullish(),
-});
-export type UpdateSubstitutionInput = z.infer<typeof updateSubstitutionSchema>;
-
 // ===== Legacy =====
 
 /**

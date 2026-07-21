@@ -85,16 +85,14 @@ export async function resolveResponsibles(
             -- Замещение материального уровня разрешается здесь же; для видов/категорий его уже
             -- применило вью, поэтому берём его effective_user_id как есть.
             COALESCE(msub.deputy_user_id, m.user_id, v.effective_user_id) AS effective_user_id,
-            COALESCE(msub.id, CASE WHEN m.user_id IS NULL THEN v.substitution_id END) AS substitution_id,
+            COALESCE(msub.substitution_id, CASE WHEN m.user_id IS NULL THEN v.substitution_id END) AS substitution_id,
             au.full_name AS assigned_name,
             eu.full_name AS effective_name
        FROM mat m
        LEFT JOIN v_procurement_responsible_effective v ON v.cost_type_id = m.cost_type_id
-       LEFT JOIN procurement_substitutions msub
+       LEFT JOIN v_procurement_active_substitution msub
               ON m.user_id IS NOT NULL
              AND msub.principal_user_id = m.user_id
-             AND msub.ended_at IS NULL
-             AND (now() AT TIME ZONE 'Europe/Moscow')::date BETWEEN msub.starts_on AND msub.ends_on
        LEFT JOIN users au ON au.id = COALESCE(m.user_id, v.assigned_user_id)
        LEFT JOIN users eu ON eu.id = COALESCE(msub.deputy_user_id, m.user_id, v.effective_user_id)`,
     [
@@ -160,7 +158,7 @@ export async function loadResponsibleTree(db: Db): Promise<unknown[]> {
     `SELECT cc.id, cc.name, cc.code, cc.sort_order, cc.is_active,
             cr.user_id      AS responsible_id,
             cu.full_name    AS responsible_name,
-            csub.id         AS substitution_id,
+            csub.substitution_id,
             csu.full_name   AS substitute_name,
             csub.ends_on    AS substitution_ends_on,
             COALESCE((
@@ -185,10 +183,8 @@ export async function loadResponsibleTree(db: Db): Promise<unknown[]> {
        FROM cost_categories cc
        LEFT JOIN procurement_category_responsible cr ON cr.category_id = cc.id
        LEFT JOIN users cu ON cu.id = cr.user_id
-       LEFT JOIN procurement_substitutions csub
+       LEFT JOIN v_procurement_active_substitution csub
               ON csub.principal_user_id = cr.user_id
-             AND csub.ended_at IS NULL
-             AND (now() AT TIME ZONE 'Europe/Moscow')::date BETWEEN csub.starts_on AND csub.ends_on
        LEFT JOIN users csu ON csu.id = csub.deputy_user_id
       WHERE cc.is_active = true OR cr.user_id IS NOT NULL
       ORDER BY cc.sort_order, cc.name`,

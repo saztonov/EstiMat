@@ -10,7 +10,6 @@ import {
   bulkSetMaterialResponsibleSchema,
   transferAssignmentsSchema,
   createSubstitutionSchema,
-  updateSubstitutionSchema,
   setCategoryResponsiblesSchema,
 } from '@estimat/shared';
 import {
@@ -383,13 +382,6 @@ export default async function procurementRoutes(fastify: FastifyInstance) {
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
-      // Блокируем строки users обоих участников в порядке id: FOR UPDATE по самой таблице
-      // замещений ничего не заблокировал бы, пока строк нет, и два параллельных запроса создали
-      // бы пересекающиеся периоды (EXCLUDE-констрейнт недоступен без btree_gist).
-      await client.query(
-        `SELECT id FROM users WHERE id IN ($1, $2) ORDER BY id FOR UPDATE`,
-        [body.principalUserId, body.deputyUserId],
-      );
 
       for (const uid of [body.principalUserId, body.deputyUserId]) {
         if (!(await assertAssignable(client, uid))) {
@@ -398,32 +390,11 @@ export default async function procurementRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Пересечение по замещаемому — период должен быть однозначен.
-      const { rows: overlap } = await client.query(
-        `SELECT 1 FROM procurement_substitutions
-          WHERE principal_user_id = $1 AND ended_at IS NULL
-            AND daterange(starts_on, ends_on, '[]') && daterange($2::date, $3::date, '[]')`,
-        [body.principalUserId, body.startsOn, body.endsOn],
-      );
-      if (overlap.length) {
-        await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'На этот период замещение уже назначено' });
-      }
-
-      // Цепочки запрещены симметрично: замещающий не может сам быть замещаемым в пересекающийся
-      // период, и наоборот — иначе пришлось бы разворачивать цепочку A→B→C.
-      const { rows: chain } = await client.query(
-        `SELECT 1 FROM procurement_substitutions
-          WHERE ended_at IS NULL
-            AND daterange(starts_on, ends_on, '[]') && daterange($2::date, $3::date, '[]')
-            AND (principal_user_id = $1 OR deputy_user_id = $4)`,
-        [body.deputyUserId, body.startsOn, body.endsOn, body.principalUserId],
-      );
-      if (chain.length) {
-        await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Замещающий сам замещается в этот период — цепочка замещений не поддерживается' });
-      }
-
+      // Пересечение периодов и цепочки A→B→C проверяет ТРИГГЕР (0075), а не этот код. Прежние
+      // SELECT-проверки здесь только выглядели защитой: незакоммиченную строку параллельной
+      // транзакции они не видят, и два одновременных запроса создавали пересечение. Триггер
+      // сериализуется advisory-локом по замещаемому и сообщает о конфликте именованным
+      // ограничением — его и разбираем ниже.
       const { rows } = await client.query(
         `INSERT INTO procurement_substitutions
                (principal_user_id, deputy_user_id, starts_on, ends_on, reason, created_by)
@@ -443,30 +414,24 @@ export default async function procurementRoutes(fastify: FastifyInstance) {
       return { data: { id: rows[0].id } };
     } catch (err) {
       await client.query('ROLLBACK');
+      // Конфликт различаем по ИМЕНИ ограничения, а не по тексту сообщения: текст живёт в
+      // миграции и переживёт любую правку формулировки.
+      const c = (err as { constraint?: string }).constraint;
+      if (c === 'procurement_substitutions_overlap') {
+        return reply.status(409).send({ error: 'На этот период замещение уже назначено' });
+      }
+      if (c === 'procurement_substitutions_chain') {
+        return reply.status(409).send({ error: 'Замещающий сам замещается в этот период — цепочка замещений не поддерживается' });
+      }
       throw err;
     } finally {
       client.release();
     }
   });
 
-  fastify.patch<{ Params: { id: string } }>('/substitutions/:id', { preHandler: [canAssign] }, async (request, reply) => {
-    const body = updateSubstitutionSchema.parse(request.body);
-    const sets: string[] = [];
-    const values: unknown[] = [request.params.id];
-    for (const [col, val] of [
-      ['deputy_user_id', body.deputyUserId], ['starts_on', body.startsOn],
-      ['ends_on', body.endsOn], ['reason', body.reason],
-    ] as const) {
-      if (val !== undefined) { values.push(val); sets.push(`${col} = $${values.length}`); }
-    }
-    if (!sets.length) return reply.status(400).send({ error: 'Нет изменений' });
-
-    const { rows } = await fastify.pool.query(
-      `UPDATE procurement_substitutions SET ${sets.join(', ')} WHERE id = $1 RETURNING id`, values,
-    );
-    if (!rows[0]) return reply.status(404).send({ error: 'Замещение не найдено' });
-    return { data: { id: rows[0].id } };
-  });
+  // PATCH /substitutions/:id удалён намеренно: правка периода уже назначенного замещения ломала
+  // ретроспективу («кто фактически отвечал в июле» менялось задним числом). Ошибочное замещение
+  // завершают через /end или удаляют, пока оно не началось.
 
   /**
    * Досрочное завершение. Отдельное поле ended_at, а не правка ends_on: дата окончания
