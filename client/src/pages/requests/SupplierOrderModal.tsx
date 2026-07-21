@@ -210,19 +210,66 @@ function CreateStep({
 // ============================================================
 // Шаг заказа: этапы Состав → Поставщики → Оформление (по sourcing_status).
 // ============================================================
+/**
+ * Загрузчик. Форма вынесена в OrderView и монтируется ТОЛЬКО когда заказ уже получен.
+ *
+ * Раньше состояние формы (победитель, НДС, тип поставки, цены) объявлялось здесь — до useQuery и
+ * до раннего выхода по `!order`. Инициализировать его сохранёнными значениями было физически
+ * нечем: при первом рендере данных ещё нет, а условные хуки после раннего выхода запрещены
+ * правилами React. Из-за этого заказ, отклонённый руководителем, открывался с пустой формой:
+ * причина отклонения не показывалась (её блок вложен в условие «выбран победитель»), цены
+ * приходилось вбивать заново — хотя сервер всё сохранил.
+ *
+ * key={orderId} обязателен: при переходе на другой заказ форма должна пересоздаться, иначе в ней
+ * останется черновик предыдущего.
+ */
 function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: string; onClose: () => void; onChanged: () => void; fromMaterials: boolean }) {
-  const { message } = App.useApp();
-  const [winnerLocal, setWinnerLocal] = useState<string | undefined>();
-  const [vatRate, setVatRate] = useState<ManualVatRate>('vat22');
-  const [paymentType, setPaymentType] = useState<PaymentType>('advance');
-  const [prices, setPrices] = useState<Map<string, { price: number | null; warranty: number | null }>>(new Map());
-
   const orderQ = useQuery({
     queryKey: ['supplier-order', orderId],
     queryFn: () => api.get<{ data: SupplierOrderDetail }>(`/supplier-orders/${orderId}`),
   });
   const order = orderQ.data?.data;
-  const refetch = () => { orderQ.refetch(); onChanged(); };
+
+  if (orderQ.isLoading || !order) {
+    return <Modal open title="Заказ поставщику" footer={null} onCancel={onClose}><div style={{ padding: 24 }}>Загрузка…</div></Modal>;
+  }
+  return (
+    <OrderView
+      key={orderId} orderId={orderId} order={order} onClose={onClose} fromMaterials={fromMaterials}
+      onChanged={onChanged} refetchOrder={() => { orderQ.refetch(); }}
+    />
+  );
+}
+
+function OrderView({
+  orderId, order, onClose, onChanged, fromMaterials, refetchOrder,
+}: {
+  orderId: string; order: SupplierOrderDetail; onClose: () => void; onChanged: () => void;
+  fromMaterials: boolean; refetchOrder: () => void;
+}) {
+  const { message } = App.useApp();
+
+  // Черновик инициализируется из сохранённого ОДИН раз, при монтировании. Ленивый инициализатор,
+  // а не useEffect на order: фоновое обновление после каждой мутации затирало бы несохранённые
+  // правки пользователя прямо во время ввода цен.
+  const [winnerLocal, setWinnerLocal] = useState<string | undefined>(() => order.proposed_offer_id ?? undefined);
+  const [vatRate, setVatRate] = useState<ManualVatRate>(
+    () => (MANUAL_VAT_RATES as readonly string[]).includes(order.vat_rate ?? '') ? (order.vat_rate as ManualVatRate) : 'vat22',
+  );
+  const [paymentType, setPaymentType] = useState<PaymentType>(
+    () => (PAYMENT_TYPES as readonly string[]).includes(order.payment_type ?? '') ? (order.payment_type as PaymentType) : 'advance',
+  );
+  const [prices, setPrices] = useState<Map<string, { price: number | null; warranty: number | null }>>(
+    () => new Map(order.priceLines.map((p) => [p.agg_key, { price: Number(p.unit_price), warranty: p.warranty_months }])),
+  );
+
+  // Победитель мог исчезнуть, пока заказ лежал у руководителя: поставщика убрали или у него
+  // отозвали файл. Ссылка на несуществующее предложение отправилась бы на согласование и была бы
+  // отбита сервером — сбрасываем выбор здесь.
+  const winnerAlive = winnerLocal != null && order.offers.some((o) => o.id === winnerLocal);
+  const winnerLocalSafe = winnerAlive ? winnerLocal : undefined;
+
+  const refetch = () => { refetchOrder(); onChanged(); };
 
   const run = useMutation({
     mutationFn: (v: { method: 'post' | 'delete'; url: string; body?: unknown }) =>
@@ -230,10 +277,6 @@ function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: st
     onSuccess: () => refetch(),
     onError: (e: Error) => message.error(e.message),
   });
-
-  if (orderQ.isLoading || !order) {
-    return <Modal open title="Заказ поставщику" footer={null} onCancel={onClose}><div style={{ padding: 24 }}>Загрузка…</div></Modal>;
-  }
 
   const number = `З-${String(order.order_no ?? 0).padStart(3, '0')}`;
   const isTender = order.procurement_method === 'tender';
@@ -313,7 +356,7 @@ function OrderStep({ orderId, onClose, onChanged, fromMaterials }: { orderId: st
       {!isTender && status === 'sourcing' && (
         <SourcingStages
           order={order} number={number}
-          winnerLocal={winnerLocal} setWinnerLocal={setWinnerLocal}
+          winnerLocal={winnerLocalSafe} setWinnerLocal={setWinnerLocal}
           vatRate={vatRate} setVatRate={setVatRate}
           paymentType={paymentType} setPaymentType={setPaymentType}
           prices={prices} setPrices={setPrices}
@@ -632,16 +675,19 @@ function SourcingStages({
       <Table rowKey="id" size="small" pagination={false} dataSource={order.offers} columns={offerCols}
         locale={{ emptyText: <Empty description="Добавьте поставщиков, которым отправлен запрос КП" /> }} scroll={{ x: 700 }} />
 
+      {/* Причина отклонения — ВНЕ условия на победителя: раньше блок был вложен в него, и если
+          выбор победителя не восстановился, отклонённый заказ открывался вообще без объяснения,
+          почему он вернулся к снабжению. */}
+      {rejected && (
+        <Alert
+          type="warning" showIcon style={{ marginTop: 12 }}
+          message="Отклонено руководителем"
+          description={order.approval_comment}
+        />
+      )}
+
       {winnerId && (
         <>
-          {rejected && (
-            <Alert
-              type="warning" showIcon style={{ marginTop: 12 }}
-              message="Отклонено руководителем"
-              description={order.approval_comment}
-            />
-          )}
-
           <Divider orientation="left" plain>Оформление победителя</Divider>
           <Space style={{ marginBottom: 12 }} size="large">
             <span>НДС: <Select value={vatRate} onChange={setVatRate} style={{ width: 130 }}
