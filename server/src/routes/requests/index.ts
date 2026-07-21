@@ -20,6 +20,7 @@ import {
   cancelRequestSchema,
   orderEditSchema,
   setFileRejectionSchema,
+  OVERPLACED_CODE, type OverplacedPayload,
 } from '@estimat/shared';
 import {
   assertContractorEstimateAccess,
@@ -928,9 +929,15 @@ export default async function requestRoutes(fastify: FastifyInstance) {
 
         if (overplaced.length && !body.acknowledgeOverplaced) {
           await client.query('ROLLBACK');
+          // Нагрузка — строго в `data`: клиентская обёртка пробрасывает вызывающему коду только
+          // это поле (плюс `code`), а список в корне тела до модалки не доходил. Форма поля
+          // описана overplacedPayloadSchema; здесь достаточно типовой аннотации — парсить
+          // собственный ответ на выходе нельзя, иначе расхождение схемы превратит 409 в 500.
+          const payload: OverplacedPayload = { overplaced };
           return reply.status(409).send({
             error: 'По части материалов заказано больше нового объёма',
-            overplaced,
+            code: OVERPLACED_CODE,
+            data: payload,
           });
         }
 

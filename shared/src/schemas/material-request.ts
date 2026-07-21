@@ -113,6 +113,31 @@ export const editRequestItemsSchema = z.object({
 });
 export type EditRequestItemsInput = z.infer<typeof editRequestItemsSchema>;
 
+/**
+ * Нагрузка отказа «объём ниже уже заказанного» (409). Общая схема, а не два независимых типа:
+ * сервер клал список в КОРЕНЬ тела, клиентская обёртка пробрасывает только вложенное `data`, а
+ * модалка читала третье, несуществующее поле — подтверждение перезаказа не работало вовсе, и
+ * ни типы, ни тесты этого не ловили. Теперь форму описывает одна схема, и разбирают её обе стороны.
+ *
+ * Код ошибки нужен, чтобы отличать этот 409 от конфликта версии (OCC) — их обрабатывают по-разному.
+ */
+export const OVERPLACED_CODE = 'OVERPLACED';
+
+export const overplacedItemSchema = z.object({
+  itemId: z.string().uuid(),
+  name: z.string(),
+  placed: z.number(),
+  /** Часть заказанного, уже ушедшая в закупку или оформленная, — её отменить сложнее. */
+  frozenPlaced: z.number(),
+  newQuantity: z.number(),
+});
+export type OverplacedItem = z.infer<typeof overplacedItemSchema>;
+
+export const overplacedPayloadSchema = z.object({
+  overplaced: z.array(overplacedItemSchema).min(1),
+});
+export type OverplacedPayload = z.infer<typeof overplacedPayloadSchema>;
+
 // Проверка графика поставки строк su10 (общая для создания и завершения доработки): у каждой
 // строки непустой график, даты уникальны, сумма по датам равна количеству. Возвращает текст
 // ошибки или null. На сервере тип заявки берётся из БД, поэтому проверка вызывается отдельно.

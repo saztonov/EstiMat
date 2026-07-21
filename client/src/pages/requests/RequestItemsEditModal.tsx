@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Modal, Table, InputNumber, Form, Input, Typography, Tag, Space, Alert, App } from 'antd';
-import { api } from '../../services/api';
+import { api, ApiError } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
 import { ROW_HIGHLIGHTS } from '../../lib/rowHighlights';
 import { round4 } from './requestConstants';
+import { parseOverplaced } from './overplaced';
 import type { RequestItem } from './types';
 
 const { Text } = Typography;
@@ -24,14 +25,6 @@ interface Props {
   rowVersion: number;
   onClose: () => void;
   onSaved: () => void;
-}
-
-interface OverplacedItem {
-  itemId: string;
-  name: string;
-  placed: number;
-  frozenPlaced: number;
-  newQuantity: number | string;
 }
 
 const fmtDate = (iso: string | null) => {
@@ -73,8 +66,7 @@ export function RequestItemsEditModal({ requestId, requestType, items, rowVersio
       onSaved();
       onClose();
     } catch (e) {
-      const err = e as { message?: string; body?: { overplaced?: OverplacedItem[] } };
-      const over = err.body?.overplaced;
+      const over = parseOverplaced(e);
       if (over?.length) {
         // Уменьшение ниже уже заказанного разрешено, но осознанно: показываем, что именно
         // окажется в перезаказе, и отдельно — что уже ушло в закупку или оформлено.
@@ -106,7 +98,7 @@ export function RequestItemsEditModal({ requestId, requestType, items, rowVersio
         });
         return;
       }
-      message.error(err.message ?? 'Не удалось сохранить');
+      message.error(e instanceof ApiError ? e.message : 'Не удалось сохранить');
     } finally {
       setBusy(false);
     }

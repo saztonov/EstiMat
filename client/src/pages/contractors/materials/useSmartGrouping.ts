@@ -56,7 +56,9 @@ export function useRunSmartGrouping(estimateId: string, contractorId: string | n
     onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY(estimateId, contractorId ?? '') }),
     onError: (err: Error) => {
       // Понятный текст вместо «409»: занято другим прогоном либо ИИ не настроен.
-      const code = err instanceof ApiError ? (err.data as { code?: string } | undefined)?.code : undefined;
+      // Код берём из err.code, а не из err.data.code: обёртка кладёт body.code в отдельное поле,
+      // и внутри data его никогда не было — сообщение «Группировка уже выполняется» не появлялось.
+      const code = err instanceof ApiError ? err.code : undefined;
       if (code === 'already_running') {
         message.info('Группировка уже выполняется');
         queryClient.invalidateQueries({ queryKey: KEY(estimateId, contractorId ?? '') });

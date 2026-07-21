@@ -31,20 +31,10 @@ interface FetchOptions {
 }
 
 // Ошибка API с HTTP-статусом и уже подготовленным понятным текстом для пользователя.
-// data/code несут тело ответа (например, при 409 — актуальная строка и code:'CONFLICT'),
-// чтобы вызывающий код мог отреагировать на конфликт, не теряя черновик пользователя.
-export class ApiError extends Error {
-  status: number;
-  data?: unknown;
-  code?: string;
-  constructor(status: number, message: string, opts?: { data?: unknown; code?: string }) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.data = opts?.data;
-    this.code = opts?.code;
-  }
-}
+// Объявлена в apiError.ts (модуль без import.meta.env — иначе её нельзя импортировать в тестах);
+// здесь только реэкспорт, чтобы не плодить второй класс и не ломать instanceof.
+export { ApiError } from './apiError.js';
+import { ApiError } from './apiError.js';
 
 async function doRefresh(): Promise<{ ok: boolean; expiresAt: number }> {
   try {
