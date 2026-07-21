@@ -94,6 +94,8 @@ export function RequestDetailContent(
     qc.invalidateQueries({ queryKey: ['requests', 'rp-registry'] });
     qc.invalidateQueries({ queryKey: ['requests', 'by-estimate'] });
     qc.invalidateQueries({ queryKey: ['material-requests'] });
+    // Свод «Материалы» строится по позициям заявок — правка объёмов/отмена заявки меняет его.
+    qc.invalidateQueries({ queryKey: ['su10-materials'] });
   };
 
   const mut = (fn: () => Promise<unknown>, okMsg: string) => async () => {
