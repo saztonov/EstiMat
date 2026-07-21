@@ -23,7 +23,9 @@ export async function svgDataUrlToPngDataUrl(svgDataUrl: string, size = DEFAULT_
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas 2D-контекст недоступен');
-  // Белая подложка — QR может быть без фона (прозрачный SVG).
+  // Белая подложка — QR может быть без фона (прозрачный SVG). Литеральный белый, а не переменная
+  // темы: картинка уходит в файл/печать, где тёмный фон сделал бы код нечитаемым сканером,
+  // и Canvas всё равно не понимает CSS-переменные.
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, size, size);
   ctx.drawImage(img, 0, 0, size, size);

@@ -54,9 +54,9 @@ function NodeTotal({ node }: { node: MaterialTreeNode }) {
   if (node.pricedRowCount === 0) return null;
   return (
     <>
-      <span style={{ color: '#1677ff' }}>{formatMoney(node.total)}</span>
+      <span style={{ color: 'var(--est-primary)' }}>{formatMoney(node.total)}</span>
       {node.pricedRowCount < node.rowCount && (
-        <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+        <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>
           оценено {node.pricedRowCount} из {node.rowCount}
         </span>
       )}
@@ -115,7 +115,7 @@ function TreeNodeView({
   // не было видно, по какому признаку разделены материалы.
   const title = node.badges ? (
     <>
-      <span style={{ color: '#8c8c8c', fontSize: 13 }}>Местоположение:</span>
+      <span style={{ color: 'var(--est-text-tertiary)', fontSize: 13 }}>Местоположение:</span>
       <LocationBadgesRow
         zoneNames={node.badges.zoneNames}
         floorsLabel={node.badges.floorsLabel}
@@ -143,7 +143,7 @@ function TreeNodeView({
   );
   const meta = (
     <>
-      <span style={{ color: '#8c8c8c', fontSize: 12 }}>{node.rowCount} поз.</span>
+      <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>{node.rowCount} поз.</span>
       <NodeTotal node={node} />
     </>
   );

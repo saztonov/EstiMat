@@ -33,7 +33,7 @@ export function LoginPage() {
   }
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#f5f5f5', padding: 16 }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'var(--est-bg-layout)', padding: 16 }}>
       <Card style={{ width: '100%', maxWidth: 400 }}>
         <Title level={3} style={{ textAlign: 'center', marginBottom: 24 }}>EstiMat</Title>
         <Form onFinish={onFinish} onValuesChange={() => { if (error) setError(null); }} layout="vertical" size="large">

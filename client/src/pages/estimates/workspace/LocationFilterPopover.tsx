@@ -124,7 +124,7 @@ export function LocationFilterPopover({
       {showUnreconciled && (
         <Space size={6}>
           <Switch size="small" checked={onlyUnreconciled} onChange={onUnreconciledChange} />
-          <span style={{ fontSize: 13, color: '#595959' }}>Не согласованные</span>
+          <span style={{ fontSize: 13, color: 'var(--est-text-secondary)' }}>Не согласованные</span>
         </Space>
       )}
       <Divider style={{ margin: 0 }} />

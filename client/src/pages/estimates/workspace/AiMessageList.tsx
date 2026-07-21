@@ -69,7 +69,7 @@ export function AiMessageList({ messages, applying, onApplyItems, onApplySection
               )}
 
               {m.status === 'running' && !m.content && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(0,0,0,0.55)', fontSize: 12.5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--est-text-secondary)', fontSize: 12.5 }}>
                   <Spin size="small" /> агент работает…
                 </div>
               )}
@@ -104,7 +104,7 @@ export function AiMessageList({ messages, applying, onApplyItems, onApplySection
 const userBubble: React.CSSProperties = {
   maxWidth: '86%',
   alignSelf: 'flex-end',
-  background: '#1677ff',
+  background: 'var(--est-primary)',
   color: '#fff',
   borderRadius: 12,
   borderBottomRightRadius: 4,
@@ -116,8 +116,8 @@ const userBubble: React.CSSProperties = {
 const assistantBubble: React.CSSProperties = {
   maxWidth: '94%',
   alignSelf: 'flex-start',
-  background: '#fafafa',
-  border: '1px solid #f0f0f0',
+  background: 'var(--est-bg-subtle)',
+  border: '1px solid var(--est-border)',
   borderRadius: 12,
   borderBottomLeftRadius: 4,
   padding: '9px 12px',

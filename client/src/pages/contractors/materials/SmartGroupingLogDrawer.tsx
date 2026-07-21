@@ -55,7 +55,7 @@ export function SmartGroupingLogDrawer({ jobId, active, open, onClose }: Props) 
       width: 190,
       render: (_v, r) => (
         <Space size={4} wrap>
-          <span style={{ color: BAD.has(r.status) ? '#cf1322' : undefined }}>
+          <span style={{ color: BAD.has(r.status) ? 'var(--est-error-text)' : undefined }}>
             {CALL_STATUS_LABEL[r.status] ?? r.status}
           </span>
           {r.httpStatus != null && r.httpStatus >= 400 && <Tag color="red">HTTP {r.httpStatus}</Tag>}
@@ -86,7 +86,7 @@ export function SmartGroupingLogDrawer({ jobId, active, open, onClose }: Props) 
       key: 'parse',
       width: 190,
       render: (_v, r) => (
-        <span style={{ color: r.parseStatus === 'failed' ? '#cf1322' : undefined }}>
+        <span style={{ color: r.parseStatus === 'failed' ? 'var(--est-error-text)' : undefined }}>
           {PARSE_STATUS_LABEL[r.parseStatus] ?? r.parseStatus}
           {r.groupsCount != null && r.parseStatus !== 'not_run' && ` · групп: ${r.groupsCount}`}
         </span>
@@ -127,7 +127,7 @@ export function SmartGroupingLogDrawer({ jobId, active, open, onClose }: Props) 
           </Descriptions.Item>
           {job.error && (
             <Descriptions.Item label="Последняя ошибка" span={2}>
-              <span style={{ color: '#cf1322' }}>{job.error}</span>
+              <span style={{ color: 'var(--est-error-text)' }}>{job.error}</span>
             </Descriptions.Item>
           )}
         </Descriptions>
@@ -193,9 +193,9 @@ function CallDetail({ jobId, callId }: { jobId: string | null; callId: string })
                 {!!a.waitedMs && a.waitedMs >= 1000 && ` · ждал очереди ${formatElapsed(a.waitedMs)}`}
                 {a.retryDelayMs != null && ` · повтор через ${formatElapsed(a.retryDelayMs)}`}
                 {/* Идентификатор нужен, чтобы найти этот же запрос в журнале шлюза. */}
-                <span style={{ color: '#8c8c8c' }}> · {a.requestId}</span>
-                {a.errorBody && <div style={{ color: '#cf1322', whiteSpace: 'pre-wrap' }}>{a.errorBody}</div>}
-                {a.networkError && <div style={{ color: '#cf1322' }}>{a.networkError}</div>}
+                <span style={{ color: 'var(--est-text-tertiary)' }}> · {a.requestId}</span>
+                {a.errorBody && <div style={{ color: 'var(--est-error-text)', whiteSpace: 'pre-wrap' }}>{a.errorBody}</div>}
+                {a.networkError && <div style={{ color: 'var(--est-error-text)' }}>{a.networkError}</div>}
               </li>
             ))}
           </ul>
@@ -234,7 +234,7 @@ function TextBlock({ title, text }: { title: string; text: string | null }) {
           margin: 0,
           maxHeight: 260,
           overflow: 'auto',
-          background: 'rgba(0,0,0,0.03)',
+          background: 'var(--est-fill-subtle)',
           padding: 8,
           borderRadius: 4,
           fontSize: 12,

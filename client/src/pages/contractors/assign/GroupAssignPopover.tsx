@@ -57,7 +57,7 @@ export function GroupAssignPopover({
   const option = (title: string, hint: string) => (
     <>
       {title}
-      <div style={{ color: '#8c8c8c', fontSize: 12, lineHeight: 1.3 }}>{hint}</div>
+      <div style={{ color: 'var(--est-text-tertiary)', fontSize: 12, lineHeight: 1.3 }}>{hint}</div>
     </>
   );
 
@@ -73,7 +73,7 @@ export function GroupAssignPopover({
           <BulkAllocationFields value={allocation} onChange={setAllocation} />
 
           <Divider style={{ margin: '4px 0' }} />
-          <div style={{ color: '#8c8c8c', fontSize: 12 }}>Область назначения</div>
+          <div style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>Область назначения</div>
           <Radio.Group value={scope} onChange={(e) => setScope(e.target.value as AssignScope)}>
             <Space direction="vertical" size={6}>
               <Radio value="all">

@@ -137,10 +137,10 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
       const active = selectedDoc?.nodeId === d.id;
       return (
         <span
-          style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontWeight: active ? 600 : 400, color: active ? '#1677ff' : undefined }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontWeight: active ? 600 : 400, color: active ? 'var(--est-primary)' : undefined }}
           onClick={() => void selectDoc(d.id, (node.title as string) ?? d.id)}
         >
-          <FileTextOutlined style={{ color: '#1677ff' }} />
+          <FileTextOutlined style={{ color: 'var(--est-primary)' }} />
           <span>{node.title as string}</span>
         </span>
       );
@@ -262,7 +262,7 @@ export function AiExtractPanel({ estimateId, onEstimateChanged }: Props) {
         </div>
       )}
 
-      <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
+      <div style={{ borderTop: '1px solid var(--est-border)', paddingTop: 10 }}>
         <Typography.Text strong style={{ fontSize: 13 }}>Область подбора работ</Typography.Text>
         <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '2px 0 8px' }}>
           Выберите разделы <b>до</b> загрузки документа (или нажмите «Запустить заново»). Работы

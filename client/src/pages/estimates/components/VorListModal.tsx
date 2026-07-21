@@ -56,7 +56,7 @@ function FiltersDetail({ f }: { f: VorFilterSnapshot }) {
   const row = (label: string, value: string) =>
     value ? (
       <div style={{ display: 'flex', gap: 8, marginBottom: 2 }}>
-        <span style={{ minWidth: 88, color: '#8c8c8c', fontSize: 12 }}>{label}</span>
+        <span style={{ minWidth: 88, color: 'var(--est-text-tertiary)', fontSize: 12 }}>{label}</span>
         <span style={{ flex: 1 }}>{value}</span>
       </div>
     ) : null;
@@ -66,7 +66,7 @@ function FiltersDetail({ f }: { f: VorFilterSnapshot }) {
   const empty =
     !f.categories.length && !f.types.length && !loc && !f.locationTypes.length &&
     f.volumeType === 'all' && !f.onlyUnreconciled;
-  if (empty) return <span style={{ color: '#8c8c8c' }}>Без фильтров (вся смета)</span>;
+  if (empty) return <span style={{ color: 'var(--est-text-tertiary)' }}>Без фильтров (вся смета)</span>;
   return (
     <div style={{ maxWidth: 320 }}>
       {row('Категория', f.categories.map((c) => c.name).join(', '))}
@@ -167,7 +167,7 @@ export function VorListModal({
       ellipsis: true,
       render: (_v, r) => (
         <Popover content={<FiltersDetail f={r.filters} />} title="Применённые фильтры">
-          <span style={{ cursor: 'help', color: '#595959' }}>{filtersShort(r.filters)}</span>
+          <span style={{ cursor: 'help', color: 'var(--est-text-secondary)' }}>{filtersShort(r.filters)}</span>
         </Popover>
       ),
     },
@@ -266,7 +266,7 @@ export function VorListModal({
           dataSource={data ?? []}
           pagination={DEFAULT_PAGINATION}
           onRow={(r) => ({
-            style: r.id === focusVorId ? { background: '#fff7e6' } : undefined,
+            style: r.id === focusVorId ? { background: 'var(--est-warning-bg)' } : undefined,
           })}
           locale={{
             emptyText: readOnly

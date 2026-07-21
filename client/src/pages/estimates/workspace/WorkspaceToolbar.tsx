@@ -36,7 +36,7 @@ function PanelSwitchRow({
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
-      <span style={{ color: '#8c8c8c', display: 'flex' }}>{icon}</span>
+      <span style={{ color: 'var(--est-text-tertiary)', display: 'flex' }}>{icon}</span>
       <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{label}</span>
       <Switch size="small" checked={checked} disabled={disabled} onChange={onChange} />
     </div>
@@ -69,8 +69,8 @@ export function WorkspaceToolbar({
         // Левый отступ 48px — чтобы «К объекту» и прочее не перекрывались фикс-гамбургером
         // (position: fixed; top:8; left:8; ~32px) в верхней полосе.
         padding: '8px 12px 8px 48px',
-        background: '#fff',
-        borderBottom: '1px solid #f0f0f0',
+        background: 'var(--est-bg-container)',
+        borderBottom: '1px solid var(--est-border)',
       }}
     >
       {isMobile ? (
@@ -96,7 +96,7 @@ export function WorkspaceToolbar({
 
       {!isPhone && (
         <>
-          <span style={{ color: '#1677ff', fontWeight: 700, whiteSpace: 'nowrap' }}>
+          <span style={{ color: 'var(--est-primary)', fontWeight: 700, whiteSpace: 'nowrap' }}>
             {formatMoney(estimate.total_amount)}
           </span>
           <Typography.Text type="secondary" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
@@ -117,7 +117,7 @@ export function WorkspaceToolbar({
         </Button>
       ) : (
         <>
-          <span style={{ width: 1, height: 22, background: '#f0f0f0', margin: '0 2px' }} />
+          <span style={{ width: 1, height: 22, background: 'var(--est-border)', margin: '0 2px' }} />
 
           <Popover
             trigger="click"
@@ -144,7 +144,7 @@ export function WorkspaceToolbar({
               </div>
             }
           >
-            <Badge count={activeCount} size="small" color="#1677ff" offset={[-2, 2]}>
+            <Badge count={activeCount} size="small" color="var(--est-primary)" offset={[-2, 2]}>
               <Button icon={<LayoutOutlined />}>Панели</Button>
             </Badge>
           </Popover>
@@ -153,7 +153,7 @@ export function WorkspaceToolbar({
 
       {isPhone && (
         <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-          <span style={{ color: '#1677ff', fontWeight: 700, whiteSpace: 'nowrap' }}>
+          <span style={{ color: 'var(--est-primary)', fontWeight: 700, whiteSpace: 'nowrap' }}>
             {formatMoney(estimate.total_amount)}
           </span>
           <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>

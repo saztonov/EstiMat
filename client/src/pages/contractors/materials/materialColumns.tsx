@@ -123,7 +123,7 @@ export function buildMaterialColumns({
           <Button
             type="text"
             className="estimat-material-name"
-            style={{ padding: 0, height: 'auto', color: '#8c8c8c', textAlign: 'left', whiteSpace: 'normal' }}
+            style={{ padding: 0, height: 'auto', color: 'var(--est-text-tertiary)', textAlign: 'left', whiteSpace: 'normal' }}
             onClick={() => onCostTypeCiphers({ costTypeId: m.costTypeId, costTypeName: m.costTypeName })}
           >
             {m.costTypeName ?? 'Без вида работ'}
@@ -166,7 +166,7 @@ export function buildMaterialColumns({
         width: 120,
         align: 'right',
         render: (_, m) =>
-          m.orderUnitPrice == null ? <span style={{ color: '#bfbfbf' }}>—</span> : formatMoney(m.orderUnitPrice),
+          m.orderUnitPrice == null ? <span style={{ color: 'var(--est-text-quaternary)' }}>—</span> : formatMoney(m.orderUnitPrice),
       },
       {
         title: <Tooltip title="Кол-во по смете × цена из заказа поставщику">Сумма</Tooltip>,
@@ -174,7 +174,7 @@ export function buildMaterialColumns({
         width: 140,
         align: 'right',
         render: (_, m) =>
-          m.materialCost == null ? <span style={{ color: '#bfbfbf' }}>—</span> : formatMoney(m.materialCost),
+          m.materialCost == null ? <span style={{ color: 'var(--est-text-quaternary)' }}>—</span> : formatMoney(m.materialCost),
       },
     );
   }
@@ -200,7 +200,7 @@ export function buildMaterialColumns({
         align: 'right',
         render: (_, m) => {
           const v = orderedMap.get(m.orderKey) ?? 0;
-          return v > 0 ? qty(v) : <span style={{ color: '#bfbfbf' }}>—</span>;
+          return v > 0 ? qty(v) : <span style={{ color: 'var(--est-text-quaternary)' }}>—</span>;
         },
       },
       {
@@ -210,7 +210,7 @@ export function buildMaterialColumns({
         align: 'right',
         render: (_, m) => {
           const left = remainingOf(m.quantity, orderedMap.get(m.orderKey) ?? 0);
-          return left > 0 ? qty(left) : <span style={{ color: '#bfbfbf' }}>0</span>;
+          return left > 0 ? qty(left) : <span style={{ color: 'var(--est-text-quaternary)' }}>0</span>;
         },
       },
     );
@@ -235,7 +235,7 @@ export function buildMaterialColumns({
                 не изменилась после нажатия «В заявку». */}
             {isManual && (
               <Tooltip title="Введено вручную: массовый набор эту строку не меняет">
-                <EditOutlined style={{ color: '#1677ff', fontSize: 12 }} />
+                <EditOutlined style={{ color: 'var(--est-primary)', fontSize: 12 }} />
               </Tooltip>
             )}
             {/* size="small": поле дефолтного размера (32px) единолично задавало высоту строки

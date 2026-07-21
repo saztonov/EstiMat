@@ -88,7 +88,7 @@ export function SmetaSelectionToolbar({
     <Space size={2} wrap={isPhone} style={{ marginLeft: 'auto', justifyContent: 'flex-end' }}>
       {editable && mode === 'reassign' && (
         <Space size={6} style={{ marginRight: 4 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>{isPhone ? selectedMaterialCount : `Выбрано: ${selectedMaterialCount}`}</span>
+          <span style={{ fontSize: 12.5, color: 'var(--est-text-secondary)' }}>{isPhone ? selectedMaterialCount : `Выбрано: ${selectedMaterialCount}`}</span>
           <Popover
             trigger="click"
             title="Перенести материалы к работе"
@@ -115,7 +115,7 @@ export function SmetaSelectionToolbar({
       )}
       {editable && mode === 'copy' && (
         <Space size={6} style={{ marginRight: 4 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>{isPhone ? selectedMaterialCount : `Выбрано: ${selectedMaterialCount}`}</span>
+          <span style={{ fontSize: 12.5, color: 'var(--est-text-secondary)' }}>{isPhone ? selectedMaterialCount : `Выбрано: ${selectedMaterialCount}`}</span>
           <Popover
             trigger="click"
             title="Копировать материалы в работу"
@@ -142,7 +142,7 @@ export function SmetaSelectionToolbar({
       )}
       {editable && mode === 'delete' && (
         <Space size={6} style={{ marginRight: 4 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>{isPhone ? deleteCount : `Выбрано: ${deleteCount}`}</span>
+          <span style={{ fontSize: 12.5, color: 'var(--est-text-secondary)' }}>{isPhone ? deleteCount : `Выбрано: ${deleteCount}`}</span>
           <Tooltip title={isPhone ? 'Подтвердить удаление' : undefined}>
             <Button
               danger
@@ -162,7 +162,7 @@ export function SmetaSelectionToolbar({
       )}
       {editable && mode === 'replicate' && (
         <Space size={6} style={{ marginRight: 4 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>{isPhone ? selectedWorkCount : `Шаблон: ${selectedWorkCount}`}</span>
+          <span style={{ fontSize: 12.5, color: 'var(--est-text-secondary)' }}>{isPhone ? selectedWorkCount : `Шаблон: ${selectedWorkCount}`}</span>
           <Tooltip title={isPhone ? 'Копировать работы' : undefined}>
             <Button
               type="primary"
@@ -182,7 +182,7 @@ export function SmetaSelectionToolbar({
           <span
             style={{
               fontSize: 12.5,
-              color: '#595959',
+              color: 'var(--est-text-secondary)',
               ...(isPhone
                 ? { maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'bottom' }
                 : {}),

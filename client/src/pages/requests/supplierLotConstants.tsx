@@ -34,13 +34,13 @@ export function SourcingStatusTag({ status }: { status: string }) {
 }
 
 export function ProcurementMethodTag({ method }: { method: string | null }) {
-  if (!method) return <span style={{ color: '#bfbfbf' }}>—</span>;
+  if (!method) return <span style={{ color: 'var(--est-text-quaternary)' }}>—</span>;
   const label = PROCUREMENT_METHOD_LABELS[method as ProcurementMethod] ?? method;
   return <Tag color={method === 'tender' ? 'blue' : 'cyan'}>{label}</Tag>;
 }
 
 export function TenderStatusTag({ status }: { status: string | null }) {
-  if (!status) return <span style={{ color: '#bfbfbf' }}>—</span>;
+  if (!status) return <span style={{ color: 'var(--est-text-quaternary)' }}>—</span>;
   const label = TENDER_STATUS_LABELS[status as TenderStatus] ?? status;
   return <Tag color={TENDER_COLOR[status] ?? 'default'}>{label}</Tag>;
 }

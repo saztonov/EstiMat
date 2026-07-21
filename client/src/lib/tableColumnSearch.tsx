@@ -47,7 +47,7 @@ export function useColumnSearch<T>() {
       </div>
     ),
     filterIcon: (filtered: boolean) => (
-      <SearchOutlined style={{ color: filtered ? '#1677ff' : undefined }} />
+      <SearchOutlined style={{ color: filtered ? 'var(--est-primary)' : undefined }} />
     ),
     onFilter: (value, record) =>
       String(getText(record) ?? '')

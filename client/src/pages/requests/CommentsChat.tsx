@@ -87,14 +87,14 @@ export function CommentsChat({ requestId }: { requestId: string }) {
 
   return (
     <div>
-      <div style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6, background: '#fafafa', padding: 8, marginBottom: 12 }}>
+      <div style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid var(--est-border)', borderRadius: 6, background: 'var(--est-bg-subtle)', padding: 8, marginBottom: 12 }}>
         {isLoading ? (
           <Text type="secondary">Загрузка…</Text>
         ) : comments.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 16 }}><Text type="secondary">Сообщений пока нет</Text></div>
         ) : (
           comments.map((c) => (
-            <div key={c.id} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 6, padding: '8px 12px', marginBottom: 8 }}>
+            <div key={c.id} style={{ background: 'var(--est-bg-container)', border: '1px solid var(--est-border)', borderRadius: 6, padding: '8px 12px', marginBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <Text strong>{c.author_name || authorSide(c.author_role)}</Text>
                 {c.recipient && <Tag color="blue">{COMMENT_RECIPIENT_LABELS[c.recipient as CommentRecipient] ?? c.recipient}</Tag>}

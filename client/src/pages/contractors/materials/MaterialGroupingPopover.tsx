@@ -33,7 +33,7 @@ export function LevelSwitches({
         <Space key={s.key} size={8} align="start">
           <Switch size="small" checked={value[s.key]} disabled={disabled} onChange={(v) => onToggle(s.key, v)} />
           <div>
-            <div style={{ fontSize: 13, color: '#595959' }}>{s.label}</div>
+            <div style={{ fontSize: 13, color: 'var(--est-text-secondary)' }}>{s.label}</div>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {s.hint}
             </Typography.Text>

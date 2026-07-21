@@ -153,7 +153,7 @@ export function buildMaterialsColumns(ctx: MaterialsColumnsCtx): ColumnsType<Est
               return (
                 <Space size={4}>
                   <Button type="text" size="small" disabled={!!editing} title="Подтвердить материал"
-                    icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => onConfirm(r.id)} />
+                    icon={<CheckOutlined style={{ color: 'var(--est-success)' }} />} onClick={() => onConfirm(r.id)} />
                   {reassignBtn(r)}
                   <Button type="text" size="small" danger disabled={!!editing} title="Отклонить предложение"
                     icon={<CloseOutlined />} onClick={() => onDelete(r.id)} />

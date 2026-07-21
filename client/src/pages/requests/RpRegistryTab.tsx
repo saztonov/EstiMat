@@ -52,7 +52,7 @@ function SentDateCell({ row, onSet }: { row: RequestRow; onSet: (id: string, d: 
     );
   }
   return (
-    <a onClick={() => setEditing(true)} style={{ color: row.rp_sent_date ? undefined : '#999' }} title="Изменить дату отправки">
+    <a onClick={() => setEditing(true)} style={{ color: row.rp_sent_date ? undefined : 'var(--est-text-tertiary)' }} title="Изменить дату отправки">
       {row.rp_sent_date ? dayjs(row.rp_sent_date).format('DD.MM.YYYY') : '—'}
     </a>
   );
@@ -180,7 +180,7 @@ export function RpRegistryTab() {
   const leafColumns: ColumnsType<Row> = [
     { title: '', key: 'unread', width: 40, align: 'center', render: (_v, r) => {
       const c = unread[leaf(r).id] || 0;
-      return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: '#8c8c8c' }} /></Badge> : null;
+      return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: 'var(--est-text-tertiary)' }} /></Badge> : null;
     } },
     // В плоском режиме — сквозной номер по серверной странице; в полном/дереве пагинация
     // клиентская и page заморожен, поэтому нумеруем по порядку строки (i из AntD).
@@ -190,14 +190,14 @@ export function RpRegistryTab() {
       return (
         <div>
           <div style={{ fontWeight: 600 }}>{row.payhub_reg_number || row.rp_number || <Text type="secondary">—</Text>}</div>
-          {row.rp_author && <div style={{ fontSize: 12, color: '#888' }}>{row.rp_author}</div>}
+          {row.rp_author && <div style={{ fontSize: 12, color: 'var(--est-text-tertiary)' }}>{row.rp_author}</div>}
         </div>
       );
     } },
     {
       title: (
         <div style={{ lineHeight: 1.2 }}>
-          <div style={{ borderBottom: '1px solid #f0f0f0', paddingBottom: 2 }}>Дата созд.</div>
+          <div style={{ borderBottom: '1px solid var(--est-border)', paddingBottom: 2 }}>Дата созд.</div>
           <div style={{ paddingTop: 2 }}>Отправки</div>
         </div>
       ),
@@ -207,7 +207,7 @@ export function RpRegistryTab() {
         return (
           <div style={{ lineHeight: 1.3 }}>
             <div>{fmtDate(row.rp_created_at)}</div>
-            <div style={{ borderTop: '1px solid #f0f0f0', marginTop: 2, paddingTop: 2 }}>
+            <div style={{ borderTop: '1px solid var(--est-border)', marginTop: 2, paddingTop: 2 }}>
               <SentDateCell row={row} onSet={setSentDate} />
             </div>
           </div>
@@ -223,12 +223,12 @@ export function RpRegistryTab() {
     { title: 'Поставщик', key: 'supplier', width: 200, ...gt.hf('supplier', filterSpecs.supplier), render: (_v, r) => {
       const row = leaf(r);
       return row.supplier_name ? (
-        <div><div>{row.supplier_name}</div>{row.supplier_inn && <div style={{ fontSize: 12, color: '#888' }}>ИНН: {row.supplier_inn}</div>}</div>
-      ) : (<span style={{ color: '#888' }}>—</span>);
+        <div><div>{row.supplier_name}</div>{row.supplier_inn && <div style={{ fontSize: 12, color: 'var(--est-text-tertiary)' }}>ИНН: {row.supplier_inn}</div>}</div>
+      ) : (<span style={{ color: 'var(--est-text-tertiary)' }}>—</span>);
     } },
     { title: 'Подрядчик', key: 'contractor', width: 200, ...gt.hf('contractor', filterSpecs.contractor), render: (_v, r) => {
       const row = leaf(r);
-      return <div><div>{row.contractor_name || '—'}</div>{row.contractor_inn && <div style={{ fontSize: 12, color: '#888' }}>ИНН: {row.contractor_inn}</div>}</div>;
+      return <div><div>{row.contractor_name || '—'}</div>{row.contractor_inn && <div style={{ fontSize: 12, color: 'var(--est-text-tertiary)' }}>ИНН: {row.contractor_inn}</div>}</div>;
     } },
     { title: 'Описание', key: 'rp_content', width: 240, ...gt.hf('rp_content', filterSpecs.rp_content), render: (_v, r) => (
       <div style={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{leaf(r).rp_content || <Text type="secondary">—</Text>}</div>
@@ -260,7 +260,7 @@ export function RpRegistryTab() {
   ];
 
   const renderGroup = (node: GroupNode<RequestRow>) => (
-    <strong>{node.label} <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· {node.count} · {fmtMoney(node.agg.amount ?? 0)}</span></strong>
+    <strong>{node.label} <span style={{ color: 'var(--est-text-tertiary)', fontWeight: 400 }}>· {node.count} · {fmtMoney(node.agg.amount ?? 0)}</span></strong>
   );
 
   const tableData = gt.data;

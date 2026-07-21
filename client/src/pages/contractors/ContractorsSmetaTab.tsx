@@ -289,7 +289,7 @@ export function ContractorsSmetaTab({
                   <li key={b.itemId}>
                     {nameById.get(b.itemId) ?? 'Строка сметы'}
                     {b.contractors.length > 0 && (
-                      <span style={{ color: '#8c8c8c' }}>
+                      <span style={{ color: 'var(--est-text-tertiary)' }}>
                         {' '}
                         — {b.contractors.map((c) => c.contractorName ?? '—').join(', ')}
                       </span>
@@ -298,7 +298,7 @@ export function ContractorsSmetaTab({
                 ))}
               </ul>
               {res.blocked.length > shown.length && (
-                <p style={{ marginBottom: 0, color: '#8c8c8c' }}>
+                <p style={{ marginBottom: 0, color: 'var(--est-text-tertiary)' }}>
                   …и ещё {res.blocked.length - shown.length}
                 </p>
               )}
@@ -582,7 +582,7 @@ export function ContractorsSmetaTab({
           <span>
             {it.description}
             {it.rate_name && it.rate_name !== it.description && (
-              <span style={{ color: '#8c8c8c' }}> · {it.rate_name}</span>
+              <span style={{ color: 'var(--est-text-tertiary)' }}> · {it.rate_name}</span>
             )}
           </span>
         ),
@@ -664,8 +664,8 @@ export function ContractorsSmetaTab({
                 alignItems: 'center',
                 gap: 8,
                 padding: '4px 10px',
-                background: '#eef2f7',
-                border: '1px solid #e0e6ee',
+                background: 'var(--est-bg-group)',
+                border: '1px solid var(--est-border-group)',
                 borderRadius: 8,
                 userSelect: 'none',
                 marginBottom: collapsed ? 0 : 8,
@@ -673,16 +673,16 @@ export function ContractorsSmetaTab({
             >
               <span
                 onClick={() => toggleCat(sec.id)}
-                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: '#8c8c8c' }}
+                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: 'var(--est-text-tertiary)' }}
                 title={collapsed ? 'Развернуть' : 'Свернуть'}
               >
                 {collapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
               </span>
               <strong style={{ fontSize: 13 }}>{sec.name}</strong>
-              <span style={{ color: '#8c8c8c', fontSize: 12 }}>Видов работ: {sec.groups.length}</span>
+              <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>Видов работ: {sec.groups.length}</span>
               <span style={{ flex: 1 }} />
               {showPrices && (
-                <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupsTotal(sec.groups))}</span>
+                <span style={{ color: 'var(--est-primary)', fontWeight: 600 }}>{formatMoney(groupsTotal(sec.groups))}</span>
               )}
             </div>
 

@@ -578,7 +578,7 @@ function CostTypeGroupBlockImpl({
   return (
     <div
       className={`estimat-cv-block${isActiveType ? ' estimat-group-active' : ''}`}
-      style={{ background: '#fff', borderRadius: 8, marginBottom: 8, border: '1px solid #f0f0f0' }}
+      style={{ background: 'var(--est-bg-container)', borderRadius: 8, marginBottom: 8, border: '1px solid var(--est-border)' }}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && editing && !saving) {
           e.stopPropagation();
@@ -591,8 +591,8 @@ function CostTypeGroupBlockImpl({
           display: 'flex',
           alignItems: 'center',
           padding: '6px 10px',
-          background: '#fafbfc',
-          borderBottom: collapsible && collapsed ? 'none' : '1px solid #f0f0f0',
+          background: 'var(--est-bg-subtle)',
+          borderBottom: collapsible && collapsed ? 'none' : '1px solid var(--est-border)',
           gap: 10,
           cursor: group.costTypeId ? 'pointer' : 'default',
           userSelect: 'none',
@@ -617,7 +617,7 @@ function CostTypeGroupBlockImpl({
               e.stopPropagation();
               toggleCollapsed();
             }}
-            style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: '#8c8c8c' }}
+            style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: 'var(--est-text-tertiary)' }}
             title={collapsed ? 'Развернуть' : 'Свернуть'}
           >
             {collapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
@@ -644,7 +644,7 @@ function CostTypeGroupBlockImpl({
           />
         )}
         <span style={{ flex: 1 }} />
-        {showPrices && <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>}
+        {showPrices && <span style={{ color: 'var(--est-primary)', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>}
         {editable && !deleteMode && (
           <Button type="primary" size="small" icon={<PlusOutlined />} disabled={!!editing} onClick={() => setEditing({ workId: null, rateId: null, description: '', unit: '', quantity: 1, unitPrice: 0 })}>
             Работа

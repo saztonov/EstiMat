@@ -70,7 +70,7 @@ export function RequestReviewModal({ open, lines, submitting, onChange, onCancel
       key: 'ordered',
       width: 120,
       align: 'right',
-      render: (_, l) => (l.ordered > 0 ? qty(l.ordered) : <span style={{ color: '#bfbfbf' }}>—</span>),
+      render: (_, l) => (l.ordered > 0 ? qty(l.ordered) : <span style={{ color: 'var(--est-text-quaternary)' }}>—</span>),
     },
     { title: 'Остаток', key: 'available', width: 100, align: 'right', render: (_, l) => qty(l.available) },
     {
@@ -96,7 +96,7 @@ export function RequestReviewModal({ open, lines, submitting, onChange, onCancel
       align: 'right',
       render: (_, l) => {
         const left = remainingOf(l.row.quantity, l.ordered + l.value);
-        return left > 0 ? qty(left) : <span style={{ color: '#bfbfbf' }}>0</span>;
+        return left > 0 ? qty(left) : <span style={{ color: 'var(--est-text-quaternary)' }}>0</span>;
       },
     },
   ];
@@ -135,14 +135,14 @@ export function RequestReviewModal({ open, lines, submitting, onChange, onCancel
             {pricedCount > 0 && ` · ${formatMoney(total)}`}
           </span>
           {pricedCount > 0 && pricedCount < lines.length && (
-            <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+            <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>
               оценено {pricedCount} из {lines.length}
             </span>
           )}
           {issues.length > 0 && (
             <Space size={6}>
               <Switch size="small" checked={onlyIssues} onChange={setOnlyIssues} />
-              <span style={{ fontSize: 13, color: '#595959' }}>
+              <span style={{ fontSize: 13, color: 'var(--est-text-secondary)' }}>
                 Только требующие внимания ({issues.length})
               </span>
             </Space>

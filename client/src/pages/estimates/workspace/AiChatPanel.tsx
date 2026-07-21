@@ -153,7 +153,7 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
   return (
     <div style={panelBox}>
       <div style={header}>
-        <RobotOutlined style={{ color: '#8c8c8c' }} />
+        <RobotOutlined style={{ color: 'var(--est-text-tertiary)' }} />
         <span>ИИ-ассистент</span>
         <Segmented<AiMode>
           size="small"
@@ -191,7 +191,7 @@ export function AiChatPanel({ estimateId, onEstimateChanged, onCollapse }: Props
             >
               <button type="button" title={activeChatTitle} style={chatTriggerBox}>
                 <span style={chatTriggerText}>{activeChatTitle ?? 'Новый чат'}</span>
-                <DownOutlined style={{ fontSize: 11, color: 'rgba(0,0,0,0.35)', flexShrink: 0, marginTop: 2 }} />
+                <DownOutlined style={{ fontSize: 11, color: 'var(--est-text-tertiary)', flexShrink: 0, marginTop: 2 }} />
               </button>
             </Dropdown>
             <Tooltip title="Новый чат">
@@ -235,8 +235,8 @@ const panelBox: React.CSSProperties = {
   flexDirection: 'column',
   minHeight: 0,
   overflow: 'hidden',
-  background: '#fff',
-  border: '1px solid #f0f0f0',
+  background: 'var(--est-bg-container)',
+  border: '1px solid var(--est-border)',
   borderRadius: 8,
 };
 
@@ -246,8 +246,8 @@ const header: React.CSSProperties = {
   alignItems: 'center',
   gap: 9,
   padding: '9px 13px',
-  borderBottom: '1px solid #f0f0f0',
-  background: '#fafbfc',
+  borderBottom: '1px solid var(--est-border)',
+  background: 'var(--est-bg-subtle)',
   fontWeight: 600,
   fontSize: 13.5,
 };
@@ -258,7 +258,7 @@ const sessionBar: React.CSSProperties = {
   alignItems: 'flex-start',
   gap: 6,
   padding: '8px 8px',
-  borderBottom: '1px solid #f5f5f5',
+  borderBottom: '1px solid var(--est-border)',
 };
 
 // Триггер выбора чата вместо нативного Select: своё название с переносом в 2 строки.
@@ -268,15 +268,15 @@ const chatTriggerBox: React.CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
   gap: 4,
-  background: '#fff',
-  border: '1px solid #d9d9d9',
+  background: 'var(--est-bg-container)',
+  border: '1px solid var(--est-border-strong)',
   borderRadius: 6,
   padding: '2px 8px',
   cursor: 'pointer',
   textAlign: 'left',
   fontSize: 12,
   lineHeight: 1.3,
-  color: 'rgba(0,0,0,0.88)',
+  color: 'var(--est-text)',
   fontFamily: 'inherit',
 };
 
@@ -295,5 +295,5 @@ const chatTriggerText: React.CSSProperties = {
 const scopeBar: React.CSSProperties = {
   flexShrink: 0,
   padding: '8px 10px',
-  borderBottom: '1px solid #f5f5f5',
+  borderBottom: '1px solid var(--est-border)',
 };

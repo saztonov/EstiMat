@@ -42,7 +42,7 @@ export function ResponsibleCell({
         disabled={disabled}
         loading={loading}
         value={value ?? undefined}
-        placeholder={<span style={{ color: '#bfbfbf' }}>{placeholder}</span>}
+        placeholder={<span style={{ color: 'var(--est-text-quaternary)' }}>{placeholder}</span>}
         optionFilterProp="label"
         options={assignable.map((u) => ({
           value: u.id,

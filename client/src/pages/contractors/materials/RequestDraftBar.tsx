@@ -55,11 +55,11 @@ export function RequestDraftBar({
         />
       </Tooltip>
 
-      <span style={{ color: stats.count > 0 ? '#1677ff' : '#8c8c8c', fontSize: 13 }}>
+      <span style={{ color: stats.count > 0 ? 'var(--est-primary)' : 'var(--est-text-tertiary)', fontSize: 13 }}>
         В заявке: {stats.count} поз.
         {stats.pricedCount > 0 && ` · ${formatMoney(stats.money)}`}
         {stats.pricedCount > 0 && stats.pricedCount < stats.count && (
-          <span style={{ color: '#8c8c8c' }}>
+          <span style={{ color: 'var(--est-text-tertiary)' }}>
             {' '}
             (оценено {stats.pricedCount} из {stats.count})
           </span>

@@ -44,7 +44,7 @@ export function GroupSelectionBar({
         <Button type="text" size="small" onClick={onClear} disabled={selectedCount === 0}>
           Снять
         </Button>
-        <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+        <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>
           {contractorName} · {allocationLabel(draft.allocation)}
         </span>
         <Popover

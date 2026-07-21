@@ -33,7 +33,7 @@ export function DisplayPopover({
       <Space size={8} align="start">
         <Switch size="small" checked={onlyUnordered} onChange={onOnlyUnorderedChange} />
         <div>
-          <div style={{ fontSize: 13, color: '#595959' }}>Не заказанные материалы</div>
+          <div style={{ fontSize: 13, color: 'var(--est-text-secondary)' }}>Не заказанные материалы</div>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Скрыть блоки, где всё уже заявлено
           </Typography.Text>
@@ -43,7 +43,7 @@ export function DisplayPopover({
         <Space size={8} align="start">
           <Switch size="small" checked={onlyReview} onChange={onOnlyReviewChange} />
           <div>
-            <div style={{ fontSize: 13, color: '#595959' }}>Только с замечаниями ({reviewCount})</div>
+            <div style={{ fontSize: 13, color: 'var(--est-text-secondary)' }}>Только с замечаниями ({reviewCount})</div>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               Неполные комплекты и возможные несовместимости
             </Typography.Text>

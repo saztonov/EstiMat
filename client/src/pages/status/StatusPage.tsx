@@ -69,7 +69,7 @@ export function StatusPage() {
         justifyContent: 'center',
         alignItems: 'center',
         minHeight: '100vh',
-        background: '#f5f5f5',
+        background: 'var(--est-bg-layout)',
         padding: 16,
       }}
     >

@@ -163,10 +163,10 @@ export function CatalogComparePanel() {
   ];
 
   const treeBoxStyle: React.CSSProperties = {
-    border: '1px solid #f0f0f0',
+    border: '1px solid var(--est-border)',
     borderRadius: 8,
     padding: 8,
-    background: '#fff',
+    background: 'var(--est-bg-container)',
   };
 
   return (

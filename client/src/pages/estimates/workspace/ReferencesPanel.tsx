@@ -35,7 +35,7 @@ export function ReferencesPanel({ onAddRate, onAddMaterial, onCollapse }: Props)
         style={{
           flex: collapsed ? '0 0 auto' : '1 1 0',
           minHeight: 0,
-          borderBottom: '1px solid #f0f0f0',
+          borderBottom: '1px solid var(--est-border)',
           display: 'flex',
           flexDirection: 'column',
         }}

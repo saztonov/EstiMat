@@ -107,10 +107,10 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
           <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
             {p.name} · {p.unit}
             {p.typeCount > 1 && (
-              <span style={{ color: '#8c8c8c' }}> ({p.typeCount})</span>
+              <span style={{ color: 'var(--est-text-tertiary)' }}> ({p.typeCount})</span>
             )}
           </span>
-          <span style={{ color: '#8c8c8c', fontSize: 12, whiteSpace: 'nowrap' }}>
+          <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12, whiteSpace: 'nowrap' }}>
             {p.price.toLocaleString('ru-RU')} ₽
           </span>
           <Tooltip title="Добавить в смету">
@@ -163,7 +163,7 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
       }
     >
       {scopeActive && (
-        <div style={{ fontSize: 12, color: '#8c8c8c', marginBottom: 6 }}>
+        <div style={{ fontSize: 12, color: 'var(--est-text-tertiary)', marginBottom: 6 }}>
           Сужено по выбранным разделам (область подбора в панели ИИ).
         </div>
       )}

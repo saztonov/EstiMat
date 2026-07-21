@@ -24,7 +24,7 @@ export function GroupFillButton({ rows, draftCount, onFill, onClear }: Props) {
   return (
     <Space size={4}>
       {draftCount > 0 && (
-        <span style={{ color: '#1677ff', fontSize: 12 }}>
+        <span style={{ color: 'var(--est-primary)', fontSize: 12 }}>
           выбрано {draftCount} из {rows.length}
         </span>
       )}

@@ -154,7 +154,7 @@ export function SuppliersBlock({
             <a onClick={() => api.downloadGet(`/supplier-orders/${order.id}/offers/${o.id}/file`, o.file_name ?? 'file').catch((e) => message.error((e as Error).message))}>
               <PaperClipOutlined /> {o.document_type ? OFFER_DOC_TYPE_LABELS[o.document_type] : 'Файл'}
             </a>
-          ) : <span style={{ color: '#bfbfbf' }}>нет</span>}
+          ) : <span style={{ color: 'var(--est-text-quaternary)' }}>нет</span>}
           <OfferUpload orderId={order.id} offerId={o.id} onDone={refetch} />
         </Space>
       ),

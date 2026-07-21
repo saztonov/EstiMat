@@ -89,7 +89,7 @@ export function AiTasksPanel() {
       render: (_v, r) => (
         <Tooltip title={r.subtitle ? `${r.title} · ${r.subtitle}` : r.title}>
           <span>{r.title}</span>
-          {r.subtitle && <span style={{ color: '#8c8c8c' }}> · {r.subtitle}</span>}
+          {r.subtitle && <span style={{ color: 'var(--est-text-tertiary)' }}> · {r.subtitle}</span>}
         </Tooltip>
       ),
     },
@@ -169,7 +169,7 @@ export function AiTasksPanel() {
         if (t == null) {
           return (
             <Tooltip title={r.hasFallback ? 'Ответ без вызова модели' : 'Расход не сохранялся'}>
-              <span style={{ color: '#bfbfbf' }}>—</span>
+              <span style={{ color: 'var(--est-text-quaternary)' }}>—</span>
             </Tooltip>
           );
         }
@@ -195,7 +195,7 @@ export function AiTasksPanel() {
                 : `Успешных вызовов: ${r.callsOk} из ${r.callsTotal}`
             }
           >
-            <span style={{ color: r.callsOk < r.callsTotal ? '#cf1322' : undefined }}>
+            <span style={{ color: r.callsOk < r.callsTotal ? 'var(--est-error-text)' : undefined }}>
               {r.callsOk}/{r.callsTotal}
             </span>
           </Tooltip>
@@ -233,7 +233,7 @@ export function AiTasksPanel() {
       render: (e: string | null) =>
         e ? (
           <Tooltip title={e}>
-            <span style={{ color: '#cf1322' }}>есть</span>
+            <span style={{ color: 'var(--est-error-text)' }}>есть</span>
           </Tooltip>
         ) : (
           '—'

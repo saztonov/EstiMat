@@ -85,7 +85,7 @@ export function UnitsPanel() {
       render: (syns: string[] | null) =>
         syns && syns.length > 0
           ? syns.map((s) => <Tag key={s} style={{ marginBottom: 2 }}>{s}</Tag>)
-          : <span style={{ color: '#bfbfbf' }}>—</span>,
+          : <span style={{ color: 'var(--est-text-quaternary)' }}>—</span>,
     },
     { title: 'Порядок', dataIndex: 'sort_order', width: 100, align: 'center' as const },
     {

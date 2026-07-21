@@ -70,7 +70,7 @@ export function CiphersModal({ projectId }: Props) {
         </Button>
       </Space.Compact>
 
-      <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 4 }}>
+      <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid var(--est-border)', borderRadius: 8, padding: 4 }}>
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: 16 }}><Spin /></div>
         ) : ciphers.length === 0 ? (

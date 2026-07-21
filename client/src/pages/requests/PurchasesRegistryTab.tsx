@@ -166,7 +166,7 @@ export function PurchasesRegistryTab() {
   ];
 
   const renderGroup = (node: GroupNode<RegistryRow>) => (
-    <strong>{node.label} <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· {node.count} · {money(node.agg.amount ?? 0)}</span></strong>
+    <strong>{node.label} <span style={{ color: 'var(--est-text-tertiary)', fontWeight: 400 }}>· {node.count} · {money(node.agg.amount ?? 0)}</span></strong>
   );
 
   const tableData = gt.data;

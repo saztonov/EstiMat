@@ -29,9 +29,9 @@ function formatSize(bytes: number): string {
 }
 
 function fileIcon(file: RdFile) {
-  if (file.mimeType === 'application/pdf') return <FilePdfOutlined style={{ color: '#cf1322' }} />;
-  if (file.mimeType.startsWith('image/')) return <FileImageOutlined style={{ color: '#1677ff' }} />;
-  if (file.fileType === 'result_md') return <FileMarkdownOutlined style={{ color: '#389e0d' }} />;
+  if (file.mimeType === 'application/pdf') return <FilePdfOutlined style={{ color: 'var(--est-error-text)' }} />;
+  if (file.mimeType.startsWith('image/')) return <FileImageOutlined style={{ color: 'var(--est-primary)' }} />;
+  if (file.fileType === 'result_md') return <FileMarkdownOutlined style={{ color: 'var(--est-success-text)' }} />;
   return <FileOutlined />;
 }
 
@@ -180,7 +180,7 @@ export function RdDocumentViewer({ doc, onClose }: Props) {
         <div style={{ overflow: 'auto', height: '100%', paddingRight: 8 }}>
           {pages.map((page) => (
             <div key={page} style={{ marginBottom: 16 }}>
-              <div style={{ fontWeight: 600, fontSize: 12.5, color: '#595959', margin: '4px 0 8px' }}>
+              <div style={{ fontWeight: 600, fontSize: 12.5, color: 'var(--est-text-secondary)', margin: '4px 0 8px' }}>
                 {page >= 0 ? `Страница ${page + 1}` : 'Без страницы'}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>

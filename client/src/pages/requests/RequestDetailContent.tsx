@@ -295,7 +295,7 @@ export function RequestDetailContent(
     { title: 'Имя', dataIndex: 'file_name', key: 'file_name', ellipsis: true,
       render: (v: string, f) => (f.is_rejected ? (
         <Tooltip title={`Вычеркнул: ${f.rejected_by_name || '—'}${f.rejected_at ? ' · ' + new Date(f.rejected_at).toLocaleString('ru-RU') : ''}`}>
-          <span style={{ textDecoration: 'line-through', color: '#999' }}>{v}</span>
+          <span style={{ textDecoration: 'line-through', color: 'var(--est-text-tertiary)' }}>{v}</span>
         </Tooltip>
       ) : v) },
     { title: 'Размер', dataIndex: 'file_size', key: 'file_size', width: 90, render: (v: number | null) => formatSize(v) },
@@ -314,7 +314,7 @@ export function RequestDetailContent(
           <Tooltip title={f.is_rejected ? 'Вернуть' : 'Вычеркнуть'}>
             <Button size="small" type="text" loading={busy}
               icon={f.is_rejected ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
-              style={{ color: f.is_rejected ? '#52c41a' : '#ff4d4f' }}
+              style={{ color: f.is_rejected ? 'var(--est-success)' : 'var(--est-error)' }}
               onClick={rejectFile(f.id, !f.is_rejected)} />
           </Tooltip>
         )}
@@ -488,7 +488,7 @@ export function RequestDetailContent(
 
       {/* Нижняя панель управления: слева закрытие, справа действия по роли/статусу */}
       <div style={{
-        flexShrink: 0, borderTop: '1px solid #f0f0f0', padding: '10px 16px',
+        flexShrink: 0, borderTop: '1px solid var(--est-border)', padding: '10px 16px',
         display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8,
       }}>
         <div>{onBack && <Button onClick={onBack}>{backLabel}</Button>}</div>

@@ -15,12 +15,12 @@ export function AiComposer({ input, loading, busy, onInputChange, onRun, onStop 
     <div
       style={{
         flexShrink: 0,
-        borderTop: '1px solid #f0f0f0',
+        borderTop: '1px solid var(--est-border)',
         padding: 10,
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
-        background: '#fff',
+        background: 'var(--est-bg-container)',
       }}
     >
       <Input.TextArea

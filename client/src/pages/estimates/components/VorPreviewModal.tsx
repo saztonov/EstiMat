@@ -106,14 +106,14 @@ export function VorPreviewModal({ open, onClose, estimateId, vor }: Props) {
             style={{
               maxHeight: 'calc(100vh - 170px)',
               overflow: 'auto',
-              border: '1px solid #f0f0f0',
+              border: '1px solid var(--est-border)',
               borderRadius: 8,
             }}
             // HTML сформирован нашим сервером из ExcelJS-модели: значения ячеек html-эскейплены,
             // инлайн-стили вычислены из модели (пользовательского ввода в стилях нет).
             dangerouslySetInnerHTML={{ __html: current?.html ?? '' }}
           />
-          <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
+          <div style={{ marginTop: 8, color: 'var(--est-text-tertiary)', fontSize: 12 }}>
             Денежные колонки и итоги в предпросмотре пусты — цены заполняет подрядчик, а предпросмотр не
             пересчитывает формулы. Итоговые суммы доступны в скачанном файле.
           </div>

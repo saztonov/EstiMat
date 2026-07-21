@@ -39,21 +39,21 @@ export function LocationSections({ sections, collapsed, onToggle, renderGroup }:
                 alignItems: 'center',
                 gap: 8,
                 padding: '5px 10px',
-                background: '#eef2f7',
-                border: '1px solid #dbe3ee',
+                background: 'var(--est-bg-group)',
+                border: '1px solid var(--est-border-group)',
                 borderRadius: 8,
                 cursor: 'pointer',
                 userSelect: 'none',
                 marginBottom: zoneCollapsed ? 0 : 8,
               }}
             >
-              <span style={{ color: '#8c8c8c', display: 'inline-flex' }}>
+              <span style={{ color: 'var(--est-text-tertiary)', display: 'inline-flex' }}>
                 {zoneCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
               </span>
-              <EnvironmentOutlined style={{ color: '#1677ff' }} />
+              <EnvironmentOutlined style={{ color: 'var(--est-primary)' }} />
               <strong style={{ fontSize: 13 }}>{zsec.zoneName}</strong>
               <span style={{ flex: 1 }} />
-              <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(zoneSum)}</span>
+              <span style={{ color: 'var(--est-primary)', fontWeight: 600 }}>{formatMoney(zoneSum)}</span>
             </div>
 
             {!zoneCollapsed && (

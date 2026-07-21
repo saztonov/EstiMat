@@ -36,7 +36,7 @@ const tokenColumns = (labelTitle: string): ColumnsType<AiTaskStatsRow> => [
     key: 'failed',
     width: 84,
     align: 'right',
-    render: (v: number) => (v ? <span style={{ color: '#cf1322' }}>{fmtInt(v)}</span> : '—'),
+    render: (v: number) => (v ? <span style={{ color: 'var(--est-error-text)' }}>{fmtInt(v)}</span> : '—'),
   },
   {
     title: 'Успешность',
@@ -107,10 +107,10 @@ export function AiTasksStats({ enabled }: { enabled: boolean }) {
           <Statistic title="Задач" value={t.tasks} />
         </Col>
         <Col xs={12} sm={6}>
-          <Statistic title="Успешно" value={t.succeeded} valueStyle={{ color: '#3f8600' }} />
+          <Statistic title="Успешно" value={t.succeeded} valueStyle={{ color: 'var(--est-success-text)' }} />
         </Col>
         <Col xs={12} sm={6}>
-          <Statistic title="Ошибок" value={t.failed} valueStyle={{ color: t.failed ? '#cf1322' : undefined }} />
+          <Statistic title="Ошибок" value={t.failed} valueStyle={{ color: t.failed ? 'var(--est-error-text)' : undefined }} />
         </Col>
         <Col xs={12} sm={6}>
           <Statistic title="Успешность" value={rate(t.succeeded, t.failed)} />
@@ -128,7 +128,7 @@ export function AiTasksStats({ enabled }: { enabled: boolean }) {
           <Statistic
             title="Вызовов модели"
             value={fmtInt(t.calls)}
-            suffix={t.callsFailed ? <span style={{ fontSize: 13, color: '#cf1322' }}>· {t.callsFailed} с ошибкой</span> : undefined}
+            suffix={t.callsFailed ? <span style={{ fontSize: 13, color: 'var(--est-error-text)' }}>· {t.callsFailed} с ошибкой</span> : undefined}
           />
         </Col>
       </Row>

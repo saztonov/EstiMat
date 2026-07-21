@@ -12,8 +12,12 @@ import {
   TeamOutlined,
   CheckSquareOutlined,
   FileDoneOutlined,
+  SunOutlined,
+  MoonOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../store/authStore';
+import { useThemeStore } from '../../store/themeStore';
+import type { ThemeMode } from '../../store/themeStore';
 import type { MenuProps } from 'antd';
 
 const { Content } = Layout;
@@ -23,6 +27,8 @@ export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuthStore();
+  const themeMode = useThemeStore((s) => s.mode);
+  const setThemeMode = useThemeStore((s) => s.setMode);
   const [open, setOpen] = useState(false);
 
   const menuItems = useMemo(() => {
@@ -98,6 +104,16 @@ export function AppLayout() {
       },
     },
     {
+      key: 'theme',
+      icon: themeMode === 'dark' ? <MoonOutlined /> : <SunOutlined />,
+      label: 'Тема',
+      children: [
+        { key: 'theme:light', icon: <SunOutlined />, label: 'Дневная' },
+        { key: 'theme:dark', icon: <MoonOutlined />, label: 'Ночная' },
+      ],
+    },
+    { type: 'divider' },
+    {
       key: 'logout',
       icon: <LogoutOutlined />,
       label: 'Выйти',
@@ -107,6 +123,11 @@ export function AppLayout() {
       },
     },
   ];
+
+  // Выбор темы — selectable-пункты с галочкой; остальные пункты меню несут свои onClick.
+  const onUserMenuClick: MenuProps['onClick'] = ({ key }) => {
+    if (key.startsWith('theme:')) setThemeMode(key.slice('theme:'.length) as ThemeMode);
+  };
 
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
@@ -140,8 +161,17 @@ export function AppLayout() {
           onClick={onMenuClick}
           style={{ flex: 1, borderRight: 0 }}
         />
-        <div style={{ borderTop: '1px solid rgba(0,0,0,0.06)', padding: '8px 16px' }}>
-          <Dropdown menu={{ items: userMenuItems }} placement="topLeft" trigger={['click']}>
+        <div style={{ borderTop: '1px solid var(--est-split)', padding: '8px 16px' }}>
+          <Dropdown
+            menu={{
+              items: userMenuItems,
+              selectable: true,
+              selectedKeys: [`theme:${themeMode}`],
+              onClick: onUserMenuClick,
+            }}
+            placement="topLeft"
+            trigger={['click']}
+          >
             <Button
               type="text"
               icon={<UserOutlined />}

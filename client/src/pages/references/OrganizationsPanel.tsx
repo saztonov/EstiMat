@@ -206,7 +206,7 @@ export function OrganizationsPanel() {
         onOk={() => projectsOrg && saveProjectsMutation.mutate({ id: projectsOrg.id as string, projectIds: selectedProjects })}
         confirmLoading={saveProjectsMutation.isPending}
       >
-        <p style={{ color: '#8c8c8c', marginTop: 0 }}>
+        <p style={{ color: 'var(--est-text-tertiary)', marginTop: 0 }}>
           Подрядчик увидит в личном кабинете только назначенные объекты.
         </p>
         <Select

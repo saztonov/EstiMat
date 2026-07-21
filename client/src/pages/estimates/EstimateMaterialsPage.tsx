@@ -101,25 +101,25 @@ function MaterialGroupBlock({ group }: { group: MaterialGroup }) {
           alignItems: 'center',
           gap: 8,
           padding: '4px 10px',
-          background: '#eef2f7',
-          border: '1px solid #e0e6ee',
+          background: 'var(--est-bg-group)',
+          border: '1px solid var(--est-border-group)',
           borderRadius: 8,
           marginBottom: 8,
         }}
       >
         <strong style={{ fontSize: 13 }}>{group.costTypeName ?? 'Без вида работ'}</strong>
         {group.costCategoryName && (
-          <span style={{ color: '#8c8c8c', fontSize: 12 }}>· {group.costCategoryName}</span>
+          <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>· {group.costCategoryName}</span>
         )}
         {group.contractorName ? (
           <Tag color="geekblue" style={{ marginInlineStart: 4 }}>
             {group.contractorName}
           </Tag>
         ) : (
-          <span style={{ color: '#bfbfbf', fontSize: 12 }}>· подрядчик не назначен</span>
+          <span style={{ color: 'var(--est-text-quaternary)', fontSize: 12 }}>· подрядчик не назначен</span>
         )}
         <span style={{ flex: 1 }} />
-        <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(group.total)}</span>
+        <span style={{ color: 'var(--est-primary)', fontWeight: 600 }}>{formatMoney(group.total)}</span>
       </div>
 
       <Table<AggregatedMaterial>
@@ -222,8 +222,8 @@ export function EstimateMaterialsPage() {
           gap: 12,
           rowGap: 4,
           padding: '8px 12px',
-          background: '#fff',
-          borderBottom: '1px solid #f0f0f0',
+          background: 'var(--est-bg-container)',
+          borderBottom: '1px solid var(--est-border)',
         }}
       >
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/estimates/${id}`)}>
@@ -236,7 +236,7 @@ export function EstimateMaterialsPage() {
           {estimate.project_code} · {estimate.project_name}
         </Typography.Text>
         <span style={{ flex: 1 }} />
-        <span style={{ color: '#1677ff', fontWeight: 700, whiteSpace: 'nowrap' }}>
+        <span style={{ color: 'var(--est-primary)', fontWeight: 700, whiteSpace: 'nowrap' }}>
           {formatMoney(metrics.total)}
         </span>
         <Typography.Text type="secondary" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
@@ -245,7 +245,7 @@ export function EstimateMaterialsPage() {
       </div>
 
       {/* Фильтры */}
-      <div style={{ flexShrink: 0, padding: '8px 12px', background: '#fafafa', borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ flexShrink: 0, padding: '8px 12px', background: 'var(--est-bg-subtle)', borderBottom: '1px solid var(--est-border)' }}>
         <Space wrap className="estimat-toolbar">
           <Input.Search
             allowClear
@@ -257,26 +257,26 @@ export function EstimateMaterialsPage() {
           <Tooltip title="Только несогласованные позиции">
             <Space size={6}>
               <Switch size="small" checked={onlyNeedsReview} onChange={setOnlyNeedsReview} />
-              <span style={{ fontSize: 13, color: '#595959' }}>Не согласованные</span>
+              <span style={{ fontSize: 13, color: 'var(--est-text-secondary)' }}>Не согласованные</span>
             </Space>
           </Tooltip>
           <Tooltip title="Только добавленные ИИ">
             <Space size={6}>
               <Switch size="small" checked={onlyAi} onChange={setOnlyAi} />
-              <span style={{ fontSize: 13, color: '#595959' }}>ИИ</span>
+              <span style={{ fontSize: 13, color: 'var(--est-text-secondary)' }}>ИИ</span>
             </Space>
           </Tooltip>
           <Tooltip title="Только предложенные (типовые) материалы">
             <Space size={6}>
               <Switch size="small" checked={onlySuggested} onChange={setOnlySuggested} />
-              <span style={{ fontSize: 13, color: '#595959' }}>Предложения</span>
+              <span style={{ fontSize: 13, color: 'var(--est-text-secondary)' }}>Предложения</span>
             </Space>
           </Tooltip>
         </Space>
       </div>
 
       {/* Тело со скроллом */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 8px', background: '#f5f5f5' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 8px', background: 'var(--est-bg-layout)' }}>
         {allGroups.length === 0 ? (
           <Empty description="В смете пока нет материалов" style={{ padding: '40px 0' }} />
         ) : filteredGroups.length === 0 ? (

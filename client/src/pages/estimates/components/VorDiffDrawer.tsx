@@ -19,7 +19,7 @@ const MAT_KIND: Record<VorMaterialChange['kind'], { label: string; color: string
 
 function ItemDiffCard({ item }: { item: VorItemDiff }) {
   return (
-    <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>
+    <div style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--est-border)' }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>
         {item.state === 'deleted' && <Tag color="red">Удалена из сметы</Tag>}
         {item.name || '(без наименования)'}

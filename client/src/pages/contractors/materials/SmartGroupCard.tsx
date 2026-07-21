@@ -132,8 +132,8 @@ export function SmartGroupCard({
               {group.purpose}
             </Typography.Text>
           )}
-          <span style={{ color: '#8c8c8c', fontSize: 12 }}>{rows.length} поз.</span>
-          {priced.length > 0 && <span style={{ color: '#1677ff' }}>{formatMoney(total)}</span>}
+          <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>{rows.length} поз.</span>
+          {priced.length > 0 && <span style={{ color: 'var(--est-primary)' }}>{formatMoney(total)}</span>}
         </>
       }
       extra={

@@ -4,7 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#ffffff" />
     <title>EstiMat — Сметный портал</title>
+    <!-- Ночная тема до старта React: иначе первый кадр белый. Ключ — как в store/themeStore.ts. -->
+    <script>
+      try {
+        var saved = JSON.parse(localStorage.getItem('estimat:theme'));
+        if (saved && saved.state && saved.state.mode === 'dark') {
+          document.documentElement.dataset.theme = 'dark';
+          // Цвет шапки браузера — сразу тёмный, иначе на мобильных мигнёт белым до старта React.
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#141414');
+        }
+      } catch (e) {
+        /* повреждённое значение — остаётся дневная тема */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

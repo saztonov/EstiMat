@@ -31,7 +31,7 @@ const SOURCE_HINT: Record<'material' | 'type' | 'category', string> = {
 export function ResponsibleSelect({ value, valueName, source, assignable, canAssign, saving, onSave }: Props) {
   // Только просмотр: инженер видит ответственного, но менять его может лишь руководитель.
   if (!canAssign) {
-    if (!valueName) return <span style={{ color: '#bfbfbf' }}>не назначен</span>;
+    if (!valueName) return <span style={{ color: 'var(--est-text-quaternary)' }}>не назначен</span>;
     return source ? <Tooltip title={SOURCE_HINT[source]}>{valueName}</Tooltip> : <>{valueName}</>;
   }
 
@@ -51,7 +51,7 @@ export function ResponsibleSelect({ value, valueName, source, assignable, canAss
       showSearch
       loading={saving}
       value={value ?? undefined}
-      placeholder={<span style={{ color: '#bfbfbf' }}>не назначен</span>}
+      placeholder={<span style={{ color: 'var(--est-text-quaternary)' }}>не назначен</span>}
       options={options}
       optionFilterProp="label"
       onChange={(v) => onSave(v ?? null)}

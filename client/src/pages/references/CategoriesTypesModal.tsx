@@ -200,7 +200,7 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
           padding: '4px 8px',
           borderRadius: 6,
           cursor: onSelect ? 'pointer' : 'default',
-          background: selected ? '#e6f4ff' : undefined,
+          background: selected ? 'var(--est-primary-bg)' : undefined,
         }}
       >
         <DragHandle disabled={isEditing || pending} />
@@ -254,7 +254,7 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
       <Row gutter={[16, 16]}>
         <Col xs={24} md={11}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>Категории</div>
-          <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 4 }}>
+          <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid var(--est-border)', borderRadius: 8, padding: 4 }}>
             {categories.length === 0 ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Нет категорий" />
             ) : (
@@ -290,7 +290,7 @@ export function CategoriesTypesModal({ open, onClose }: Props) {
           <div style={{ fontWeight: 600, marginBottom: 6 }}>
             Виды работ{selectedCategory ? ` — ${selectedCategory.name}` : ''}
           </div>
-          <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 4 }}>
+          <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid var(--est-border)', borderRadius: 8, padding: 4 }}>
             {!selectedCategory ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Выберите категорию слева" />
             ) : types.length === 0 ? (

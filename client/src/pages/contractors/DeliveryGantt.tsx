@@ -50,13 +50,13 @@ export function DeliveryGantt({ materials }: { materials: GanttMaterial[] }) {
   // Крайние метки не должны вылезать за трек.
   const shiftOf = (p: number) => (p <= 1 ? '0' : p >= 99 ? '-100%' : '-50%');
 
-  const colHead: CSSProperties = { fontWeight: 600, fontSize: 12, color: '#595959' };
+  const colHead: CSSProperties = { fontWeight: 600, fontSize: 12, color: 'var(--est-text-secondary)' };
 
   return (
     <div style={{ width: '100%', overflowX: 'auto' }}>
       <div style={{ minWidth: NAME_W + QTY_W + trackW }}>
         {/* Заголовок столбцов + ось дат */}
-        <div style={{ display: 'flex', alignItems: 'flex-end', marginBottom: 8, borderBottom: '1px solid #f0f0f0', paddingBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', marginBottom: 8, borderBottom: '1px solid var(--est-border)', paddingBottom: 4 }}>
           <div style={{ width: NAME_W, flexShrink: 0, ...colHead }}>Наименование</div>
           <div style={{ width: QTY_W, flexShrink: 0, textAlign: 'right', paddingRight: 12, ...colHead }}>Кол-во</div>
           <div style={{ position: 'relative', width: trackW, flexShrink: 0, height: 18 }}>
@@ -67,7 +67,7 @@ export function DeliveryGantt({ materials }: { materials: GanttMaterial[] }) {
                   key={d}
                   style={{
                     position: 'absolute', left: `${p}%`, transform: `translateX(${shiftOf(p)})`,
-                    fontSize: 11, color: '#8c8c8c', whiteSpace: 'nowrap',
+                    fontSize: 11, color: 'var(--est-text-tertiary)', whiteSpace: 'nowrap',
                   }}
                 >
                   {fmtDate(d)}
@@ -79,7 +79,7 @@ export function DeliveryGantt({ materials }: { materials: GanttMaterial[] }) {
 
         {/* Строки материалов */}
         {withSchedule.map((m) => (
-          <div key={m.key} style={{ display: 'flex', alignItems: 'center', minHeight: 34, borderBottom: '1px solid #fafafa' }}>
+          <div key={m.key} style={{ display: 'flex', alignItems: 'center', minHeight: 34, borderBottom: '1px solid var(--est-bg-subtle)' }}>
             <div style={{ width: NAME_W, flexShrink: 0, paddingRight: 12, fontSize: 13, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.25 }}>
               {m.name}
             </div>
@@ -89,7 +89,7 @@ export function DeliveryGantt({ materials }: { materials: GanttMaterial[] }) {
             <div
               style={{
                 position: 'relative', width: trackW, flexShrink: 0, height: 26,
-                background: 'linear-gradient(#f0f0f0,#f0f0f0) center/100% 2px no-repeat',
+                background: 'linear-gradient(var(--est-border),var(--est-border)) center/100% 2px no-repeat',
               }}
             >
               {m.schedule.map((s, i) => {

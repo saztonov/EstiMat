@@ -119,7 +119,7 @@ export function ReviewUnconfirmedModal({ open, groups, confirming, deleting, onC
       width={680}
       footer={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 12.5, color: '#595959' }}>
+          <span style={{ fontSize: 12.5, color: 'var(--est-text-secondary)' }}>
             Выбрано: работ {workIds.length}, материалов {materialIds.length}
           </span>
           <span style={{ flex: 1 }} />
@@ -134,7 +134,7 @@ export function ReviewUnconfirmedModal({ open, groups, confirming, deleting, onC
       }
     >
       {nodes.length === 0 ? (
-        <div style={{ padding: 16, color: '#8c8c8c' }}>Нет несогласованных позиций.</div>
+        <div style={{ padding: 16, color: 'var(--est-text-tertiary)' }}>Нет несогласованных позиций.</div>
       ) : (
         <>
           <Checkbox

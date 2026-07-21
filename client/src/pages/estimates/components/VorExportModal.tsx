@@ -25,7 +25,7 @@ const VOLUME_LABEL: Record<VorFilterSnapshot['volumeType'], string> = {
 function FilterRow({ label, children }: { label: string; children: ReactNode }): ReactNode {
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
-      <span style={{ minWidth: 96, color: '#8c8c8c', fontSize: 12 }}>{label}</span>
+      <span style={{ minWidth: 96, color: 'var(--est-text-tertiary)', fontSize: 12 }}>{label}</span>
       <span style={{ flex: 1 }}>{children}</span>
     </div>
   );
@@ -85,7 +85,7 @@ export function VorExportModal({ open, onClose, defaultName, itemCount, exportin
           maxLength={150}
           autoFocus
         />
-        <div style={{ marginTop: 4, color: '#8c8c8c', fontSize: 12 }}>
+        <div style={{ marginTop: 4, color: 'var(--est-text-tertiary)', fontSize: 12 }}>
           Расширение «.xlsx» добавится автоматически.
         </div>
       </div>
@@ -95,10 +95,10 @@ export function VorExportModal({ open, onClose, defaultName, itemCount, exportin
       ) : (
         <div>
           <div style={{ marginBottom: 6, fontWeight: 500 }}>
-            Применённые фильтры <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· работ: {itemCount}</span>
+            Применённые фильтры <span style={{ color: 'var(--est-text-tertiary)', fontWeight: 400 }}>· работ: {itemCount}</span>
           </div>
           {hasFilters ? (
-            <div style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8, padding: '8px 12px' }}>
+            <div style={{ background: 'var(--est-bg-subtle)', border: '1px solid var(--est-border)', borderRadius: 8, padding: '8px 12px' }}>
               {snapshot.categories.length > 0 && <FilterRow label="Категория">{tags(snapshot.categories)}</FilterRow>}
               {snapshot.types.length > 0 && <FilterRow label="Вид работ">{tags(snapshot.types)}</FilterRow>}
               {location.length > 0 && <FilterRow label="Локация">{location.join(' · ')}</FilterRow>}
@@ -107,7 +107,7 @@ export function VorExportModal({ open, onClose, defaultName, itemCount, exportin
               {snapshot.onlyUnreconciled && <FilterRow label="Отбор">Только несогласованные</FilterRow>}
             </div>
           ) : (
-            <div style={{ color: '#8c8c8c', fontSize: 12 }}>Фильтры не применены — выгружается вся смета.</div>
+            <div style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>Фильтры не применены — выгружается вся смета.</div>
           )}
         </div>
       )}

@@ -106,7 +106,12 @@ export function OfficeFileViewer({ buffer, fileName, height = '70vh' }: Props) {
   if (error) return <div style={{ padding: 48 }}><Empty description={error} /></div>;
 
   const render = (html: string) => (
-    <div className="office-preview" style={{ height, overflow: 'auto', padding: 12, background: '#fff' }}>
+    // Лист документа остаётся белым в обеих темах: оформление пришло из файла Office и рассчитано
+    // на белый холст. Цвет текста задаём явно — иначе в ночной теме он наследуется светлым.
+    <div
+      className="office-preview"
+      style={{ height, overflow: 'auto', padding: 12, background: '#fff', color: 'rgba(0,0,0,0.88)' }}
+    >
       <style>{`.office-preview table{border-collapse:collapse}.office-preview td,.office-preview th{border:1px solid #e0e0e0;padding:2px 6px;font-size:13px;white-space:nowrap}`}</style>
       <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />
     </div>

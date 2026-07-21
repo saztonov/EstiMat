@@ -1,9 +1,97 @@
+/* ===== Палитра портала: единый источник цветов для дневной и ночной темы =====
+   Компоненты Ant Design перекрашивает алгоритм темы (AppProviders.tsx); эти переменные —
+   для собственных фонов, границ и приглушённого текста (правила ниже и inline-стили в tsx).
+   Дневные значения совпадают с прежними hex, поэтому светлая тема не изменилась.
+   Ночные — палитра darkAlgorithm antd. Атрибут data-theme ставит AppProviders (и, до старта
+   React, скрипт в index.html). */
+:root {
+  color-scheme: light;
+
+  --est-bg-container: #ffffff;
+  --est-bg-subtle: #fafafa;
+  --est-bg-layout: #f5f5f5;
+  --est-bg-group: #eef2f7;
+
+  --est-border: #f0f0f0;
+  --est-border-strong: #d9d9d9;
+  --est-border-group: #e0e6ee;
+  --est-split: rgba(0, 0, 0, 0.06);
+
+  --est-text: rgba(0, 0, 0, 0.88);
+  --est-text-secondary: rgba(0, 0, 0, 0.65);
+  --est-text-tertiary: rgba(0, 0, 0, 0.45);
+  --est-text-quaternary: rgba(0, 0, 0, 0.25);
+
+  --est-primary: #1677ff;
+  --est-primary-hover: #4096ff;
+  --est-primary-text: #0958d9;
+  --est-primary-border: #91caff;
+  --est-primary-bg: #e6f4ff;
+  --est-primary-bg-hover: #d6ebff;
+  --est-primary-bg-active: #e6f0ff;
+  --est-primary-bg-faint: #f6faff;
+  --est-chip-bg: #f0f8ff;
+
+  --est-success: #52c41a;
+  --est-success-text: #3f8600;
+  --est-warning: #faad14;
+  --est-warning-text: #d46b08;
+  --est-warning-bg: #fffbe6;
+  --est-error: #ff4d4f;
+  --est-error-text: #cf1322;
+  --est-orange: #fa8c16;
+  --est-fill-subtle: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --est-bg-container: #141414;
+  --est-bg-subtle: #1d1d1d;
+  --est-bg-layout: #000000;
+  --est-bg-group: #1d2532;
+
+  --est-border: #303030;
+  --est-border-strong: #424242;
+  --est-border-group: #2e3a4d;
+  --est-split: rgba(255, 255, 255, 0.12);
+
+  --est-text: rgba(255, 255, 255, 0.85);
+  --est-text-secondary: rgba(255, 255, 255, 0.65);
+  --est-text-tertiary: rgba(255, 255, 255, 0.45);
+  --est-text-quaternary: rgba(255, 255, 255, 0.25);
+
+  --est-primary: #1668dc;
+  --est-primary-hover: #3c89e8;
+  --est-primary-text: #65a9f3;
+  --est-primary-border: #15325b;
+  --est-primary-bg: #111a2c;
+  --est-primary-bg-hover: #112545;
+  --est-primary-bg-active: #112545;
+  --est-primary-bg-faint: rgba(22, 104, 220, 0.12);
+  --est-chip-bg: #111a2c;
+
+  --est-success: #49aa19;
+  --est-success-text: #6abe39;
+  --est-warning: #d89614;
+  --est-warning-text: #e8b339;
+  --est-warning-bg: #2b2111;
+  --est-error: #dc4446;
+  --est-error-text: #e84749;
+  --est-orange: #d87a16;
+  --est-fill-subtle: rgba(255, 255, 255, 0.06);
+}
+
 /* Корневые узлы должны иметь фиксированную высоту, иначе
    flex-контейнеры Layout'а не ограничивают высоту таблицы,
    и скролл уходит на всю страницу. */
 html, body, #root {
   height: 100%;
   margin: 0;
+}
+/* Фон страницы — до монтирования React и под областью overscroll */
+body {
+  background: var(--est-bg-layout);
 }
 
 /* Табличные layout'ы: таблица заполняет доступное пространство,
@@ -97,8 +185,8 @@ html, body, #root {
 }
 .estimat-tree-badge {
   font-size: 10px;
-  color: #8c8c8c;
-  border: 1px solid #f0f0f0;
+  color: var(--est-text-tertiary);
+  border: 1px solid var(--est-border);
   border-radius: 8px;
   padding: 0 6px;
   line-height: 16px;
@@ -106,15 +194,15 @@ html, body, #root {
 }
 /* Выделенная строка работы в окне ввода сметы (клик по строке) */
 .estimat-row-selected > td {
-  background: #e6f4ff;
+  background: var(--est-primary-bg);
 }
 .estimat-row-selected:hover > td {
-  background: #d6ebff !important;
+  background: var(--est-primary-bg-hover) !important;
 }
 /* Активный контекст в смете: вид работ и категория */
 .estimat-group-active {
-  border-color: #1677ff !important;
-  box-shadow: 0 0 0 1px #1677ff;
+  border-color: var(--est-primary) !important;
+  box-shadow: 0 0 0 1px var(--est-primary);
 }
 /* Блок вида работ: пропускаем layout/paint вне вьюпорта (быстрее скролл больших смет).
    contain-intrinsic-size — оценка типовой высоты, чтобы скролл-якорь не прыгал. */
@@ -123,8 +211,8 @@ html, body, #root {
   contain-intrinsic-size: auto 320px;
 }
 .estimat-cat-active {
-  border-color: #1677ff !important;
-  background: #e6f0ff !important;
+  border-color: var(--est-primary) !important;
+  background: var(--est-primary-bg-active) !important;
 }
 
 /* Markdown распознанного документа РД (вьювер портала RDLOCAL) */
@@ -142,22 +230,24 @@ html, body, #root {
 }
 .rd-markdown th,
 .rd-markdown td {
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--est-border-strong);
   padding: 3px 8px;
   font-size: 12.5px;
   vertical-align: top;
 }
 .rd-markdown th {
-  background: #fafafa;
+  background: var(--est-bg-subtle);
   font-weight: 600;
 }
 .rd-markdown hr {
   border: none;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--est-border);
   margin: 14px 0;
 }
 .rd-markdown code {
-  background: #f5f5f5;
+  /* Полупрозрачная заливка, а не фон страницы: работает поверх приподнятого фона Drawer
+     в обеих темах (в ночной var(--est-bg-layout) дал бы чёрный провал). */
+  background: var(--est-fill-subtle);
   padding: 0 4px;
   border-radius: 3px;
   font-size: 12px;
@@ -169,8 +259,8 @@ html, body, #root {
   padding: 6px 8px;
   max-height: 320px;
   overflow: auto;
-  background: #fafafa;
-  border: 1px solid #f0f0f0;
+  background: var(--est-bg-subtle);
+  border: 1px solid var(--est-border);
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 12px;
@@ -196,7 +286,7 @@ html, body, #root {
 }
 .estimat-compact .ant-table-thead .ant-table-cell {
   font-size: 12px;
-  color: #595959;
+  color: var(--est-text-secondary);
 }
 /* Заголовки в одну строку: короткие подписи («Ошиб», «Выз») не режутся на слоги, когда рядом
    встают иконки сортировки и отбора. Отдельным классом: в таблицах сметы длинные заголовки,
@@ -233,9 +323,9 @@ html, body, #root {
 .estimat-qty-chip {
   display: inline-block;
   min-width: 32px;
-  border: 1px solid #91caff;
+  border: 1px solid var(--est-primary-border);
   border-radius: 4px;
-  background: #f0f8ff;
+  background: var(--est-chip-bg);
   padding: 0 6px;
   font-size: 12px;
   line-height: 18px;
@@ -248,8 +338,8 @@ html, body, #root {
   min-width: 16px;
   height: 16px;
   border-radius: 8px;
-  background: #e6f4ff;
-  color: #0958d9;
+  background: var(--est-primary-bg);
+  color: var(--est-primary-text);
   padding: 0 5px;
   font-size: 11px;
   line-height: 16px;
@@ -289,53 +379,60 @@ html, body, #root {
   background: none;
   padding: 0;
   cursor: pointer;
-  color: #1677ff;
+  color: var(--est-primary);
   font-weight: 700;
   font-size: 12px;
   line-height: 1;
 }
 .estimat-vor-badge:focus-visible {
-  outline: 2px solid #1677ff;
+  outline: 2px solid var(--est-primary);
   outline-offset: 1px;
   border-radius: 2px;
 }
 /* Изменилась после выгрузки (В!) — оранжевый; снимок недоступен (В?) — серый */
 .estimat-vor-badge--changed {
-  color: #d46b08;
+  color: var(--est-warning-text);
 }
 .estimat-vor-badge--unknown {
-  color: #8c8c8c;
+  color: var(--est-text-tertiary);
 }
 
 /* Предпросмотр ВОР: разметку и оформление (заливки, шрифты, границы, ширины колонок, объединения)
-   задаёт сервер инлайн из ExcelJS-модели файла; здесь — только отступы ячеек для читаемости. */
+   задаёт сервер инлайн из ExcelJS-модели файла; здесь — только отступы ячеек для читаемости.
+   Лист остаётся белым в обеих темах: заливки и цвета шрифтов пришли из книги Excel и рассчитаны
+   на белый холст — на тёмном фоне тёмный текст ячеек стал бы нечитаемым. */
+.estimat-xlsx-preview {
+  background: #ffffff;
+  color: rgba(0, 0, 0, 0.88);
+}
 .estimat-xlsx-preview td {
   padding: 2px 6px;
 }
 
 /* Вычеркнутый (неактуальный) документ заявки — серый фон строки */
 .file-rejected-row td {
-  background-color: #fafafa;
+  background-color: var(--est-bg-subtle);
 }
 
 /* Строка, попавшая в черновик заявки: лёгкая заливка и акцент слева. Hover antd её перебивает —
    так и задумано, подсветка не должна мешать наведению. */
 .estimat-row-in-request td {
-  background-color: #f6faff;
+  background-color: var(--est-primary-bg-faint);
 }
 .estimat-row-in-request td:first-child {
-  box-shadow: inset 2px 0 0 #1677ff;
+  box-shadow: inset 2px 0 0 var(--est-primary);
 }
 
 /* Позиция заявки с изменённым объёмом. Янтарный, а не синий: синий уже занят смыслом «в черновике
    заявки», и два разных состояния одним цветом читались бы как одно. Полоса слева, а не рамка по
    периметру: рамка требует box-shadow на всех td и ломается при горизонтальном скролле.
-   Цвета продублированы в client/src/lib/rowHighlights.ts — менять оба места. */
+   Цвета — переменные --est-* из палитры вверху файла; их же читает легенда
+   (client/src/lib/rowHighlights.ts), так что подсветка и легенда не разъезжаются. */
 .estimat-row-qty-changed td {
-  background-color: #fffbe6;
+  background-color: var(--est-warning-bg);
 }
 .estimat-row-qty-changed td:first-child {
-  box-shadow: inset 2px 0 0 #faad14;
+  box-shadow: inset 2px 0 0 var(--est-warning);
 }
 
 /* Имя материала во вкладке «Материалы»: остаётся кнопкой (клавиатура, детализация по
@@ -385,6 +482,10 @@ html, body, #root {
   background: #1f1f1f;
   color: #fff;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+/* В ночной теме тёмный баннер сливается с фоном — отделяем обводкой */
+[data-theme='dark'] .app-update-banner {
+  border: 1px solid var(--est-border-strong);
 }
 .app-update-banner__actions {
   display: flex;

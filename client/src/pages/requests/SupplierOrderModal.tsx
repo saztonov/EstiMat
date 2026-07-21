@@ -94,7 +94,9 @@ function OrderView({
   orderId: string; order: SupplierOrderDetail; onClose: () => void; onChanged: () => void;
   justCreated: boolean; refetchOrder: () => void;
 }) {
-  const { message } = App.useApp();
+  // modal из useApp() (а не статический Modal.confirm) — иначе диалоги подтверждения
+  // рендерятся вне ConfigProvider и в ночной теме остаются светлыми.
+  const { message, modal } = App.useApp();
   const role = useAuthStore((s) => s.user?.role);
   const canApprove = PROCUREMENT_ASSIGN_ROLES.includes(role as never);
 
@@ -200,7 +202,7 @@ function OrderView({
     onConfirm: (reason: string) => Promise<unknown>;
   }) {
     let reason = '';
-    Modal.confirm({
+    modal.confirm({
       title: opts.title,
       width: 520,
       okText: opts.okText,
@@ -244,7 +246,7 @@ function OrderView({
     onClick: ({ key }: { key: string }) => {
       if (key === 'items') setItemsEditOpen(true);
       if (key === 'del') {
-        Modal.confirm({
+        modal.confirm({
           title: 'Удалить формируемый заказ?', okText: 'Удалить', okButtonProps: { danger: true },
           onOk: () => api.delete(`/supplier-orders/${orderId}`).then(() => { message.success('Заказ удалён'); onChanged(); onClose(); }).catch((e) => message.error(e.message)),
         });
@@ -372,7 +374,7 @@ function OrderView({
       {/* Нижняя панель: одно главное действие стадии + редкие операции под «Ещё». */}
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        gap: 8, marginTop: 16, paddingTop: 12, borderTop: '1px solid #f0f0f0', flexWrap: 'wrap',
+        gap: 8, marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--est-border)', flexWrap: 'wrap',
       }}>
         <div>
           {moreMenu.items.length > 0 && (

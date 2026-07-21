@@ -282,14 +282,14 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
   const showLabel = (f: number) => f === 1 || f === -1 || f === top || f === bottom || f % labelStep === 0;
 
   const sliceView = (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid var(--est-border)', borderRadius: 8, padding: 8 }}>
       {draft.length === 0 ? (
-        <div style={{ color: '#bfbfbf', fontSize: 12, padding: '28px 0', textAlign: 'center' }}>Пустая площадка — добавьте корпус</div>
+        <div style={{ color: 'var(--est-text-quaternary)', fontSize: 12, padding: '28px 0', textAlign: 'center' }}>Пустая площадка — добавьте корпус</div>
       ) : (
         <div style={{ position: 'relative', width: AXIS_W + plotW + 4, height: plotH + LABELS_H }}>
           {/* ось этажей */}
           {floorsList.filter(showLabel).map((f) => (
-            <div key={`ax-${f}`} style={{ position: 'absolute', left: 0, top: rowTopY(f), width: AXIS_W - 4, height: floorPx, fontSize: 9, color: '#bfbfbf', textAlign: 'right', lineHeight: `${Math.max(floorPx, 10)}px`, overflow: 'hidden' }}>{f}</div>
+            <div key={`ax-${f}`} style={{ position: 'absolute', left: 0, top: rowTopY(f), width: AXIS_W - 4, height: floorPx, fontSize: 9, color: 'var(--est-text-quaternary)', textAlign: 'right', lineHeight: `${Math.max(floorPx, 10)}px`, overflow: 'hidden' }}>{f}</div>
           ))}
 
           {/* зоны (плоскость со смещением на ось) */}
@@ -302,8 +302,8 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
                   onClick={() => setEditingId(b.id)}
                   style={{ position: 'absolute', left: colX(i), top: blockTop(b), width: COLW, height: Math.max(20, blockH(b)), background: cB + '1f', border: `1px solid ${cB}`, borderRadius: 4, boxSizing: 'border-box', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                   <span style={{ color: cB, display: 'inline-flex', fontSize: 14 }}><KindIcon kind="building" /></span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: COLW - 8 }}>{b.name}</span>
-                  <span style={{ fontSize: 10, color: '#8c8c8c' }}>{buildingCount(b)} эт.</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--est-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: COLW - 8 }}>{b.name}</span>
+                  <span style={{ fontSize: 10, color: 'var(--est-text-tertiary)' }}>{buildingCount(b)} эт.</span>
                 </div>
               );
             })}
@@ -318,18 +318,18 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
                   onClick={() => setEditingId(z.id)}
                   style={{ position: 'absolute', left: seg.x, top: blockTop(z), width: seg.w, height: h, background: c + '33', border: `1px solid ${c}`, borderRadius: 3, display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px', overflow: 'hidden', cursor: 'pointer', boxSizing: 'border-box', zIndex: 2 }}>
                   <span style={{ color: c, display: 'inline-flex', fontSize: 11, flexShrink: 0 }}><KindIcon kind={z.kind} /></span>
-                  <span style={{ fontSize: 10, fontWeight: 600, color: '#333', whiteSpace: 'nowrap', flexShrink: 0 }}>{range}</span>
-                  <span style={{ fontSize: 10, color: '#777', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{z.name}</span>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--est-text)', whiteSpace: 'nowrap', flexShrink: 0 }}>{range}</span>
+                  <span style={{ fontSize: 10, color: 'var(--est-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{z.name}</span>
                 </div>
               );
             }))}
 
             {/* линия земли */}
-            <div style={{ position: 'absolute', left: 0, top: groundY, width: plotW, borderTop: '2px solid #8c8c8c', zIndex: 3 }} />
+            <div style={{ position: 'absolute', left: 0, top: groundY, width: plotW, borderTop: '2px solid var(--est-text-tertiary)', zIndex: 3 }} />
 
             {/* подписи колонок */}
             {buildings.map((b, i) => (
-              <div key={`lbl-${b.id}`} style={{ position: 'absolute', left: colX(i), top: plotH + 2, width: COLW, fontSize: 10, color: '#8c8c8c', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</div>
+              <div key={`lbl-${b.id}`} style={{ position: 'absolute', left: colX(i), top: plotH + 2, width: COLW, fontSize: 10, color: 'var(--est-text-tertiary)', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</div>
             ))}
           </div>
         </div>
@@ -384,7 +384,7 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
                   <InputNumber controls={false} min={0} max={20} disabled={!canEdit} style={{ width: 120 }} value={stylH} onChange={(v) => applyBuilding(editing.id, { stylobate: (v as number) ?? 0 })} />
                 </div>
               </Space>
-              <Typography.Text style={{ fontSize: 12, color: '#8c8c8c' }}>
+              <Typography.Text style={{ fontSize: 12, color: 'var(--est-text-tertiary)' }}>
                 Итог: {formatFloorRange(editing.floorMin, editing.floorMax)}{stylH > 0 ? ` · стилобат эт. 1–${stylH}` : ''}
               </Typography.Text>
               {canEdit && (
@@ -460,7 +460,7 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
       )}
 
       {canEdit && (
-        <div style={{ flexShrink: 0, borderTop: '1px solid #f0f0f0', paddingTop: 10, marginTop: 8 }}>
+        <div style={{ flexShrink: 0, borderTop: '1px solid var(--est-border)', paddingTop: 10, marginTop: 8 }}>
           <Button type="primary" loading={saveZones.isPending} disabled={!dirty} onClick={onSaveZones}>Сохранить</Button>
           {isFetching && <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>обновление…</Typography.Text>}
         </div>

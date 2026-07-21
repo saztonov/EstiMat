@@ -467,7 +467,7 @@ export function SU10MaterialsTab() {
       render: (_v, r) => {
         const row = leaf(r);
         const dates = row.items.map((i) => i.delivery_date).filter(Boolean) as string[];
-        if (!dates.length) return <span style={{ color: '#bfbfbf' }}>—</span>;
+        if (!dates.length) return <span style={{ color: 'var(--est-text-quaternary)' }}>—</span>;
         if (dates.length === 1) return fmtRuDate(dates[0]!);
         return (
           <Tooltip title={dates.map(fmtRuDate).join(', ')}>
@@ -485,10 +485,10 @@ export function SU10MaterialsTab() {
       render: (_v, r) => {
         const row = leaf(r);
         const v = row.remaining;
-        if (v == null) return <span style={{ color: '#bfbfbf' }}>не применяется</span>;
+        if (v == null) return <span style={{ color: 'var(--est-text-quaternary)' }}>не применяется</span>;
         return (
           <Space size={4}>
-            <strong style={{ color: v > EPS ? '#1677ff' : '#bfbfbf' }}>{round4(v)}</strong>
+            <strong style={{ color: v > EPS ? 'var(--est-primary)' : 'var(--est-text-quaternary)' }}>{round4(v)}</strong>
             {row.has_overplaced && (
               <Tooltip title={`Заказано сверх заявленного: ${round4(row.overplaced)}`}>
                 <Tag color="red" style={{ margin: 0 }}>перезаказ</Tag>
@@ -508,7 +508,7 @@ export function SU10MaterialsTab() {
     <Space size={8} onClick={(e) => e.stopPropagation()}>
       <strong>
         {node.label}{' '}
-        <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· {node.count} поз.</span>
+        <span style={{ color: 'var(--est-text-tertiary)', fontWeight: 400 }}>· {node.count} поз.</span>
       </strong>
       {canAssign && (
         <Tooltip title={truncated ? 'Набор усечён — сузьте фильтры, чтобы назначить всей группе' : ''}>
@@ -638,7 +638,7 @@ export function SU10MaterialsTab() {
               checked={showZeroRemaining}
               onChange={(v) => changeFilter(setShowZeroRemaining, v)}
             />
-            <span style={{ fontSize: 13, color: '#595959' }}>Показывать материалы с остатком 0</span>
+            <span style={{ fontSize: 13, color: 'var(--est-text-secondary)' }}>Показывать материалы с остатком 0</span>
           </Space>
           {viewCount > 0 && <Tag>Отборы/группировка в заголовках: {viewCount}</Tag>}
         </div>

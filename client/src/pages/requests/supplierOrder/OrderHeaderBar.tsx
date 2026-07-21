@@ -65,7 +65,7 @@ export function OrderHeaderBar({ order, readOnly, onCommentSaved }: {
               {invoices.map((i) => (
                 <a
                   key={i.id}
-                  style={i.superseded ? { color: '#bfbfbf', textDecoration: 'line-through' } : undefined}
+                  style={i.superseded ? { color: 'var(--est-text-quaternary)', textDecoration: 'line-through' } : undefined}
                   onClick={() => api
                     .downloadGet(`/supplier-orders/${order.id}/invoices/${i.id}/file`, i.fileName ?? 'invoice')
                     .catch((e) => message.error((e as Error).message))}

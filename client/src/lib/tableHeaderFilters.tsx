@@ -99,9 +99,9 @@ function MultiFilter({ value, options, onApply, close }: {
             {o.label}
           </Checkbox>
         ))}
-        {matched.length === 0 && <span style={{ color: '#bfbfbf' }}>Ничего не найдено</span>}
+        {matched.length === 0 && <span style={{ color: 'var(--est-text-quaternary)' }}>Ничего не найдено</span>}
         {matched.length > MULTI_RENDER_CAP && (
-          <span style={{ color: '#bfbfbf', fontSize: 12 }}>
+          <span style={{ color: 'var(--est-text-quaternary)', fontSize: 12 }}>
             Показаны первые {MULTI_RENDER_CAP} из {matched.length} — уточните поиск
           </span>
         )}
@@ -210,7 +210,7 @@ function HeaderFilterDropdown<T>({ spec, value, onChange, rows, group, close }: 
 export function headerFilterCol<T>(args: HeaderFilterArgs<T>): Pick<ColumnType<T>, 'filterDropdown' | 'filterIcon'> {
   const active = isColumnFilterActive(args.value) || !!args.group?.active;
   return {
-    filterIcon: () => <FilterOutlined style={{ color: active ? '#1677ff' : undefined }} />,
+    filterIcon: () => <FilterOutlined style={{ color: active ? 'var(--est-primary)' : undefined }} />,
     filterDropdown: (p: FilterDropdownProps) => (
       <HeaderFilterDropdown {...args} close={() => p.confirm({ closeDropdown: true })} />
     ),

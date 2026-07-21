@@ -1,9 +1,10 @@
 /**
  * Подсветки строк таблиц: единый источник для rowClassName и легенды.
  *
- * Цвета продублированы в client/src/index.css (CSS оттуда не читается из JS) — при правке менять
- * оба места. Держим описания здесь, чтобы легенда не разъезжалась с фактической подсветкой:
- * раньше классы жили только в CSS, и что означает заливка, приходилось угадывать.
+ * Цвета — переменные --est-* из палитры client/src/index.css: те же значения, что у самих правил
+ * подсветки, и автоматически меняются вместе с темой. Описания держим здесь, чтобы легенда не
+ * разъезжалась с фактической подсветкой: раньше классы жили только в CSS, и что означает заливка,
+ * приходилось угадывать.
  */
 export interface RowHighlight {
   className: string;
@@ -19,23 +20,23 @@ export const ROW_HIGHLIGHTS = {
   /** Объём позиции правился снабжением после подачи заявки. */
   qtyChanged: {
     className: 'estimat-row-qty-changed',
-    bg: '#fffbe6',
-    accent: '#faad14',
+    bg: 'var(--est-warning-bg)',
+    accent: 'var(--est-warning)',
     label: 'Изменение объёма',
     hint: 'Объём правился снабжением после подачи заявки — наведите на количество, чтобы увидеть исходное',
   },
   /** Строка сметы попала в черновик заявки (раздел «Подрядчики»). */
   inRequest: {
     className: 'estimat-row-in-request',
-    bg: '#f6faff',
-    accent: '#1677ff',
+    bg: 'var(--est-primary-bg-faint)',
+    accent: 'var(--est-primary)',
     label: 'В черновике заявки',
   },
   /** Документ вычеркнут как неактуальный. */
   rejectedFile: {
     className: 'file-rejected-row',
-    bg: '#fafafa',
-    accent: '#d9d9d9',
+    bg: 'var(--est-bg-subtle)',
+    accent: 'var(--est-border-strong)',
     label: 'Вычеркнутый документ',
   },
 } satisfies Record<string, RowHighlight>;

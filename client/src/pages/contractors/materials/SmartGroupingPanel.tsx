@@ -243,7 +243,7 @@ export function SmartGroupingPanel({
             <strong>Итого:</strong> {result.stats.total} поз.
             {pricedRows.length > 0 && ` · ${formatMoney(totalMoney)}`}
           </span>
-          <span style={{ color: '#8c8c8c' }}>
+          <span style={{ color: 'var(--est-text-tertiary)' }}>
             в группах {result.stats.covered} · общие {result.stats.shared} · не сгруппировано{' '}
             {result.stats.ungrouped}
           </span>
@@ -465,7 +465,7 @@ function Section({
       title={<strong style={{ fontSize: 14 }}>{title}</strong>}
       meta={
         <>
-          <span style={{ color: '#8c8c8c', fontSize: 12 }}>{rows.length} поз.</span>
+          <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>{rows.length} поз.</span>
           {hint && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {hint}

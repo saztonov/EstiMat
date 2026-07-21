@@ -74,7 +74,7 @@ export function InvoicesBlock({ order, refetch }: { order: SupplierOrderDetail; 
       render: (_, i) => (
         <Space direction="vertical" size={0}>
           <a
-            style={i.superseded_at ? { color: '#bfbfbf', textDecoration: 'line-through' } : undefined}
+            style={i.superseded_at ? { color: 'var(--est-text-quaternary)', textDecoration: 'line-through' } : undefined}
             onClick={() => api
               .downloadGet(`/supplier-orders/${order.id}/invoices/${i.id}/file`, i.file_name ?? 'invoice')
               .catch((e) => message.error((e as Error).message))}
@@ -98,7 +98,7 @@ export function InvoicesBlock({ order, refetch }: { order: SupplierOrderDetail; 
         <Space size={4} wrap>
           <Tag color={STATUS_COLOR[i.recognition_status]}>{RECOGNITION_STATUS_LABELS[i.recognition_status]}</Tag>
           {i.recognition_error && (
-            <Tooltip title={i.recognition_error}><WarningOutlined style={{ color: '#faad14' }} /></Tooltip>
+            <Tooltip title={i.recognition_error}><WarningOutlined style={{ color: 'var(--est-warning)' }} /></Tooltip>
           )}
           {i.match_status === 'warn' && <Tag color="warning">есть расхождения</Tag>}
           {i.match_status === 'match' && <Tag color="green">сходится с заказом</Tag>}

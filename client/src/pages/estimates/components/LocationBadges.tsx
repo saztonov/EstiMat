@@ -25,7 +25,7 @@ export function LocationBadges({ zoneNames, floorsLabel, typeLabels }: Props) {
   const empty = zoneNames.length === 0 && !floorsLabel && typeLabels.length === 0;
   if (empty) {
     return (
-      <Tag style={{ margin: 0, color: '#bfbfbf' }}>
+      <Tag style={{ margin: 0, color: 'var(--est-text-quaternary)' }}>
         <EnvironmentOutlined /> —
       </Tag>
     );

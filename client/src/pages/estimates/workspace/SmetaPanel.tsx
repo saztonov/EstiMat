@@ -493,7 +493,7 @@ export function SmetaPanel({
                   </div>
                 }
               >
-                <Badge count={activeFilterCount} size="small" color="#1677ff" offset={[-2, 2]}>
+                <Badge count={activeFilterCount} size="small" color="var(--est-primary)" offset={[-2, 2]}>
                   <Tooltip title="Отбор по категории и виду работ">
                     <Button icon={<FilterOutlined />} aria-label="Отбор" />
                   </Tooltip>
@@ -584,8 +584,8 @@ export function SmetaPanel({
                       alignItems: 'center',
                       gap: 8,
                       padding: '4px 10px',
-                      background: '#eef2f7',
-                      border: '1px solid #e0e6ee',
+                      background: 'var(--est-bg-group)',
+                      border: '1px solid var(--est-border-group)',
                       borderRadius: 8,
                       cursor: sec.id !== NO_CATEGORY ? 'pointer' : 'default',
                       userSelect: 'none',
@@ -598,15 +598,15 @@ export function SmetaPanel({
                         e.stopPropagation();
                         toggleCat(sec.id);
                       }}
-                      style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: '#8c8c8c' }}
+                      style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', color: 'var(--est-text-tertiary)' }}
                       title={collapsed ? 'Развернуть' : 'Свернуть'}
                     >
                       {collapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
                     </span>
                     <strong style={{ fontSize: 13 }}>{sec.name}</strong>
-                    <span style={{ color: '#8c8c8c', fontSize: 12 }}>Видов работ: {sec.groups.length}</span>
+                    <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>Видов работ: {sec.groups.length}</span>
                     <span style={{ flex: 1 }} />
-                    <span style={{ color: '#1677ff', fontWeight: 600 }}>{formatMoney(sectionTotals.get(sec.id) ?? 0)}</span>
+                    <span style={{ color: 'var(--est-primary)', fontWeight: 600 }}>{formatMoney(sectionTotals.get(sec.id) ?? 0)}</span>
                   </div>
 
                   {!collapsed && (

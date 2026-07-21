@@ -108,7 +108,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
   const leafColumns: ColumnsType<Row> = [
     { title: '', key: 'unread', width: 40, align: 'center', render: (_v, r) => {
       const c = unread[leaf(r).id] || 0;
-      return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: '#8c8c8c' }} /></Badge> : null;
+      return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: 'var(--est-text-tertiary)' }} /></Badge> : null;
     } },
     { title: 'Номер', key: 'number', width: 120, ...gt.hf('number', filterSpecs.number), render: (_v, r) => <strong>{leaf(r).number}</strong> },
     { title: 'Дата', key: 'created_at', width: 150, ...gt.hf('created_at', filterSpecs.created_at), render: (_v, r) => new Date(leaf(r).created_at).toLocaleString('ru-RU') },
@@ -135,7 +135,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
   ];
 
   const renderGroup = (node: GroupNode<RequestRow>) => (
-    <strong>{node.label} <span style={{ color: '#8c8c8c', fontWeight: 400 }}>· {node.count} · {money(node.agg.amount ?? 0)}</span></strong>
+    <strong>{node.label} <span style={{ color: 'var(--est-text-tertiary)', fontWeight: 400 }}>· {node.count} · {money(node.agg.amount ?? 0)}</span></strong>
   );
 
   const tableData = gt.data;

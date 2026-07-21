@@ -15,8 +15,8 @@ interface Props {
 
 const cardBox: React.CSSProperties = {
   marginTop: 8,
-  border: '1px solid #e6effa',
-  background: '#f7fbff',
+  border: '1px solid var(--est-border-group)',
+  background: 'var(--est-primary-bg-faint)',
   borderRadius: 8,
   padding: 10,
 };
@@ -26,7 +26,7 @@ const rowBox: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '4px 0',
-  borderTop: '1px solid #eef3f8',
+  borderTop: '1px solid var(--est-border)',
 };
 
 export function AiCandidateCards({ card, applying, onApplyItems, onApplySection }: Props) {
@@ -46,7 +46,7 @@ export function AiCandidateCards({ card, applying, onApplyItems, onApplySection 
             Раздел для копирования — {card.works.length} работ
           </Typography.Text>
           {card.works.slice(0, 8).map((w, i) => (
-            <div key={i} style={{ fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
+            <div key={i} style={{ fontSize: 12, color: 'var(--est-text-secondary)' }}>
               • {w.description} — {fmt(w.quantity)} {w.unit ?? ''}
             </div>
           ))}
@@ -66,7 +66,7 @@ export function AiCandidateCards({ card, applying, onApplyItems, onApplySection 
       return (
         <div style={cardBox}>
           <Typography.Text strong>🧮 {fmt(card.value)} {card.unit}</Typography.Text>
-          <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.55)' }}>{card.formula}</div>
+          <div style={{ fontSize: 12, color: 'var(--est-text-secondary)' }}>{card.formula}</div>
         </div>
       );
     default:
@@ -121,7 +121,7 @@ function WorkCandidatesCard({
               {c.name}{' '}
               {c.duplicateOfItemId && <Tag color="gold" style={{ marginInlineStart: 4 }}>уже в смете</Tag>}
             </div>
-            <div style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)' }}>
+            <div style={{ fontSize: 11, color: 'var(--est-text-secondary)' }}>
               {[c.categoryName, c.costTypeName].filter(Boolean).join(' › ') || '—'} · {fmt(c.price)} ₽/{c.unit ?? '—'}
             </div>
           </div>
@@ -183,14 +183,14 @@ function MaterialCandidatesCard({
             <div style={{ fontSize: 12.5 }}>
               {c.name} {c.duplicateOfItemId && <Tag color="gold">уже в смете</Tag>}
             </div>
-            <div style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)' }}>{fmt(c.price)} ₽/{c.unit ?? '—'}</div>
+            <div style={{ fontSize: 11, color: 'var(--est-text-secondary)' }}>{fmt(c.price)} ₽/{c.unit ?? '—'}</div>
           </div>
           <InputNumber size="small" min={0.0001} value={qty[c.catalogId] ?? 1} style={{ width: 78 }}
             onChange={(v) => setQty((q) => ({ ...q, [c.catalogId]: Number(v) || 1 }))} />
         </div>
       ))}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-        <span style={{ flex: 1, fontSize: 11, color: 'rgba(0,0,0,0.45)' }}>
+        <span style={{ flex: 1, fontSize: 11, color: 'var(--est-text-tertiary)' }}>
           {target ? 'материалы добавятся к выбранной работе' : 'выберите работу в смете'}
         </span>
         <Tooltip title={!target ? 'Сначала выберите работу в смете' : ''}>
@@ -236,7 +236,7 @@ function SimilarWorksCard({
           </Tooltip>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5 }}>{w.description}</div>
-            <div style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)' }}>
+            <div style={{ fontSize: 11, color: 'var(--est-text-secondary)' }}>
               {w.projectName ?? 'объект'} · {fmt(w.quantity)} {w.unit ?? ''} · {fmt(w.unitPrice)} ₽
             </div>
           </div>
@@ -290,7 +290,7 @@ function SimilarMaterialsCard({
           </Tooltip>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5 }}>{m.description}</div>
-            <div style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)' }}>
+            <div style={{ fontSize: 11, color: 'var(--est-text-secondary)' }}>
               {m.projectName ?? 'объект'}{m.parentWorkDescription ? ` · ${m.parentWorkDescription}` : ''} · {fmt(m.unitPrice)} ₽
             </div>
           </div>
@@ -301,7 +301,7 @@ function SimilarMaterialsCard({
         </div>
       ))}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-        <span style={{ flex: 1, fontSize: 11, color: 'rgba(0,0,0,0.45)' }}>
+        <span style={{ flex: 1, fontSize: 11, color: 'var(--est-text-tertiary)' }}>
           {selectedWorkId ? 'добавятся к выбранной работе' : 'выберите работу в смете'}
         </span>
         <Button size="small" type="primary" icon={<PlusOutlined />} loading={applying}

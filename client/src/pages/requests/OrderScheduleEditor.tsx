@@ -148,7 +148,7 @@ export function OrderScheduleEditor({
     {
       title: 'Наименование', key: 'name', onCell: spanCell,
       render: (_, r) => (
-        <span style={isOff(r) ? { textDecoration: 'line-through', color: '#bfbfbf' } : undefined}>
+        <span style={isOff(r) ? { textDecoration: 'line-through', color: 'var(--est-text-quaternary)' } : undefined}>
           {r.line.name}
         </span>
       ),
@@ -164,7 +164,7 @@ export function OrderScheduleEditor({
             <span>{num(r.line.quantity)}</span>
             {/* При allowPartial недобор — норма (закажем позже), поэтому он нейтрального цвета. */}
             {diff > EPS && (
-              <Text type="secondary" style={{ fontSize: 11, color: allowPartial ? undefined : '#fa8c16' }}>
+              <Text type="secondary" style={{ fontSize: 11, color: allowPartial ? undefined : 'var(--est-orange)' }}>
                 {allowPartial ? 'не заказано' : 'остаток'}: {num(diff)}
               </Text>
             )}

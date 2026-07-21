@@ -25,8 +25,8 @@ export function PanelShell({ icon, title, meta, extra, toolbar, flush, bodyRef, 
         minHeight: 0,
         minWidth: 0,
         overflow: 'hidden',
-        background: '#fff',
-        border: '1px solid #f0f0f0',
+        background: 'var(--est-bg-container)',
+        border: '1px solid var(--est-border)',
         borderRadius: 8,
       }}
     >
@@ -37,16 +37,16 @@ export function PanelShell({ icon, title, meta, extra, toolbar, flush, bodyRef, 
           alignItems: 'center',
           gap: 9,
           padding: '9px 13px',
-          borderBottom: '1px solid #f0f0f0',
-          background: '#fafbfc',
+          borderBottom: '1px solid var(--est-border)',
+          background: 'var(--est-bg-subtle)',
           fontWeight: 600,
           fontSize: 13.5,
         }}
       >
-        {icon && <span style={{ color: '#8c8c8c' }}>{icon}</span>}
+        {icon && <span style={{ color: 'var(--est-text-tertiary)' }}>{icon}</span>}
         <span>{title}</span>
         {meta && (
-          <span style={{ marginLeft: 'auto', fontWeight: 400, color: '#8c8c8c', fontSize: 12.5 }}>
+          <span style={{ marginLeft: 'auto', fontWeight: 400, color: 'var(--est-text-tertiary)', fontSize: 12.5 }}>
             {meta}
           </span>
         )}
@@ -57,8 +57,8 @@ export function PanelShell({ icon, title, meta, extra, toolbar, flush, bodyRef, 
           style={{
             flexShrink: 0,
             padding: '10px 12px',
-            borderBottom: '1px solid #f0f0f0',
-            background: '#fff',
+            borderBottom: '1px solid var(--est-border)',
+            background: 'var(--est-bg-container)',
           }}
         >
           {toolbar}

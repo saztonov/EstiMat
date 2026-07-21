@@ -76,7 +76,7 @@ function ObjectList() {
             <div style={{ marginBottom: 6 }}>
               <strong>{r.project_code} · {r.project_name}</strong>
             </div>
-            <div style={{ color: '#8c8c8c', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
+            <div style={{ color: 'var(--est-text-tertiary)', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
               {r.address || '—'}
             </div>
             {r.items_unassigned != null ? (
@@ -87,13 +87,13 @@ function ObjectList() {
                   {(r.items_unassigned ?? 0) > 0 && <Tag color="orange">Без подрядчика: {r.items_unassigned}</Tag>}
                 </Space>
                 {Number(r.unassigned_amount ?? 0) > 0 && (
-                  <span style={{ color: '#fa8c16' }}>Нераспределено: {formatMoney(r.unassigned_amount)}</span>
+                  <span style={{ color: 'var(--est-orange)' }}>Нераспределено: {formatMoney(r.unassigned_amount)}</span>
                 )}
               </Space>
             ) : (
               <Space wrap>
                 <Tag color="blue">Мои строки: {r.items_total}</Tag>
-                <span style={{ color: '#1677ff' }}>{formatMoney(r.my_amount)}</span>
+                <span style={{ color: 'var(--est-primary)' }}>{formatMoney(r.my_amount)}</span>
               </Space>
             )}
           </Card>
@@ -129,15 +129,15 @@ function MaterialsSummaryWidget({
   return (
     <Space size={12} style={{ fontWeight: 400, fontSize: 13 }}>
       <span>
-        <span style={{ color: '#8c8c8c' }}>Итого: </span>
+        <span style={{ color: 'var(--est-text-tertiary)' }}>Итого: </span>
         {positions} поз.
       </span>
       <span>
-        <span style={{ color: '#8c8c8c' }}>Заказано: </span>
+        <span style={{ color: 'var(--est-text-tertiary)' }}>Заказано: </span>
         {orderedPositions}
       </span>
       <span>
-        <span style={{ color: '#8c8c8c' }}>Заказов: </span>
+        <span style={{ color: 'var(--est-text-tertiary)' }}>Заказов: </span>
         {requestCount}
       </span>
     </Space>

@@ -75,7 +75,7 @@ export function MaterialScheduleModal({ row, onClose }: { row: Su10MaterialGroup
               title: 'Осталось', dataIndex: 'left', width: 110, align: 'right',
               render: (v: number) => (v < 0
                 ? <Text type="danger">{round4(v)}</Text>
-                : <strong style={{ color: v > 0 ? '#1677ff' : '#bfbfbf' }}>{round4(v)}</strong>),
+                : <strong style={{ color: v > 0 ? 'var(--est-primary)' : 'var(--est-text-quaternary)' }}>{round4(v)}</strong>),
             },
           ]}
         />
@@ -101,7 +101,7 @@ export function MaterialScheduleModal({ row, onClose }: { row: Su10MaterialGroup
           <Descriptions.Item label="Подрядчик">{row.contractor_name ?? '—'}</Descriptions.Item>
           <Descriptions.Item label="Вид работ">{row.cost_type_name ?? '—'}</Descriptions.Item>
           <Descriptions.Item label="Ответственный">
-            {row.responsible?.full_name ?? <span style={{ color: '#bfbfbf' }}>не назначен</span>}
+            {row.responsible?.full_name ?? <span style={{ color: 'var(--est-text-quaternary)' }}>не назначен</span>}
           </Descriptions.Item>
           <Descriptions.Item label="Запрошено">{round4(row.requested)}</Descriptions.Item>
           <Descriptions.Item label="Заказано">{round4(row.ordered ?? 0)}</Descriptions.Item>

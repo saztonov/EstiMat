@@ -23,7 +23,7 @@ export function AiToolCallCard({ step }: { step: ChatStep }) {
         alignItems: 'center',
         gap: 6,
         fontSize: 12,
-        color: step.status === 'error' ? '#cf1322' : 'rgba(0,0,0,0.55)',
+        color: step.status === 'error' ? 'var(--est-error-text)' : 'var(--est-text-secondary)',
         padding: '2px 0',
       }}
     >

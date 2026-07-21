@@ -134,7 +134,7 @@ export function EstimatesPage() {
                 <div style={{ marginBottom: 6 }}>
                   <strong>{p.code} · {p.name}</strong>
                 </div>
-                <div style={{ color: '#8c8c8c', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
+                <div style={{ color: 'var(--est-text-tertiary)', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
                   {p.address || '—'}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -144,7 +144,7 @@ export function EstimatesPage() {
                         type="text"
                         size="small"
                         icon={<BuildingsIcon />}
-                        style={{ paddingInline: 6, color: '#595959' }}
+                        style={{ paddingInline: 6, color: 'var(--est-text-secondary)' }}
                         onClick={(e) => { e.stopPropagation(); openBuilder(p.id); }}
                       />
                     </Tooltip>
@@ -153,7 +153,7 @@ export function EstimatesPage() {
                         type="text"
                         size="small"
                         icon={<FileTextOutlined />}
-                        style={{ paddingInline: 6, color: '#595959' }}
+                        style={{ paddingInline: 6, color: 'var(--est-text-secondary)' }}
                         onClick={(e) => { e.stopPropagation(); setCiphersProjectId(p.id); }}
                       />
                     </Tooltip>
@@ -162,14 +162,14 @@ export function EstimatesPage() {
                         type="text"
                         size="small"
                         icon={<BarChartOutlined />}
-                        style={{ paddingInline: 6, color: '#595959' }}
+                        style={{ paddingInline: 6, color: 'var(--est-text-secondary)' }}
                         onClick={(e) => { e.stopPropagation(); setStatsProjectId(p.id); }}
                       >
                         {p.works_count}
                       </Button>
                     </Tooltip>
                   </Space>
-                  <strong style={{ color: '#1677ff' }}>{formatMoney(p.estimates_total)}</strong>
+                  <strong style={{ color: 'var(--est-primary)' }}>{formatMoney(p.estimates_total)}</strong>
                 </div>
               </Card>
             </Col>

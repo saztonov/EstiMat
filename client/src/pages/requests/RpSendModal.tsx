@@ -213,7 +213,7 @@ export function RpSendModal({
                       src={qrPng ?? sent.qr ?? undefined}
                       width={160}
                       alt="QR-код письма PayHub"
-                      style={{ border: '1px solid #f0f0f0', background: '#fff' }}
+                      style={{ border: '1px solid var(--est-border)', background: 'var(--est-bg-container)' }}
                     />
                   </div>
                   <Button icon={<DownloadOutlined />} style={{ marginTop: 8 }} onClick={downloadQr}>

@@ -61,7 +61,7 @@ function BlockCard({
       title={<strong style={{ fontSize: 14 }}>{block.title}</strong>}
       meta={
         <>
-          <span style={{ color: '#8c8c8c', fontSize: 12 }}>{block.orderKeys.length} поз.</span>
+          <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>{block.orderKeys.length} поз.</span>
           {block.hint && (
             <Text type="secondary" style={{ fontSize: 12 }}>
               {block.hint}
@@ -290,7 +290,7 @@ export function DeliveryScheduleModal({ open, lines, estimateId, contractorId, r
         return (
           <Space direction="vertical" size={0} style={{ alignItems: 'flex-end' }}>
             <span>{num(r.line.quantity)}</span>
-            {diff > EPS && <Text style={{ fontSize: 11, color: '#fa8c16' }}>остаток: {num(diff)}</Text>}
+            {diff > EPS && <Text style={{ fontSize: 11, color: 'var(--est-orange)' }}>остаток: {num(diff)}</Text>}
             {diff < -EPS && <Text type="danger" style={{ fontSize: 11 }}>лишнее: {num(-diff)}</Text>}
           </Space>
         );

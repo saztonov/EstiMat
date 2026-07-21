@@ -59,7 +59,7 @@ export function RdSection({ collapsed, onToggle }: Props) {
           onClick={() => setViewerDoc(d)}
           title="Открыть документ"
         >
-          <FileTextOutlined style={{ color: '#1677ff', flexShrink: 0 }} />
+          <FileTextOutlined style={{ color: 'var(--est-primary)', flexShrink: 0 }} />
           <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
             {node.title as string}
           </span>
@@ -89,7 +89,7 @@ export function RdSection({ collapsed, onToggle }: Props) {
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           description={
-            <span style={{ fontSize: 12.5, color: '#8c8c8c' }}>
+            <span style={{ fontSize: 12.5, color: 'var(--est-text-tertiary)' }}>
               Портал РД не настроен. Заполните переменные RD_* в .env сервера.
             </span>
           }

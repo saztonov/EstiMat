@@ -66,25 +66,25 @@ function AiRail({ onClick }: { onClick: () => void }) {
         alignItems: 'center',
         gap: 14,
         padding: '12px 0',
-        background: '#fff',
-        border: '1px solid #f0f0f0',
+        background: 'var(--est-bg-container)',
+        border: '1px solid var(--est-border)',
         borderRadius: 8,
         cursor: 'pointer',
       }}
     >
-      <RobotOutlined style={{ fontSize: 18, color: '#1677ff' }} />
+      <RobotOutlined style={{ fontSize: 18, color: 'var(--est-primary)' }} />
       <span
         style={{
           writingMode: 'vertical-rl',
           transform: 'rotate(180deg)',
-          color: 'rgba(0,0,0,0.65)',
+          color: 'var(--est-text-secondary)',
           fontSize: 12.5,
           letterSpacing: 0.5,
         }}
       >
         ИИ-ассистент
       </span>
-      <LeftOutlined style={{ marginTop: 'auto', color: '#bfbfbf' }} />
+      <LeftOutlined style={{ marginTop: 'auto', color: 'var(--est-text-quaternary)' }} />
     </div>
   );
 }
@@ -104,25 +104,25 @@ function RefsRail({ onClick }: { onClick: () => void }) {
         alignItems: 'center',
         gap: 14,
         padding: '12px 0',
-        background: '#fff',
-        border: '1px solid #f0f0f0',
+        background: 'var(--est-bg-container)',
+        border: '1px solid var(--est-border)',
         borderRadius: 8,
         cursor: 'pointer',
       }}
     >
-      <AppstoreOutlined style={{ fontSize: 18, color: '#1677ff' }} />
+      <AppstoreOutlined style={{ fontSize: 18, color: 'var(--est-primary)' }} />
       <span
         style={{
           writingMode: 'vertical-rl',
           transform: 'rotate(180deg)',
-          color: 'rgba(0,0,0,0.65)',
+          color: 'var(--est-text-secondary)',
           fontSize: 12.5,
           letterSpacing: 0.5,
         }}
       >
         Справочники
       </span>
-      <LeftOutlined style={{ marginTop: 'auto', color: '#bfbfbf' }} />
+      <LeftOutlined style={{ marginTop: 'auto', color: 'var(--est-text-quaternary)' }} />
     </div>
   );
 }
@@ -182,7 +182,7 @@ export function EstimateWorkspace(props: Props) {
           onBack={props.onBack}
         />
 
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: '6px 6px', background: '#f5f5f5' }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: '6px 6px', background: 'var(--est-bg-layout)' }}>
           {smetaNode}
         </div>
 
@@ -243,7 +243,7 @@ export function EstimateWorkspace(props: Props) {
         onBack={props.onBack}
       />
 
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: '6px 6px', background: '#f5f5f5' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', padding: '6px 6px', background: 'var(--est-bg-layout)' }}>
         <Splitter
           style={{ flex: 1, height: '100%' }}
           onResize={(sizes) => setColSizes(panels.map((p) => p.id), sizes)}

@@ -120,7 +120,7 @@ export function RequestItemsEditModal({ requestId, requestType, items, rowVersio
       title: 'В заказах', dataIndex: 'placed', key: 'placed', width: 100, align: 'right' as const,
       render: (v: number | string | undefined) => {
         const n = Number(v ?? 0);
-        return n > 0 ? <Tag>{round4(n)}</Tag> : <span style={{ color: '#bfbfbf' }}>—</span>;
+        return n > 0 ? <Tag>{round4(n)}</Tag> : <span style={{ color: 'var(--est-text-quaternary)' }}>—</span>;
       },
     },
     {

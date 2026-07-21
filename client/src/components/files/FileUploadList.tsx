@@ -56,8 +56,8 @@ export function FileUploadList({ value, onChange, docTypeOptions, showValidation
         }}
         style={{
           marginBottom: value.length > 0 ? 12 : 0,
-          borderColor: isDragOver ? '#1677ff' : undefined,
-          background: isDragOver ? '#e6f4ff' : undefined,
+          borderColor: isDragOver ? 'var(--est-primary)' : undefined,
+          background: isDragOver ? 'var(--est-primary-bg)' : undefined,
         }}
       >
         <p className="ant-upload-drag-icon" style={{ marginBottom: 4 }}><InboxOutlined /></p>
@@ -69,7 +69,7 @@ export function FileUploadList({ value, onChange, docTypeOptions, showValidation
         <div
           key={it.uid}
           style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
-                   border: '1px solid #f0f0f0', borderRadius: 6, marginBottom: 8 }}
+                   border: '1px solid var(--est-border)', borderRadius: 6, marginBottom: 8 }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
             <Tooltip title={it.file.name}>
@@ -78,7 +78,7 @@ export function FileUploadList({ value, onChange, docTypeOptions, showValidation
             <Text type="secondary" style={{ fontSize: 12 }}>{formatSize(it.file.size)}</Text>
           </div>
           <Select
-            placeholder={<span>Тип документа <span style={{ color: '#ff4d4f' }}>*</span></span>}
+            placeholder={<span>Тип документа <span style={{ color: 'var(--est-error)' }}>*</span></span>}
             size="small"
             style={{ width: 180, flexShrink: 0 }}
             status={showValidation && !it.docType ? 'error' : undefined}
@@ -88,7 +88,7 @@ export function FileUploadList({ value, onChange, docTypeOptions, showValidation
             value={it.docType ?? undefined}
             onChange={(v) => setType(it.uid, v)}
           />
-          <CheckCircleFilled style={{ color: '#52c41a', fontSize: 16, flexShrink: 0, visibility: it.docType ? 'visible' : 'hidden' }} />
+          <CheckCircleFilled style={{ color: 'var(--est-success)', fontSize: 16, flexShrink: 0, visibility: it.docType ? 'visible' : 'hidden' }} />
           <Space size={4}>
             <Tooltip title="Просмотр">
               <Button size="small" icon={<EyeOutlined />} onClick={() => setPreview({ file: it.file, name: it.file.name })} />

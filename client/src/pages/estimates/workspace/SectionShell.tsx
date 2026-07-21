@@ -35,8 +35,8 @@ export function SectionShell({ title, meta, collapsed, onToggle, toolbar, childr
           alignItems: 'center',
           gap: 8,
           padding: '7px 12px',
-          background: '#fafbfc',
-          borderBottom: '1px solid #f0f0f0',
+          background: 'var(--est-bg-subtle)',
+          borderBottom: '1px solid var(--est-border)',
           fontWeight: 600,
           fontSize: 13,
           cursor: collapsible ? 'pointer' : 'default',
@@ -45,13 +45,13 @@ export function SectionShell({ title, meta, collapsed, onToggle, toolbar, childr
       >
         {collapsible &&
           (collapsed ? (
-            <CaretRightOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+            <CaretRightOutlined style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }} />
           ) : (
-            <CaretDownOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+            <CaretDownOutlined style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }} />
           ))}
         <span>{title}</span>
         {meta && (
-          <span style={{ marginLeft: 'auto', fontWeight: 400, color: '#8c8c8c', fontSize: 12 }}>{meta}</span>
+          <span style={{ marginLeft: 'auto', fontWeight: 400, color: 'var(--est-text-tertiary)', fontSize: 12 }}>{meta}</span>
         )}
       </div>
       {!(collapsible && collapsed) && toolbar && (
@@ -59,8 +59,8 @@ export function SectionShell({ title, meta, collapsed, onToggle, toolbar, childr
           style={{
             flexShrink: 0,
             padding: '8px 10px',
-            background: '#fff',
-            borderBottom: '1px solid #f0f0f0',
+            background: 'var(--est-bg-container)',
+            borderBottom: '1px solid var(--est-border)',
           }}
         >
           {toolbar}
