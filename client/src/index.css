@@ -345,6 +345,9 @@ html, body, #root {
   color: inherit;
   text-align: left;
   white-space: normal;
+  /* Кнопка несёт свой font-size из токенов antd — в компактной ячейке имя было бы крупнее
+     соседних колонок. Наследуем размер у .ant-table-cell. */
+  font-size: inherit;
 }
 .ant-btn.estimat-material-name:hover {
   background: transparent;

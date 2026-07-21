@@ -26,7 +26,7 @@ export function GroupCard({ title, meta, extra, collapsed, onToggle, children }:
   return (
     <Card
       size="small"
-      style={{ marginBottom: 12 }}
+      style={{ marginBottom: 8 }}
       styles={{
         header: {
           background: token.colorFillAlter,

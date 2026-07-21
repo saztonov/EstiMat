@@ -162,6 +162,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
         <Table<Row>
           rowKey={(r) => (isGroupRow(r) ? r.key : leaf(r).id)}
           size="small"
+          className="estimat-compact estimat-th-nowrap"
           loading={isLoading}
           columns={columns}
           dataSource={tableData}

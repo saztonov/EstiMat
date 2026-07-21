@@ -95,6 +95,7 @@ export function MaterialLocationsModal({ material, zoneIndex, onClose }: Props) 
       <Table<WorkRow>
         rowKey="key"
         size="small"
+        className="estimat-compact"
         pagination={false}
         dataSource={rows}
         columns={columns}

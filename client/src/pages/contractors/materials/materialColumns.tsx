@@ -92,18 +92,20 @@ export function buildMaterialColumns({
             >
               {m.name}
             </Button>
-            {m.hasSuggested && <Tag color="orange">предложение</Tag>}
-            {m.hasAi && <Tag color="blue">ИИ</Tag>}
+            {/* margin: 0 у тегов — зазор уже даёт Space, а собственный отступ antd раздувал бы
+                ячейку на 8px с каждого тега. */}
+            {m.hasSuggested && <Tag color="orange" style={{ margin: 0 }}>предложение</Tag>}
+            {m.hasAi && <Tag color="blue" style={{ margin: 0 }}>ИИ</Tag>}
             {discrete && (
               <Tooltip
                 title={`По смете ${discrete.quantity} ${m.unit} — штучный материал заказывают целым числом. Проверьте объём в смете.`}
               >
-                <Tag color="orange">Дробное количество</Tag>
+                <Tag color="orange" style={{ margin: 0 }}>Дробное количество</Tag>
               </Tooltip>
             )}
             {/* При активном отборе «По смете» урезано, а «Уже заявлено» — по всей смете:
                 сравнивать их нельзя, иначе тег сработает ложно. */}
-            {over && !locFilterActive && <Tag color="red">Сверх сметы</Tag>}
+            {over && !locFilterActive && <Tag color="red" style={{ margin: 0 }}>Сверх сметы</Tag>}
           </Space>
         );
       },
@@ -233,8 +235,11 @@ export function buildMaterialColumns({
                 <EditOutlined style={{ color: '#1677ff', fontSize: 12 }} />
               </Tooltip>
             )}
+            {/* size="small": поле дефолтного размера (32px) единолично задавало высоту строки
+                в режиме набора и сводило на нет компактность таблицы. */}
             <InputNumber
               min={0}
+              size="small"
               style={{ width: 100 }}
               // Подсказка — остаток: сразу видно, сколько ещё можно заявить.
               placeholder={String(qty(remainingOf(m.quantity, orderedMap.get(m.orderKey) ?? 0)))}

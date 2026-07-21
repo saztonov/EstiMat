@@ -136,6 +136,7 @@ export function SmartGroupingLogDrawer({ jobId, active, open, onClose }: Props) 
       <Table<GroupingCallSummary>
         rowKey="id"
         size="small"
+        className="estimat-compact"
         dataSource={rows}
         columns={columns}
         pagination={DEFAULT_PAGINATION}

@@ -151,6 +151,7 @@ export function RequestReviewModal({ open, lines, submitting, onChange, onCancel
         <Table<ReviewLine>
           rowKey={(l) => l.row.orderKey}
           size="small"
+          className="estimat-compact"
           dataSource={shown}
           columns={columns}
           pagination={DEFAULT_PAGINATION}

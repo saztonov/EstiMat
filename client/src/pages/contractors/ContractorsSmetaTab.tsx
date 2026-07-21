@@ -612,7 +612,7 @@ export function ContractorsSmetaTab({
                       {g.costTypeName ?? 'Без вида работ'}
                     </strong>
                   </Space>
-                  <Table<EstimateItem> rowKey="id" size="small" pagination={false} dataSource={g.works} columns={myColumns} scroll={{ x: 700 }} />
+                  <Table<EstimateItem> rowKey="id" size="small" className="estimat-compact" pagination={false} dataSource={g.works} columns={myColumns} scroll={{ x: 700 }} />
                 </div>
               ))}
             </Space>

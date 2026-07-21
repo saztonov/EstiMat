@@ -482,6 +482,7 @@ function Section({
       <Table<OrderMaterialRow>
         rowKey="orderKey"
         size="small"
+        className="estimat-compact"
         pagination={false}
         dataSource={rows}
         columns={columns}

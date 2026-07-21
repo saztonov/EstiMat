@@ -64,10 +64,10 @@ export function SmartSplitView({ nodes, collapsed, onToggle, onCostTypeCiphers, 
             <strong style={{ fontSize: 13 }}>{nodeTitle(node)}</strong>
           );
         return (
-          <div key={node.key} style={{ marginLeft: depth * 16, marginBottom: 6 }}>
+          <div key={node.key} style={{ marginLeft: depth * 12, marginBottom: 4 }}>
             <div
               onClick={() => onToggle(node.key)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', padding: '4px 0' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', padding: '2px 0' }}
             >
               {isCollapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
               {heading}
@@ -85,13 +85,15 @@ export function SmartSplitView({ nodes, collapsed, onToggle, onCostTypeCiphers, 
                   depth={depth + 1}
                 />
               ) : (
-                <div style={{ marginLeft: 16 }}>
+                <div style={{ marginLeft: 12 }}>
                   <Table<SplitLeafRow>
                     rowKey={(r) => r.row.orderKey}
                     size="small"
+                    className="estimat-compact"
                     pagination={false}
                     dataSource={node.leaves}
                     columns={leafColumns}
+                    scroll={{ x: 700 }}
                   />
                 </div>
               ))}

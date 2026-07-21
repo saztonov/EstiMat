@@ -88,6 +88,7 @@ function BlockCard({
       <Table<FlatRow>
         rowKey="rowId"
         size="small"
+        className="estimat-compact"
         pagination={false}
         columns={columns}
         dataSource={rows}

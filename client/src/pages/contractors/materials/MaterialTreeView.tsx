@@ -44,7 +44,7 @@ export function collectNodeKeys(nodes: MaterialTreeNode[]): string[] {
   return out;
 }
 
-const HEAD_FONT = [15, 14, 13, 13];
+const HEAD_FONT = [14, 13, 12, 12];
 
 /**
  * Итог узла в ₽ — только по строкам с известной ценой закупки. Без единой цены суммы нет вовсе
@@ -161,6 +161,7 @@ function TreeNodeView({
         <Table<OrderMaterialRow>
           rowKey="orderKey"
           size="small"
+          className="estimat-compact"
           pagination={false}
           dataSource={node.materials}
           columns={columns}
@@ -189,16 +190,18 @@ function TreeNodeView({
   if (depth === 0) {
     return (
       <GroupCard collapsed={isCollapsed} onToggle={() => onToggle(node.key)} title={title} meta={meta} extra={fillButton}>
-        <div style={{ padding: node.children.length > 0 ? 8 : 0 }}>{body}</div>
+        <div style={{ padding: node.children.length > 0 ? 4 : 0 }}>{body}</div>
       </GroupCard>
     );
   }
 
+  // Ступенька вложенности 12px, а не 16: при уменьшенном шрифте заголовков она даёт тот же
+  // визуальный сдвиг, но при трёх-четырёх уровнях экономит заметную ширину.
   return (
-    <div style={{ marginLeft: (depth - 1) * 16, marginBottom: 8 }}>
+    <div style={{ marginLeft: (depth - 1) * 12, marginBottom: 4 }}>
       {/* Кликабельная часть заголовка и кнопки — сиблинги: клик по заголовку сворачивает узел,
           клик по кнопке набора до него не доходит без stopPropagation. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
         <Space size={6} style={{ cursor: 'pointer' }} onClick={() => onToggle(node.key)}>
           {isCollapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
           {title}
