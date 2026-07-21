@@ -2197,7 +2197,9 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       fastify.pool.query(
         `SELECT i.id, i.invoice_revision, i.invoice_no, to_char(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
                 i.amount, i.vat_amount, i.supplier_name, i.supplier_inn, i.source,
-                i.file_name, i.file_size, i.note, i.superseded_at, i.superseded_reason, i.created_at,
+                i.file_name, i.file_size, i.note,
+                i.recognition_status, i.recognition_error, i.match_result, i.match_status,
+                i.superseded_at, i.superseded_reason, i.created_at,
                 u.full_name AS uploaded_by_name
            FROM supplier_order_invoices i
            LEFT JOIN users u ON u.id = i.uploaded_by

@@ -17,6 +17,7 @@ import { CompositionBlock } from './supplierOrder/CompositionBlock';
 import { SuppliersBlock, type WinnerDraft } from './supplierOrder/SuppliersBlock';
 import { ApprovalStage } from './supplierOrder/ApprovalStage';
 import { OrderItemsEditModal } from './supplierOrder/OrderItemsEditModal';
+import { InvoicesBlock } from './supplierOrder/InvoicesBlock';
 import { ProposalView } from './supplierOrder/ProposalView';
 import { TenderView } from './supplierOrder/TenderView';
 import { primaryActionOf, isCompositionEditable } from './supplierOrder/orderHeader';
@@ -307,6 +308,12 @@ function OrderView({
           onSubmitApproval={onSubmitApproval} submitting={submitApproval.isPending} refetch={refetch}
         />
       ),
+    }] : []),
+    // Счета появляются, когда поставщик уже определён: до этого прикладывать нечего.
+    ...(!isTender && ['sourcing', 'approval', 'awarded'].includes(status) ? [{
+      key: 'invoices',
+      label: `Счета${order.invoices?.length ? ` · ${order.invoices.length}` : ''}`,
+      children: <InvoicesBlock order={order} refetch={refetch} />,
     }] : []),
   ];
 

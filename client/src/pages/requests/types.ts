@@ -1,4 +1,6 @@
-import type { RequestStatus } from '@estimat/shared';
+import type {
+  RequestStatus, RecognitionStatus, InvoiceMatchResult, InvoiceMatchStatus,
+} from '@estimat/shared';
 
 export interface RequestItem {
   id: string;
@@ -449,6 +451,12 @@ export interface OrderInvoice {
   superseded_reason: 'composition_changed' | 'award_revoked' | 'replaced' | null;
   created_at: string;
   uploaded_by_name: string | null;
+  /** Ход распознавания реквизитов моделью. 'unsupported' — формат или настройка не позволяют. */
+  recognition_status: RecognitionStatus;
+  recognition_error: string | null;
+  /** Результат сверки с заказом. Предупреждает, но ничего не блокирует. */
+  match_result: InvoiceMatchResult | null;
+  match_status: InvoiceMatchStatus | null;
 }
 
 // Строка графика поставки заказа (по агрегату материала). delivery_date — YYYY-MM-DD.

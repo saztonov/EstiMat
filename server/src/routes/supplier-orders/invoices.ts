@@ -15,6 +15,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { assertOrderAccessForOrder } from '../../lib/procurement/access.js';
 import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
 import { guardedStreamUpload, FileGuardError } from '../../lib/uploads/file-guard.js';
+import { runInvoiceRecognition, requeueStaleRecognitions } from '../../lib/invoice-recognition/run.js';
 
 const FILE_LIMIT = 50 * 1024 * 1024; // как у документов предложений
 
@@ -24,6 +25,12 @@ const INVOICE_STAGES = ['sourcing', 'approval', 'awarded'] as const;
 export default async function supplierOrderInvoiceRoutes(fastify: FastifyInstance) {
   /** Удалять документ поставщика может только тот, кто ведёт закупку целиком. */
   const canManageInvoices = requireRole(...PROCUREMENT_ASSIGN_ROLES);
+
+  // Прогон, брошенный упавшим процессом, иначе навсегда остался бы «распознаётся». Проверяем
+  // редко: это страховка на случай деплоя посреди вызова, а не рабочая очередь.
+  const staleTimer = setInterval(() => { void requeueStaleRecognitions(fastify); }, 5 * 60_000);
+  staleTimer.unref();
+  fastify.addHook('onClose', async () => { clearInterval(staleTimer); });
 
   async function loadOrder(db: Pool | PoolClient, id: string, lock = false) {
     const { rows } = await db.query(
@@ -49,6 +56,7 @@ export default async function supplierOrderInvoiceRoutes(fastify: FastifyInstanc
       `SELECT i.id, i.invoice_revision, i.invoice_no, to_char(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
               i.amount, i.vat_amount, i.vat_rate, i.supplier_name, i.supplier_inn, i.source,
               i.file_name, i.mime_type, i.file_size, i.note,
+              i.recognition_status, i.recognition_error, i.recognized, i.match_result, i.match_status,
               i.superseded_at, i.superseded_reason, i.created_at, u.full_name AS uploaded_by_name
          FROM supplier_order_invoices i
          LEFT JOIN users u ON u.id = i.uploaded_by
@@ -124,6 +132,9 @@ export default async function supplierOrderInvoiceRoutes(fastify: FastifyInstanc
           projectId: order.project_id,
         });
         await client.query('COMMIT');
+        // Распознавание — в фоне: вызов модели идёт до двух минут, и держать на нём HTTP-запрос
+        // значит упереться в таймауты прокси. Отказ распознавания на загрузку счёта не влияет.
+        void runInvoiceRecognition(fastify, ins[0].id as string);
         return reply.status(201).send({ data: { id: ins[0].id, fileName: meta.safeName } });
       } catch (dbErr) {
         await client.query('ROLLBACK').catch(() => {});
@@ -197,6 +208,34 @@ export default async function supplierOrderInvoiceRoutes(fastify: FastifyInstanc
     });
     return { data: { ok: true } };
   });
+
+  // ============================================================
+  // POST /:id/invoices/:invoiceId/recognize — распознать повторно.
+  //   Нужен после сбоя модели и после правки состава: сверка считается против текущего заказа.
+  // ============================================================
+  fastify.post<{ Params: { id: string; invoiceId: string } }>(
+    '/:id/invoices/:invoiceId/recognize',
+    async (request, reply) => {
+      const order = await loadOrder(fastify.pool, request.params.id);
+      if (!order) return reply.status(404).send({ error: 'Заказ не найден' });
+      const access = await assertOrderAccessForOrder(fastify.pool, request.currentUser, order.id);
+      if (!access.ok) return reply.status(403).send({ error: access.reason });
+
+      // Счётчик попыток обнуляем: это осознанный повтор человеком, а не автоматический ретрай.
+      const { rows } = await fastify.pool.query(
+        `UPDATE supplier_order_invoices
+            SET recognition_status = 'queued', recognition_error = NULL, attempts = 0,
+                locked_by = NULL, locked_until = NULL
+          WHERE id = $1 AND order_id = $2
+          RETURNING id`,
+        [request.params.invoiceId, order.id],
+      );
+      if (!rows[0]) return reply.status(404).send({ error: 'Счёт не найден' });
+
+      void runInvoiceRecognition(fastify, rows[0].id as string);
+      return { data: { ok: true, recognitionStatus: 'queued' } };
+    },
+  );
 
   // ============================================================
   // DELETE /:id/invoices/:invoiceId — убрать ошибочно приложенный счёт (админ/руководитель).

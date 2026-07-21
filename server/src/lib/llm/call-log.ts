@@ -40,13 +40,15 @@ export type CallKind =
   | 'extract.sweep_works'
   | 'extract.sweep_material_to_work'
   | 'chat.agent'
-  | 'chat.force_final';
+  | 'chat.force_final'
+  | 'invoice.extract';
 
 /** К чему относится вызов. Ровно один родитель — иначе БД отвергнет запись. */
 export type CallParent =
   | { kind: 'grouping'; materialGroupingJobId: string }
   | { kind: 'md'; aiJobId: string }
-  | { kind: 'chat'; aiChatMessageId: string };
+  | { kind: 'chat'; aiChatMessageId: string }
+  | { kind: 'invoice'; supplierOrderInvoiceId: string };
 
 export interface LlmCallStart {
   parent: CallParent;
@@ -103,11 +105,14 @@ function lastHttpStatus(attempts: HttpAttemptInfo[] | undefined): number | null 
 }
 
 /** Колонка родителя. Разложено здесь, чтобы вызывающие не знали про устройство таблицы. */
-function parentColumns(p: CallParent): { grouping: string | null; job: string | null; msg: string | null } {
+function parentColumns(p: CallParent): {
+  grouping: string | null; job: string | null; msg: string | null; invoice: string | null;
+} {
   return {
     grouping: p.kind === 'grouping' ? p.materialGroupingJobId : null,
     job: p.kind === 'md' ? p.aiJobId : null,
     msg: p.kind === 'chat' ? p.aiChatMessageId : null,
+    invoice: p.kind === 'invoice' ? p.supplierOrderInvoiceId : null,
   };
 }
 
@@ -117,14 +122,15 @@ export async function startLlmCall(fastify: FastifyInstance, c: LlmCallStart): P
   try {
     const { rows } = await fastify.pool.query<{ id: string }>(
       `INSERT INTO ai_llm_calls
-         (material_grouping_job_id, ai_job_id, ai_chat_message_id,
+         (material_grouping_job_id, ai_job_id, ai_chat_message_id, supplier_order_invoice_id,
           attempt, kind, batch_index, partition_key, lines_count, model, provider, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'queued')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'queued')
        RETURNING id`,
       [
         p.grouping,
         p.job,
         p.msg,
+        p.invoice,
         c.attempt ?? 1,
         c.kind,
         c.batchIndex ?? null,
@@ -220,8 +226,12 @@ export async function closeDanglingLlmCalls(fastify: FastifyInstance, parent: Ca
         WHERE status IN ('queued', 'waiting_slot', 'in_progress')
           AND material_grouping_job_id IS NOT DISTINCT FROM $1
           AND ai_job_id IS NOT DISTINCT FROM $2
-          AND ai_chat_message_id IS NOT DISTINCT FROM $3`,
-      [p.grouping, p.job, p.msg],
+          AND ai_chat_message_id IS NOT DISTINCT FROM $3
+          -- Условие по КАЖДОЙ колонке родителя обязательно, включая новые: у чужого контура
+          -- остальные поля тоже NULL, и без этой строки очистка одного контура закрывала бы
+          -- записи другого — тихая порча журнала, которую не видно ни в одном тесте.
+          AND supplier_order_invoice_id IS NOT DISTINCT FROM $4`,
+      [p.grouping, p.job, p.msg, p.invoice],
     )
     .catch((err) => fastify.log.warn({ err, parent }, 'ai call log: dangling cleanup failed'));
 }

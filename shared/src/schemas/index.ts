@@ -8,6 +8,7 @@ export * from './estimate.js';
 export * from './material-request.js';
 export * from './material-grouping.js';
 export * from './supplier-order.js';
+export * from './invoice-recognition.js';
 export * from './procurement.js';
 export * from './payment-request.js';
 export * from './payhub.js';

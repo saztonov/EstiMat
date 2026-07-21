@@ -14,6 +14,7 @@ export const AI_PROMPT_IDS = [
   'chat.system',
   'chat.scopeNote',
   'extract.role',
+  'invoice.extract',
 ] as const;
 export type AiPromptId = (typeof AI_PROMPT_IDS)[number];
 
@@ -24,6 +25,7 @@ export const AI_PROMPT_GROUPS = {
   grouping: 'Умная группировка материалов',
   chat: 'ИИ-чат',
   extract: 'Извлечение из рабочей документации',
+  invoice: 'Распознавание счетов',
 } as const;
 export type AiPromptGroup = keyof typeof AI_PROMPT_GROUPS;
 
@@ -69,6 +71,13 @@ export const AI_PROMPT_DEFS: readonly AiPromptDef[] = [
     description:
       'Общий префикс роли сметчика для извлечения работ и материалов из документации. Это только начало промпта — конкретные инструкции по типу документа задаются в коде.',
     group: 'extract',
+  },
+  {
+    id: 'invoice.extract',
+    title: 'Распознавание счёта: системный промпт',
+    description:
+      'Правила чтения счёта поставщика: какие реквизиты извлекать, как переносить числа и НДС, чего не домысливать. Формат ответа (JSON-схема) задаётся в коде и промптом не меняется.',
+    group: 'invoice',
   },
 ];
 
