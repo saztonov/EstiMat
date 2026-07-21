@@ -1,17 +1,22 @@
 import { useState } from 'react';
-import { Modal, Steps, Space, Tag, Alert, App } from 'antd';
-import { DeleteOutlined } from '@ant-design/icons';
+import { Modal, Collapse, Button, Space, Tag, Alert, Dropdown, App } from 'antd';
+import { DeleteOutlined, MoreOutlined, FileExcelOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  MANUAL_VAT_RATES, PAYMENT_TYPES, type ManualVatRate, type PaymentType,
+  MANUAL_VAT_RATES, PAYMENT_TYPES, PROCUREMENT_ASSIGN_ROLES,
+  type ManualVatRate, type PaymentType,
 } from '@estimat/shared';
 import { api } from '../../services/api';
+import { useAuthStore } from '../../store/authStore';
+import { SourcingStatusTag } from './supplierLotConstants';
 import { CreateStep } from './supplierOrder/CreateStep';
-import { FormingStage } from './supplierOrder/FormingStage';
-import { SourcingStages } from './supplierOrder/SourcingStages';
+import { OrderHeaderBar } from './supplierOrder/OrderHeaderBar';
+import { CompositionBlock } from './supplierOrder/CompositionBlock';
+import { SuppliersBlock, type WinnerDraft } from './supplierOrder/SuppliersBlock';
 import { ApprovalStage } from './supplierOrder/ApprovalStage';
 import { ProposalView } from './supplierOrder/ProposalView';
 import { TenderView } from './supplierOrder/TenderView';
+import { primaryActionOf, isCompositionEditable } from './supplierOrder/orderHeader';
 import type { Su10MaterialRow, SupplierOrderDetail } from './types';
 
 interface Props {
@@ -45,7 +50,7 @@ export function SupplierOrderModal({ create, orderId, onClose, onChanged }: Prop
       />
     );
   }
-  return <OrderStep orderId={id} onClose={onClose} onChanged={invalidateOutside} fromMaterials={!!create} />;
+  return <OrderStep orderId={id} onClose={onClose} onChanged={invalidateOutside} justCreated={!!create} />;
 }
 
 /**
@@ -54,15 +59,13 @@ export function SupplierOrderModal({ create, orderId, onClose, onChanged }: Prop
  * Раньше состояние формы (победитель, НДС, тип поставки, цены) объявлялось здесь — до useQuery и
  * до раннего выхода по `!order`. Инициализировать его сохранёнными значениями было физически
  * нечем: при первом рендере данных ещё нет, а условные хуки после раннего выхода запрещены
- * правилами React. Из-за этого заказ, отклонённый руководителем, открывался с пустой формой:
- * причина отклонения не показывалась (её блок вложен в условие «выбран победитель»), цены
- * приходилось вбивать заново — хотя сервер всё сохранил.
+ * правилами React.
  *
  * key={orderId} обязателен: при переходе на другой заказ форма должна пересоздаться, иначе в ней
  * останется черновик предыдущего.
  */
-function OrderStep({ orderId, onClose, onChanged, fromMaterials }: {
-  orderId: string; onClose: () => void; onChanged: () => void; fromMaterials: boolean;
+function OrderStep({ orderId, onClose, onChanged, justCreated }: {
+  orderId: string; onClose: () => void; onChanged: () => void; justCreated: boolean;
 }) {
   const orderQ = useQuery({
     queryKey: ['supplier-order', orderId],
@@ -75,39 +78,52 @@ function OrderStep({ orderId, onClose, onChanged, fromMaterials }: {
   }
   return (
     <OrderView
-      key={orderId} orderId={orderId} order={order} onClose={onClose} fromMaterials={fromMaterials}
+      key={orderId} orderId={orderId} order={order} onClose={onClose} justCreated={justCreated}
       onChanged={onChanged} refetchOrder={() => { orderQ.refetch(); }}
     />
   );
 }
 
 function OrderView({
-  orderId, order, onClose, onChanged, fromMaterials, refetchOrder,
+  orderId, order, onClose, onChanged, justCreated, refetchOrder,
 }: {
   orderId: string; order: SupplierOrderDetail; onClose: () => void; onChanged: () => void;
-  fromMaterials: boolean; refetchOrder: () => void;
+  justCreated: boolean; refetchOrder: () => void;
 }) {
   const { message } = App.useApp();
+  const role = useAuthStore((s) => s.user?.role);
+  const canApprove = PROCUREMENT_ASSIGN_ROLES.includes(role as never);
 
   // Черновик инициализируется из сохранённого ОДИН раз, при монтировании. Ленивый инициализатор,
   // а не useEffect на order: фоновое обновление после каждой мутации затирало бы несохранённые
   // правки пользователя прямо во время ввода цен.
-  const [winnerLocal, setWinnerLocal] = useState<string | undefined>(() => order.proposed_offer_id ?? undefined);
-  const [vatRate, setVatRate] = useState<ManualVatRate>(
-    () => (MANUAL_VAT_RATES as readonly string[]).includes(order.vat_rate ?? '') ? (order.vat_rate as ManualVatRate) : 'vat22',
-  );
-  const [paymentType, setPaymentType] = useState<PaymentType>(
-    () => (PAYMENT_TYPES as readonly string[]).includes(order.payment_type ?? '') ? (order.payment_type as PaymentType) : 'advance',
-  );
-  const [prices, setPrices] = useState<Map<string, { price: number | null; warranty: number | null }>>(
-    () => new Map(order.priceLines.map((p) => [p.agg_key, { price: Number(p.unit_price), warranty: p.warranty_months }])),
+  const [draft, setDraft] = useState<WinnerDraft>(() => ({
+    winnerId: order.proposed_offer_id ?? undefined,
+    vatRate: (MANUAL_VAT_RATES as readonly string[]).includes(order.vat_rate ?? '')
+      ? (order.vat_rate as ManualVatRate) : 'vat22',
+    paymentType: (PAYMENT_TYPES as readonly string[]).includes(order.payment_type ?? '')
+      ? (order.payment_type as PaymentType) : 'advance',
+    prices: new Map(order.priceLines.map((p) => [p.agg_key, { price: Number(p.unit_price), warranty: p.warranty_months }])),
+  }));
+  const patchDraft = (patch: Partial<WinnerDraft>) => setDraft((d) => ({ ...d, ...patch }));
+
+  const status = order.sourcing_status;
+  const isTender = order.procurement_method === 'tender';
+  const editable = isCompositionEditable(order);
+  const canCollectDocs = status === 'sourcing';
+
+  // Активный блок ВСЕГДА управляемый: после создания заказа и при смене стадии он должен
+  // переключиться сам, а модалка при этом не размонтируется — defaultActiveKey сработал бы
+  // только на первом рендере и оставил бы пользователя в свёрнутом виде.
+  const [activeKeys, setActiveKeys] = useState<string[]>(
+    () => (justCreated || editable ? ['composition'] : ['suppliers']),
   );
 
   // Победитель мог исчезнуть, пока заказ лежал у руководителя: поставщика убрали или у него
   // отозвали файл. Ссылка на несуществующее предложение отправилась бы на согласование и была бы
   // отбита сервером — сбрасываем выбор здесь.
-  const winnerAlive = winnerLocal != null && order.offers.some((o) => o.id === winnerLocal);
-  const winnerLocalSafe = winnerAlive ? winnerLocal : undefined;
+  const winnerAlive = draft.winnerId != null && order.offers.some((o) => o.id === draft.winnerId);
+  const safeDraft: WinnerDraft = winnerAlive ? draft : { ...draft, winnerId: undefined };
 
   const refetch = () => { refetchOrder(); onChanged(); };
 
@@ -118,23 +134,43 @@ function OrderView({
     onError: (e: Error) => message.error(e.message),
   });
 
+  const submitApproval = useMutation({
+    mutationFn: (body: unknown) => api.post(`/supplier-orders/${orderId}/submit-approval`, body),
+    onSuccess: () => { message.success('Заказ отправлен на согласование'); refetch(); },
+    onError: (e: Error) => message.error(e.message),
+  });
+
   const number = `З-${String(order.order_no ?? 0).padStart(3, '0')}`;
-  const isTender = order.procurement_method === 'tender';
-  const status = order.sourcing_status;
-  // Шаги: Состав → Поставщики → Оформление. Согласование и присуждение — последний шаг.
-  const stepIndex = status === 'forming' ? 0 : (status === 'awarded' || status === 'approval') ? 2 : 1;
 
   async function freezeAndExport() {
     try {
-      await api.post(`/supplier-orders/${orderId}/start`, { method: 'manual', expectedVersion: order!.row_version });
+      await api.post(`/supplier-orders/${orderId}/start`, { method: 'manual', expectedVersion: order.row_version });
       await api.download(`/supplier-orders/${orderId}/export`, undefined, `Запрос_КП_${number}.xlsx`);
       message.success('Состав зафиксирован, запрос КП скачан');
+      setActiveKeys(['suppliers']); // дальше работают с поставщиками — открываем нужный блок
       refetch();
     } catch (e) { message.error((e as Error).message); }
   }
   async function reExport() {
     try { await api.download(`/supplier-orders/${orderId}/export`, undefined, `Запрос_КП_${number}.xlsx`); }
     catch (e) { message.error((e as Error).message); }
+  }
+
+  function onSubmitApproval() {
+    if (!safeDraft.winnerId) return message.warning('Выберите победителя');
+    const lines = order.aggItems.map((a) => ({
+      aggKey: a.agg_key,
+      unitPrice: safeDraft.prices.get(a.agg_key)?.price ?? null,
+      warrantyMonths: safeDraft.prices.get(a.agg_key)?.warranty ?? null,
+    }));
+    if (lines.some((l) => l.unitPrice == null)) return message.warning('Укажите цену по всем материалам');
+    submitApproval.mutate({
+      winnerOfferId: safeDraft.winnerId,
+      vatRate: safeDraft.vatRate,
+      paymentType: safeDraft.paymentType,
+      lines: lines.map((l) => ({ aggKey: l.aggKey, unitPrice: String(l.unitPrice), warrantyMonths: l.warrantyMonths ?? undefined })),
+      expectedVersion: order.row_version,
+    });
   }
 
   const moreMenu = {
@@ -162,54 +198,27 @@ function OrderView({
     },
   };
 
-  return (
-    <Modal
-      open width={960} onCancel={onClose} footer={null}
-      title={
-        <Space>
-          <span>Заказ поставщику {number}</span>
-          {order.project_name && <Tag>{order.project_name}</Tag>}
-          {isTender && <Tag color="blue">Тендер</Tag>}
-        </Space>
-      }
-    >
-      {!isTender && <Steps size="small" current={stepIndex} style={{ marginBottom: 16 }}
-        items={[{ title: 'Состав' }, { title: 'Поставщики' }, { title: 'Оформление' }]} />}
+  const primary = primaryActionOf(order, canApprove);
+  const terminal = status === 'cancelled' || status === 'no_award';
 
-      {/* ===== Тендер: компактный статус (read-only) ===== */}
-      {isTender && (
-        <TenderView order={order} onRefresh={() => run.mutate({ method: 'post', url: `/supplier-orders/${orderId}/tender-refresh` })}
-          onAward={(pid) => run.mutate({ method: 'post', url: `/supplier-orders/${orderId}/award`, body: { source: 'tender', winnerParticipantId: pid, expectedVersion: order.row_version } })} />
-      )}
-
-      {/* ===== Этап «Состав» (forming): состав + запрос КП + поставщики (без приёма КП/победителя) ===== */}
-      {!isTender && status === 'forming' && (
-        <FormingStage
-          order={order} fromMaterials={fromMaterials}
-          onFreezeExport={freezeAndExport} onReExport={reExport} moreMenu={moreMenu}
+  // Блоки окна. Состав виден всегда; поставщики — во всех ручных стадиях, где они осмысленны.
+  const blocks = [
+    {
+      key: 'composition',
+      label: `Материалы и график${order.items.length ? ` · ${order.items.length} поз.` : ''}`,
+      children: (
+        <CompositionBlock
+          order={order} editable={editable} refetch={refetch} onReExport={reExport}
           onRemoveItem={(itemId) => run.mutate({ method: 'delete', url: `/supplier-orders/${orderId}/items/${itemId}` })}
-          refetch={refetch}
         />
-      )}
-
-      {/* ===== Этапы «Поставщики» + «Оформление» (sourcing) ===== */}
-      {!isTender && status === 'sourcing' && (
-        <SourcingStages
-          order={order}
-          winnerLocal={winnerLocalSafe} setWinnerLocal={setWinnerLocal}
-          vatRate={vatRate} setVatRate={setVatRate}
-          paymentType={paymentType} setPaymentType={setPaymentType}
-          prices={prices} setPrices={setPrices}
-          onReExport={reExport} moreMenu={moreMenu} refetch={refetch} onClose={onClose}
-        />
-      )}
-
-      {/* ===== Оформлен (awarded) — read-only ===== */}
-      {!isTender && status === 'approval' && (
+      ),
+    },
+    ...(!isTender ? [{
+      key: 'suppliers',
+      label: `Поставщики${order.offers.length ? ` · ${order.offers.length}` : ''}`,
+      children: status === 'approval' ? (
         <ApprovalStage order={order} number={number} onDone={refetch} />
-      )}
-
-      {!isTender && status === 'awarded' && (
+      ) : status === 'awarded' ? (
         <>
           <ProposalView order={order} />
           {(order.approved_by_name || order.approval_comment) && (
@@ -222,11 +231,75 @@ function OrderView({
             />
           )}
         </>
+      ) : terminal ? (
+        <ProposalView order={order} />
+      ) : (
+        <SuppliersBlock
+          order={order} canCollectDocs={canCollectDocs} draft={safeDraft} onDraftChange={patchDraft}
+          onSubmitApproval={onSubmitApproval} submitting={submitApproval.isPending} refetch={refetch}
+        />
+      ),
+    }] : []),
+  ];
+
+  return (
+    <Modal
+      open onCancel={onClose} footer={null}
+      width="80vw" style={{ maxWidth: 1400, top: 32 }}
+      // Единственный скролл — тело окна: вложенные прокрутки внутри блоков давали бы три полосы.
+      styles={{ body: { maxHeight: '76vh', overflow: 'auto' } }}
+      title={
+        <Space wrap>
+          <span>Заказ поставщику {number}</span>
+          <SourcingStatusTag status={status} />
+          {order.project_name && <Tag>{order.project_name}</Tag>}
+          {isTender && <Tag color="blue">Тендер</Tag>}
+        </Space>
+      }
+    >
+      <OrderHeaderBar order={order} readOnly={terminal} onCommentSaved={refetch} />
+
+      {terminal && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+          message="Заказ завершён без поставщика — материалы возвращены в свод" />
       )}
 
-      {(status === 'cancelled' || status === 'no_award') && (
-        <Alert type="warning" showIcon message="Заказ завершён без поставщика — материалы возвращены в свод" />
+      {isTender && (
+        <div style={{ marginBottom: 12 }}>
+          <TenderView
+            order={order}
+            onRefresh={() => run.mutate({ method: 'post', url: `/supplier-orders/${orderId}/tender-refresh` })}
+            onAward={(pid) => run.mutate({
+              method: 'post', url: `/supplier-orders/${orderId}/award`,
+              body: { source: 'tender', winnerParticipantId: pid, expectedVersion: order.row_version },
+            })}
+          />
+        </div>
       )}
+
+      <Collapse
+        items={blocks}
+        activeKey={activeKeys}
+        onChange={(k) => setActiveKeys(Array.isArray(k) ? k : [k])}
+      />
+
+      {/* Нижняя панель: одно главное действие стадии + редкие операции под «Ещё». */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        gap: 8, marginTop: 16, paddingTop: 12, borderTop: '1px solid #f0f0f0', flexWrap: 'wrap',
+      }}>
+        <div>
+          {moreMenu.items.length > 0 && (
+            <Dropdown menu={moreMenu as never}><Button icon={<MoreOutlined />}>Ещё</Button></Dropdown>
+          )}
+        </div>
+        <Space wrap>
+          <Button onClick={onClose}>Закрыть</Button>
+          {primary.key === 'freeze' && (
+            <Button type="primary" icon={<FileExcelOutlined />} onClick={freezeAndExport}>{primary.label}</Button>
+          )}
+        </Space>
+      </div>
     </Modal>
   );
 }

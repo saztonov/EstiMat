@@ -40,7 +40,6 @@ export function RequestLotsSection({ requestId }: { requestId: string }) {
 
   const columns: ColumnsType<OrderBrief> = [
     { title: '№', dataIndex: 'order_no', key: 'no', width: 80, render: (v, r) => <a onClick={() => setOpenOrderId(r.id)}>{`З-${String(v ?? 0).padStart(3, '0')}`}</a> },
-    { title: 'Название', dataIndex: 'title', key: 'title', render: (v) => v ?? '—' },
     { title: 'Стадия', dataIndex: 'sourcing_status', key: 'stage', width: 140, render: (v) => <SourcingStatusTag status={v} /> },
     { title: 'Канал', dataIndex: 'procurement_method', key: 'method', width: 150, render: (v) => <ProcurementMethodTag method={v} /> },
     { title: 'Тендер', dataIndex: 'tender_status', key: 'tender', width: 150, render: (v) => <TenderStatusTag status={v} /> },

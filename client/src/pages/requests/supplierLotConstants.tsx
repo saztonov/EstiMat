@@ -11,6 +11,9 @@ import {
 const SOURCING_COLOR: Record<string, string> = {
   forming: 'default',
   sourcing: 'processing',
+  // Без своего цвета стадия согласования красилась серым «по умолчанию» — то есть выглядела как
+  // черновик, хотя это ожидание решения руководителя.
+  approval: 'gold',
   awarded: 'green',
   cancel_pending: 'warning',
   cancelled: 'default',

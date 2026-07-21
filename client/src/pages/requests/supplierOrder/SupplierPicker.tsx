@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Modal, Input, Select, Space, App } from 'antd';
+import { Select } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 
@@ -28,32 +28,5 @@ export function SupplierPicker({ value, onChange }: { value?: SupplierSel; onCha
       placeholder="Поиск по названию или ИНН" style={{ width: '100%' }}
       onChange={(val) => onChange(options.find((o) => o.value === val)?.supplier)}
     />
-  );
-}
-
-/** Модалка добавления поставщика в список предложений (из справочника). */
-export function AddSupplierModal({
-  open, onClose, onSubmit,
-}: {
-  open: boolean; onClose: () => void;
-  onSubmit: (b: { supplierId: string; supplierName: string; supplierInn?: string }) => void;
-}) {
-  const { message } = App.useApp();
-  const [sel, setSel] = useState<SupplierSel>();
-  return (
-    <Modal
-      open={open} title="Поставщик" onCancel={onClose} destroyOnClose afterClose={() => setSel(undefined)}
-      onOk={() => {
-        if (!sel) return message.warning('Выберите поставщика из справочника');
-        onSubmit({ supplierId: sel.id, supplierName: sel.name, supplierInn: sel.inn ?? undefined });
-        setSel(undefined);
-      }}
-      okText="Добавить"
-    >
-      <Space direction="vertical" style={{ width: '100%' }}>
-        <SupplierPicker value={sel} onChange={setSel} />
-        <Input placeholder="ИНН" value={sel?.inn ?? ''} disabled />
-      </Space>
-    </Modal>
   );
 }

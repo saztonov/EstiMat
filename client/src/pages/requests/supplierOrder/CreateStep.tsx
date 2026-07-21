@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Modal, Input, Select, Radio, Spin, Alert, App } from 'antd';
+import { Modal, Select, Radio, Spin, Alert, App } from 'antd';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { round4 } from '../requestConstants';
@@ -20,7 +20,6 @@ export function CreateStep({
 }: { projectId: string; rows: Su10MaterialRow[]; onCancel: () => void; onCreated: (id: string) => void }) {
   const { message } = App.useApp();
   const [mode, setMode] = useState<'new' | 'existing'>('new');
-  const [title, setTitle] = useState('');
   const [orderId, setOrderId] = useState<string | undefined>();
   const [schedule, setSchedule] = useState<OrderScheduleValue[]>([]);
   const [meta, setMeta] = useState<ScheduleMeta>({ incomplete: [], excluded: [] });
@@ -100,10 +99,11 @@ export function CreateStep({
 
   const submit = useMutation({
     mutationFn: (payload: { items: { requestItemId: string; quantity: number }[]; deliverySchedule: OrderScheduleValue[] }) =>
+      // title больше не задаётся: заказ опознаётся номером, объектом и составом. Колонка в БД
+      // осталась ради названий у ранее созданных заказов (их читают экспорт КП и выбор заказа).
       api.post<{ data: { id: string } }>('/supplier-orders', {
         projectId,
         orderId: mode === 'existing' ? orderId : undefined,
-        title: mode === 'new' ? title.trim() || undefined : undefined,
         clientRequestId,
         items: payload.items,
         deliverySchedule: payload.deliverySchedule,
@@ -154,18 +154,15 @@ export function CreateStep({
         value={mode} onChange={(e) => setMode(e.target.value)} style={{ marginBottom: 12 }} optionType="button"
         options={[{ value: 'new', label: 'Новый заказ' }, { value: 'existing', label: 'Добавить в существующий' }]}
       />
-      {mode === 'new' ? (
-        <Input
-          placeholder="Название заказа (необязательно)" value={title}
-          onChange={(e) => setTitle(e.target.value)} style={{ marginBottom: 12 }}
-        />
-      ) : (
+      {mode === 'existing' && (
         <Select
           placeholder="Выберите формируемый заказ" style={{ width: '100%', marginBottom: 12 }}
           value={orderId} onChange={setOrderId} loading={ordersQ.isLoading}
           options={(ordersQ.data?.data ?? []).map((l) => ({
             value: l.id,
-            label: `З-${String(l.order_no ?? 0).padStart(3, '0')}${l.title ? ` · ${l.title}` : ''} (${l.items_count} поз.)`,
+            // Хвост с названием оставлен ради заказов, созданных до отказа от этого поля: без него
+            // у них пропал бы единственный человекочитаемый признак.
+            label: `З-${String(l.order_no ?? 0).padStart(3, '0')} · ${l.items_count} поз. · ${l.requests_count} заявк.${l.title ? ` · ${l.title}` : ''}`,
           }))}
           notFoundContent="Формируемых заказов нет"
         />
