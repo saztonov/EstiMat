@@ -1,7 +1,7 @@
+import { useState, type KeyboardEvent } from 'react';
 import { Alert, Collapse, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { MaterialGroupDto } from '@estimat/shared';
-import { formatMoney } from '../../estimates/components/types';
 import type { OrderMaterialRow } from './orderRow';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupCard } from './GroupCard';
@@ -10,9 +10,14 @@ import type { DimensionFinding } from './dimensionChecks';
 import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
 import type { SplitNode } from './smartSplit';
 import { SmartSplitView } from './SmartSplitView';
+import { groupCheck } from './smartReview';
 
 /** Сколько корпусов показать тегами в шапке блока, прежде чем свернуть в «+N». */
 const MAX_ZONE_TAGS = 4;
+/** Длинные виды работ («Автомат-я, диспетч-я и мониторинг: …») иначе съедают всю шапку. */
+const MAX_COST_TYPE_WIDTH = 220;
+/** Замечаний по размерности может не быть вовсе — общая пустая карта вместо новой на каждый блок. */
+const EMPTY_DIMENSION = new Map<string, DimensionFinding>();
 
 interface Props {
   group: MaterialGroupDto;
@@ -32,27 +37,21 @@ interface Props {
   onCostTypeCiphers: OnCostTypeCiphers;
 }
 
-/**
- * Подпись статуса — проекция двух независимых осей (комплектность × совместимость) на понятные
- * сметчику формулировки из ТЗ. Одним enum это не выразить: группа может быть полной, но с
- * возможной несостыковкой, и наоборот.
- *
- * У благополучной группы тега НЕТ: на смете из тридцати операций двадцать пять зелёных «Комплект
- * выглядит полным» — шум, в котором теряется единственный красный. Отсутствие тега и есть «всё в
- * порядке».
- */
-export function groupStatus(g: MaterialGroupDto): { label: string; color: string } | null {
-  if (g.compatibility === 'possible_issue') return { label: 'Возможные несовместимости', color: 'red' };
-  if (g.completeness === 'incomplete') return { label: 'Неполный комплект', color: 'orange' };
-  if (g.completeness === 'complete' && g.compatibility === 'no_issues') return null;
-  // Модель не смогла сделать вывод — это честный ответ, а не ошибка.
-  return { label: 'Требует проверки', color: 'gold' };
-}
-
 const SEVERITY_LABEL: Record<string, string> = {
   warning: 'Предупреждение',
   review: 'Требует проверки',
   recommendation: 'Рекомендация',
+};
+
+/** Тип плашки резюме — по цвету бейджа, чтобы шапка и панель говорили об одной важности. */
+const ALERT_TYPE = { red: 'error', orange: 'warning', gold: 'info' } as const;
+
+/** Enter/Space на теге внутри кликабельной шапки: без остановки всплытия блок бы свернулся. */
+const onActivate = (e: KeyboardEvent<HTMLElement>, run: () => void) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  e.preventDefault();
+  e.stopPropagation();
+  run();
 };
 
 export function SmartGroupCard({
@@ -68,14 +67,17 @@ export function SmartGroupCard({
   collapsedNodes,
   onCostTypeCiphers,
 }: Props) {
-  // Итог — только по строкам с ценой закупки: сметные цены материалов во вкладке не показываются.
-  const priced = rows.filter((r) => r.materialCost != null);
-  const total = priced.reduce((s, r) => s + (r.materialCost ?? 0), 0);
-  const status = groupStatus(group);
-  // Детерминированные замечания входят в счётчик наравне с модельными: иначе блок проверки у
-  // группы без замечаний ИИ просто не отрисуется, и находка останется невидимой.
-  const dimIssues = dimension ? rows.map((r) => dimension.get(r.orderKey)).filter((f) => !!f) : [];
-  const findings = group.issues.length + group.missing.length + dimIssues.length;
+  // Панель проверки открывается и снаружи — кликом по бейджу в шапке.
+  const [checkOpen, setCheckOpen] = useState(false);
+  // Состояние проверки считает smartReview — тот же расчёт, что стоит за отбором «Только с
+  // замечаниями». Размерность берём по видимым строкам: у подрядчика группа обрезана до его доли.
+  const check = groupCheck(group, dimension ?? EMPTY_DIMENSION, rows.map((r) => r.orderKey));
+  const dimIssues = check?.dimension ?? [];
+  const openCheck = () => {
+    setCheckOpen(true);
+    // Свёрнутый блок панели не рисует вовсе — бейдж должен и раскрыть его.
+    if (collapsed) onToggle(group.id);
+  };
   // Вид работ группы: различает карточки-однофамильцы (одна операция в разных видах работ при
   // включённом виде работ не сливается — иначе на экране две одинаковые «Монтаж трубопровода»).
   const costTypes = [...new Set(rows.map((r) => r.costTypeName).filter((n): n is string => !!n))];
@@ -96,44 +98,74 @@ export function SmartGroupCard({
       onToggle={() => onToggle(group.id)}
       title={
         <>
-          <strong style={{ fontSize: 14 }}>{group.name}</strong>
+          {/* Назначение операции — подсказкой: в строке оно спорило с названием за внимание. */}
+          <Tooltip title={group.purpose || undefined}>
+            <strong style={{ fontSize: 14 }}>{group.name}</strong>
+          </Tooltip>
+          {/* Одно сообщение вместо пары «статус + счётчик»: они говорили об одном и том же.
+              Цвет несёт важность, подсказка — причину, клик ведёт к самому результату. */}
+          {check && (
+            <Tooltip title={`${check.axes[0] ?? 'Есть замечания'} — открыть результат проверки`}>
+              <Tag
+                color={check.color}
+                role="button"
+                tabIndex={0}
+                style={{ cursor: 'pointer', marginInlineEnd: 0 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openCheck();
+                }}
+                onKeyDown={(e) => onActivate(e, openCheck)}
+              >
+                Проверить · {check.count}
+              </Tag>
+            </Tooltip>
+          )}
+        </>
+      }
+      meta={<span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>{rows.length} поз.</span>}
+      right={
+        <>
           {/* Тег вида работ открывает его шифры РД. Он лежит внутри кликабельной шапки, поэтому
               без stopPropagation клик заодно свернул бы весь блок. */}
           {costTypeLabel && (
-            <Tooltip title="Показать шифры рабочей документации">
+            <Tooltip title={`${costTypeLabel} — показать шифры рабочей документации`}>
               <Tag
                 color="blue"
-                style={{ cursor: 'pointer' }}
+                role="button"
+                tabIndex={0}
+                style={{
+                  cursor: 'pointer',
+                  marginInlineEnd: 0,
+                  display: 'inline-block',
+                  maxWidth: MAX_COST_TYPE_WIDTH,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  verticalAlign: 'middle',
+                }}
                 onClick={(e) => {
                   e.stopPropagation();
                   onCostTypeCiphers({ costTypeId, costTypeName: costTypeLabel });
                 }}
+                onKeyDown={(e) =>
+                  onActivate(e, () => onCostTypeCiphers({ costTypeId, costTypeName: costTypeLabel }))
+                }
               >
                 {costTypeLabel}
               </Tag>
             </Tooltip>
           )}
-          {status && <Tag color={status.color}>{status.label}</Tag>}
-          {/* Счётчик находок — в шапке: иначе он виден только у развёрнутой карточки, внутри
-              второго сворачивания. */}
-          {findings > 0 && <Tag>Проверить · {findings}</Tag>}
           {zoneNames.slice(0, MAX_ZONE_TAGS).map((z) => (
-            <Tag key={z} color="geekblue" style={{ marginInlineEnd: 4 }}>
+            <Tag key={z} color="geekblue" style={{ marginInlineEnd: 0 }}>
               {z}
             </Tag>
           ))}
-          {zoneNames.length > MAX_ZONE_TAGS && <Tag>+{zoneNames.length - MAX_ZONE_TAGS}</Tag>}
-        </>
-      }
-      meta={
-        <>
-          {group.purpose && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {group.purpose}
-            </Typography.Text>
+          {zoneNames.length > MAX_ZONE_TAGS && (
+            <Tooltip title={zoneNames.slice(MAX_ZONE_TAGS).join(', ')}>
+              <Tag style={{ marginInlineEnd: 0 }}>+{zoneNames.length - MAX_ZONE_TAGS}</Tag>
+            </Tooltip>
           )}
-          <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>{rows.length} поз.</span>
-          {priced.length > 0 && <span style={{ color: 'var(--est-primary)' }}>{formatMoney(total)}</span>}
         </>
       }
       extra={
@@ -142,16 +174,41 @@ export function SmartGroupCard({
         )
       }
     >
-      {findings > 0 && (
+      {check && (
         <Collapse
           size="small"
           style={{ margin: 8 }}
+          activeKey={checkOpen ? ['check'] : []}
+          onChange={(k) => setCheckOpen((Array.isArray(k) ? k.length : Number(!!k)) > 0)}
           items={[
             {
               key: 'check',
-              label: `Результат проверки (${findings})`,
+              label: `Результат проверки (${check.count})`,
               children: (
                 <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {/* Почему блок помечен — первой строкой и всегда: оси комплектности и
+                      совместимости независимы от замечаний, и без резюме причина бейджа терялась. */}
+                  {check.axes.length > 0 && (
+                    <Alert
+                      type={ALERT_TYPE[check.color]}
+                      showIcon
+                      message="Почему блок помечен"
+                      description={
+                        <>
+                          <ul style={{ margin: 0, paddingLeft: 18 }}>
+                            {check.axes.map((a) => (
+                              <li key={a}>{a}</li>
+                            ))}
+                          </ul>
+                          {check.details === 0 && (
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                              Конкретных замечаний ИИ не назвал — проверьте состав блока вручную
+                            </Typography.Text>
+                          )}
+                        </>
+                      }
+                    />
+                  )}
                   {/* Детерминированная проверка — первой: это факт из сметы, а не мнение модели. */}
                   {dimIssues.length > 0 && (
                     <Alert

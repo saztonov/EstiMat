@@ -10,8 +10,10 @@ import { DownOutlined, RightOutlined } from '@ant-design/icons';
 interface Props {
   /** Название блока и теги. */
   title: ReactNode;
-  /** Пояснение, «N поз.», сумма — в той же кликабельной шапке. */
+  /** «N поз.» и прочие подписи — в той же кликабельной шапке, сразу за названием. */
   meta?: ReactNode;
+  /** Классификация блока (вид работ, корпуса) — у правого края шапки, до области действий. */
+  right?: ReactNode;
   /** Действия справа: набор в заявку, дата поставки. Клик по ним шапку не сворачивает —
    *  antd рендерит extra отдельно от заголовка, поэтому stopPropagation не нужен. */
   extra?: ReactNode;
@@ -21,7 +23,7 @@ interface Props {
   children: ReactNode;
 }
 
-export function GroupCard({ title, meta, extra, collapsed, onToggle, children }: Props) {
+export function GroupCard({ title, meta, right, extra, collapsed, onToggle, children }: Props) {
   const { token } = theme.useToken();
   return (
     <Card
@@ -34,7 +36,8 @@ export function GroupCard({ title, meta, extra, collapsed, onToggle, children }:
           borderBottom: collapsed ? 'none' : undefined,
         },
         // Шапка Card по умолчанию однострочная с многоточием — теги и пояснение обрезались бы.
-        title: { whiteSpace: 'normal', overflow: 'visible' },
+        // minWidth: 0 — чтобы длинное название сжималось, а не распирало шапку под правой зоной.
+        title: { whiteSpace: 'normal', overflow: 'visible', minWidth: 0 },
         body: { padding: 0 },
       }}
       title={
@@ -50,9 +53,39 @@ export function GroupCard({ title, meta, extra, collapsed, onToggle, children }:
             }
           }}
         >
-          {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
-          {title}
-          {meta}
+          {/* Левая зона: чем блок является. Сжимается первой — правая держит теги. */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+              flex: '1 1 auto',
+              minWidth: 0,
+            }}
+          >
+            {collapsed ? <RightOutlined style={{ fontSize: 11 }} /> : <DownOutlined style={{ fontSize: 11 }} />}
+            {title}
+            {meta}
+          </div>
+          {/* Правая зона прижата авто-отступом: при нехватке ширины она переносится на вторую
+              строку целиком и остаётся у правого края, а не рвётся между тегами. */}
+          {right && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                gap: 4,
+                flexWrap: 'wrap',
+                flex: '0 1 auto',
+                maxWidth: '100%',
+                marginInlineStart: 'auto',
+              }}
+            >
+              {right}
+            </div>
+          )}
         </div>
       }
       extra={extra}

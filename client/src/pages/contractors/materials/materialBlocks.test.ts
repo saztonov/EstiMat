@@ -11,7 +11,7 @@ import type { AggregatedMaterial, MaterialGroup, MaterialOccurrence } from '../.
 import { buildOrderRows, type CategoryIndex, type OrderMaterialRow } from './orderRow';
 import { buildMaterialTree, pruneNodesByRows, type MaterialLevelSettings } from './materialTree';
 import { REST_KEY, SHARED_KEY, UNGROUPED_KEY, smartBlocks, standardBlocks } from './materialBlocks';
-import { countReviewGroups, isReviewGroup } from './smartReview';
+import { countReviewGroups, groupCheck, isReviewGroup } from './smartReview';
 import type { DimensionFinding } from './dimensionChecks';
 
 // ---------- фикстуры ----------
@@ -236,6 +236,56 @@ test('isReviewGroup: модельные оси и детерминированн
     true,
     'дробное количество прячется отбором, если его не учесть',
   );
+  assert.equal(
+    isReviewGroup(dto({ issues: [{ severity: 'recommendation', message: 'Проверьте марку', orderKeys: [] }] }), empty),
+    true,
+    'бейдж «Проверить» и отбор считают одно: иначе блок с бейджем исчезал при включении отбора',
+  );
+});
+
+test('groupCheck: счёт замечаний, цвет по максимальному риску, обе оси в резюме', () => {
+  const empty = new Map<string, DimensionFinding>();
+  const finding: DimensionFinding = { orderKey: 'k1', name: 'Кран', unit: 'шт', quantity: 1.5, suggested: 2 };
+
+  assert.equal(groupCheck(dto(), empty), null, 'благополучный блок — ни бейджа, ни панели');
+
+  const axisOnly = groupCheck(dto({ completeness: 'unknown' }), empty)!;
+  assert.equal(axisOnly.details, 0);
+  assert.equal(axisOnly.count, 1, 'без конкретики бейдж всё равно зовёт открыть панель');
+  assert.equal(axisOnly.color, 'gold');
+
+  const both = groupCheck(dto({ completeness: 'incomplete', compatibility: 'possible_issue' }), empty)!;
+  assert.deepEqual(
+    both.axes,
+    ['Возможные несовместимости', 'Неполный комплект'],
+    'оси независимы — в панели видны обе причины',
+  );
+  assert.equal(both.color, 'red', 'красный сильнее оранжевого');
+
+  const dim = groupCheck(dto({ orderKeys: ['k1'] }), new Map([['k1', finding]]))!;
+  assert.equal(dim.color, 'orange', 'дробное количество при благополучных осях — не золотой');
+  assert.deepEqual(dim.axes, [], 'модель претензий не имеет — резюме осей не показывается');
+  assert.equal(dim.count, 1);
+
+  const warn = groupCheck(dto({ issues: [{ severity: 'warning', message: 'Разные диаметры', orderKeys: [] }] }), empty)!;
+  assert.equal(warn.color, 'orange');
+  const tip = groupCheck(dto({ issues: [{ severity: 'recommendation', message: 'Проверьте марку', orderKeys: [] }] }), empty)!;
+  assert.equal(tip.color, 'gold', 'рекомендация не выдаёт себя за предупреждение');
+
+  const many = groupCheck(
+    dto({
+      orderKeys: ['k1'],
+      completeness: 'incomplete',
+      issues: [{ severity: 'warning', message: 'Разные диаметры', orderKeys: [] }],
+      missing: [{ name: 'Прокладка', reason: 'нужна к фланцу', need: 'required' }],
+    }),
+    new Map([['k1', finding]]),
+  )!;
+  assert.equal(many.details, 3, 'размерность + замечание + пропуск');
+  assert.equal(many.count, 3, 'резюме осей отдельным замечанием не считается');
+
+  const visible = groupCheck(dto({ orderKeys: ['k1', 'k2'] }), new Map([['k1', finding]]), ['k2']);
+  assert.equal(visible, null, 'у подрядчика размерность считается только по его строкам');
 });
 
 test('countReviewGroups: группы из чужих строк не в счёте', () => {
