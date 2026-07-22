@@ -6,6 +6,7 @@ import { api } from '../../services/api';
 import { money, round4 } from './requestConstants';
 import { SourcingStatusTag, ProcurementMethodTag, TenderStatusTag } from './supplierLotConstants';
 import { SupplierOrderModal } from './SupplierOrderModal';
+import { orderNumberOf } from './supplierOrder/orderHeader';
 
 const { Text } = Typography;
 
@@ -17,6 +18,8 @@ interface OrderBrief {
   procurement_method: string | null;
   tender_status: string | null;
   supplier_name: string | null;
+  /** Подрядчик заказа (по всем его позициям, а не только по позициям открытой заявки). */
+  contractor_name: string | null;
   amount: string | number | null;
   qty: string | number;
 }
@@ -39,10 +42,11 @@ export function RequestLotsSection({ requestId }: { requestId: string }) {
   const cov = data?.data?.coverage;
 
   const columns: ColumnsType<OrderBrief> = [
-    { title: '№', dataIndex: 'order_no', key: 'no', width: 80, render: (v, r) => <a onClick={() => setOpenOrderId(r.id)}>{`З-${String(v ?? 0).padStart(3, '0')}`}</a> },
+    { title: '№', dataIndex: 'order_no', key: 'no', width: 80, render: (v, r) => <a onClick={() => setOpenOrderId(r.id)}>{orderNumberOf(v)}</a> },
     { title: 'Стадия', dataIndex: 'sourcing_status', key: 'stage', width: 140, render: (v) => <SourcingStatusTag status={v} /> },
     { title: 'Канал', dataIndex: 'procurement_method', key: 'method', width: 150, render: (v) => <ProcurementMethodTag method={v} /> },
     { title: 'Тендер', dataIndex: 'tender_status', key: 'tender', width: 150, render: (v) => <TenderStatusTag status={v} /> },
+    { title: 'Подрядчик', dataIndex: 'contractor_name', key: 'contractor', width: 180, render: (v) => v ?? '—' },
     { title: 'Кол-во из заявки', dataIndex: 'qty', key: 'qty', width: 130, align: 'right', render: (v) => round4(v) },
     { title: 'Поставщик', dataIndex: 'supplier_name', key: 'supplier', render: (v) => v ?? '—' },
     { title: 'Сумма', dataIndex: 'amount', key: 'amount', width: 120, align: 'right', render: (v) => money(v) },
@@ -65,7 +69,7 @@ export function RequestLotsSection({ requestId }: { requestId: string }) {
       ) : (
         <Table<OrderBrief>
           rowKey="id" size="small" loading={isLoading} pagination={false}
-          dataSource={orders} columns={columns} scroll={{ x: 900 }}
+          dataSource={orders} columns={columns} scroll={{ x: 1080 }}
         />
       )}
       {openOrderId && (

@@ -4,6 +4,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { round4 } from '../requestConstants';
 import { OrderScheduleEditor } from '../OrderScheduleEditor';
+import { orderNumberOf } from './orderHeader';
 import { validateOrderSchedule, type OrderScheduleValue, type ScheduleMeta } from '../orderSchedule';
 import {
   capacitiesOf, aggregateScheduleLines, prefillFromRows, mergeSchedulePrefill, normalizeSchedule,
@@ -162,7 +163,7 @@ export function CreateStep({
             value: l.id,
             // Хвост с названием оставлен ради заказов, созданных до отказа от этого поля: без него
             // у них пропал бы единственный человекочитаемый признак.
-            label: `З-${String(l.order_no ?? 0).padStart(3, '0')} · ${l.items_count} поз. · ${l.requests_count} заявк.${l.title ? ` · ${l.title}` : ''}`,
+            label: `${orderNumberOf(l.order_no)} · ${l.items_count} поз. · ${l.requests_count} заявк.${l.title ? ` · ${l.title}` : ''}`,
           }))}
           notFoundContent="Формируемых заказов нет"
         />

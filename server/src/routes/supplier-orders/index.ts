@@ -2073,7 +2073,14 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
       fastify.pool.query(
         `SELECT so.id, so.order_no, so.title, so.sourcing_status, so.procurement_method, so.tender_status,
                 so.tender_url, so.supplier_name, so.amount,
-                COALESCE(SUM(soi.quantity), 0)::numeric AS qty
+                COALESCE(SUM(soi.quantity), 0)::numeric AS qty,
+                -- Подрядчик заказа: берём по ВСЕМ его позициям, а не только по позициям открытой
+                -- заявки — заказ мог собираться из нескольких заявок одного подрядчика. Подрядчик у
+                -- заказа один, поэтому min() — просто способ взять это единственное имя. Скалярный
+                -- подзапрос, а не join: запрос уже сгруппирован по so.id.
+                (SELECT min(s2.contractor_name)
+                   FROM supplier_order_items s2
+                  WHERE s2.order_id = so.id AND s2.contractor_name IS NOT NULL) AS contractor_name
            FROM supplier_orders so
            JOIN supplier_order_items soi ON soi.order_id = so.id AND soi.request_id = $1
           WHERE so.kind = 'sourcing'

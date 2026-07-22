@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Modal, Collapse, Button, Space, Tag, Alert, Dropdown, Input, App } from 'antd';
+import { Modal, Collapse, Button, Space, Tag, Alert, Dropdown, Input, Skeleton, App } from 'antd';
 import {
   DeleteOutlined, MoreOutlined, FileExcelOutlined, EditOutlined, SwapOutlined, StopOutlined,
 } from '@ant-design/icons';
@@ -20,7 +20,7 @@ import { OrderItemsEditModal } from './supplierOrder/OrderItemsEditModal';
 import { InvoicesBlock } from './supplierOrder/InvoicesBlock';
 import { ProposalView } from './supplierOrder/ProposalView';
 import { TenderView } from './supplierOrder/TenderView';
-import { primaryActionOf, isCompositionEditable } from './supplierOrder/orderHeader';
+import { primaryActionOf, isCompositionEditable, orderNumberOf } from './supplierOrder/orderHeader';
 import type { Su10MaterialRow, SupplierOrderDetail } from './types';
 
 interface Props {
@@ -58,12 +58,22 @@ export function SupplierOrderModal({ create, orderId, onClose, onChanged }: Prop
 }
 
 /**
- * Загрузчик. Форма вынесена в OrderView и монтируется ТОЛЬКО когда заказ уже получен.
+ * Оболочка окна и загрузчик. Форма вынесена в OrderView и монтируется ТОЛЬКО когда заказ уже получен.
  *
  * Раньше состояние формы (победитель, НДС, тип поставки, цены) объявлялось здесь — до useQuery и
  * до раннего выхода по `!order`. Инициализировать его сохранёнными значениями было физически
  * нечем: при первом рендере данных ещё нет, а условные хуки после раннего выхода запрещены
  * правилами React.
+ *
+ * <Modal> живёт ЗДЕСЬ, а не в OrderView: пока заказ грузился, окно рисовалось отдельной модалкой
+ * («Загрузка…»), а после ответа она размонтировалась и монтировалась вторая — с другой шириной и
+ * своей анимацией. Пользователь видел, как окно подменяется. Теперь экземпляр один на все три
+ * состояния (загрузка, ошибка, заказ), меняется только содержимое.
+ *
+ * Геометрия задаётся через styles.content (высота 90vh на самом .ant-modal-content), а не через
+ * maxHeight тела: так окно не зависит от фактической высоты заголовка, и появление тегов стадии
+ * после загрузки не двигает раскладку. paddingBottom: 0 снимает дефолтный отступ .ant-modal (24px),
+ * из-за которого окно в 90vh давало бы лишнюю прокрутку страницы.
  *
  * key={orderId} обязателен: при переходе на другой заказ форма должна пересоздаться, иначе в ней
  * останется черновик предыдущего.
@@ -76,22 +86,52 @@ function OrderStep({ orderId, onClose, onChanged, justCreated }: {
     queryFn: () => api.get<{ data: SupplierOrderDetail }>(`/supplier-orders/${orderId}`),
   });
   const order = orderQ.data?.data;
+  const number = order ? orderNumberOf(order.order_no) : null;
 
-  if (orderQ.isLoading || !order) {
-    return <Modal open title="Заказ поставщику" footer={null} onCancel={onClose}><div style={{ padding: 24 }}>Загрузка…</div></Modal>;
-  }
   return (
-    <OrderView
-      key={orderId} orderId={orderId} order={order} onClose={onClose} justCreated={justCreated}
-      onChanged={onChanged} refetchOrder={() => { orderQ.refetch(); }}
-    />
+    <Modal
+      open onCancel={onClose} footer={null}
+      width="90vw" style={{ top: '5vh', paddingBottom: 0 }}
+      styles={{
+        content: { height: '90vh', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+        header: { flexShrink: 0 },
+        // Тело — только каркас: прокручивается внутренний контейнер, чтобы нижние кнопки не уезжали.
+        body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+      }}
+      title={
+        <Space wrap>
+          <span>Заказ поставщику{number ? ` ${number}` : ''}</span>
+          {order && <SourcingStatusTag status={order.sourcing_status} />}
+          {order?.project_name && <Tag>{order.project_name}</Tag>}
+          {order?.procurement_method === 'tender' && <Tag color="blue">Тендер</Tag>}
+        </Space>
+      }
+    >
+      {order && number ? (
+        <OrderView
+          key={orderId} orderId={orderId} order={order} number={number} onClose={onClose}
+          justCreated={justCreated} onChanged={onChanged} refetchOrder={() => { orderQ.refetch(); }}
+        />
+      ) : orderQ.isError ? (
+        // Без этой ветки ошибка запроса оставляла окно в вечном «Загрузка…»: причина не видна и
+        // повторить попытку нечем.
+        <Alert
+          type="error" showIcon
+          message="Не удалось загрузить заказ"
+          description={orderQ.error?.message}
+          action={<Button size="small" onClick={() => orderQ.refetch()}>Повторить</Button>}
+        />
+      ) : (
+        <Skeleton active paragraph={{ rows: 8 }} />
+      )}
+    </Modal>
   );
 }
 
 function OrderView({
-  orderId, order, onClose, onChanged, justCreated, refetchOrder,
+  orderId, order, number, onClose, onChanged, justCreated, refetchOrder,
 }: {
-  orderId: string; order: SupplierOrderDetail; onClose: () => void; onChanged: () => void;
+  orderId: string; order: SupplierOrderDetail; number: string; onClose: () => void; onChanged: () => void;
   justCreated: boolean; refetchOrder: () => void;
 }) {
   // modal из useApp() (а не статический Modal.confirm) — иначе диалоги подтверждения
@@ -155,8 +195,6 @@ function OrderView({
     onSuccess: () => { message.success('Заказ отправлен на согласование'); refetch(); },
     onError: (e: Error) => message.error(e.message),
   });
-
-  const number = `З-${String(order.order_no ?? 0).padStart(3, '0')}`;
 
   async function freezeAndExport() {
     try {
@@ -330,50 +368,41 @@ function OrderView({
     }] : []),
   ];
 
+  // Разметка окна: прокручивается только верхний контейнер, нижняя панель закреплена. Боковые
+  // отступы даёт сам .ant-modal-content — здесь их задавать нельзя, иначе удвоятся.
   return (
-    <Modal
-      open onCancel={onClose} footer={null}
-      width="80vw" style={{ maxWidth: 1400, top: 32 }}
-      // Единственный скролл — тело окна: вложенные прокрутки внутри блоков давали бы три полосы.
-      styles={{ body: { maxHeight: '76vh', overflow: 'auto' } }}
-      title={
-        <Space wrap>
-          <span>Заказ поставщику {number}</span>
-          <SourcingStatusTag status={status} />
-          {order.project_name && <Tag>{order.project_name}</Tag>}
-          {isTender && <Tag color="blue">Тендер</Tag>}
-        </Space>
-      }
-    >
-      <OrderHeaderBar order={order} readOnly={terminal} onCommentSaved={refetch} />
+    <>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        <OrderHeaderBar order={order} readOnly={terminal} onCommentSaved={refetch} />
 
-      {terminal && (
-        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
-          message="Заказ завершён без поставщика — материалы возвращены в свод" />
-      )}
+        {terminal && (
+          <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+            message="Заказ завершён без поставщика — материалы возвращены в свод" />
+        )}
 
-      {isTender && (
-        <div style={{ marginBottom: 12 }}>
-          <TenderView
-            order={order}
-            onRefresh={() => run.mutate({ method: 'post', url: `/supplier-orders/${orderId}/tender-refresh` })}
-            onAward={(pid) => run.mutate({
-              method: 'post', url: `/supplier-orders/${orderId}/award`,
-              body: { source: 'tender', winnerParticipantId: pid, expectedVersion: order.row_version },
-            })}
-          />
-        </div>
-      )}
+        {isTender && (
+          <div style={{ marginBottom: 12 }}>
+            <TenderView
+              order={order}
+              onRefresh={() => run.mutate({ method: 'post', url: `/supplier-orders/${orderId}/tender-refresh` })}
+              onAward={(pid) => run.mutate({
+                method: 'post', url: `/supplier-orders/${orderId}/award`,
+                body: { source: 'tender', winnerParticipantId: pid, expectedVersion: order.row_version },
+              })}
+            />
+          </div>
+        )}
 
-      <Collapse
-        items={blocks}
-        activeKey={activeKeys}
-        onChange={(k) => setActiveKeys(Array.isArray(k) ? k : [k])}
-      />
+        <Collapse
+          items={blocks}
+          activeKey={activeKeys}
+          onChange={(k) => setActiveKeys(Array.isArray(k) ? k : [k])}
+        />
+      </div>
 
       {/* Нижняя панель: одно главное действие стадии + редкие операции под «Ещё». */}
       <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0,
         gap: 8, marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--est-border)', flexWrap: 'wrap',
       }}>
         <div>
@@ -392,6 +421,6 @@ function OrderView({
       {itemsEditOpen && (
         <OrderItemsEditModal order={order} onClose={() => setItemsEditOpen(false)} onSaved={refetch} />
       )}
-    </Modal>
+    </>
   );
 }

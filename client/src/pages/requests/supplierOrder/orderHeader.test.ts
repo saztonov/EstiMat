@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  deliveryWindowOf, invoiceLabel, invoicesOf, primaryActionOf, isCompositionEditable,
+  deliveryWindowOf, invoiceLabel, invoicesOf, primaryActionOf, isCompositionEditable, orderNumberOf,
 } from './orderHeader.js';
 import type { SupplierOrderDetail, OrderInvoice } from '../types.js';
 
@@ -21,6 +21,13 @@ const invoice = (patch: Partial<OrderInvoice> = {}) => ({
   superseded_at: null, superseded_reason: null, created_at: '2026-07-01', uploaded_by_name: null,
   ...patch,
 } as OrderInvoice);
+
+test('номер заказа: три разряда, без номера — З-000', () => {
+  assert.equal(orderNumberOf(3), 'З-003');
+  assert.equal(orderNumberOf(142), 'З-142');
+  assert.equal(orderNumberOf(1234), 'З-1234'); // четырёхзначные не режем
+  assert.equal(orderNumberOf(null), 'З-000');
+});
 
 test('окно поставок: границы по крайним датам, повторы не считаются дважды', () => {
   const w = deliveryWindowOf(order({

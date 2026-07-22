@@ -7,6 +7,11 @@
  */
 import type { SupplierOrderDetail, OrderInvoice } from '../types';
 
+/** Человекочитаемый номер заказа «З-NNN». Совпадает с номером в реестре (серверный SQL). */
+export function orderNumberOf(orderNo: number | null | undefined): string {
+  return `З-${String(orderNo ?? 0).padStart(3, '0')}`;
+}
+
 /** Окно поставок: от первой даты до последней. null — график не задан. */
 export interface DeliveryWindow {
   from: string;
