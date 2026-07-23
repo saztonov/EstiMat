@@ -1,11 +1,12 @@
 import { useState } from 'react';
+import type { CSSProperties } from 'react';
 import { App, Button, Modal, Popconfirm, Space, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
+  ArrowRightOutlined,
   CloseOutlined,
   DownloadOutlined,
   EyeOutlined,
-  FilterOutlined,
   UserAddOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -38,8 +39,35 @@ interface Props {
 }
 
 // Высота строки подрядчика: столбцы «Подрядчики» и «Договор» читаются парой, поэтому их строки
-// обязаны стоять на одной высоте.
-const ROW_H = 40;
+// обязаны стоять на одной высоте. 36 = две строки имени по 16 px плюс отступ.
+const ROW_H = 36;
+
+// Длинный текст в узкой колонке: перенос без обрезания.
+const wrapCell: CSSProperties = { whiteSpace: 'normal', overflowWrap: 'anywhere' };
+
+// Имя подрядчика — ровно две строки с многоточием (полный текст в подсказке).
+// maxHeight страхует браузеры без line-clamp.
+const contractorNameCell: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: '-webkit-box',
+  WebkitBoxOrient: 'vertical',
+  WebkitLineClamp: 2,
+  overflow: 'hidden',
+  overflowWrap: 'anywhere',
+  fontSize: 12,
+  lineHeight: '16px',
+  maxHeight: 32,
+};
+
+// Компактный бейдж и кнопка: в суженной колонке «Подрядчики» место отдаётся имени.
+const compactTag: CSSProperties = {
+  marginInlineEnd: 0,
+  fontSize: 11,
+  lineHeight: '16px',
+  padding: '0 4px',
+};
+const compactBtn: CSSProperties = { width: 22, minWidth: 22, padding: 0 };
 
 function formatContractDate(iso: string | null): string {
   if (!iso) return '';
@@ -55,14 +83,14 @@ function TagList({ values }: { values: string[] }) {
     <Space size={4} wrap>
       {shown.map((v) => (
         <Tooltip key={v} title={v}>
-          <Tag style={{ marginInlineEnd: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <Tag style={{ ...compactTag, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
             {v}
           </Tag>
         </Tooltip>
       ))}
       {values.length > shown.length && (
         <Tooltip title={values.join(', ')}>
-          <Tag style={{ marginInlineEnd: 0 }}>+{values.length - shown.length}</Tag>
+          <Tag style={compactTag}>+{values.length - shown.length}</Tag>
         </Tooltip>
       )}
     </Space>
@@ -126,15 +154,16 @@ export function VorObjectListModal({
       title: 'Название',
       dataIndex: 'name',
       key: 'name',
-      ellipsis: true,
+      width: 156,
+      render: (v: string) => <span style={wrapCell}>{v}</span>,
       ...getColumnSearchProps((r) => r.name),
     },
     {
       title: 'Автор',
       dataIndex: 'createdByName',
       key: 'createdByName',
-      width: 240,
-      ellipsis: true,
+      width: 170,
+      render: (v: string) => <span style={wrapCell}>{v}</span>,
       filters: uniqueFilters(data ?? [], (r) => r.createdByName),
       filterSearch: true,
       onFilter: (value, record) => record.createdByName === value,
@@ -143,25 +172,25 @@ export function VorObjectListModal({
       title: 'Дата',
       dataIndex: 'createdAt',
       key: 'createdAt',
-      width: 140,
-      render: (v: string) => new Date(v).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }),
+      width: 100,
+      render: (v: string) => new Date(v).toLocaleDateString('ru-RU'),
     },
     {
       title: 'Местоположения',
       key: 'locations',
-      width: 260,
+      width: 208,
       render: (_v, r) => <TagList values={r.facets.locations} />,
     },
     {
       title: 'Типы',
       key: 'types',
-      width: 300,
+      width: 240,
       render: (_v, r) => <TagList values={r.facets.types} />,
     },
     {
       title: 'Подрядчики',
       key: 'contractors',
-      width: 300,
+      width: 210,
       render: (_v, r) =>
         r.contractors.length === 0 ? (
           <span style={{ color: 'var(--est-text-tertiary)' }}>—</span>
@@ -178,23 +207,20 @@ export function VorObjectListModal({
                 >
                   <span
                     style={{
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      ...contractorNameCell,
                       color: empty ? 'var(--est-text-tertiary)' : undefined,
                     }}
                     title={c.contractorName ?? '—'}
                   >
                     {c.contractorName ?? '—'}
                   </span>
-                  {empty && <Tag style={{ marginInlineEnd: 0 }}>без строк</Tag>}
+                  {empty && <Tag style={compactTag}>без строк</Tag>}
                   <Tooltip title={empty ? 'Строк за подрядчиком нет' : 'Показать строки договора в смете'}>
                     <Button
                       type="text"
                       size="small"
-                      icon={<FilterOutlined />}
+                      style={compactBtn}
+                      icon={<ArrowRightOutlined />}
                       disabled={empty}
                       aria-label="Показать строки договора"
                       onClick={() =>
@@ -220,6 +246,7 @@ export function VorObjectListModal({
                         type="text"
                         size="small"
                         danger
+                        style={compactBtn}
                         icon={<CloseOutlined />}
                         aria-label="Снять подрядчика"
                       />
@@ -245,7 +272,9 @@ export function VorObjectListModal({
                 key={c.contractorId}
                 style={{ height: ROW_H, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}
               >
-                <span>{c.contractNumber || <span style={{ color: 'var(--est-text-tertiary)' }}>—</span>}</span>
+                <span style={{ fontSize: 12, lineHeight: '16px' }}>
+                  {c.contractNumber || <span style={{ color: 'var(--est-text-tertiary)' }}>—</span>}
+                </span>
                 {c.contractDate && (
                   <span style={{ fontSize: 11, color: 'var(--est-text-tertiary)' }}>
                     {formatContractDate(c.contractDate)}
@@ -310,10 +339,11 @@ export function VorObjectListModal({
         <Table<EstimateVor>
           rowKey="id"
           size="small"
+          className="estimat-compact"
           loading={isLoading}
           columns={columns}
           dataSource={data ?? []}
-          scroll={{ x: 1700 }}
+          scroll={{ x: 1414 }}
           pagination={DEFAULT_PAGINATION}
           onRow={(r) => ({
             style: r.id === focusVorId ? { background: 'var(--est-warning-bg)' } : undefined,
