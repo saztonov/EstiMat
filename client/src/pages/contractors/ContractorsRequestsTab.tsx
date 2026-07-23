@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Space, Button, Tooltip, Empty, Badge, Select, Input, Alert, App } from 'antd';
 import { FileExcelOutlined, MessageOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -19,6 +19,7 @@ import { CipherTags } from '../../components/CipherTags';
 import { contractorRequestsColumnsStore } from './columns/contractorRequestsColumns';
 import { RequestStatusTag, RequestTypeTag, money } from '../requests/requestConstants';
 import { RequestDetailModal } from '../requests/RequestDetailModal';
+import { RequestInfoPopover } from '../requests/RequestInfoPopover';
 import { useUnreadCounts } from '../requests/useUnreadCounts';
 import type { RequestRow } from '../requests/types';
 
@@ -26,13 +27,15 @@ interface Props {
   estimateId: string;
   /** Подрядчику колонка «Подрядчик» не нужна (все заявки — его). */
   viewerIsContractor: boolean;
+  /** Вкладка открыта сейчас. Скрытая остаётся смонтированной — см. обновление списка ниже. */
+  active: boolean;
 }
 
 interface Filters { type?: string; status?: string; q?: string }
 type Row = GroupRow<RequestRow>;
 
 /** Вкладка «Заявки» на странице сметы объекта: заявки только по этому объекту, карточка в окне. */
-export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props) {
+export function ContractorsRequestsTab({ estimateId, viewerIsContractor, active }: Props) {
   const { message } = App.useApp();
   const [openId, setOpenId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -58,11 +61,25 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
     return p.toString();
   }, [estimateId, filters, page, pageSize, needFull]);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch } = useQuery({
     queryKey: ['requests', 'by-estimate', estimateId, filters, needFull ? 'all' : page, needFull ? 0 : pageSize],
     queryFn: () => api.get<{ data: RequestRow[]; meta: { total: number; truncated?: boolean } }>(`/requests?${qs}`),
     enabled: !!estimateId,
+    // Только у открытой вкладки: скрытая остаётся смонтированной и иначе гоняла бы в фоне запрос
+    // всего набора (all=1) на каждый возврат фокуса в окно.
+    refetchOnWindowFocus: active,
   });
+
+  // Antd Tabs не размонтирует однажды показанную панель, поэтому возврат на вкладку сам по себе
+  // список не перезапрашивает: заявка, созданная на «Материалах» (или другим пользователем),
+  // появлялась только после перезагрузки страницы. Первый показ пропускаем — панель монтируется
+  // ровно в момент первой активации и грузит запрос сама.
+  const shown = useRef(false);
+  useEffect(() => {
+    if (!active) return;
+    if (shown.current) void refetch();
+    else shown.current = true;
+  }, [active, refetch]);
   const rows = data?.data ?? [];
   const total = data?.meta?.total ?? 0;
   const truncated = (data?.meta?.truncated ?? false) && needFull;
@@ -110,15 +127,36 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
       const c = unread[leaf(r).id] || 0;
       return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: 'var(--est-text-tertiary)' }} /></Badge> : null;
     } },
-    { title: 'Номер', key: 'number', width: 120, ...gt.hf('number', filterSpecs.number), render: (_v, r) => <strong>{leaf(r).number}</strong> },
-    { title: 'Дата', key: 'created_at', width: 150, ...gt.hf('created_at', filterSpecs.created_at), render: (_v, r) => new Date(leaf(r).created_at).toLocaleString('ru-RU') },
-    { title: 'Вид', key: 'request_type', width: 170, ...gt.hf('request_type', filterSpecs.request_type), render: (_v, r) => <RequestTypeTag type={leaf(r).request_type} /> },
+    { title: 'Номер', key: 'number', width: 110, ...gt.hf('number', filterSpecs.number), render: (_v, r) => <strong>{leaf(r).number}</strong> },
+    { title: 'Дата', key: 'created_at', width: 130, ...gt.hf('created_at', filterSpecs.created_at), render: (_v, r) => new Date(leaf(r).created_at).toLocaleString('ru-RU') },
+    { title: 'Вид', key: 'request_type', width: 150, ...gt.hf('request_type', filterSpecs.request_type), render: (_v, r) => <RequestTypeTag type={leaf(r).request_type} /> },
     ...(!viewerIsContractor
-      ? ([{ title: 'Подрядчик', key: 'contractor_name', ...gt.hf('contractor_name', filterSpecs.contractor_name), render: (_v: unknown, r: Row) => leaf(r).contractor_name || '—' }] as ColumnsType<Row>)
+      ? ([{
+          title: 'Подрядчик', key: 'contractor_name', width: 170, ellipsis: { showTitle: true },
+          ...gt.hf('contractor_name', filterSpecs.contractor_name),
+          render: (_v: unknown, r: Row) => leaf(r).contractor_name || '—',
+        }] as ColumnsType<Row>)
       : []),
-    { title: 'Статус', key: 'status', width: 160, ...gt.hf('status', filterSpecs.status), render: (_v, r) => { const row = leaf(r); return <RequestStatusTag status={row.status} comment={row.revision_reason} />; } },
-    { title: 'Сумма', key: 'order_amount', width: 130, align: 'right', ...gt.hf('order_amount', filterSpecs.order_amount), render: (_v, r) => money(leaf(r).order_amount) },
-    { title: 'Шифры РД', key: 'rd_ciphers', width: 200, ...gt.hf('rd_ciphers', filterSpecs.rd_ciphers), render: (_v, r) => <CipherTags codes={leaf(r).rd_ciphers ?? []} /> },
+    {
+      title: 'Информация', key: 'info', width: 96, align: 'center',
+      // Клик по кнопке не должен открывать карточку заявки (строка кликабельна) — как в «Действиях».
+      onCell: () => ({ onClick: (e: { stopPropagation: () => void }) => e.stopPropagation() }),
+      render: (_v, r) => {
+        const row = leaf(r);
+        return (
+          <RequestInfoPopover
+            requestId={row.id}
+            contractorName={row.contractor_name}
+            ciphers={row.rd_ciphers ?? []}
+          />
+        );
+      },
+    },
+    { title: 'Статус', key: 'status', width: 140, ...gt.hf('status', filterSpecs.status), render: (_v, r) => { const row = leaf(r); return <RequestStatusTag status={row.status} comment={row.revision_reason} />; } },
+    { title: 'Сумма', key: 'order_amount', width: 120, align: 'right', ...gt.hf('order_amount', filterSpecs.order_amount), render: (_v, r) => money(leaf(r).order_amount) },
+    // Единственная колонка без width: при заданном scroll.x она забирает всё свободное место, и
+    // длинные перечни шифров перестают ломаться на три строки.
+    { title: 'Шифры РД', key: 'rd_ciphers', ...gt.hf('rd_ciphers', filterSpecs.rd_ciphers), render: (_v, r) => <CipherTags codes={leaf(r).rd_ciphers ?? []} /> },
     {
       title: '', key: 'actions', width: 110,
       onCell: () => ({ onClick: (e: { stopPropagation: () => void }) => e.stopPropagation() }),
@@ -170,7 +208,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor }: Props
           pagination={needFull
             ? { ...DEFAULT_PAGINATION }
             : { ...DEFAULT_PAGINATION, current: page, pageSize, total, onChange: (p, ps) => { setPage(p); setPageSize(ps); } }}
-          scroll={{ x: 900, y: 'flex' }}
+          scroll={{ x: 1300, y: 'flex' }}
           onRow={(r) => (isGroupRow(r) ? {} : {
             onClick: () => setOpenId(leaf(r).id),
             onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(leaf(r).id); } },

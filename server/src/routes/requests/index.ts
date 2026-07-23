@@ -32,6 +32,8 @@ import {
   lineKey,
   appendRequestAudit,
 } from '../../lib/material-requests/access.js';
+import { ensureVorFacets, EMPTY_FACETS, type VorFacetsRow } from '../../lib/vor/manifest.js';
+import { pickRequestVors } from '../../lib/vor/request-context.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { matchResponsibleCarryOver, type ItemKey, type ResponsibleSnapshot } from '../../lib/requests/responsible-carryover.js';
 import {
@@ -348,6 +350,81 @@ export default async function requestRoutes(fastify: FastifyInstance) {
         revisions: revisions.rows,
         history: history.rows,
         rp_letter: rpLetter.rows[0] ?? null,
+      },
+    };
+  });
+
+  // ============================================================
+  // GET /:id/vor-context — по какому ВОР и договору заведена заявка (поповер «Информация» на
+  //   вкладке «Заявки» раздела «Подрядчики»). Ленивый роут, а не поле списка: список отдаёт ещё и
+  //   общий реестр заявок с режимом all=1 (до 5000 строк), а поповер открывают по одному.
+  //
+  //   Реквизиты договора — ТЕКУЩИЕ, а не снимок на момент заявки: номер и дата правятся в
+  //   «Назначении подрядчика», и в реестре ВОР и в заявке они обязаны выглядеть одинаково.
+  // ============================================================
+  fastify.get<{ Params: { id: string } }>('/:id/vor-context', async (request, reply) => {
+    const res = await loadScoped(request.params.id, request.currentUser);
+    if (!res.ok) return reply.status(res.code).send({ error: res.msg });
+    const mr = res.row;
+    if (!mr.estimate_id || !mr.contractor_id) {
+      return { data: { matched: 'estimate', hasUnlinkedItems: false, vors: [] } };
+    }
+
+    const [vorRes, unlinkedRes] = await Promise.all([
+      // Берём ВОР объекта, которые либо содержат строки этой заявки, либо связаны с подрядчиком
+      // договором. Договор — LEFT JOIN: подрядчика могли назначить до появления реестра договоров
+      // (0083), и тогда ВОР с местоположениями и типами есть, а реквизитов договора нет — терять
+      // из-за этого весь контекст нельзя.
+      //
+      // Связь «позиция заявки → строка сметы» считается тем же инвариантом, что и защита
+      // назначений (link_resolution IN ('exact','reconstructed'), см. lib/contractors/bulk-assign),
+      // иначе поповер показывал бы ВОР там, где переназначение подрядчика не блокируется.
+      fastify.pool.query(
+        `SELECT * FROM (
+           SELECT v.id, v.name, v.created_at, v.content_facets, v.snapshot_key, v.snapshot_checksum,
+                  v.content_schema_version,
+                  vc.contract_number, vc.contract_date::text AS contract_date,
+                  vc.vor_id IS NOT NULL AS has_contract,
+                  EXISTS (SELECT 1 FROM estimate_vor_items vi
+                            JOIN material_request_item_sources s ON s.item_id = vi.item_id
+                            JOIN material_request_items mri ON mri.id = s.request_item_id
+                                                          AND mri.request_id = $1
+                                                          AND mri.link_resolution IN ('exact','reconstructed')
+                           WHERE vi.vor_id = v.id) AS from_items
+             FROM estimate_vors v
+             LEFT JOIN estimate_vor_contractors vc ON vc.vor_id = v.id AND vc.contractor_id = $2
+            WHERE v.estimate_id = $3
+         ) t
+          WHERE t.from_items OR t.has_contract
+          ORDER BY t.created_at DESC`,
+        [mr.id, mr.contractor_id, mr.estimate_id],
+      ),
+      // Полнота покрытия считается по ПОЗИЦИЯМ: часть может быть связана со сметой, часть нет —
+      // тогда найденные ВОР описывают заявку не целиком, и об этом честно говорим в поповере.
+      fastify.pool.query(
+        `SELECT EXISTS (SELECT 1 FROM material_request_items
+                         WHERE request_id = $1 AND link_resolution = 'unresolved') AS has_unlinked`,
+        [mr.id],
+      ),
+    ]);
+
+    const facetsByVor = await ensureVorFacets(fastify, vorRes.rows as VorFacetsRow[]);
+    const { matched, vors } = pickRequestVors(
+      vorRes.rows.map((r) => ({
+        vorId: r.id as string,
+        vorName: r.name as string,
+        contractNumber: (r.contract_number as string | null) ?? null,
+        contractDate: (r.contract_date as string | null) ?? null,
+        fromItems: r.from_items as boolean,
+        facets: facetsByVor.get(r.id as string) ?? EMPTY_FACETS,
+      })),
+    );
+
+    return {
+      data: {
+        matched,
+        hasUnlinkedItems: Boolean(unlinkedRes.rows[0]?.has_unlinked),
+        vors,
       },
     };
   });

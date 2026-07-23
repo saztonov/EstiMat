@@ -23,9 +23,15 @@ export interface ColumnPrefs {
   hidden: Record<string, boolean>;
 }
 
-// Нормализация persisted-настроек: выкинуть неизвестные ключи, дописать новые (появившиеся
-// в defs) в конец, required-колонки считать видимыми даже если помечены hidden. Дефолтная
-// видимость — из defs.defaultHidden, явное значение пользователя её перекрывает.
+// Нормализация persisted-настроек: выкинуть неизвестные ключи, вставить новые (появившиеся
+// в defs) на их место из defs, required-колонки считать видимыми даже если помечены hidden.
+// Дефолтная видимость — из defs.defaultHidden, явное значение пользователя её перекрывает.
+//
+// «Место из defs» = сразу за ближайшим предшественником по defs, который уже стоит в сохранённом
+// порядке (предшественников нет — в начало). Раньше новый ключ всегда дописывался в конец, поэтому
+// добавленный в середину столбец у тех, кто таблицу уже открывал, уезжал в хвост, и порядок у
+// старых и новых пользователей расходился. Ключей, уже сохранённых у пользователя, правило не
+// касается — его порядок и перестановки сохраняются.
 export function resolveColumnPrefs(
   defs: ColumnDef[],
   order: string[],
@@ -37,7 +43,16 @@ export function resolveColumnPrefs(
   const seen = new Set<string>();
   const norm: string[] = [];
   for (const k of order) if (known.has(k) && !seen.has(k)) { norm.push(k); seen.add(k); }
-  for (const d of defs) if (!seen.has(d.key)) { norm.push(d.key); seen.add(d.key); }
+  defs.forEach((d, i) => {
+    if (seen.has(d.key)) return;
+    let at = 0;
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = norm.indexOf(defs[j]!.key);
+      if (prev >= 0) { at = prev + 1; break; }
+    }
+    norm.splice(at, 0, d.key);
+    seen.add(d.key);
+  });
   const effHidden: Record<string, boolean> = {};
   for (const k of norm)
     effHidden[k] = required.has(k) ? false : (hidden[k] ?? defaultHidden.has(k));

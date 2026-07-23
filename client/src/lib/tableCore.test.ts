@@ -21,10 +21,21 @@ const DEFS: ColumnDef[] = [
 ];
 
 test('resolveColumnPrefs: нормализация старого localStorage', () => {
-  // Сохранён устаревший порядок: неизвестный ключ + пропущенные новые колонки.
+  // Сохранён устаревший порядок: неизвестный ключ + пропущенные новые колонки. Недостающие встают
+  // на своё место из defs: «Объект» — первым (предшественников нет), «Сумма» — следом за «Материалом».
   const prefs = resolveColumnPrefs(DEFS, ['ghost', 'contractor', 'name'], { ghost: true });
-  assert.deepEqual(prefs.order, ['contractor', 'name', 'project', 'amount']);
+  assert.deepEqual(prefs.order, ['project', 'contractor', 'name', 'amount']);
   assert.equal('ghost' in prefs.hidden, false);
+});
+
+test('resolveColumnPrefs: новый столбец встаёт в середину, а не в хвост', () => {
+  // Столбец добавили в defs между «Подрядчиком» и «Материалом»; у пользователя сохранён порядок
+  // без него, причём переставленный — место считается по фактическим соседям, а не по defs.
+  const withInfo: ColumnDef[] = [
+    DEFS[0]!, DEFS[1]!, { key: 'info', label: 'Информация' }, DEFS[2]!, DEFS[3]!,
+  ];
+  const prefs = resolveColumnPrefs(withInfo, ['amount', 'contractor', 'name', 'project'], {});
+  assert.deepEqual(prefs.order, ['amount', 'contractor', 'info', 'name', 'project']);
 });
 
 test('resolveColumnPrefs: required нельзя скрыть, defaultHidden работает, явный показ перекрывает', () => {

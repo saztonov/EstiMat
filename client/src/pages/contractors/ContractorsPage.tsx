@@ -349,7 +349,13 @@ export function ContractorsPage() {
             {
               key: 'requests',
               label: 'Заявки',
-              children: <ContractorsRequestsTab estimateId={estimateId} viewerIsContractor={viewerIsContractor} />,
+              children: (
+                <ContractorsRequestsTab
+                  estimateId={estimateId}
+                  viewerIsContractor={viewerIsContractor}
+                  active={activeTab === 'requests'}
+                />
+              ),
             },
           ]}
         />

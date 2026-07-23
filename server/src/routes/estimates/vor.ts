@@ -2,12 +2,19 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { randomUUID, createHash } from 'node:crypto';
-import { gzipSync, gunzipSync } from 'node:zlib';
+import { gzipSync } from 'node:zlib';
 import { requireRole } from '../../middleware/requireRole.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { loadProjectId } from '../../lib/estimate-detail.js';
-import { buildContentFacets, exportEstimateKp, ExportError } from '../../lib/estimate-export/index.js';
+import { exportEstimateKp, ExportError } from '../../lib/estimate-export/index.js';
+import {
+  ensureVorFacets,
+  loadVorManifest,
+  readObjectBuffer,
+  type VorFacetsRow,
+  type VorSnapshotMeta,
+} from '../../lib/vor/manifest.js';
 import { gatherVorItemSnapshots } from '../../lib/estimate-export/data.js';
 import { renderXlsxPreview } from '../../lib/estimate-export/xlsx-preview.js';
 import {
@@ -94,43 +101,9 @@ async function streamStoredFile(
   return reply.send(obj.body);
 }
 
-// Прочитать объект S3 целиком в память (для gzip-manifest — маленький, не стримим).
-async function readObjectBuffer(fastify: FastifyInstance, key: string): Promise<Buffer> {
-  const obj = await fastify.storage!.getObject(key);
-  const chunks: Buffer[] = [];
-  for await (const c of obj.body as AsyncIterable<Buffer | string>) {
-    chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
-  }
-  return Buffer.concat(chunks);
-}
-
-/** Метаданные снимка ВОР из БД (нужны и diff'у, и импорту цен, и фасетам реестра). */
-export interface VorSnapshotMeta {
-  snapshotKey: string | null;
-  snapshotChecksum: Buffer | null;
-  version: number;
-}
-
-/**
- * Построчный снимок ВОР из S3. null — снимка нет или он непригоден: легаси-ВОР (version 0),
- * неподдерживаемая версия схемы, отсутствующий/повреждённый объект. Вызывающий решает сам,
- * что это значит: для diff — «подробности недоступны», для импорта цен — отказ.
- */
-export async function loadVorManifest(
-  fastify: FastifyInstance,
-  meta: VorSnapshotMeta,
-): Promise<VorManifest | null> {
-  const { snapshotKey, snapshotChecksum, version } = meta;
-  if (!snapshotKey || version < 1 || !isSupportedSchemaVersion(version) || !fastify.storage) return null;
-  try {
-    const gz = await readObjectBuffer(fastify, snapshotKey);
-    if (snapshotChecksum && !createHash('sha256').update(gz).digest().equals(snapshotChecksum)) return null;
-    return JSON.parse(gunzipSync(gz).toString()) as VorManifest;
-  } catch (err) {
-    fastify.log.warn({ err, snapshotKey }, 'vor manifest read/parse failed');
-    return null;
-  }
-}
+// Чтение построчного снимка и фасетов переехало в lib/vor/manifest.ts (тем же кодом пользуется
+// контекст заявки в разделе «Подрядчики»); здесь — ре-экспорт для прежних импортов из этого модуля.
+export { loadVorManifest, type VorSnapshotMeta };
 
 export interface VorItemStateRow {
   itemId: string;
@@ -342,29 +315,9 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
            FROM estimate_vors WHERE estimate_id = $1 ORDER BY created_at DESC`,
         [id.data],
       );
-      // Фасеты (местоположения/типы строк ВОР) пишутся при создании; у ВОР, созданных раньше,
-      // их нет — досчитываем из снимка при первом показе реестра и сохраняем, чтобы следующий
-      // раз обошёлся без похода в S3.
-      const facetsByVor = new Map<string, VorContentFacets>();
-      for (const r of rows) {
-        const stored = r.content_facets as VorContentFacets | null;
-        if (stored) {
-          facetsByVor.set(r.id as string, stored);
-          continue;
-        }
-        const manifest = await loadVorManifest(fastify, {
-          snapshotKey: r.snapshot_key as string | null,
-          snapshotChecksum: r.snapshot_checksum as Buffer | null,
-          version: r.content_schema_version as number,
-        });
-        if (!manifest) continue; // легаси-ВОР без снимка: фасетов взять неоткуда
-        const facets = buildContentFacets(manifest);
-        facetsByVor.set(r.id as string, facets);
-        await fastify.pool.query(
-          'UPDATE estimate_vors SET content_facets = $2::jsonb WHERE id = $1 AND content_facets IS NULL',
-          [r.id, JSON.stringify(facets)],
-        );
-      }
+      // Фасеты (местоположения/типы строк ВОР) — общий хелпер: у ВОР, созданных до появления
+      // колонки, они досчитываются из снимка при первом обращении и сохраняются.
+      const facetsByVor = await ensureVorFacets(fastify, rows as VorFacetsRow[]);
       // Счётчики актуальности по каждому ВОР (изменено/удалено/неизвестно из построчных статусов).
       const states = await loadVorItemStates(fastify, id.data);
       const countsByVor = new Map<string, VorCounts>();

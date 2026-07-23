@@ -126,6 +126,27 @@ export interface RequestRow {
   rd_ciphers: string[];
 }
 
+// Договорный контекст заявки (GET /requests/:id/vor-context): по какому ВОР и договору она
+// заведена. Реквизиты ТЕКУЩИЕ, а не на момент создания заявки — их правят в «Назначении
+// подрядчика», и в реестре ВОР и в заявке они должны выглядеть одинаково.
+export interface RequestVor {
+  vorId: string;
+  vorName: string;
+  contractNumber: string | null;
+  /** YYYY-MM-DD (форматирует клиент). */
+  contractDate: string | null;
+  /** Местоположения и типы строк ВОР — как они были на момент выгрузки. */
+  facets: { locations: string[]; types: string[] };
+}
+
+export interface RequestVorContext {
+  /** 'items' — ВОР найдены по строкам заявки; 'estimate' — фолбэк: все договоры подрядчика по объекту. */
+  matched: 'items' | 'estimate';
+  /** Есть позиции без связи со строками сметы — найденные ВОР описывают заявку не целиком. */
+  hasUnlinkedItems: boolean;
+  vors: RequestVor[];
+}
+
 // Данные для формы «Отправить РП» (GET /requests/:id/rp-config).
 export interface RpConfig {
   project: { code: string | null; name: string | null } | null;
