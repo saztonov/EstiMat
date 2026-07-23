@@ -1,9 +1,11 @@
+import { useMemo } from 'react';
 import { Table, Space, Tooltip } from 'antd';
 import { DownOutlined, RightOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
 import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
+import { locationBadgeKey, withLocationSpans } from './locationSpans';
 import type { MaterialTreeNode } from './materialTree';
 import type { OrderMaterialRow } from './orderRow';
 import { subtreeRows } from './draftFill';
@@ -110,6 +112,12 @@ function TreeNodeView({
 } & Omit<Props, 'nodes'>) {
   const isCollapsed = collapsed.has(node.key);
   const headFont = HEAD_FONT[Math.min(depth, HEAD_FONT.length - 1)];
+  // Объединение ячеек местоположения считается по строкам ИМЕННО этой таблицы: rowSpan привязан
+  // к порядку dataSource и через границы таблиц не переносится.
+  const cols = useMemo(
+    () => withLocationSpans(columns, node.materials, locationBadgeKey),
+    [columns, node.materials],
+  );
 
   // Уровни «Локация» и «Тип работы» без подписи читались как случайные бейджи: из заголовка
   // не было видно, по какому признаку разделены материалы.
@@ -164,7 +172,7 @@ function TreeNodeView({
           className="estimat-compact"
           pagination={false}
           dataSource={node.materials}
-          columns={columns}
+          columns={cols}
           rowClassName={rowClassName}
           scroll={{ x: 1100 }}
         />

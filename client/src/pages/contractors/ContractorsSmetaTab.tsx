@@ -28,6 +28,7 @@ import {
   toLocationSnapshot,
   type ZoneIndex,
 } from '../estimates/components/LocationBadges';
+import { locationBadgeKey, withLocationSpans } from './materials/locationSpans';
 import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
 import { useInitialCollapsedTypes } from '../estimates/workspace/useInitialCollapsedTypes';
 import { useContractorLocationFilter } from './useContractorLocationFilter';
@@ -83,6 +84,71 @@ function ContractorTags({ contractors }: { contractors: ItemContractor[] }) {
         </Tooltip>
       )}
     </Space>
+  );
+}
+
+/**
+ * Работы одного вида работ в виде подрядчика.
+ *
+ * Отдельный компонент, а не таблица внутри groups.map: колонки и объединение ячеек местоположения
+ * мемоизируются, а хуки в цикле родителя стоять не могут.
+ */
+function ContractorWorksTable({ works, zoneIndex }: { works: EstimateItem[]; zoneIndex: ZoneIndex }) {
+  const columns = useMemo<ColumnsType<EstimateItem>>(
+    () => [
+      {
+        title: 'Местоположение',
+        key: 'location',
+        width: 237,
+        render: (_, it) => {
+          const { zoneNames, floorsLabel, typeLabel } = locationParts(toLocationSnapshot(it), zoneIndex);
+          return (
+            <LocationBadgesRow
+              zoneNames={zoneNames}
+              floorsLabel={floorsLabel}
+              typeLabels={typeLabel ? [typeLabel] : []}
+            />
+          );
+        },
+      },
+      {
+        title: 'Работа',
+        dataIndex: 'description',
+        key: 'description',
+        render: (_, it) => (
+          <span>
+            {it.description}
+            {it.rate_name && it.rate_name !== it.description && (
+              <span style={{ color: 'var(--est-text-tertiary)' }}> · {it.rate_name}</span>
+            )}
+          </span>
+        ),
+      },
+      { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
+      // Работа достаётся исполнителю целиком, поэтому его объём — объём строки.
+      { title: 'Кол-во', key: 'quantity', width: 110, align: 'right', render: (_, it) => num(it.quantity) },
+    ],
+    [zoneIndex],
+  );
+  // Ключ объединения считаем той же locationParts, что и рендер, — иначе блок и подпись разъедутся.
+  const cols = useMemo(
+    () =>
+      withLocationSpans(columns, works, (it) => {
+        const { zoneNames, floorsLabel, typeLabel } = locationParts(toLocationSnapshot(it), zoneIndex);
+        return locationBadgeKey({ zoneNames, floorsLabel, typeLabels: typeLabel ? [typeLabel] : [] });
+      }),
+    [columns, works, zoneIndex],
+  );
+  return (
+    <Table<EstimateItem>
+      rowKey="id"
+      size="small"
+      className="estimat-compact"
+      pagination={false}
+      dataSource={works}
+      columns={cols}
+      scroll={{ x: 700 }}
+    />
   );
 }
 
@@ -287,39 +353,6 @@ export function ContractorsSmetaTab({
 
   // ── Вид подрядчика: только его строки ──
   if (viewerIsContractor) {
-    const myColumns: ColumnsType<EstimateItem> = [
-      {
-        title: 'Местоположение',
-        key: 'location',
-        width: 237,
-        render: (_, it) => {
-          const { zoneNames, floorsLabel, typeLabel } = locationParts(toLocationSnapshot(it), zoneIndex);
-          return (
-            <LocationBadgesRow
-              zoneNames={zoneNames}
-              floorsLabel={floorsLabel}
-              typeLabels={typeLabel ? [typeLabel] : []}
-            />
-          );
-        },
-      },
-      {
-        title: 'Работа',
-        dataIndex: 'description',
-        key: 'description',
-        render: (_, it) => (
-          <span>
-            {it.description}
-            {it.rate_name && it.rate_name !== it.description && (
-              <span style={{ color: 'var(--est-text-tertiary)' }}> · {it.rate_name}</span>
-            )}
-          </span>
-        ),
-      },
-      { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
-      // Работа достаётся исполнителю целиком, поэтому его объём — объём строки.
-      { title: 'Кол-во', key: 'quantity', width: 110, align: 'right', render: (_, it) => num(it.quantity) },
-    ];
     return (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {/* Тулбар вне области результатов: иначе отбор «до нуля строк» убрал бы кнопку сброса. */}
@@ -341,7 +374,7 @@ export function ContractorsSmetaTab({
                       {g.costTypeName ?? 'Без вида работ'}
                     </strong>
                   </Space>
-                  <Table<EstimateItem> rowKey="id" size="small" className="estimat-compact" pagination={false} dataSource={g.works} columns={myColumns} scroll={{ x: 700 }} />
+                  <ContractorWorksTable works={g.works} zoneIndex={zoneIndex} />
                 </div>
               ))}
             </Space>

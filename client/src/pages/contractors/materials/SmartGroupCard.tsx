@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useMemo, useState, type KeyboardEvent } from 'react';
 import { Alert, Collapse, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { MaterialGroupDto } from '@estimat/shared';
@@ -6,6 +6,7 @@ import type { OrderMaterialRow } from './orderRow';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
+import { locationBadgeKey, withLocationSpans } from './locationSpans';
 import type { DimensionFinding } from './dimensionChecks';
 import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
 import type { SplitNode } from './smartSplit';
@@ -91,6 +92,9 @@ export function SmartGroupCard({
   const zoneNames = [...new Set(rows.flatMap((r) => r.zoneNames))].sort((a, b) => a.localeCompare(b, 'ru'));
 
   const draftCount = bulk ? rows.filter((r) => bulk.draftValues.has(r.orderKey)).length : 0;
+  // Объединение ячеек местоположения — по строкам этой таблицы: rowSpan привязан к порядку
+  // dataSource и через границы карточек не переносится.
+  const cols = useMemo(() => withLocationSpans(columns, rows, locationBadgeKey), [columns, rows]);
 
   return (
     <GroupCard
@@ -282,7 +286,7 @@ export function SmartGroupCard({
           className="estimat-compact"
           pagination={false}
           dataSource={rows}
-          columns={columns}
+          columns={cols}
           rowClassName={rowClassName}
           scroll={{ x: 1100 }}
         />

@@ -10,6 +10,7 @@ import { SmartGroupCard } from './SmartGroupCard';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
+import { locationBadgeKey, withLocationSpans } from './locationSpans';
 import { SHARED_KEY, UNGROUPED_KEY } from './materialBlocks';
 import type { DimensionFinding } from './dimensionChecks';
 import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
@@ -458,6 +459,9 @@ function Section({
   rowClassName?: (row: OrderMaterialRow) => string;
 }) {
   const draftCount = bulk ? rows.filter((r) => bulk.draftValues.has(r.orderKey)).length : 0;
+  // Объединение ячеек местоположения — по строкам этой секции: rowSpan привязан к порядку
+  // dataSource и через границы карточек не переносится.
+  const cols = useMemo(() => withLocationSpans(columns, rows, locationBadgeKey), [columns, rows]);
   return (
     <GroupCard
       collapsed={collapsed}
@@ -485,7 +489,7 @@ function Section({
         className="estimat-compact"
         pagination={false}
         dataSource={rows}
-        columns={columns}
+        columns={cols}
         rowClassName={rowClassName}
         scroll={{ x: 1100 }}
       />
