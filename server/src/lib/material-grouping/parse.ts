@@ -9,11 +9,12 @@
  * UUID, и одно только их эхо на смету стоило бы ~18 000 токенов при лимите вывода 8192.
  */
 import { extractJson } from '../llm/json.js';
-import type { DraftBatch, DraftGroup, GroupingBatch } from './types.js';
+import { GROUP_STAGES, type DraftBatch, type DraftGroup, type GroupingBatch } from './types.js';
 import type { MergeOp } from './assemble.js';
 
 const COMPLETENESS = new Set(['complete', 'incomplete', 'unknown']);
 const COMPATIBILITY = new Set(['no_issues', 'possible_issue', 'unknown']);
+const STAGE: ReadonlySet<string> = new Set(GROUP_STAGES);
 const SEVERITY = new Set(['warning', 'review', 'recommendation']);
 const NEED = new Set(['required', 'conditional', 'recommended']);
 
@@ -21,6 +22,16 @@ const asRecord = (v: unknown): Record<string, unknown> | null =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+/**
+ * Стадия по allowlist. Всё, чего нет в списке (в том числе выдуманное моделью и отсутствующее в
+ * ответах прежних версий промпта), становится null: «не знаю» безопаснее выдумки и, в отличие от
+ * неё, слияние не блокирует.
+ */
+const stageOf = (v: unknown): DraftGroup['stage'] => {
+  const s = str(v);
+  return s && STAGE.has(s) ? (s as DraftGroup['stage']) : null;
+};
 
 /** idx → ключ заказа. Всё, что вне диапазона батча, отбрасывается. */
 function mapIdx(raw: unknown, batch: GroupingBatch, seen: Set<string>, warnings: string[]): string[] {
@@ -79,7 +90,7 @@ export function parseBatchResponse(raw: string, batch: GroupingBatch): DraftBatc
   const duplicated = new Set([...claimed].filter(([, n]) => n > 1).map(([k]) => k));
   if (duplicated.size) {
     warnings.push(
-      `Набор ${batch.index + 1}: ${duplicated.size} поз. модель отнесла к нескольким операциям — перенесены в «Не удалось сгруппировать»`,
+      `Набор ${batch.index + 1}: ${duplicated.size} поз. модель отнесла к нескольким комплектам — перенесены в «Не удалось сгруппировать»`,
     );
   }
 
@@ -102,6 +113,7 @@ export function parseBatchResponse(raw: string, batch: GroupingBatch): DraftBatc
       batchIndex: batch.index,
       name,
       purpose: g ? str(g.purpose) : null,
+      stage: stageOf(g.stage),
       // Недопустимое или отсутствующее значение → unknown: «не знаю» безопаснее выдумки.
       completeness: (completeness && COMPLETENESS.has(completeness) ? completeness : 'unknown') as DraftGroup['completeness'],
       compatibility: (compatibility && COMPATIBILITY.has(compatibility)
@@ -162,7 +174,7 @@ function parseMissing(raw: unknown): DraftGroup['missing'] {
 }
 
 /**
- * Разбор ответа фазы слияния. Неизвестные id игнорируются. Пересмотренная оценка (purpose,
+ * Разбор ответа фазы слияния. Неизвестные id игнорируются. Пересмотренная оценка (purpose, stage,
  * completeness, compatibility) необязательна: при отсутствии сборка вернётся к «худшему из двух».
  */
 export function parseMergeResponse(raw: string, known: Set<string>): MergeOp[] {
@@ -184,6 +196,7 @@ export function parseMergeResponse(raw: string, known: Set<string>): MergeOp[] {
       from,
       name: str(r.name),
       purpose: str(r.purpose),
+      stage: stageOf(r.stage),
       completeness: completeness && COMPLETENESS.has(completeness) ? (completeness as MergeOp['completeness']) : null,
       compatibility:
         compatibility && COMPATIBILITY.has(compatibility) ? (compatibility as MergeOp['compatibility']) : null,

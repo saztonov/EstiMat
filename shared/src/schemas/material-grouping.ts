@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Умная группировка материалов сметы по производственным операциям.
+ * Умная группировка материалов сметы по комплектам заявки.
  *
  * Модель возвращает только состав групп и признаки проверки. Количества, суммы и «Заказано»
  * клиент присоединяет из живого свода по ключу заказа — модель их не видит и менять не может.
@@ -56,7 +56,7 @@ export const missingComponentSchema = z.object({
 
 export const materialGroupSchema = z.object({
   id: z.string(),
-  /** Производственная операция: «Армирование плиты перекрытия». */
+  /** Комплект заявки: «Устройство монолитной плиты перекрытия». */
   name: z.string(),
   purpose: z.string().nullable(),
   completeness: z.enum(COMPLETENESS),
@@ -70,9 +70,9 @@ export type MaterialGroupDto = z.infer<typeof materialGroupSchema>;
 
 export const groupingResultSchema = z.object({
   groups: z.array(materialGroupSchema),
-  /** Расходники, общие для нескольких операций. */
+  /** Расходники, общие для нескольких комплектов. */
   sharedKeys: z.array(z.string()).default([]),
-  /** Строки, которые не удалось отнести к операции (в т.ч. отброшенные при валидации). */
+  /** Строки, которые не удалось отнести к комплекту (в т.ч. отброшенные при валидации). */
   ungroupedKeys: z.array(z.string()).default([]),
   stats: z.object({
     batches: z.number(),

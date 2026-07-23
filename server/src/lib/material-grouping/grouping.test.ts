@@ -3,11 +3,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { planBatches, MAX_LINES_PER_BATCH } from './batch.js';
-import { parseBatchResponse } from './parse.js';
+import { parseBatchResponse, parseMergeResponse } from './parse.js';
 import { assembleResult, applyMerges, type MergeOp } from './assemble.js';
-import { buildBatchUserPrompt, buildSystemPrompt } from './prompt.js';
+import { buildBatchUserPrompt, buildMergeUserPrompt, buildSystemPrompt } from './prompt.js';
+import { computeInputHash } from './input.js';
 import { PROMPT_DEFAULTS } from '../llm/prompts.js';
-import type { GroupingLine } from './types.js';
+import type { DraftGroup, GroupingLine } from './types.js';
 
 function line(over: Partial<GroupingLine> & { orderKey: string }): GroupingLine {
   return {
@@ -41,8 +42,22 @@ function manyLines(n: number, perWork: number, costTypeId = 'ct-heat'): Grouping
 const mergeOp = (over: Partial<MergeOp> & { into: string; from: string[] }): MergeOp => ({
   name: null,
   purpose: null,
+  stage: null,
   completeness: null,
   compatibility: null,
+  ...over,
+});
+
+const draft = (over: Partial<DraftGroup> & { id: string }): DraftGroup => ({
+  batchIndex: 0,
+  name: over.id.toUpperCase(),
+  purpose: null,
+  stage: null,
+  completeness: 'unknown',
+  compatibility: 'no_issues',
+  orderKeys: [over.id],
+  issues: [],
+  missing: [],
   ...over,
 });
 
@@ -148,20 +163,20 @@ test('неразобранный ответ не роняет батч', () => {
 
 // ---------- глобальный merge ----------
 
-test('merge сливает одну операцию через разные виды работ (границы вида работ больше нет)', () => {
+test('merge сливает один комплект через разные виды работ (границы вида работ больше нет)', () => {
   const lines = [...manyLines(3, 3, 'ct-heat'), ...manyLines(3, 3, 'ct-water')];
   const batches = planBatches(lines);
   const drafts = batches.map((b) => parseBatchResponse('{"groups":[{"name":"Монтаж трубопровода","idx":[1,2]}]}', b));
   const ids = drafts.flatMap((d) => d.groups.map((g) => g.id));
   assert.equal(ids.length, 2, 'две группы из двух видов работ');
   const { result } = assembleResult(lines, drafts, [mergeOp({ into: ids[0]!, from: [ids[1]!], name: 'Монтаж трубопровода' })], 2);
-  assert.equal(result.groups.length, 1, 'одна операция под разными видами работ должна слиться');
+  assert.equal(result.groups.length, 1, 'один комплект под разными видами работ должен слиться');
 });
 
 test('переоценка модели перекрывает «худшее из двух» при слиянии', () => {
   const groups = [
-    { id: 'g1', batchIndex: 0, name: 'A', purpose: null, completeness: 'incomplete' as const, compatibility: 'no_issues' as const, orderKeys: ['a'], issues: [], missing: [] },
-    { id: 'g2', batchIndex: 0, name: 'B', purpose: null, completeness: 'incomplete' as const, compatibility: 'no_issues' as const, orderKeys: ['b'], issues: [], missing: [] },
+    draft({ id: 'g1', completeness: 'incomplete', orderKeys: ['a'] }),
+    draft({ id: 'g2', completeness: 'incomplete', orderKeys: ['b'] }),
   ];
   // Две неполные половины — модель вернула, что вместе они комплект.
   const revised = applyMerges(structuredClone(groups), [mergeOp({ into: 'g1', from: ['g2'], completeness: 'complete' })]);
@@ -171,6 +186,151 @@ test('переоценка модели перекрывает «худшее и
   // Без пересмотра — консервативно худшее из двух.
   const fallback = applyMerges(structuredClone(groups), [mergeOp({ into: 'g1', from: ['g2'] })]);
   assert.equal(fallback.groups[0]!.completeness, 'incomplete');
+});
+
+// ---------- стадия готовности ----------
+
+test('стадия берётся только из закрытого списка: мусор и отсутствие дают null', () => {
+  const batch = batchOf(manyLines(3, 3));
+  const res = parseBatchResponse(
+    '{"groups":[{"name":"A","idx":[1],"stage":"finish"},{"name":"B","idx":[2],"stage":"чистовая"},{"name":"C","idx":[3]}]}',
+    batch,
+  );
+  assert.deepEqual(
+    res.groups.map((g) => g.stage),
+    ['finish', null, null],
+  );
+});
+
+test('стадия из ответа слияния тоже проходит allowlist', () => {
+  const known = new Set(['g1', 'g2']);
+  const ok = parseMergeResponse('{"merge":[{"into":"g1","from":["g2"],"stage":"main"}]}', known);
+  assert.equal(ok[0]!.stage, 'main');
+  const bad = parseMergeResponse('{"merge":[{"into":"g1","from":["g2"],"stage":"монтаж"}]}', known);
+  assert.equal(bad[0]!.stage, null, 'выдуманная стадия не должна стать границей слияния');
+});
+
+test('разные известные стадии не сливаются, даже если модель просит', () => {
+  const groups = [
+    draft({ id: 'g1', name: 'Черновая разводка', stage: 'main' }),
+    draft({ id: 'g2', name: 'Установка приборов', stage: 'finish' }),
+  ];
+  const res = applyMerges(structuredClone(groups), [mergeOp({ into: 'g1', from: ['g2'] })]);
+  assert.equal(res.groups.length, 2, 'скрытые работы и финишный монтаж закупаются к разным порогам готовности');
+  assert.ok(res.warnings.some((w) => w.includes('стадиям')), 'отклонённое слияние должно быть видно в предупреждениях');
+});
+
+test('неизвестная стадия слиянию не мешает: null и other границей не считаются', () => {
+  const withNull = applyMerges(
+    [draft({ id: 'g1', stage: 'main' }), draft({ id: 'g2', stage: null })],
+    [mergeOp({ into: 'g1', from: ['g2'] })],
+  );
+  assert.equal(withNull.groups.length, 1);
+  const withOther = applyMerges(
+    [draft({ id: 'g1', stage: 'main' }), draft({ id: 'g2', stage: 'other' })],
+    [mergeOp({ into: 'g1', from: ['g2'] })],
+  );
+  assert.equal(withOther.groups.length, 1);
+});
+
+test('совпадение стадии само по себе ничего не сливает', () => {
+  const groups = [draft({ id: 'g1', stage: 'main' }), draft({ id: 'g2', stage: 'main' })];
+  assert.equal(applyMerges(structuredClone(groups), []).groups.length, 2, 'слияние — решение модели, а не следствие ярлыка');
+});
+
+test('пересмотренная моделью стадия применяется к объединённой группе', () => {
+  const res = applyMerges(
+    [draft({ id: 'g1', stage: 'main' }), draft({ id: 'g2', stage: null })],
+    [mergeOp({ into: 'g1', from: ['g2'], stage: 'finish' })],
+  );
+  assert.equal(res.groups[0]!.stage, 'finish', 'следующий раунд должен видеть актуальный ярлык');
+});
+
+test('стадия — служебная: в итоговый результат она не выходит', () => {
+  const lines = manyLines(2, 2);
+  const batch = batchOf(lines);
+  const parsed = parseBatchResponse('{"groups":[{"name":"A","idx":[1,2],"stage":"main"}]}', batch);
+  const { result } = assembleResult(lines, [parsed], [], 1);
+  assert.ok(!('stage' in result.groups[0]!), 'публичный контракт группы не меняется');
+});
+
+// ---------- согласованность замечаний после слияния ----------
+
+test('обязательные «не хватает» снимаются, когда модель объявила комплект полным', () => {
+  const groups = [
+    draft({
+      id: 'g1',
+      completeness: 'incomplete',
+      missing: [
+        { name: 'Смеситель', reason: 'нет в составе', need: 'required' },
+        { name: 'Уплотнитель', reason: 'проверить', need: 'recommended' },
+      ],
+    }),
+    draft({ id: 'g2', completeness: 'incomplete' }),
+  ];
+  const res = applyMerges(structuredClone(groups), [mergeOp({ into: 'g1', from: ['g2'], completeness: 'complete' })]);
+  assert.deepEqual(
+    res.groups[0]!.missing.map((m) => m.name),
+    ['Уплотнитель'],
+    'закрытое второй половиной требование не должно висеть на комплекте, рекомендация — остаётся',
+  );
+});
+
+test('одинаковые замечания половин схлопываются', () => {
+  const issue = { severity: 'review' as const, message: 'уточните кратность поставки', orderKeys: [] };
+  const miss = { name: 'Кронштейн', reason: 'проверить', need: 'conditional' as const };
+  const res = applyMerges(
+    [draft({ id: 'g1', issues: [issue], missing: [miss] }), draft({ id: 'g2', issues: [{ ...issue }], missing: [{ ...miss }] })],
+    [mergeOp({ into: 'g1', from: ['g2'] })],
+  );
+  assert.equal(res.groups[0]!.issues.length, 1);
+  assert.equal(res.groups[0]!.missing.length, 1);
+});
+
+// ---------- карточки слияния ----------
+
+test('карточки слияния несут стадию и контекст и идут в стабильном порядке', () => {
+  const lines = [...manyLines(2, 2, 'ct-water'), ...manyLines(2, 2, 'ct-heat')];
+  const byKey = new Map(lines.map((l) => [l.orderKey, { ...l, costTypeName: l.costTypeId === 'ct-heat' ? 'Отопление' : 'Водоснабжение' }]));
+  const groups = [
+    draft({ id: 'g1', name: 'Стояки водоснабжения', stage: 'main', orderKeys: [lines[0]!.orderKey] }),
+    draft({ id: 'g2', name: 'Приборы отопления', stage: 'finish', orderKeys: [lines[2]!.orderKey] }),
+  ];
+  const text = buildMergeUserPrompt(groups, byKey);
+  assert.ok(text.includes('этап: main') && text.includes('этап: finish'));
+  assert.ok(text.includes('виды работ: Водоснабжение'));
+  assert.ok(text.includes('категории: Инженерные системы'));
+  // Порядок не зависит от порядка групп на входе.
+  assert.equal(text, buildMergeUserPrompt([...groups].reverse(), byKey));
+});
+
+// ---------- актуальность результата ----------
+
+test('переименование категории или вида работ объявляет результат устаревшим', () => {
+  const lines = manyLines(2, 2);
+  const base = computeInputHash(lines, 'openrouter:model', 'mg-4');
+  const renamedType = computeInputHash(
+    lines.map((l) => ({ ...l, costTypeName: 'Отопление и вентиляция' })),
+    'openrouter:model',
+    'mg-4',
+  );
+  const renamedCategory = computeInputHash(
+    lines.map((l) => ({ ...l, costCategoryName: 'ВИС' })),
+    'openrouter:model',
+    'mg-4',
+  );
+  assert.notEqual(base, renamedType, 'вид работ виден модели — его переименование меняет вход');
+  assert.notEqual(base, renamedCategory, 'категория видна модели — её переименование меняет вход');
+  assert.notEqual(base, computeInputHash(lines, 'openrouter:model', 'mg-3'), 'версия промпта входит в хэш');
+});
+
+test('пересоздание строки сметы не объявляет результат устаревшим', () => {
+  const lines = manyLines(2, 2);
+  assert.equal(
+    computeInputHash(lines, 'openrouter:model', 'mg-4'),
+    computeInputHash(lines.map((l) => ({ ...l, primaryWorkId: 'w-new' })), 'openrouter:model', 'mg-4'),
+    'идентификатор строки-источника смысла для модели не несёт — пересчёт на 10–25 минут был бы впустую',
+  );
 });
 
 // ---------- сборка итога ----------

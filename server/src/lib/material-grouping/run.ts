@@ -334,10 +334,13 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
     const drafts = batches.map((b) => done[String(b.index)]).filter((d): d is DraftBatch => !!d);
     if (drafts.length === 0) throw new Error('Модель не вернула ни одного разобранного ответа');
 
-    // Слияние — ГЛОБАЛЬНОЕ: вида работ как границы больше нет, одну операцию под разными видами
+    // Слияние — ГЛОБАЛЬНОЕ: вида работ как границы больше нет, один комплект под разными видами
     // работ можно слить. Итеративно, пока модель находит слияния, но не больше MAX_MERGE_ROUNDS:
     // на каждом раунде модель видит уже укрупнённые группы.
     const linesByKey = new Map<string, GroupingLine>(lines.map((l) => [l.orderKey, l]));
+    // Сбой слияния виден пользователю: без него блоки остаются такими, какими их вернули наборы, и
+    // молчаливая раздробленность выглядела бы как решение модели.
+    const mergeFailures: string[] = [];
     const allGroups = drafts.flatMap((d) => d.groups);
     // Накопленные из checkpoint слияния — стартовое состояние: при resume раунды продолжаются с
     // укрупнённых групп, а не гоняются с нуля и не бросаются недоделанными. Сходимость (пустой ответ
@@ -412,11 +415,13 @@ export async function runGroupingJob(fastify: FastifyInstance, jobId: string): P
           });
         }
         fastify.log.warn({ err, jobId, round }, 'material grouping merge failed');
+        mergeFailures.push('Объединение блоков не выполнено — материалы одного комплекта могли остаться в разных блоках');
         break;
       }
     }
 
     const { result, warnings } = assembleResult(lines, drafts, merges, batches.length);
+    warnings.push(...mergeFailures);
 
     const upd = await fastify.pool.query(
       `UPDATE material_grouping_jobs

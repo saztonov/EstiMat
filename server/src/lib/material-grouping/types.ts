@@ -32,12 +32,23 @@ export interface GroupingBatch {
   lines: GroupingLine[];
 }
 
+/**
+ * Служебный ярлык стадии готовности. Модель выбирает его из закрытого списка; сервер использует
+ * ярлык ТОЛЬКО как отрицательную границу слияния (разные известные стадии не сливаются). Совпадение
+ * стадии основанием для слияния не является: одна стадия одной системы вмещает и магистраль, и
+ * самостоятельно принимаемые узлы. В публичный MaterialGroupDto ярлык не выходит.
+ */
+export const GROUP_STAGES = ['prep', 'main', 'protection', 'finish', 'commissioning', 'other'] as const;
+export type GroupStage = (typeof GROUP_STAGES)[number];
+
 /** Черновая группа из ответа модели (до сборки итога). */
 export interface DraftGroup {
   id: string;
   batchIndex: number;
   name: string;
   purpose: string | null;
+  /** null — модель не назвала стадию или назвала вне списка. «Не знаю» слияние не блокирует. */
+  stage: GroupStage | null;
   completeness: 'complete' | 'incomplete' | 'unknown';
   compatibility: 'no_issues' | 'possible_issue' | 'unknown';
   orderKeys: string[];

@@ -100,7 +100,7 @@ export function smartBlocks(rows: OrderMaterialRow[], result: GroupingResult | n
   const ungrouped = take(result.ungroupedKeys, used, known, {
     key: UNGROUPED_KEY,
     title: 'Не удалось сгруппировать',
-    hint: 'ИИ не отнёс эти материалы к операции',
+    hint: 'ИИ не отнёс эти материалы к комплекту',
   });
   if (ungrouped) blocks.push(ungrouped);
 

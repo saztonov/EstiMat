@@ -103,8 +103,13 @@ export async function loadGroupingLines(pool: Pool, scope: GroupingScope): Promi
 
 /**
  * Хэш канонического входа. Меняется всё, что влияет на решение модели: состав строк, количества,
- * контекст (вид работ, группа справочника, работы), модель, версия промпта и версия алгоритма
- * батчинга. Не зависит от порядка строк — сортируем здесь.
+ * весь контекст, который уходит в промпт (категория, вид работ, группа справочника, работы),
+ * модель, версия промпта и версия алгоритма батчинга. Не зависит от порядка строк — сортируем здесь.
+ *
+ * Названия категории и вида работ входят в хэш наравне с идентификаторами: они видны модели, и
+ * переименование справочника меняет её вход. А вот primaryWorkId сознательно не входит — это UUID
+ * строки сметы, и её пересоздание без смысловых изменений объявляло бы результат устаревшим,
+ * запуская пересчёт на 10–25 минут впустую.
  */
 export function computeInputHash(lines: GroupingLine[], qualifiedModel: string, promptVersion: string): string {
   const sorted = [...lines].sort((a, b) => a.orderKey.localeCompare(b.orderKey));
@@ -117,6 +122,9 @@ export function computeInputHash(lines: GroupingLine[], qualifiedModel: string, 
       // не должен объявлять результат устаревшим.
       Math.round(l.quantity * 1e4) / 1e4,
       l.costTypeId ?? '',
+      l.costTypeName ?? '',
+      l.costCategoryId ?? '',
+      l.costCategoryName ?? '',
       l.materialGroupName ?? '',
       // Сортируем и здесь: снимок мог прийти из старого задания с иным порядком работ.
       [...l.workNames].sort((a, b) => a.localeCompare(b, 'ru')),
