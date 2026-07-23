@@ -6,6 +6,7 @@ import {
   ArrowRightOutlined,
   CloseOutlined,
   DownloadOutlined,
+  EditOutlined,
   EyeOutlined,
   UserAddOutlined,
 } from '@ant-design/icons';
@@ -76,14 +77,20 @@ function formatContractDate(iso: string | null): string {
 }
 
 // Список значений колонкой тегов: длинные перечисления не должны растягивать строку таблицы.
-function TagList({ values }: { values: string[] }) {
+// Цвет — признак КОЛОНКИ, а не значения: рядом стоящие «Местоположения» и «Типы» в строке из
+// нескольких тегов иначе сливаются в одно серое пятно. Счётчик «+N» остаётся нейтральным — это
+// не значение, а «есть ещё столько же».
+function TagList({ values, color }: { values: string[]; color?: string }) {
   if (values.length === 0) return <span style={{ color: 'var(--est-text-tertiary)' }}>—</span>;
   const shown = values.slice(0, 3);
   return (
     <Space size={4} wrap>
       {shown.map((v) => (
         <Tooltip key={v} title={v}>
-          <Tag style={{ ...compactTag, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+          <Tag
+            color={color}
+            style={{ ...compactTag, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' }}
+          >
             {v}
           </Tag>
         </Tooltip>
@@ -117,8 +124,10 @@ export function VorObjectListModal({
   const queryClient = useQueryClient();
   const { getColumnSearchProps } = useColumnSearch<EstimateVor>();
   const [previewVor, setPreviewVor] = useState<{ id: string; name: string } | null>(null);
+  // editContractorId задан — модалка открыта на правку конкретного назначения (договор и область),
+  // иначе это обычное назначение нового подрядчика.
   const [assignVor, setAssignVor] = useState<
-    { id: string; name: string; contractors: VorContractor[] } | null
+    { id: string; name: string; contractors: VorContractor[]; editContractorId?: string } | null
   >(null);
 
   const { data, isLoading } = useQuery({
@@ -179,18 +188,18 @@ export function VorObjectListModal({
       title: 'Местоположения',
       key: 'locations',
       width: 208,
-      render: (_v, r) => <TagList values={r.facets.locations} />,
+      render: (_v, r) => <TagList values={r.facets.locations} color="blue" />,
     },
     {
       title: 'Типы',
       key: 'types',
       width: 240,
-      render: (_v, r) => <TagList values={r.facets.types} />,
+      render: (_v, r) => <TagList values={r.facets.types} color="green" />,
     },
     {
       title: 'Подрядчики',
       key: 'contractors',
-      width: 210,
+      width: 234,
       render: (_v, r) =>
         r.contractors.length === 0 ? (
           <span style={{ color: 'var(--est-text-tertiary)' }}>—</span>
@@ -200,6 +209,7 @@ export function VorObjectListModal({
               // Строк за подрядчиком не осталось (сняли или удалили из сметы), а договор есть:
               // показываем отдельным состоянием, переходить некуда.
               const empty = c.itemsCount === 0;
+              const name = c.contractorName ?? '—';
               return (
                 <div
                   key={c.contractorId}
@@ -210,11 +220,28 @@ export function VorObjectListModal({
                       ...contractorNameCell,
                       color: empty ? 'var(--est-text-tertiary)' : undefined,
                     }}
-                    title={c.contractorName ?? '—'}
+                    title={name}
                   >
-                    {c.contractorName ?? '—'}
+                    {name}
                   </span>
                   {empty && <Tag style={compactTag}>без строк</Tag>}
+                  <Tooltip title="Изменить договор и область назначения">
+                    <Button
+                      type="text"
+                      size="small"
+                      style={compactBtn}
+                      icon={<EditOutlined />}
+                      aria-label="Изменить назначение"
+                      onClick={() =>
+                        setAssignVor({
+                          id: r.id,
+                          name: r.name,
+                          contractors: r.contractors,
+                          editContractorId: c.contractorId,
+                        })
+                      }
+                    />
+                  </Tooltip>
                   <Tooltip title={empty ? 'Строк за подрядчиком нет' : 'Показать строки договора в смете'}>
                     <Button
                       type="text"
@@ -228,14 +255,25 @@ export function VorObjectListModal({
                           vorId: r.id,
                           vorName: r.name,
                           contractorId: c.contractorId,
-                          contractorName: c.contractorName ?? '—',
+                          contractorName: name,
                         })
                       }
                     />
                   </Tooltip>
+                  {/* Имя подрядчика и название ВОР в подтверждении обязательны: в реестре строки
+                      называются почти одинаково, а снятие необратимо. */}
                   <Popconfirm
-                    title="Снять подрядчика?"
-                    description="Он уйдёт со всех строк этого ВОР. Строки с оформленными заявками останутся за ним."
+                    title={
+                      <span>
+                        Снять «<span style={{ fontWeight: 600, color: 'var(--est-error-text)' }}>{name}</span>»?
+                      </span>
+                    }
+                    description={
+                      <div style={{ maxWidth: 340, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+                        Подрядчик уйдёт со всех строк ВОР «{r.name}». Строки с оформленными заявками
+                        останутся за ним.
+                      </div>
+                    }
                     okText="Снять"
                     okButtonProps={{ danger: true }}
                     cancelText="Отмена"
@@ -343,7 +381,7 @@ export function VorObjectListModal({
           loading={isLoading}
           columns={columns}
           dataSource={data ?? []}
-          scroll={{ x: 1414 }}
+          scroll={{ x: 1438 }}
           pagination={DEFAULT_PAGINATION}
           onRow={(r) => ({
             style: r.id === focusVorId ? { background: 'var(--est-warning-bg)' } : undefined,
@@ -362,6 +400,7 @@ export function VorObjectListModal({
         onClose={() => setAssignVor(null)}
         estimateId={estimateId}
         vor={assignVor}
+        editContractorId={assignVor?.editContractorId ?? null}
         onChanged={onChanged}
       />
     </>

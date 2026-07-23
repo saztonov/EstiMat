@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Checkbox, Empty, Select, Space, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -29,6 +29,7 @@ import {
   type ZoneIndex,
 } from '../estimates/components/LocationBadges';
 import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
+import { useInitialCollapsedTypes } from '../estimates/workspace/useInitialCollapsedTypes';
 import { useContractorLocationFilter } from './useContractorLocationFilter';
 import type { ContractFilter } from './vor/VorObjectListModal';
 
@@ -216,14 +217,29 @@ export function ContractorsSmetaTab({
       else n.add(k);
       return n;
     });
-  const expandAll = () => {
+  const expandAll = useCallback(() => {
     setCollapsedCats(new Set());
     setCollapsedTypes(new Set());
-  };
+  }, []);
   const collapseAll = () => {
     setCollapsedCats(new Set(groups.map((g) => g.costCategoryId ?? NO_CATEGORY)));
     setCollapsedTypes(new Set(groups.map(typeKey)));
   };
+
+  // Вход на вкладку: категории и виды работ видны, наименования работ свёрнуты — как на «Смете».
+  // Переход «строки договора» из реестра ВОР исключение: там пришли смотреть именно строки.
+  const allTypeKeys = useMemo(() => groups.map((g) => g.costTypeId ?? NO_CATEGORY), [groups]);
+  useInitialCollapsedTypes({
+    estimateId,
+    typeKeys: allTypeKeys,
+    enabled: !contractFilter,
+    onCollapse: setCollapsedTypes,
+  });
+  const contractVorId = contractFilter?.vorId ?? null;
+  const contractContractorId = contractFilter?.contractorId ?? null;
+  useEffect(() => {
+    if (contractVorId) expandAll();
+  }, [contractVorId, contractContractorId, expandAll]);
 
   // Сумма по набору видов работ (работы + их материалы) — по договорным ценам, как и столбцы.
   const groupsTotal = (gs: CostTypeGroup[]) =>

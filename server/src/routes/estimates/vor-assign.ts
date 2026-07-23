@@ -236,8 +236,13 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
     },
   );
 
-  // POST /:id/vors/:vorId/assign — назначить подрядчика на весь ВОР либо на его часть.
+  // POST /:id/vors/:vorId/assign — назначить подрядчика на весь ВОР либо на его часть, а также
+  // изменить уже сделанное назначение (реквизиты договора и/или область).
+  //
   // Одна работа — один исполнитель: чужие назначения снимаются, объём отдаётся целиком.
+  // scope: 'keep' — область не трогаем, правятся только реквизиты договора.
+  // replaceScope — область становится ровно выбранной: строки ЭТОГО подрядчика вне неё
+  // освобождаются, кроме защищённых его же заявками на материалы (правило то же, что при снятии).
   fastify.post<{ Params: { id: string; vorId: string } }>(
     '/:id/vors/:vorId/assign',
     { preHandler: [requireRole(...ROLES)] },
@@ -251,11 +256,30 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
       const { vor } = resolved;
 
       const all = await loadVorScopeItems(fastify, vor);
-      const selected = filterVorScope(all, body.scope, body.filters);
+      const selected = filterVorScope(all, body.scope, body.filters, body.contractorId);
       const deletedSkipped = all.filter((it) => it.state === 'deleted').length;
-      if (selected.length === 0) {
+
+      // Замена области: строки, которые сейчас за этим подрядчиком, но в новую область не попали.
+      const selectedIds = new Set(selected.map((it) => it.itemId));
+      const releaseCandidates = body.replaceScope
+        ? all
+            .filter(
+              (it) =>
+                it.state !== 'deleted' &&
+                it.assignedContractorIds.includes(body.contractorId) &&
+                !selectedIds.has(it.itemId),
+            )
+            .map((it) => it.itemId)
+        : [];
+
+      // Работать не с чем. Исключение — 'keep': там запрос осмыслен и без строк (правка договора
+      // у подрядчика, за которым строк уже не осталось).
+      if (selected.length === 0 && releaseCandidates.length === 0 && body.scope !== 'keep') {
         return reply.send({
-          data: { assigned: 0, replacedRows: 0, blocked: [], deletedSkipped, clearedPrices: 0 },
+          data: {
+            assigned: 0, replacedRows: 0, blocked: [], deletedSkipped, clearedPrices: 0,
+            released: 0, releaseBlocked: [],
+          },
         });
       }
 
@@ -267,7 +291,11 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
         return reply.status(400).send({ error: 'Подрядчик не найден' });
 
       const userId = request.currentUser.id;
-      const itemIds = selected.map((it) => it.itemId);
+      // 'keep' — область не трогаем вовсе: переназначать те же строки незачем, а строка,
+      // защищённая заявкой, зря попала бы в отчёт «назначено не на все».
+      const itemIds = body.scope === 'keep' ? [] : selected.map((it) => it.itemId);
+      // Блокируем и освобождаемые строки: снятие идёт в этой же транзакции.
+      const lockIds = [...new Set([...itemIds, ...releaseCandidates])];
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
@@ -279,7 +307,7 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
             WHERE id = ANY($1::uuid[]) AND estimate_id = $2::uuid
             ORDER BY id
               FOR UPDATE`,
-          [itemIds, vor.estimateId],
+          [lockIds, vor.estimateId],
         );
 
         const rows = await loadScopeRows(client, {
@@ -329,9 +357,38 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
              ON CONFLICT (project_id, contractor_id) DO NOTHING`,
             [vor.estimateId, body.contractorId, userId],
           );
+        }
 
-          // Реквизиты договора: форма приходит с подставленными текущими значениями, поэтому
-          // пустое поле — осознанная очистка, а не «не менять».
+        // Замена области: строки подрядчика, не попавшие в новую область, освобождаются. Защита
+        // та же, что при снятии, — его собственная заявка на материалы (чужая не мешает).
+        let releasedRows: Record<string, unknown>[] = [];
+        let releaseBlocked: ReturnType<typeof blockedForContractor> = [];
+        if (releaseCandidates.length > 0) {
+          // targetContractorId = null: снимаемый подрядчик должен попасть в «чужие», иначе его
+          // собственная заявка не удержала бы строку.
+          const releaseScope = await loadScopeRows(client, {
+            estimateId: vor.estimateId,
+            itemIds: releaseCandidates,
+            targetContractorId: null,
+          });
+          releaseBlocked = blockedForContractor(releaseScope, body.contractorId);
+          const blockedIds = new Set(releaseBlocked.map((b) => b.itemId));
+          const releasable = releaseCandidates.filter((id) => !blockedIds.has(id));
+          if (releasable.length > 0) {
+            const res = await client.query(
+              `DELETE FROM estimate_item_contractors
+                WHERE item_id = ANY($1::uuid[]) AND contractor_id = $2::uuid
+                RETURNING *`,
+              [releasable, body.contractorId],
+            );
+            releasedRows = res.rows;
+          }
+        }
+
+        // Реквизиты договора: форма приходит с подставленными текущими значениями, поэтому
+        // пустое поле — осознанная очистка, а не «не менять». Пишем и в режиме 'keep' (правка
+        // одного договора, строки не трогаем) — иначе сохранять было бы нечему.
+        if (plan.assignItemIds.length > 0 || body.scope === 'keep') {
           await client.query(
             `INSERT INTO estimate_vor_contractors
                (vor_id, contractor_id, contract_number, contract_date, assigned_by)
@@ -346,20 +403,26 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
 
         // Подрядчик, у которого в этом ВОР не осталось ни одной строки (его перезаписали
         // целиком), из реестра договоров уходит — иначе в столбце «Подрядчики» висел бы тот,
-        // кто здесь уже ничего не делает.
-        await client.query(
-          `DELETE FROM estimate_vor_contractors vc
-            WHERE vc.vor_id = $1::uuid
-              AND NOT EXISTS (
-                SELECT 1 FROM estimate_vor_items vi
-                  JOIN estimate_item_contractors eic
-                    ON eic.item_id = vi.item_id AND eic.contractor_id = vc.contractor_id
-                 WHERE vi.vor_id = vc.vor_id)`,
-          [vor.id],
-        );
+        // кто здесь уже ничего не делает. Пропускаем, когда назначений не менялось: правка
+        // договора у подрядчика без строк не должна тут же удалять его договорную запись.
+        const touchedAssignments =
+          assignedRows.length > 0 || removedRows.length > 0 || releasedRows.length > 0;
+        if (touchedAssignments) {
+          await client.query(
+            `DELETE FROM estimate_vor_contractors vc
+              WHERE vc.vor_id = $1::uuid
+                AND NOT EXISTS (
+                  SELECT 1 FROM estimate_vor_items vi
+                    JOIN estimate_item_contractors eic
+                      ON eic.item_id = vi.item_id AND eic.contractor_id = vc.contractor_id
+                   WHERE vi.vor_id = vc.vor_id)`,
+            [vor.id],
+          );
+        }
 
-        // Договорные цены прежних исполнителей — снять: новому подрядчику чужой прайс не наследуется.
-        const clearedPrices = await clearStaleContractPrices(client, itemIds);
+        // Договорные цены прежних исполнителей — снять: новому подрядчику чужой прайс не
+        // наследуется, а с освобождённых строк уходит и цена ушедшего подрядчика.
+        const clearedPrices = await clearStaleContractPrices(client, lockIds);
 
         const auditInputs = [
           ...removedRows.map((r) => ({
@@ -369,6 +432,14 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
             action: 'delete',
             userId,
             changes: { before: r, reason: 'vor_assign' },
+          })),
+          ...releasedRows.map((r) => ({
+            estimateId: r.estimate_id as string,
+            entityType: 'estimate_item_contractor',
+            entityId: r.id as string,
+            action: 'delete',
+            userId,
+            changes: { before: r, reason: 'vor_scope_replace', vorId: vor.id },
           })),
           ...assignedRows.map((r) => ({
             estimateId: r.estimate_id as string,
@@ -385,7 +456,7 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
 
         await client.query('COMMIT');
 
-        if (assignedRows.length > 0 || removedRows.length > 0 || clearedPrices > 0) {
+        if (touchedAssignments || clearedPrices > 0) {
           const projectId = await loadProjectId(fastify.pool, vor.estimateId);
           await emitEstimateChanged(fastify, 'contractor_set', vor.estimateId, projectId, userId);
         }
@@ -397,6 +468,8 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
             blocked: plan.blocked,
             deletedSkipped,
             clearedPrices,
+            released: releasedRows.length,
+            releaseBlocked,
           },
         });
       } catch (err) {

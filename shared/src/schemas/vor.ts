@@ -206,13 +206,19 @@ export const vorAssignFiltersSchema = z.object({
 // назначить работу вне этого ВОР невозможно даже подделанным запросом.
 export const vorAssignInputSchema = z.object({
   contractorId: z.string().uuid(),
-  scope: z.enum(['all', 'filters']),
+  // 'keep' — «оставить область как есть»: строки не трогаем, правятся только реквизиты договора
+  // (режим редактирования назначения).
+  scope: z.enum(['all', 'filters', 'keep']),
   filters: vorAssignFiltersSchema.default({
     categoryIds: [],
     typeIds: [],
     zoneIds: [],
     locationTypeIds: [],
   }),
+  // Область = ровно выбранное: строки ЭТОГО подрядчика вне новой области снимаются (кроме
+  // защищённых заявками). Без флага назначение только добавляет — иначе сломался бы сценарий
+  // «раздать одному подрядчику частями, несколькими назначениями».
+  replaceScope: z.boolean().default(false),
   // Реквизиты договора — необязательные и всегда перезаписывают прежние: форма приходит с
   // подставленными текущими значениями, поэтому пустое поле означает «очистить».
   contractNumber: z.string().trim().max(150).nullable().optional(),
@@ -231,6 +237,10 @@ export const vorAssignResultSchema = z.object({
   deletedSkipped: z.number().int(),
   /** Строк, у которых снята договорная цена прежнего исполнителя. */
   clearedPrices: z.number().int(),
+  /** Строк, освобождённых при сужении области (replaceScope). */
+  released: z.number().int().default(0),
+  /** Строки, оставшиеся за подрядчиком при сужении из-за его собственных заявок. */
+  releaseBlocked: z.array(assignBlockedItemSchema).default([]),
 });
 
 // Снятие подрядчика со всех строк ВОР. blocked — строки, оставшиеся за ним из-за собственных
@@ -265,7 +275,7 @@ export const vorPriceImportResultSchema = z.object({
 //
 // Правила: пустой список внутри фильтра = «все значения»; внутри фильтра — ИЛИ, между
 // фильтрами — И; 'none' — явное «Без категории/вида/локации/типа»; удалённая из сметы строка не
-// назначается никогда.
+// назначается никогда. 'keep' — текущая область подрядчика (строки, которые за ним уже числятся).
 function matchesFacet(values: string[], selected: string[]): boolean {
   if (selected.length === 0) return true;
   if (values.length === 0) return selected.includes('none');
@@ -274,10 +284,13 @@ function matchesFacet(values: string[], selected: string[]): boolean {
 
 export function filterVorScope(
   items: VorScopeItem[],
-  scope: 'all' | 'filters',
+  scope: 'all' | 'filters' | 'keep',
   filters: VorAssignFilters,
+  contractorId?: string | null,
 ): VorScopeItem[] {
   const live = items.filter((it) => it.state !== 'deleted');
+  if (scope === 'keep')
+    return contractorId ? live.filter((it) => it.assignedContractorIds.includes(contractorId)) : [];
   if (scope === 'all') return live;
   return live.filter(
     (it) =>

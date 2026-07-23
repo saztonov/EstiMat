@@ -14,7 +14,7 @@ export function useExpandSteps({
   groups: CostTypeGroup[];
   collapsedCats: Set<string>;
   setCollapsedCats: Dispatch<SetStateAction<Set<string>>>;
-}): { expandStep: () => void; collapseStep: () => void } {
+}): { expandStep: () => void; collapseStep: () => void; allTypeKeys: string[] } {
   const allCatKeys = useMemo(() => groups.map((g) => g.costCategoryId ?? NO_CATEGORY), [groups]);
   const allTypeKeys = useMemo(() => groups.map((g) => typeKeyOf(g.costTypeId)), [groups]);
   const workIdsWithMaterials = useMemo(
@@ -48,5 +48,7 @@ export function useExpandSteps({
     }
   }, [allCatKeys, allTypeKeys, workIdsWithMaterials, collapsedCats, setCollapsedCats]);
 
-  return { expandStep, collapseStep };
+  // allTypeKeys наружу: тот же набор нужен начальной свёртке видов при входе в смету
+  // (useInitialCollapsedTypes) — считать его во второй раз незачем.
+  return { expandStep, collapseStep, allTypeKeys };
 }

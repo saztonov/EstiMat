@@ -10,10 +10,13 @@ export function ContractorSelect({
   options,
   value,
   onChange,
+  disabled = false,
 }: {
   options: ContractorOption[];
   value: string | undefined;
   onChange: (v: string) => void;
+  /** Правка существующего назначения: подрядчик зафиксирован. */
+  disabled?: boolean;
 }) {
   return (
     <Select
@@ -22,6 +25,7 @@ export function ContractorSelect({
       value={value}
       onChange={onChange}
       options={options}
+      disabled={disabled}
       showSearch
       optionFilterProp="label"
       notFoundContent="Подрядчиков нет"

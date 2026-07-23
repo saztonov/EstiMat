@@ -16,6 +16,7 @@ import { formatMoney } from '../components/types';
 import { useSmetaFilters, NO_CATEGORY } from './useSmetaFilters';
 import { useSmetaSelection, type AssignLocation } from './useSmetaSelection';
 import { useExpandSteps } from './useExpandSteps';
+import { useInitialCollapsedTypes } from './useInitialCollapsedTypes';
 import { useEstimateReveal } from './useEstimateReveal';
 import { SmetaSelectionToolbar } from './SmetaSelectionToolbar';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
@@ -191,7 +192,15 @@ export function SmetaPanel({
     });
 
   // Поэтапное сворачивание/разворачивание дерева сметы (категории → виды → работы → материалы).
-  const { expandStep, collapseStep } = useExpandSteps({ groups, collapsedCats, setCollapsedCats });
+  const { expandStep, collapseStep, allTypeKeys } = useExpandSteps({ groups, collapsedCats, setCollapsedCats });
+
+  // Вход в смету: категории и виды работ видны, наименования работ свёрнуты. Пишем в store
+  // императивно (как useExpandSteps) — подписка на collapsedTypes ререндерила бы всю панель.
+  const collapseTypes = useCallback(
+    (keys: Set<string>) => useEstimateExpandStore.getState().setCollapsedTypes(keys),
+    [],
+  );
+  useInitialCollapsedTypes({ estimateId, typeKeys: allTypeKeys, onCollapse: collapseTypes });
 
   // Список работ сметы — для выбора цели при переносе материала (дерево Категория → Вид работ → Работа).
   const allWorks = useMemo(
@@ -371,6 +380,7 @@ export function SmetaPanel({
   );
 
   // «Перейти» из списка ВОР: применить сохранённый снимок фильтров к смете (весь набор разом).
+  // Дерево при этом раскрываем: пользователь пришёл смотреть строки ВОР, а не заголовки видов.
   const applyVorFilters = useCallback(
     (snap: VorFilterSnapshot) => {
       setCategoryFilter(snap.categories.map((c) => c.id));
@@ -382,6 +392,8 @@ export function SmetaPanel({
         filterLocationTypeIds: snap.locationTypes.map((l) => l.id),
         filterVolumeType: snap.volumeType,
       });
+      setCollapsedCats(new Set());
+      useEstimateExpandStore.getState().setCollapsedTypes(new Set());
     },
     [setCategoryFilter, setTypeFilter, setOnlyUnreconciled, setLocationFilter],
   );

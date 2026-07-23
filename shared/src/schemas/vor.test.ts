@@ -9,6 +9,8 @@ const TYPE_B = '22222222-2222-4222-8222-222222222222';
 const ZONE_1 = '33333333-3333-4333-8333-333333333331';
 const ZONE_2 = '33333333-3333-4333-8333-333333333332';
 const LT_A = '44444444-4444-4444-8444-444444444441';
+const ORG_1 = '55555555-5555-4555-8555-555555555551';
+const ORG_2 = '55555555-5555-4555-8555-555555555552';
 
 const noFilters: VorAssignFilters = { categoryIds: [], typeIds: [], zoneIds: [], locationTypeIds: [] };
 
@@ -126,4 +128,19 @@ test('«Без локации» вместе с конкретной зоной 
 test('отбор, под который не подходит ни одна строка, даёт пустой набор', () => {
   const items = [item('a')];
   assert.deepEqual(filterVorScope(items, 'filters', { ...noFilters, categoryIds: [CAT_B] }), []);
+});
+
+test('«оставить как есть»: текущие строки подрядчика, чужие и удалённые не в счёт', () => {
+  const items = [
+    item('a', { assignedContractorIds: [ORG_1] }),
+    item('b', { assignedContractorIds: [ORG_2] }),
+    item('c', { assignedContractorIds: [] }),
+    item('d', { assignedContractorIds: [ORG_1], state: 'deleted' }),
+  ];
+  assert.deepEqual(ids(filterVorScope(items, 'keep', noFilters, ORG_1)), ['a']);
+});
+
+test('«оставить как есть» без подрядчика — пустой набор (назначать нечего)', () => {
+  const items = [item('a', { assignedContractorIds: [ORG_1] })];
+  assert.deepEqual(filterVorScope(items, 'keep', noFilters, null), []);
 });

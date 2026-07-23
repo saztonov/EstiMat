@@ -23,6 +23,8 @@ interface Props {
   estimateId: string;
   /** contractors — текущие подрядчики ВОР: по ним подставляются реквизиты договора. */
   vor: { id: string; name: string; contractors?: VorContractor[] } | null;
+  /** Правка уже сделанного назначения: подрядчик зафиксирован, область по умолчанию не меняется. */
+  editContractorId?: string | null;
   onChanged: () => void;
 }
 
@@ -94,15 +96,23 @@ function IssueList({ issues, total }: { issues: VorPriceIssue[]; total: number }
  * несколькими подрядчиками, назначая непересекающиеся отборы.
  *
  * Шаг 2 — цены из присланного файла. Открывается после назначения: цены ложатся только на строки
- * выбранного подрядчика, поэтому сначала должно быть известно, что именно он делает.
+ * выбранного подрядчика, поэтому сначала должно быть известно, что именно он делает. В режиме
+ * правки (editContractorId) доступен сразу — назначение уже существует, и файл с ценами можно
+ * догрузить позже, отдельным заходом.
+ *
+ * Правка назначения: подрядчик зафиксирован (сменить исполнителя = снять и назначить заново),
+ * область по умолчанию «оставить как есть» — правятся только реквизиты договора. Выбранные
+ * «Весь ВОР»/«С отборами» заменяют область целиком: строки вне неё уходят от подрядчика, кроме
+ * защищённых его заявками на материалы.
  */
-export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Props) {
+export function VorAssignModal({ open, onClose, estimateId, vor, editContractorId = null, onChanged }: Props) {
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
+  const isEdit = !!editContractorId;
   const [contractorId, setContractorId] = useState<string | undefined>();
   const [contractNumber, setContractNumber] = useState('');
   const [contractDate, setContractDate] = useState<Dayjs | null>(null);
-  const [scope, setScope] = useState<'all' | 'filters'>('all');
+  const [scope, setScope] = useState<'all' | 'filters' | 'keep'>('all');
   const [filters, setFilters] = useState<VorAssignFilters>(EMPTY_FILTERS);
   const [assignedContractorId, setAssignedContractorId] = useState<string | null>(null);
   const [priceResult, setPriceResult] = useState<VorPriceImportResult | null>(null);
@@ -111,18 +121,21 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
   const [uploading, setUploading] = useState(false);
 
   // Каждое открытие — с чистого листа: модалку открывают на конкретный ВОР из реестра.
+  // В режиме правки лист не чистый: подрядчик и его договор уже известны, а шаг цен доступен
+  // сразу (назначение существует — ждать нового незачем).
   useEffect(() => {
     if (!open) return;
-    setContractorId(undefined);
-    setContractNumber('');
-    setContractDate(null);
-    setScope('all');
+    const editing = vor?.contractors?.find((c) => c.contractorId === editContractorId) ?? null;
+    setContractorId(editContractorId ?? undefined);
+    setContractNumber(editing?.contractNumber ?? '');
+    setContractDate(editing?.contractDate ? dayjs(editing.contractDate) : null);
+    setScope(editContractorId ? 'keep' : 'all');
     setFilters(EMPTY_FILTERS);
-    setAssignedContractorId(null);
+    setAssignedContractorId(editContractorId);
     setPriceResult(null);
     setPriceIssues(null);
     setPriceError(null);
-  }, [open, vor?.id]);
+  }, [open, vor?.id, vor?.contractors, editContractorId]);
 
   // Выбрали подрядчика, у которого по этому ВОР уже есть договор — показываем его реквизиты.
   // Сохранение всегда пишет то, что в форме: очищенное поле означает «убрать», а не «не менять».
@@ -173,18 +186,31 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
   );
 
   // Счётчик считается той же функцией, что и фактическая область на сервере.
-  const selected = useMemo(() => filterVorScope(items, scope, filters), [items, scope, filters]);
+  const selected = useMemo(
+    () => filterVorScope(items, scope, filters, contractorId ?? null),
+    [items, scope, filters, contractorId],
+  );
   const stats = useMemo(() => {
     const busy = selected.filter(
       (it) => it.assignedContractorIds.length > 0 && !it.assignedContractorIds.includes(contractorId ?? ''),
     ).length;
+    // Замена области (правка): строки, которые сейчас за подрядчиком, но в новую область не вошли.
+    // Из них уйдут только незащищённые — по остальным он уже оформил заявки на материалы.
+    const selectedIds = new Set(selected.map((it) => it.itemId));
+    const current = items.filter(
+      (it) => it.state !== 'deleted' && !!contractorId && it.assignedContractorIds.includes(contractorId),
+    );
+    const releasing = isEdit && scope !== 'keep' ? current.filter((it) => !selectedIds.has(it.itemId)) : [];
     return {
       total: selected.length,
       busy,
       locked: selected.filter((it) => it.requestLocked).length,
       deleted: items.filter((it) => it.state === 'deleted').length,
+      current: current.length,
+      releasing: releasing.filter((it) => !it.requestLocked).length,
+      releaseLocked: releasing.filter((it) => it.requestLocked).length,
     };
-  }, [selected, items, contractorId]);
+  }, [selected, items, contractorId, isEdit, scope]);
 
   const assignMutation = useMutation({
     mutationFn: () =>
@@ -193,18 +219,25 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
           contractorId,
           scope,
           filters,
+          // Область заменяем только из правки: обычное назначение раздаёт ВОР частями и снимать
+          // прежние строки того же подрядчика не должно.
+          replaceScope: isEdit && scope !== 'keep',
           contractNumber: contractNumber.trim() || null,
           contractDate: contractDate ? contractDate.format('YYYY-MM-DD') : null,
         })
         .then((r) => r.data),
     onSuccess: (res) => {
-      const parts = [`назначено строк: ${res.assigned}`];
+      const nameById = new Map(items.map((it) => [it.itemId, it.description]));
+      const parts = scope === 'keep' ? ['договор сохранён'] : [`назначено строк: ${res.assigned}`];
       if (res.replacedRows > 0) parts.push(`перезаписано: ${res.replacedRows}`);
+      if (res.released > 0) parts.push(`освобождено строк: ${res.released}`);
       if (res.blocked.length > 0) parts.push(`пропущено: ${res.blocked.length}`);
+      if (res.releaseBlocked.length > 0) parts.push(`оставлено по заявкам: ${res.releaseBlocked.length}`);
       if (res.clearedPrices > 0) parts.push(`снято цен прежних подрядчиков: ${res.clearedPrices}`);
-      if (res.assigned === 0) message.warning(parts.join(' · '));
+      if (scope !== 'keep' && res.assigned === 0 && res.released === 0) message.warning(parts.join(' · '));
       else message.success(parts.join(' · '));
-      showBlockedReport(modal, res.blocked, new Map(items.map((it) => [it.itemId, it.description])));
+      showBlockedReport(modal, res.blocked, nameById);
+      showBlockedReport(modal, res.releaseBlocked, nameById, 'unassign');
       setAssignedContractorId(contractorId ?? null);
       queryClient.invalidateQueries({ queryKey: ['vor-scope', estimateId, vor?.id] });
       // Столбцы «Подрядчики» и «Договор» реестра берутся из списка ВОР — он устарел.
@@ -260,13 +293,19 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
       options={facets[key]}
       optionFilterProp="label"
       maxTagCount="responsive"
-      disabled={scope === 'all'}
+      disabled={scope !== 'filters'}
     />
   );
 
+  const editingName = vor?.contractors?.find((c) => c.contractorId === editContractorId)?.contractorName;
+
   return (
     <Modal
-      title={`Назначение подрядчика · ${vor?.name ?? ''}`}
+      title={
+        isEdit
+          ? `Назначение подрядчика · ${editingName ?? ''} · ${vor?.name ?? ''}`
+          : `Назначение подрядчика · ${vor?.name ?? ''}`
+      }
       open={open}
       onCancel={onClose}
       footer={null}
@@ -283,6 +322,8 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
               options={contractorOptions}
               value={contractorId}
               onChange={pickContractor}
+              // Правка идёт по конкретному назначению: сменить исполнителя = снять и назначить заново.
+              disabled={isEdit}
             />
           </div>
 
@@ -311,8 +352,10 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
             <div style={{ marginBottom: 4, fontWeight: 500 }}>Область назначения</div>
             <Radio.Group
               value={scope}
-              onChange={(e) => setScope(e.target.value as 'all' | 'filters')}
+              onChange={(e) => setScope(e.target.value as 'all' | 'filters' | 'keep')}
               options={[
+                // В правке область по умолчанию не меняется: чаще всего правят один договор.
+                ...(isEdit ? [{ value: 'keep', label: 'Оставить как есть' }] : []),
                 { value: 'all', label: 'Весь ВОР' },
                 { value: 'filters', label: 'С отборами' },
               ]}
@@ -328,20 +371,42 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
           </Space>
 
           <div style={{ color: 'var(--est-text-secondary)' }}>
-            Строк попадёт: <strong>{stats.total}</strong>
-            {stats.busy > 0 && <> · за другим подрядчиком: {stats.busy}</>}
-            {stats.locked > 0 && <> · защищено заявками: {stats.locked}</>}
-            {stats.deleted > 0 && <> · удалено из сметы: {stats.deleted}</>}
+            {scope === 'keep' ? (
+              <>За подрядчиком строк: <strong>{stats.current}</strong> · область не меняется</>
+            ) : (
+              <>
+                Строк попадёт: <strong>{stats.total}</strong>
+                {stats.busy > 0 && <> · за другим подрядчиком: {stats.busy}</>}
+                {stats.locked > 0 && <> · защищено заявками: {stats.locked}</>}
+                {stats.deleted > 0 && <> · удалено из сметы: {stats.deleted}</>}
+              </>
+            )}
           </div>
+
+          {/* Сужение области: пользователь должен увидеть, что строки уйдут от подрядчика, до
+              сохранения — операция необратима, а заявки часть строк удержат. */}
+          {(stats.releasing > 0 || stats.releaseLocked > 0) && (
+            <Alert
+              type="warning"
+              showIcon
+              message={
+                <>
+                  Освободится строк: <strong>{stats.releasing}</strong>
+                  {stats.releaseLocked > 0 && <> · останется по заявкам: {stats.releaseLocked}</>}
+                </>
+              }
+              description="Подрядчик уйдёт со строк, не вошедших в новую область; строки с его заявками на материалы останутся за ним."
+            />
+          )}
 
           <Space>
             <Button
               type="primary"
               loading={assignMutation.isPending}
-              disabled={!contractorId || stats.total === 0}
+              disabled={!contractorId || (scope !== 'keep' && stats.total === 0 && stats.releasing === 0)}
               onClick={() => assignMutation.mutate()}
             >
-              Назначить
+              {isEdit ? 'Сохранить' : 'Назначить'}
             </Button>
             {!contractorId && <span style={{ color: 'var(--est-text-tertiary)' }}>Выберите подрядчика</span>}
           </Space>
