@@ -21,6 +21,7 @@ import {
 import {
   createEstimateVorInputSchema,
   type VorContentFacets,
+  type VorContractor,
   type VorCounts,
   type VorFilterSnapshot,
   type VorItemState,
@@ -375,6 +376,41 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
         else if (s.state === 'unknown') c.unknown += 1;
         countsByVor.set(s.vorId, c);
       }
+      // Подрядчики ВОР с реквизитами договора. itemsCount = 0 — договор есть, а строк за
+      // подрядчиком не осталось (сняли или удалили из сметы): реестр показывает это отдельным
+      // состоянием, поэтому такие записи не отфильтровываем.
+      const { rows: contractorRows } = await fastify.pool.query(
+        `SELECT vc.vor_id,
+                vc.contractor_id,
+                o.name AS contractor_name,
+                vc.contract_number,
+                vc.contract_date::text AS contract_date,
+                (SELECT count(*)::int
+                   FROM estimate_vor_items vi
+                   JOIN estimate_item_contractors eic
+                     ON eic.item_id = vi.item_id AND eic.contractor_id = vc.contractor_id
+                  WHERE vi.vor_id = vc.vor_id) AS items_count
+           FROM estimate_vor_contractors vc
+           JOIN estimate_vors v ON v.id = vc.vor_id
+           LEFT JOIN organizations o ON o.id = vc.contractor_id
+          WHERE v.estimate_id = $1
+          ORDER BY o.name NULLS LAST`,
+        [id.data],
+      );
+      const contractorsByVor = new Map<string, VorContractor[]>();
+      for (const c of contractorRows) {
+        const key = c.vor_id as string;
+        const list = contractorsByVor.get(key) ?? [];
+        list.push({
+          contractorId: c.contractor_id as string,
+          contractorName: (c.contractor_name as string | null) ?? null,
+          contractNumber: (c.contract_number as string | null) ?? null,
+          contractDate: (c.contract_date as string | null) ?? null,
+          itemsCount: c.items_count as number,
+        });
+        contractorsByVor.set(key, list);
+      }
+
       const emptyCounts: VorCounts = { total: 0, changed: 0, deleted: 0, unknown: 0 };
       const isAdmin = request.currentUser.role === 'admin';
       const data = rows.map((r) => ({
@@ -388,6 +424,7 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
         diffAvailable: !!r.snapshot_key && (r.content_schema_version as number) >= 1,
         counts: countsByVor.get(r.id as string) ?? emptyCounts,
         facets: facetsByVor.get(r.id as string) ?? { locations: [], types: [] },
+        contractors: contractorsByVor.get(r.id as string) ?? [],
       }));
       return reply.send({ data });
     },

@@ -87,6 +87,19 @@ export const vorContentFacetsSchema = z.object({
   types: z.array(z.string()).default([]),
 });
 
+// Подрядчик ВОР с реквизитами договора. Живёт в estimate_vor_contractors — это реестр договорных
+// связок, а не назначений: сами назначения на строках (estimate_item_contractors). Связка может
+// пережить строки (сняли/удалили работы) — тогда itemsCount = 0 и подрядчик показан «без строк».
+export const vorContractorSchema = z.object({
+  contractorId: z.string().uuid(),
+  contractorName: z.string().nullable(),
+  contractNumber: z.string().nullable(),
+  /** Дата договора в формате YYYY-MM-DD (форматирует клиент). */
+  contractDate: z.string().nullable(),
+  /** Живых строк этого ВОР за подрядчиком сейчас. */
+  itemsCount: z.number().int(),
+});
+
 // Строка списка «Созданные ВОР».
 export const estimateVorSchema = z.object({
   id: z.string().uuid(),
@@ -102,6 +115,9 @@ export const estimateVorSchema = z.object({
   counts: vorCountsSchema,
   // Местоположения и типы строк ВОР — как они были на момент выгрузки.
   facets: vorContentFacetsSchema,
+  // Подрядчики ВОР с договорами. default([]) — модалка «Созданные ВОР» раздела «Смета» читает
+  // тот же ответ и колонки подрядчиков не показывает.
+  contractors: z.array(vorContractorSchema).default([]),
 });
 
 // Агрегатная отметка строки сметы: обобщённый статус по всем ВОР, куда входит работа.
@@ -197,6 +213,14 @@ export const vorAssignInputSchema = z.object({
     zoneIds: [],
     locationTypeIds: [],
   }),
+  // Реквизиты договора — необязательные и всегда перезаписывают прежние: форма приходит с
+  // подставленными текущими значениями, поэтому пустое поле означает «очистить».
+  contractNumber: z.string().trim().max(150).nullable().optional(),
+  contractDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата договора должна быть в формате ГГГГ-ММ-ДД')
+    .nullable()
+    .optional(),
 });
 
 export const vorAssignResultSchema = z.object({
@@ -206,6 +230,14 @@ export const vorAssignResultSchema = z.object({
   /** Строки ВОР, удалённые из сметы — назначать нечего. */
   deletedSkipped: z.number().int(),
   /** Строк, у которых снята договорная цена прежнего исполнителя. */
+  clearedPrices: z.number().int(),
+});
+
+// Снятие подрядчика со всех строк ВОР. blocked — строки, оставшиеся за ним из-за собственных
+// заявок на материалы (чужие заявки снятию не мешают).
+export const vorUnassignResultSchema = z.object({
+  cleared: z.number().int(),
+  blocked: z.array(assignBlockedItemSchema),
   clearedPrices: z.number().int(),
 });
 
@@ -262,6 +294,8 @@ export type VorScopeItem = z.infer<typeof vorScopeItemSchema>;
 export type VorAssignFilters = z.infer<typeof vorAssignFiltersSchema>;
 export type VorAssignInput = z.infer<typeof vorAssignInputSchema>;
 export type VorAssignResult = z.infer<typeof vorAssignResultSchema>;
+export type VorUnassignResult = z.infer<typeof vorUnassignResultSchema>;
+export type VorContractor = z.infer<typeof vorContractorSchema>;
 export type VorPriceIssue = z.infer<typeof vorPriceIssueSchema>;
 export type VorPriceImportResult = z.infer<typeof vorPriceImportResultSchema>;
 export type VorFilterSnapshot = z.infer<typeof vorFilterSnapshotSchema>;

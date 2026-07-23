@@ -60,7 +60,7 @@ export async function fetchCostTypeCiphers(
 
 export interface EstimateDetailOptions {
   // true → дополнительный запрос estimate_item_contractors и поля item_contractors/
-  // assigned_total/remaining_qty/over_assigned у каждой работы (как в GET /api/estimates/:id).
+  // request_locked_contractor_ids у каждой работы (как в GET /api/estimates/:id).
   // false (default) → без этих полей (как в GET /api/projects/:id/estimate).
   includeItemContractors?: boolean;
 }
@@ -167,21 +167,18 @@ export async function buildEstimateDetail(
     // Построчные назначения подрядчиков (раздел «Подрядчики») — только когда запрошены.
     const itemContractors = opts?.includeItemContractors
       ? await pool.query(
-          `SELECT eic.item_id, eic.contractor_id, eic.assigned_qty, eic.assigned_percent,
-                  COALESCE(eic.assigned_qty, ei.quantity * eic.assigned_percent / 100.0, ei.quantity) AS effective_qty,
-                  o.name AS contractor_name
+          `SELECT eic.item_id, eic.contractor_id, o.name AS contractor_name
              FROM estimate_item_contractors eic
-             JOIN estimate_items ei      ON ei.id = eic.item_id
-             LEFT JOIN organizations o   ON o.id = eic.contractor_id
+             LEFT JOIN organizations o ON o.id = eic.contractor_id
             WHERE eic.estimate_id = $1
             ORDER BY eic.assigned_at`,
           [estimateId],
         )
       : null;
     // Назначения, защищённые заявками на материалы: по строке уже заказано, поэтому снять или
-    // заменить подрядчика нельзя. Нужны разделу «Подрядчики» — замок на чипе и предпросмотр
-    // массового назначения без второго запроса. Авторитет остаётся за POST /assignments/bulk:
-    // он пересчитывает то же самое под FOR UPDATE, так что слегка устаревшее поле безопасно.
+    // заменить подрядчика нельзя. Нужны разделу «Подрядчики» — замок на чипе исполнителя.
+    // Авторитет остаётся за роутами назначения/снятия ВОР: они пересчитывают то же самое под
+    // FOR UPDATE, так что слегка устаревшее поле безопасно.
     const lockedContractors = opts?.includeItemContractors
       ? await pool.query(
           `WITH live AS (
@@ -222,24 +219,16 @@ export async function buildEstimateDetail(
 
   let itemsOut: Record<string, unknown>[];
   if (itemContractors) {
-    // Распределённый объём, остаток без подрядчика и признак over-assigned по каждой работе.
+    // Исполнитель строки и подрядчики, которых с неё не снять из-за оформленных заявок.
     const contractorsByItem = bucketBy(itemContractors.rows, (c) => c.item_id as string);
     const lockedByItem = bucketBy(lockedContractors?.rows ?? [], (r) => r.item_id as string);
 
-    itemsOut = items.rows.map((it) => {
-      const its = contractorsByItem.get(it.id) ?? [];
-      const assignedTotal = its.reduce((s, c) => s + Number(c.effective_qty), 0);
-      const qty = Number(it.quantity);
-      return {
-        ...it,
-        materials: materialsByItem.get(it.id) ?? [],
-        item_contractors: its,
-        assigned_total: assignedTotal,
-        remaining_qty: Math.max(qty - assignedTotal, 0),
-        over_assigned: assignedTotal > qty + 1e-6,
-        request_locked_contractor_ids: (lockedByItem.get(it.id) ?? []).map((r) => r.contractor_id as string),
-      };
-    });
+    itemsOut = items.rows.map((it) => ({
+      ...it,
+      materials: materialsByItem.get(it.id) ?? [],
+      item_contractors: contractorsByItem.get(it.id) ?? [],
+      request_locked_contractor_ids: (lockedByItem.get(it.id) ?? []).map((r) => r.contractor_id as string),
+    }));
   } else {
     itemsOut = items.rows.map((it) => ({
       ...it,

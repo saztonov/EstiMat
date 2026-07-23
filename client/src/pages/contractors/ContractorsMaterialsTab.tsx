@@ -44,7 +44,7 @@ import { RequestReviewModal, buildReviewLines } from './materials/RequestReviewM
 interface Props {
   estimateId: string;
   items: EstimateItem[];
-  /** Подрядчик: материалы масштабируются по его доле строки (effective_qty / quantity). */
+  /** Подрядчик: ему приходят только его строки (работа назначается целиком). */
   viewerIsContractor: boolean;
   isAdmin: boolean;
   /** Шифры РД по видам работ — показываются в модалке по клику на вид работ. */
@@ -63,38 +63,27 @@ const num = (v: string | number | null | undefined) => Number(v ?? 0);
 const FILL_PERCENT = 100;
 
 /**
- * Чьи объёмы показываем: 'me' — подрядчик (своя доля строки), список id — доли выбранных
- * подрядчиков, пустой список — вся смета без масштабирования.
+ * Чьи объёмы показываем: 'me' — подрядчик (ему приходят только его строки), список id —
+ * выбранные подрядчики, пустой список — вся смета.
  */
 type QtyScope = 'me' | string[];
 
 /**
- * Свести объёмы материалов к доле выбранных подрядчиков.
+ * Обнулить материалы строк вне выбранных подрядчиков.
  *
- * Подрядчику нельзя показывать 100% строки, назначенной ему на 40%. Сотруднику с отбором по
- * подрядчику — тоже: рядом стоит «Уже заявлено», которое уже скоупится по подрядчику, и полный
- * объём делал бы эти числа несопоставимыми.
+ * Работа достаётся исполнителю целиком, поэтому масштабировать нечего: строка либо принадлежит
+ * выбранному подрядчику полностью, либо не входит в отбор вовсе. Строки подрядчика оставляем как
+ * есть, чужие обнуляем — рядом стоит «Уже заявлено», которое скоупится по подрядчику, и чужие
+ * объёмы делали бы эти числа несопоставимыми.
  */
 function scaleToScope(items: EstimateItem[], scope: QtyScope): EstimateItem[] {
-  if (Array.isArray(scope) && scope.length === 0) return items;
+  if (scope === 'me' || scope.length === 0) return items;
   return items.map((it) => {
-    const q = num(it.quantity);
-    const eff =
-      scope === 'me'
-        ? num(it.my_effective_qty)
-        : (it.item_contractors ?? [])
-            .filter((c) => scope.includes(c.contractor_id))
-            .reduce((s, c) => s + num(c.effective_qty), 0);
-    // Доля больше единицы бессмысленна: суммарные назначения не должны превышать объём строки.
-    const share = q > 0 ? Math.min(eff / q, 1) : 1;
-    if (share >= 1 - 1e-9) return it;
+    const mine = (it.item_contractors ?? []).some((c) => scope.includes(c.contractor_id));
+    if (mine) return it;
     return {
       ...it,
-      materials: it.materials.map((m) => ({
-        ...m,
-        quantity: String(num(m.quantity) * share),
-        total: String(num(m.total) * share),
-      })),
+      materials: it.materials.map((m) => ({ ...m, quantity: '0', total: '0' })),
     };
   });
 }

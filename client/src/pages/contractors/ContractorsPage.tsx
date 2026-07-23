@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { Card, Row, Col, Tag, Empty, Spin, Space, Button, Tabs } from 'antd';
 import { ArrowLeftOutlined, FileExcelOutlined } from '@ant-design/icons';
@@ -18,7 +18,7 @@ import {
 import { ContractorsSmetaTab } from './ContractorsSmetaTab';
 import { ContractorsMaterialsTab } from './ContractorsMaterialsTab';
 import { ContractorsRequestsTab } from './ContractorsRequestsTab';
-import { VorObjectListModal } from './vor/VorObjectListModal';
+import { VorObjectListModal, type ContractFilter } from './vor/VorObjectListModal';
 import { useMaterialsSummary } from './materials/useMaterialsSummary';
 
 // Строка списка объектов раздела (поля зависят от роли — см. /api/contractors/estimates).
@@ -155,6 +155,9 @@ export function ContractorsPage() {
   const canAssign = role === 'admin' || role === 'engineer' || role === 'manager';
   const [tab, setTab] = usePersistedTab('estimat:contractors-tab', 'smeta');
   const [vorListOpen, setVorListOpen] = useState(false);
+  // Отбор «строки одного договора» из реестра ВОР. Живёт на странице: реестр после перехода
+  // закрывается, а отбор должен остаться на вкладке «Смета».
+  const [contractFilter, setContractFilter] = useState<ContractFilter | null>(null);
 
   // Вкладка из ссылки (вход «Новая заявка» из раздела «Заявки») — один раз при открытии и только
   // на время этого визита: в localStorage не пишем, иначе разовый переход по ссылке молча сменил
@@ -167,6 +170,14 @@ export function ContractorsPage() {
   const onTabChange = (key: string) => {
     setTabOverride(null);
     setTab(key);
+  };
+
+  // Переход к строкам договора: реестр закрывается, вкладка «Смета» показывает только их.
+  const showContract = (filter: ContractFilter) => {
+    setContractFilter(filter);
+    setVorListOpen(false);
+    setTabOverride(null);
+    setTab('smeta');
   };
 
   const engineerQ = useQuery({
@@ -208,6 +219,11 @@ export function ContractorsPage() {
   const zones = useMemo(() => zonesData?.data.roots ?? [], [zonesData]);
   // Индекс имён зон строим один раз на дерево: в своде материалов он нужен на каждое вхождение.
   const zoneIndex = useMemo(() => buildZoneIndex(zones), [zones]);
+
+  // Отбор договора привязан к ВОР конкретной сметы — при переходе на другой объект он бессмыслен.
+  useEffect(() => {
+    setContractFilter(null);
+  }, [estimateId]);
 
   // Список объектов
   if (!estimateId) {
@@ -280,8 +296,9 @@ export function ContractorsPage() {
                   costTypeCiphers={costTypeCiphers}
                   zones={zones}
                   zoneIndex={zoneIndex}
-                  onChanged={() => refetch()}
                   onOpenVorRegistry={() => setVorListOpen(true)}
+                  contractFilter={contractFilter}
+                  onClearContractFilter={() => setContractFilter(null)}
                 />
               ),
             },
@@ -315,6 +332,7 @@ export function ContractorsPage() {
           onClose={() => setVorListOpen(false)}
           estimateId={estimateId}
           onChanged={() => refetch()}
+          onShowContract={showContract}
         />
       )}
     </Card>

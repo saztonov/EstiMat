@@ -142,19 +142,12 @@ export interface EstimateItem {
   // Трассировка тиражирования.
   copy_batch_id?: string | null;
   copy_source_item_id?: string | null;
-  // Назначения подрядчиков на строку + распределение объёма (раздел «Подрядчики», вид инженера).
+  // Исполнитель строки (раздел «Подрядчики», вид инженера). Назначается через реестр ВОР.
   item_contractors?: ItemContractor[];
-  assigned_total?: number;
-  remaining_qty?: number;
-  over_assigned?: boolean;
   /** Подрядчики строки, чьи назначения защищены заявками: по строке уже заказаны материалы,
-   *  снять или заменить их нельзя. Авторитет — ответ сервера при назначении; здесь это
-   *  разметка интерфейса (замок на чипе) и предпросмотр без второго запроса. */
+   *  снять их нельзя. Авторитет — ответ сервера при снятии; здесь это разметка интерфейса
+   *  (замок на чипе). */
   request_locked_contractor_ids?: string[];
-  // Вид подрядчика (его строки из /contractors/my-items): объём, назначенный его организации.
-  my_effective_qty?: string | number | null;
-  my_assigned_qty?: string | null;
-  my_assigned_percent?: string | null;
   // Тип объёма строки: 'main' (осн) / 'additional' (доп). undefined трактуется как 'main'.
   volume_type?: 'main' | 'additional';
   // OCC: версия строки, снимается при открытии формы редактирования; растёт при каждом UPDATE.
@@ -168,15 +161,11 @@ export interface EstimateItem {
   comment_count?: number;
 }
 
-// Назначение подрядчика (организации) на строку сметы с распределённым объёмом.
+// Исполнитель строки сметы: работа достаётся подрядчику целиком (долей объёма больше нет).
 export interface ItemContractor {
   item_id?: string;
   contractor_id: string;
   contractor_name: string | null;
-  assigned_qty: string | null;
-  assigned_percent: string | null;
-  /** Эффективный объём подрядчика по строке (qty, доля или весь объём) — посчитан сервером. */
-  effective_qty: string | number;
 }
 
 // Подрядчик на вид затрат (estimate + cost_type)

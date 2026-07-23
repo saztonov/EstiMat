@@ -16,6 +16,7 @@ export const ENTITY_LABEL: Record<string, string> = {
   estimate_item: 'работу',
   estimate_material: 'материал',
   estimate_contractor: 'подрядчика',
+  estimate_item_contractor: 'исполнителя строки',
 };
 
 export const ACTION_COLOR: Record<string, string> = {

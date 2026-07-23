@@ -1,14 +1,29 @@
 import { useState } from 'react';
-import { App, Button, Modal, Space, Table, Tag, Tooltip } from 'antd';
+import { App, Button, Modal, Popconfirm, Space, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DownloadOutlined, EyeOutlined, UserAddOutlined } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
-import type { EstimateVor } from '@estimat/shared';
-import { api } from '../../../services/api';
+import {
+  CloseOutlined,
+  DownloadOutlined,
+  EyeOutlined,
+  FilterOutlined,
+  UserAddOutlined,
+} from '@ant-design/icons';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { EstimateVor, VorContractor, VorUnassignResult } from '@estimat/shared';
+import { api, apiFetch } from '../../../services/api';
 import { DEFAULT_PAGINATION } from '../../../lib/tableConfig';
 import { useColumnSearch, uniqueFilters } from '../../../lib/tableColumnSearch';
 import { VorPreviewModal } from '../../estimates/components/VorPreviewModal';
 import { VorAssignModal } from './VorAssignModal';
+import { showBlockedReport } from './blockedReport';
+
+/** Отбор «строки одного договора» — что показать во вкладке «Смета» по кнопке перехода. */
+export interface ContractFilter {
+  vorId: string;
+  vorName: string;
+  contractorId: string;
+  contractorName: string;
+}
 
 interface Props {
   open: boolean;
@@ -16,8 +31,20 @@ interface Props {
   estimateId: string;
   /** Подсветить строку (вход по метке «В» из таблицы сметы); null — просто реестр. */
   focusVorId?: string | null;
-  /** Обновить смету после назначения/загрузки цен. */
+  /** Обновить смету после назначения/снятия/загрузки цен. */
   onChanged: () => void;
+  /** Показать в смете только строки этого договора (реестр при этом закрывается). */
+  onShowContract: (filter: ContractFilter) => void;
+}
+
+// Высота строки подрядчика: столбцы «Подрядчики» и «Договор» читаются парой, поэтому их строки
+// обязаны стоять на одной высоте.
+const ROW_H = 40;
+
+function formatContractDate(iso: string | null): string {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
 }
 
 // Список значений колонкой тегов: длинные перечисления не должны растягивать строку таблицы.
@@ -44,21 +71,54 @@ function TagList({ values }: { values: string[] }) {
 
 /**
  * Реестр ВОР объекта (раздел «Подрядчики»). Здесь ВОР не создают и не удаляют — это операции
- * раздела «Смета»; здесь его смотрят, скачивают и раздают подрядчикам.
+ * раздела «Смета»; здесь его смотрят, скачивают и раздают подрядчикам. Отсюда же подрядчика
+ * снимают и переходят к строкам его договора: другого места назначения исполнителей нет.
  *
  * «Местоположения» и «Типы» — какими они были на момент выгрузки (снимок строк ВОР), а не какими
  * стали в смете: реестр должен совпадать с тем, что подрядчик видит в присланном файле.
  */
-export function VorObjectListModal({ open, onClose, estimateId, focusVorId = null, onChanged }: Props) {
-  const { message } = App.useApp();
+export function VorObjectListModal({
+  open,
+  onClose,
+  estimateId,
+  focusVorId = null,
+  onChanged,
+  onShowContract,
+}: Props) {
+  const { message, modal } = App.useApp();
+  const queryClient = useQueryClient();
   const { getColumnSearchProps } = useColumnSearch<EstimateVor>();
   const [previewVor, setPreviewVor] = useState<{ id: string; name: string } | null>(null);
-  const [assignVor, setAssignVor] = useState<{ id: string; name: string } | null>(null);
+  const [assignVor, setAssignVor] = useState<
+    { id: string; name: string; contractors: VorContractor[] } | null
+  >(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['estimate-vor', estimateId],
     queryFn: () => api.get<{ data: EstimateVor[] }>(`/estimates/${estimateId}/vors`).then((r) => r.data),
     enabled: open,
+  });
+
+  // Снятие подрядчика со всех строк этого ВОР. Строки с его собственными заявками на материалы
+  // остаются за ним — сервер возвращает их списком.
+  const unassign = useMutation({
+    mutationFn: (v: { vorId: string; contractorId: string }) =>
+      apiFetch<{ data: VorUnassignResult }>(
+        `/estimates/${estimateId}/vors/${v.vorId}/contractors/${v.contractorId}`,
+        { method: 'DELETE' },
+      ).then((r) => r.data),
+    onSuccess: (res, v) => {
+      const parts = [`снято строк: ${res.cleared}`];
+      if (res.blocked.length > 0) parts.push(`оставлено по заявкам: ${res.blocked.length}`);
+      if (res.clearedPrices > 0) parts.push(`снято договорных цен: ${res.clearedPrices}`);
+      if (res.blocked.length > 0) message.warning(parts.join(' · '));
+      else message.success(parts.join(' · '));
+      showBlockedReport(modal, res.blocked, new Map(), 'unassign');
+      queryClient.invalidateQueries({ queryKey: ['estimate-vor', estimateId] });
+      queryClient.invalidateQueries({ queryKey: ['vor-scope', estimateId, v.vorId] });
+      onChanged();
+    },
+    onError: (e: Error) => message.error(e.message),
   });
 
   const columns: ColumnsType<EstimateVor> = [
@@ -99,6 +159,104 @@ export function VorObjectListModal({ open, onClose, estimateId, focusVorId = nul
       render: (_v, r) => <TagList values={r.facets.types} />,
     },
     {
+      title: 'Подрядчики',
+      key: 'contractors',
+      width: 300,
+      render: (_v, r) =>
+        r.contractors.length === 0 ? (
+          <span style={{ color: 'var(--est-text-tertiary)' }}>—</span>
+        ) : (
+          <div>
+            {r.contractors.map((c) => {
+              // Строк за подрядчиком не осталось (сняли или удалили из сметы), а договор есть:
+              // показываем отдельным состоянием, переходить некуда.
+              const empty = c.itemsCount === 0;
+              return (
+                <div
+                  key={c.contractorId}
+                  style={{ height: ROW_H, display: 'flex', alignItems: 'center', gap: 4 }}
+                >
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      color: empty ? 'var(--est-text-tertiary)' : undefined,
+                    }}
+                    title={c.contractorName ?? '—'}
+                  >
+                    {c.contractorName ?? '—'}
+                  </span>
+                  {empty && <Tag style={{ marginInlineEnd: 0 }}>без строк</Tag>}
+                  <Tooltip title={empty ? 'Строк за подрядчиком нет' : 'Показать строки договора в смете'}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<FilterOutlined />}
+                      disabled={empty}
+                      aria-label="Показать строки договора"
+                      onClick={() =>
+                        onShowContract({
+                          vorId: r.id,
+                          vorName: r.name,
+                          contractorId: c.contractorId,
+                          contractorName: c.contractorName ?? '—',
+                        })
+                      }
+                    />
+                  </Tooltip>
+                  <Popconfirm
+                    title="Снять подрядчика?"
+                    description="Он уйдёт со всех строк этого ВОР. Строки с оформленными заявками останутся за ним."
+                    okText="Снять"
+                    okButtonProps={{ danger: true }}
+                    cancelText="Отмена"
+                    onConfirm={() => unassign.mutate({ vorId: r.id, contractorId: c.contractorId })}
+                  >
+                    <Tooltip title="Снять подрядчика">
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<CloseOutlined />}
+                        aria-label="Снять подрядчика"
+                      />
+                    </Tooltip>
+                  </Popconfirm>
+                </div>
+              );
+            })}
+          </div>
+        ),
+    },
+    {
+      title: 'Договор',
+      key: 'contract',
+      width: 150,
+      render: (_v, r) =>
+        r.contractors.length === 0 ? (
+          <span style={{ color: 'var(--est-text-tertiary)' }}>—</span>
+        ) : (
+          <div>
+            {r.contractors.map((c) => (
+              <div
+                key={c.contractorId}
+                style={{ height: ROW_H, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}
+              >
+                <span>{c.contractNumber || <span style={{ color: 'var(--est-text-tertiary)' }}>—</span>}</span>
+                {c.contractDate && (
+                  <span style={{ fontSize: 11, color: 'var(--est-text-tertiary)' }}>
+                    {formatContractDate(c.contractDate)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        ),
+    },
+    {
       title: 'Действия',
       key: 'actions',
       width: 180,
@@ -130,7 +288,7 @@ export function VorObjectListModal({ open, onClose, estimateId, focusVorId = nul
             type="link"
             size="small"
             icon={<UserAddOutlined />}
-            onClick={() => setAssignVor({ id: r.id, name: r.name })}
+            onClick={() => setAssignVor({ id: r.id, name: r.name, contractors: r.contractors })}
           >
             Назначить
           </Button>
@@ -155,7 +313,7 @@ export function VorObjectListModal({ open, onClose, estimateId, focusVorId = nul
           loading={isLoading}
           columns={columns}
           dataSource={data ?? []}
-          scroll={{ x: 1250 }}
+          scroll={{ x: 1700 }}
           pagination={DEFAULT_PAGINATION}
           onRow={(r) => ({
             style: r.id === focusVorId ? { background: 'var(--est-warning-bg)' } : undefined,

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planBulkAssign, allocationValues, type ScopeRow } from './bulk-assign.js';
+import { planBulkAssign, blockedForContractor, type ScopeRow } from './bulk-assign.js';
 
 // Строка скоупа: свободная, занятая чужими и/или защищённая заявками.
 const row = (
@@ -79,7 +79,20 @@ test('пустой скоуп даёт пустой план', () => {
   assert.equal(plan.skipped, 0);
 });
 
-test('«весь объём» пишет оба NULL, процент — только процент', () => {
-  assert.deepEqual(allocationValues({ type: 'whole' }), { qty: null, percent: null });
-  assert.deepEqual(allocationValues({ type: 'percent', percent: 50 }), { qty: null, percent: 50 });
+test('снятие: чужая заявка не мешает, собственная блокирует', () => {
+  const rows = [
+    row('i1', { linked: ['a'] }), // заявка другого подрядчика
+    row('i2', { linked: ['b'] }), // заявка снимаемого
+    row('i3', { foreign: ['b'] }), // назначен, заявок нет
+  ];
+  const blocked = blockedForContractor(rows, 'b');
+  assert.deepEqual(blocked.map((b) => b.itemId), ['i2']);
+  assert.deepEqual(blocked[0]!.contractors.map((c) => c.contractorId), ['b']);
+  assert.equal(blocked[0]!.reason, 'material_requests');
+});
+
+test('снятие: заявка без связи блокирует по виду работ с причиной legacy', () => {
+  const blocked = blockedForContractor([row('i1', { legacy: ['b'] })], 'b');
+  assert.deepEqual(blocked.map((b) => b.itemId), ['i1']);
+  assert.equal(blocked[0]!.reason, 'material_requests_legacy');
 });

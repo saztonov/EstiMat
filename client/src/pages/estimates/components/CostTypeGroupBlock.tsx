@@ -99,8 +99,10 @@ interface Props {
   /** Какие это цены: базовые из справочника расценок (по умолчанию) или договорные из ВОР
    *  (раздел «Подрядчики»). Влияет и на столбцы, и на сумму группы. */
   priceMode?: PriceMode;
-  /** Дополнительный контент в шапке блока вида работ (напр. «Назначить на весь вид»). */
+  /** Дополнительный контент в шапке блока вида работ (сразу после названия). */
   headerExtra?: ReactNode;
+  /** Контент в правой части шапки — перед суммой группы (напр. подрядчики вида работ). */
+  headerRight?: ReactNode;
   /** Scroll-контейнер сметы — root для IntersectionObserver ленивых материалов. Передаётся
    *  только на «Смете»; когда задан и нет режима выбора, материалы рендерятся лениво. */
   scrollRootRef?: RefObject<HTMLDivElement | null>;
@@ -219,6 +221,7 @@ function CostTypeGroupBlockImpl({
   showPrices = true,
   priceMode = 'base',
   headerExtra,
+  headerRight,
   scrollRootRef,
   onOpenHistory,
   estimateId,
@@ -644,6 +647,7 @@ function CostTypeGroupBlockImpl({
           />
         )}
         <span style={{ flex: 1 }} />
+        {headerRight}
         {showPrices && <span style={{ color: 'var(--est-primary)', fontWeight: 600 }}>{formatMoney(groupTotal)}</span>}
         {editable && !deleteMode && (
           <Button type="primary" size="small" icon={<PlusOutlined />} disabled={!!editing} onClick={() => setEditing({ workId: null, rateId: null, description: '', unit: '', quantity: 1, unitPrice: 0 })}>

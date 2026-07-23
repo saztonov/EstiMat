@@ -1,15 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import {
-  App,
-  Button,
-  Checkbox,
-  Empty,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Tooltip,
-} from 'antd';
+import { useCallback, useMemo, useState } from 'react';
+import { Button, Checkbox, Empty, Select, Space, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   CaretRightOutlined,
@@ -18,9 +8,9 @@ import {
   LockOutlined,
   UpOutlined,
 } from '@ant-design/icons';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import type { BulkAssignResult, Organization, VorMark, VorMarksMap } from '@estimat/shared';
-import { api, apiFetch } from '../../services/api';
+import { useQuery } from '@tanstack/react-query';
+import type { VorMark, VorMarksMap, VorScopeItem } from '@estimat/shared';
+import { api } from '../../services/api';
 import { CostTypeGroupBlock } from '../estimates/components/CostTypeGroupBlock';
 import {
   buildCostTypeGroups,
@@ -40,17 +30,12 @@ import {
 } from '../estimates/components/LocationBadges';
 import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
 import { useContractorLocationFilter } from './useContractorLocationFilter';
-import { RowAssignPopover } from './assign/RowAssignPopover';
-import { GroupAssignPopover } from './assign/GroupAssignPopover';
-import { GroupSelectionBar } from './assign/GroupSelectionBar';
-import { countUnassigned, useAssignPlan } from './assign/useAssignPlan';
-import { showBlockedReport } from './assign/blockedReport';
-import { allocationLabel, type AssignInput, type BulkAssignDraft } from './assign/types';
+import type { ContractFilter } from './vor/VorObjectListModal';
 
 interface Props {
   estimateId: string;
   items: EstimateItem[];
-  /** Инженер/админ — может назначать; подрядчик — только просмотр своих строк. */
+  /** Инженер/админ — видит цены и реестр ВОР; подрядчик — только свои строки. */
   canAssign: boolean;
   viewerIsContractor: boolean;
   /** Объект строк — для справочника типов в поповере локации (вид инженера). */
@@ -59,19 +44,45 @@ interface Props {
   costTypeCiphers: CostTypeCiphers;
   zones: ZoneNode[];
   zoneIndex: ZoneIndex;
-  onChanged: () => void;
   /** Открыть реестр ВОР объекта (он один на раздел — им же владеет страница). */
   onOpenVorRegistry: () => void;
+  /** Показывать только строки одного договора (вход по кнопке перехода из реестра ВОР). */
+  contractFilter?: ContractFilter | null;
+  onClearContractFilter?: () => void;
 }
 
 const NO_CATEGORY = '__none__';
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
 
-// Подпись подрядчика строки с его объёмом/долей.
-function contractorLabel(c: ItemContractor) {
-  if (c.assigned_percent != null) return `${c.contractor_name ?? '—'} · ${num(c.assigned_percent)}%`;
-  if (c.assigned_qty != null) return `${c.contractor_name ?? '—'} · ${num(c.assigned_qty)}`;
-  return `${c.contractor_name ?? '—'} · весь объём`;
+// Подрядчики набора работ без повторов — для правой части заголовков «Категория» и «Вид работ».
+function contractorsOf(works: EstimateItem[]): ItemContractor[] {
+  const byId = new Map<string, ItemContractor>();
+  for (const w of works)
+    for (const c of w.item_contractors ?? []) if (!byId.has(c.contractor_id)) byId.set(c.contractor_id, c);
+  return [...byId.values()];
+}
+
+// Подрядчики группы тегами: длинный список не должен разрывать строку заголовка.
+function ContractorTags({ contractors }: { contractors: ItemContractor[] }) {
+  if (contractors.length === 0) return null;
+  const shown = contractors.slice(0, 3);
+  const names = contractors.map((c) => c.contractor_name ?? '—');
+  return (
+    <Space size={4}>
+      {shown.map((c) => (
+        <Tag key={c.contractor_id} color="purple" style={{ marginInlineEnd: 0 }}>
+          {c.contractor_name ?? '—'}
+        </Tag>
+      ))}
+      {contractors.length > shown.length && (
+        <Tooltip title={names.join(', ')}>
+          <Tag color="purple" style={{ marginInlineEnd: 0 }}>
+            +{contractors.length - shown.length}
+          </Tag>
+        </Tooltip>
+      )}
+    </Space>
+  );
 }
 
 export function ContractorsSmetaTab({
@@ -83,10 +94,10 @@ export function ContractorsSmetaTab({
   costTypeCiphers,
   zones,
   zoneIndex,
-  onChanged,
   onOpenVorRegistry,
+  contractFilter = null,
+  onClearContractFilter,
 }: Props) {
-  const { message, modal } = App.useApp();
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
@@ -94,20 +105,6 @@ export function ContractorsSmetaTab({
 
   // Инженеру/админу видны цены (как на странице «Смета»).
   const showPrices = canAssign;
-
-  // Организации-подрядчики для назначения (только инженеру/админу).
-  const { data: orgsData } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => api.get<{ data: Organization[] }>('/organizations'),
-    enabled: canAssign,
-  });
-  const contractorOptions = useMemo(
-    () =>
-      (orgsData?.data ?? [])
-        .filter((o) => o.type === 'subcontractor' || o.type === 'general_contractor')
-        .map((o) => ({ value: o.id, label: o.name })),
-    [orgsData],
-  );
 
   // Опции фильтра — только подрядчики, реально назначенные на работы в этой смете
   // (источник — item_contractors, а не справочник организаций).
@@ -123,8 +120,7 @@ export function ContractorsSmetaTab({
 
   // Отметки ВОР строк — тот же ключ, что на «Смете»: кэш общий, переход между разделами не
   // даёт лишнего запроса. Подрядчику ВОР закрыт (роут для его роли не открыт), поэтому не
-  // запрашиваем вовсе. Назначение подрядчика в снимок ВОР не входит (contentHash по составу
-  // строки), поэтому после мутаций назначений этот ключ инвалидировать НЕ нужно.
+  // запрашиваем вовсе.
   const { data: vorMarks } = useQuery({
     queryKey: ['estimate-vor-marks', estimateId],
     queryFn: () =>
@@ -142,6 +138,27 @@ export function ContractorsSmetaTab({
   // отметка не хранит его id (как и на «Смете»).
   const openVorList = useCallback(() => onOpenVorRegistry(), [onOpenVorRegistry]);
 
+  // Строки договора: состав ВОР пересекается с назначениями подрядчика. Ключ тот же, что у
+  // модалки назначения — кэш общий, а после снятия подрядчика набор пересчитается сам.
+  const { data: contractScope, isLoading: contractScopeLoading } = useQuery({
+    queryKey: ['vor-scope', estimateId, contractFilter?.vorId],
+    queryFn: () =>
+      api
+        .get<{ data: { items: VorScopeItem[] } }>(
+          `/estimates/${estimateId}/vors/${contractFilter!.vorId}/items`,
+        )
+        .then((r) => r.data),
+    enabled: !!contractFilter && !viewerIsContractor,
+  });
+  const contractItemIds = useMemo(() => {
+    if (!contractFilter || !contractScope) return null;
+    return new Set(
+      contractScope.items
+        .filter((si) => si.assignedContractorIds.includes(contractFilter.contractorId))
+        .map((si) => si.itemId),
+    );
+  }, [contractFilter, contractScope]);
+
   // Локационный отбор раздела (корпус/этажи/тип) — своё состояние, не связано со страницей «Смета».
   const {
     value: locFilter,
@@ -152,15 +169,16 @@ export function ContractorsSmetaTab({
   } = useContractorLocationFilter(items);
 
   const visibleItems = useMemo(() => {
-    let res = onlyUnassigned
-      ? items.filter((it) => num(it.remaining_qty ?? it.quantity) > 1e-6)
-      : items;
+    let res = onlyUnassigned ? items.filter((it) => (it.item_contractors ?? []).length === 0) : items;
+    // Пока состав договора не загрузился, показывать всю смету нельзя: пользователь просил
+    // строки одного договора и принял бы полный список за результат отбора.
+    if (contractFilter) res = contractItemIds ? res.filter((it) => contractItemIds.has(it.id)) : [];
     if (filterContractorIds.length)
       res = res.filter((it) =>
         (it.item_contractors ?? []).some((c) => filterContractorIds.includes(c.contractor_id)),
       );
     return filterByLocation(res);
-  }, [items, onlyUnassigned, filterContractorIds, filterByLocation]);
+  }, [items, onlyUnassigned, contractFilter, contractItemIds, filterContractorIds, filterByLocation]);
   const groups = useMemo(
     () => buildCostTypeGroups(visibleItems, [], [], undefined, costTypeCiphers),
     [visibleItems, costTypeCiphers],
@@ -181,248 +199,13 @@ export function ContractorsSmetaTab({
     return order.map((k) => map.get(k)!);
   }, [groups]);
 
-  const assignMutation = useMutation({
-    mutationFn: (v: AssignInput & { itemIds: string[] }) => {
-      if (v.mode === 'percent')
-        return api.post('/contractors/assignments', { mode: 'percent', contractorId: v.contractorId, itemIds: v.itemIds, percent: v.percent });
-      if (v.mode === 'qty')
-        return api.post('/contractors/assignments', {
-          mode: 'qty',
-          contractorId: v.contractorId,
-          assignments: v.itemIds.map((id) => ({ itemId: id, assignedQty: v.qty })),
-        });
-      return api.post('/contractors/assignments', { mode: 'remainder', contractorId: v.contractorId, itemIds: v.itemIds });
-    },
-    onSuccess: () => {
-      message.success('Исполнитель назначен');
-      onChanged();
-    },
-    onError: (e: Error) => message.error(e.message),
-  });
-
-  const clearMutation = useMutation({
-    mutationFn: (v: { itemIds: string[]; contractorId?: string }) =>
-      apiFetch('/contractors/assignments', { method: 'DELETE', body: JSON.stringify(v) }),
-    onSuccess: () => {
-      message.success('Исполнитель снят');
-      onChanged();
-    },
-    onError: (e: Error) => message.error(e.message),
-  });
-
-  const doAssign = (input: AssignInput, itemIds: string[]) => assignMutation.mutateAsync({ ...input, itemIds });
-
-  // Массовое назначение: применяется частично и возвращает отчёт (что перезаписано, что
-  // пропущено из-за заявок). Сообщение об итоге строит вызывающий — оно зависит от отчёта.
-  const bulkAssignMutation = useMutation({
-    mutationFn: (v: BulkAssignDraft & { itemIds: string[]; strategy: 'replace' | 'unassigned_only' }) =>
-      api
-        .post<{ data: BulkAssignResult }>('/contractors/assignments/bulk', {
-          estimateId,
-          contractorId: v.contractorId,
-          itemIds: v.itemIds,
-          strategy: v.strategy,
-          allocation: v.allocation,
-        })
-        .then((r) => r.data),
-    onSuccess: () => onChanged(),
-    onError: (e: Error) => message.error(e.message),
-  });
-
   const typeKey = (g: CostTypeGroup) => g.costTypeId ?? NO_CATEGORY;
-
-  // ── Режим отметки строк («назначить на несколько работ») ──
-  // Живёт ровно в одном виде работ: назначать «через весь экран» смысла нет, а панель действий
-  // должна стоять рядом с отмеченными строками.
-  const [selectSession, setSelectSession] = useState<(BulkAssignDraft & { typeKey: string }) | null>(null);
-  const [selectedWorkIds, setSelectedWorkIds] = useState<Set<string>>(new Set());
-  const exitSelect = useCallback(() => {
-    setSelectSession(null);
-    setSelectedWorkIds(new Set());
-  }, []);
-  const toggleWork = useCallback(
-    (id: string, selected: boolean) =>
-      setSelectedWorkIds((prev) => {
-        const n = new Set(prev);
-        if (selected) n.add(id);
-        else n.delete(id);
-        return n;
-      }),
-    [],
-  );
-
-  // Смена отбора меняет набор видимых строк — режим гасим целиком: назначать можно только на
-  // то, что видно. Завязка именно на значения фильтров, а НЕ на visibleItems/groups: последние
-  // пересоздаются на каждом refetch (в т.ч. по фокусу окна) и убивали бы режим на ровном месте.
-  useEffect(() => {
-    exitSelect();
-  }, [onlyUnassigned, filterContractorIds, filterByLocation, exitSelect]);
-
-  const buildPlan = useAssignPlan();
-
-  // Итог массового назначения: сначала факт, потом причины пропусков.
-  const reportBulkResult = useCallback(
-    (res: BulkAssignResult, works: EstimateItem[]) => {
-      const nameById = new Map(works.map((w) => [w.id, w.description]));
-      if (res.assigned === 0) {
-        message.warning(
-          res.blocked.length > 0
-            ? 'Назначать нечего: все строки защищены заявками'
-            : 'Назначать нечего: подходящих строк нет',
-        );
-        return;
-      }
-      const parts = [`назначено строк: ${res.assigned}`];
-      if (res.replacedRows > 0) parts.push(`перезаписано: ${res.replacedRows}`);
-      if (res.blocked.length > 0) parts.push(`пропущено: ${res.blocked.length}`);
-      message.success(parts.join(' · '));
-      showBlockedReport(modal, res.blocked, nameById);
-    },
-    [message, modal],
-  );
-
-  // Назначение на вид работ целиком либо только на строки без подрядчика.
-  const runGroupAssign = useCallback(
-    async (group: CostTypeGroup, scope: 'all' | 'new', draft: BulkAssignDraft) => {
-      const plan = buildPlan(group.works, draft.contractorId, scope);
-      if (plan.targets.length === 0 && plan.locked.length === 0) {
-        message.warning('Подходящих строк нет');
-        return;
-      }
-      const itemIds = [...plan.targets, ...plan.locked].map((w) => w.id);
-
-      const run = async () => {
-        const res = await bulkAssignMutation.mutateAsync({
-          ...draft,
-          itemIds,
-          strategy: scope === 'new' ? 'unassigned_only' : 'replace',
-        });
-        reportBulkResult(res, group.works);
-      };
-
-      // Диалог только когда есть что затирать или пропускать — иначе он лишний.
-      if (plan.replaceCount === 0 && plan.locked.length === 0) return run();
-
-      const contractorName =
-        contractorOptions.find((o) => o.value === draft.contractorId)?.label ?? 'подрядчика';
-      modal.confirm({
-        title: scope === 'new' ? 'Назначить на новые строки?' : 'Назначить на весь вид работ?',
-        width: 520,
-        okText: plan.replaceCount > 0 ? 'Назначить и перезаписать' : 'Назначить',
-        okButtonProps: { danger: plan.replaceCount > 0 },
-        cancelText: 'Отмена',
-        content: (
-          <div>
-            <div>Вид работ: «{group.costTypeName ?? 'Без вида работ'}»</div>
-            <div>
-              Подрядчик: {contractorName} · {allocationLabel(draft.allocation)}
-            </div>
-            <div>Строк в назначении: {plan.targets.length}</div>
-            {plan.replaceCount > 0 && (
-              <div>Будет перезаписано у других подрядчиков: {plan.replaceCount}</div>
-            )}
-            {plan.locked.length > 0 && (
-              <div>Защищено заявками — пропустим: {plan.locked.length}</div>
-            )}
-            {plan.replaceCount > 0 && (
-              <p style={{ marginBottom: 0, marginTop: 8 }}>
-                Текущие подрядчики этих строк будут сняты.
-              </p>
-            )}
-          </div>
-        ),
-        onOk: run,
-      });
-    },
-    [buildPlan, bulkAssignMutation, contractorOptions, message, modal, reportBulkResult],
-  );
-
-  // Назначение на строки, отмеченные галочками.
-  const runSelectedAssign = useCallback(
-    async (group: CostTypeGroup) => {
-      if (!selectSession) return;
-      // Отмеченная строка могла исчезнуть из-за refetch — сверяемся с текущими видимыми.
-      const visible = new Map(group.works.map((w) => [w.id, w]));
-      const picked = [...selectedWorkIds].map((id) => visible.get(id)).filter((w): w is EstimateItem => !!w);
-      if (picked.length === 0) {
-        message.warning('Отмеченные строки больше не видны — отметьте заново');
-        return;
-      }
-      const plan = buildPlan(picked, selectSession.contractorId, 'all');
-      const itemIds = picked.map((w) => w.id);
-
-      const run = async () => {
-        const res = await bulkAssignMutation.mutateAsync({
-          contractorId: selectSession.contractorId,
-          allocation: selectSession.allocation,
-          itemIds,
-          strategy: 'replace',
-        });
-        reportBulkResult(res, group.works);
-        exitSelect();
-      };
-
-      if (plan.replaceCount === 0 && plan.locked.length === 0) return run();
-
-      modal.confirm({
-        title: 'Перезаписать назначения?',
-        width: 520,
-        okText: plan.replaceCount > 0 ? 'Назначить и перезаписать' : 'Назначить',
-        okButtonProps: { danger: plan.replaceCount > 0 },
-        cancelText: 'Отмена',
-        content: (
-          <div>
-            <div>Отмечено строк: {picked.length}</div>
-            {plan.replaceCount > 0 && (
-              <div>Из них назначены другим подрядчикам: {plan.replaceCount} — их назначения будут сняты</div>
-            )}
-            {plan.locked.length > 0 && <div>Защищено заявками — пропустим: {plan.locked.length}</div>}
-          </div>
-        ),
-        onOk: run,
-      });
-    },
-    [
-      selectSession,
-      selectedWorkIds,
-      buildPlan,
-      bulkAssignMutation,
-      message,
-      modal,
-      reportBulkResult,
-      exitSelect,
-    ],
-  );
-
-  // Вход в режим отметки: разворачиваем вид и его категорию — иначе отмечать было бы нечего.
-  const startSelect = (group: CostTypeGroup, draft: BulkAssignDraft) => {
-    const key = typeKey(group);
-    setCollapsedTypes((p) => {
-      const n = new Set(p);
-      n.delete(key);
-      return n;
-    });
-    setCollapsedCats((p) => {
-      const n = new Set(p);
-      n.delete(group.costCategoryId ?? NO_CATEGORY);
-      return n;
-    });
-    setSelectedWorkIds(new Set());
-    setSelectSession({ ...draft, typeKey: key });
-  };
 
   const toggleCat = (id: string) =>
     setCollapsedCats((prev) => {
       const n = new Set(prev);
-      if (n.has(id)) {
-        n.delete(id);
-      } else {
-        n.add(id);
-        // Свернули категорию с активным режимом отметки — блок уходит из DOM, режим остался бы
-        // включённым «вслепую».
-        if (selectSession && groups.some((g) => (g.costCategoryId ?? NO_CATEGORY) === id && typeKey(g) === selectSession.typeKey))
-          exitSelect();
-      }
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
       return n;
     });
   const toggleType = (id: string | null) =>
@@ -440,70 +223,33 @@ export function ContractorsSmetaTab({
   const collapseAll = () => {
     setCollapsedCats(new Set(groups.map((g) => g.costCategoryId ?? NO_CATEGORY)));
     setCollapsedTypes(new Set(groups.map(typeKey)));
-    exitSelect(); // все блоки свёрнуты — отмечать больше нечего
   };
 
   // Сумма по набору видов работ (работы + их материалы) — по договорным ценам, как и столбцы.
   const groupsTotal = (gs: CostTypeGroup[]) =>
     gs.reduce((acc, g) => acc + sumWorksTotal(g.works, 'contract'), 0);
 
-  // Ячейка «Исполнитель»: чипы подрядчиков + статус остатка. Клик по всему блоку — назначение.
+  // Ячейка «Исполнитель». Только показ: назначают и снимают подрядчика в реестре «ВОР объекта».
   const renderExecutor = (it: EstimateItem) => {
     const lockedIds = it.request_locked_contractor_ids ?? [];
     const chips = (it.item_contractors ?? []).map((c) => {
-      // По строке уже заказаны материалы у этого подрядчика — снять его нельзя (сервер ответит
-      // 409). Прячем крестик и объясняем причину, чтобы запрет не выглядел поломкой.
+      // По строке уже заказаны материалы у этого подрядчика — снятие через ВОР её пропустит.
       const locked = lockedIds.includes(c.contractor_id);
       return (
         <Tooltip
           key={c.contractor_id}
           title={locked ? 'По этой строке оформлена заявка на материалы — исполнителя не снять' : undefined}
         >
-          <Tag
-            color="purple"
-            icon={locked ? <LockOutlined /> : undefined}
-            closable={canAssign && !locked}
-            onClose={(e) => {
-              e.preventDefault();
-              e.stopPropagation(); // снятие подрядчика «крестиком» не должно открывать поповер
-              clearMutation.mutate({ itemIds: [it.id], contractorId: c.contractor_id });
-            }}
-          >
-            {contractorLabel(c)}
+          <Tag color="purple" icon={locked ? <LockOutlined /> : undefined}>
+            {c.contractor_name ?? '—'}
           </Tag>
         </Tooltip>
       );
     });
-    const remaining = num(it.remaining_qty ?? it.quantity);
-    let status: ReactNode;
-    if (it.over_assigned) status = <Tag color="red">превышение</Tag>;
-    else if (remaining > 1e-6)
-      status = chips.length ? (
-        <Tag color="orange">остаток {remaining.toLocaleString('ru-RU')}</Tag>
-      ) : (
-        <Tag>без подрядчика</Tag>
-      );
-    else status = <Tag color="green">распределено</Tag>;
-
-    const content = (
-      <Space size={4} wrap>
-        {chips}
-        {status}
-      </Space>
-    );
-
-    if (!canAssign) return content;
-
     return (
-      <RowAssignPopover
-        contractorOptions={contractorOptions}
-        onAssign={(input) => doAssign(input, [it.id])}
-        trigger={
-          <div style={{ cursor: 'pointer' }} title="Назначить исполнителя">
-            {content}
-          </div>
-        }
-      />
+      <Space size={4} wrap>
+        {chips.length > 0 ? chips : <Tag>без подрядчика</Tag>}
+      </Space>
     );
   };
 
@@ -523,7 +269,7 @@ export function ContractorsSmetaTab({
     />
   );
 
-  // ── Вид подрядчика: только его строки с его объёмом ──
+  // ── Вид подрядчика: только его строки ──
   if (viewerIsContractor) {
     const myColumns: ColumnsType<EstimateItem> = [
       {
@@ -555,8 +301,8 @@ export function ContractorsSmetaTab({
         ),
       },
       { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
-      // Подрядчик видит только назначенный ему объём (без полного объёма строки).
-      { title: 'Кол-во', key: 'quantity', width: 110, align: 'right', render: (_, it) => num(it.my_effective_qty) },
+      // Работа достаётся исполнителю целиком, поэтому его объём — объём строки.
+      { title: 'Кол-во', key: 'quantity', width: 110, align: 'right', render: (_, it) => num(it.quantity) },
     ];
     return (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -595,7 +341,7 @@ export function ContractorsSmetaTab({
       <div style={{ flexShrink: 0, marginBottom: 12 }}>
         <Space wrap className="estimat-toolbar">
           <Checkbox checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)}>
-            Только с нераспределённым объёмом
+            Только без подрядчика
           </Checkbox>
           <Select
             mode="multiple"
@@ -610,6 +356,11 @@ export function ContractorsSmetaTab({
             maxTagCount={1}
           />
           {locationFilterPopover}
+          {contractFilter && (
+            <Tag color="blue" closable onClose={onClearContractFilter} style={{ marginInlineEnd: 0 }}>
+              Договор: {contractFilter.contractorName} · ВОР «{contractFilter.vorName}»
+            </Tag>
+          )}
           <Tooltip title="Развернуть всё">
             <Button type="text" size="small" icon={<DownOutlined />} onClick={expandAll} />
           </Tooltip>
@@ -620,7 +371,13 @@ export function ContractorsSmetaTab({
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {sections.length === 0 && <Empty description="Строк нет" />}
+        {sections.length === 0 && (
+          <Empty
+            description={
+              contractFilter && contractScopeLoading ? 'Загружаем строки договора…' : 'Строк нет'
+            }
+          />
+        )}
         {sections.map((sec) => {
         const collapsed = collapsedCats.has(sec.id);
         return (
@@ -648,6 +405,7 @@ export function ContractorsSmetaTab({
               <strong style={{ fontSize: 13 }}>{sec.name}</strong>
               <span style={{ color: 'var(--est-text-tertiary)', fontSize: 12 }}>Видов работ: {sec.groups.length}</span>
               <span style={{ flex: 1 }} />
+              <ContractorTags contractors={contractorsOf(sec.groups.flatMap((g) => g.works))} />
               {showPrices && (
                 <span style={{ color: 'var(--est-primary)', fontWeight: 600 }}>{formatMoney(groupsTotal(sec.groups))}</span>
               )}
@@ -668,8 +426,7 @@ export function ContractorsSmetaTab({
                     showLocationColumn
                     zones={zones}
                     projectId={projectId}
-                    // estimateId — только чтобы отрисовались шифры РД (условие показа в блоке);
-                    // назначения подрядчиков сервер выводит из itemIds и его не требуют.
+                    // estimateId — только чтобы отрисовались шифры РД (условие показа в блоке).
                     estimateId={estimateId}
                     showPrices={showPrices}
                     // В разделе «Подрядчики» цена означает договор, а не расценку справочника:
@@ -678,32 +435,7 @@ export function ContractorsSmetaTab({
                     vorByItem={vorByItem}
                     onOpenVor={openVorList}
                     leadingColumns={executorColumn}
-                    selectWorksMode={canAssign && selectSession?.typeKey === typeKey(group)}
-                    selectedWorkIds={selectedWorkIds}
-                    onToggleWork={toggleWork}
-                    headerExtra={
-                      !canAssign ? undefined : selectSession?.typeKey === typeKey(group) ? (
-                        <GroupSelectionBar
-                          draft={selectSession}
-                          onDraftChange={(d) => setSelectSession({ ...d, typeKey: selectSession.typeKey })}
-                          selectedCount={selectedWorkIds.size}
-                          contractorOptions={contractorOptions}
-                          busy={bulkAssignMutation.isPending}
-                          onSelectAll={() => setSelectedWorkIds(new Set(group.works.map((w) => w.id)))}
-                          onClear={() => setSelectedWorkIds(new Set())}
-                          onAssign={() => void runSelectedAssign(group)}
-                          onCancel={exitSelect}
-                        />
-                      ) : (
-                        <GroupAssignPopover
-                          contractorOptions={contractorOptions}
-                          totalCount={group.works.length}
-                          unassignedCount={countUnassigned(group.works)}
-                          onAssign={(scope, draft) => runGroupAssign(group, scope, draft)}
-                          onStartSelect={(draft) => startSelect(group, draft)}
-                        />
-                      )
-                    }
+                    headerRight={<ContractorTags contractors={contractorsOf(group.works)} />}
                   />
                 ))}
               </div>

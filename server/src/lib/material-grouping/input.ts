@@ -5,9 +5,9 @@
  * содержимое запроса к модели было бы управляемым из браузера, а вход мог бы разъехаться с тем,
  * что реально лежит в смете.
  *
- * Вход — материалы работ, НАЗНАЧЕННЫХ подрядчику, в количествах его ДОЛИ (assigned_qty/percent).
- * Результат принадлежит паре (смета, подрядчик): неназначенное в расчёт не входит и его пересчёт
- * не заказывает. Проекции «общего результата под подрядчика» больше нет — расчёт сразу по scope.
+ * Вход — материалы работ, НАЗНАЧЕННЫХ подрядчику, в полном количестве строки: работа достаётся
+ * исполнителю целиком. Результат принадлежит паре (смета, подрядчик): неназначенное в расчёт не
+ * входит и его пересчёт не заказывает. Проекции «общего результата под подрядчика» больше нет.
  */
 import { createHash } from 'node:crypto';
 import { aggKey, lineKey, type GroupingScope } from '@estimat/shared';
@@ -33,9 +33,8 @@ interface RawRow {
 }
 
 /**
- * Собрать строки материалов, назначенных подрядчику, свёрнутые по ключу заказа и масштабированные
- * по его доле. Доля работы = EFFECTIVE/quantity (та же формула, что в /contractors): количество
- * вхождения материала × доля, затем суммирование по ключу заказа.
+ * Собрать строки материалов, назначенных подрядчику, свёрнутые по ключу заказа: количества
+ * вхождений суммируются как есть — работа принадлежит исполнителю целиком.
  */
 export async function loadGroupingLines(pool: Pool, scope: GroupingScope): Promise<GroupingLine[]> {
   const { rows } = await pool.query<RawRow>(
@@ -46,12 +45,7 @@ export async function loadGroupingLines(pool: Pool, scope: GroupingScope): Promi
             em.material_id,
             COALESCE(mc.name, em.description, 'Материал') AS name,
             em.unit,
-            (em.quantity::numeric
-              * CASE WHEN ei.quantity > 0
-                     THEN LEAST(
-                       COALESCE(eic.assigned_qty, ei.quantity * eic.assigned_percent / 100.0, ei.quantity)
-                       / ei.quantity, 1)
-                     ELSE 1 END) AS quantity,
+            em.quantity::numeric AS quantity,
             mg.name  AS material_group_name,
             ei.id    AS work_id,
             ei.description AS work_name
@@ -108,12 +102,9 @@ export async function loadGroupingLines(pool: Pool, scope: GroupingScope): Promi
 }
 
 /**
- * Хэш канонического входа. Меняется всё, что влияет на решение модели: состав строк, количества
- * доли подрядчика, контекст (вид работ, группа справочника, работы), модель, версия промпта и
- * версия алгоритма батчинга. Не зависит от порядка строк — сортируем здесь.
- *
- * Эквивалентные способы задать долю (assigned_percent=25 при qty=100 и assigned_qty=25) дают одно
- * эффективное количество и, значит, один хэш.
+ * Хэш канонического входа. Меняется всё, что влияет на решение модели: состав строк, количества,
+ * контекст (вид работ, группа справочника, работы), модель, версия промпта и версия алгоритма
+ * батчинга. Не зависит от порядка строк — сортируем здесь.
  */
 export function computeInputHash(lines: GroupingLine[], qualifiedModel: string, promptVersion: string): string {
   const sorted = [...lines].sort((a, b) => a.orderKey.localeCompare(b.orderKey));

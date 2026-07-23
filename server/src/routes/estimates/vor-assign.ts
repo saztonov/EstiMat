@@ -1,9 +1,9 @@
-// Назначение подрядчика на ВОР (раздел «Подрядчики») и состав ВОР для отборов.
+// Назначение и снятие подрядчика на ВОР (раздел «Подрядчики») и состав ВОР для отборов.
+// Это единственный путь, которым подрядчик попадает на строки сметы и уходит с них.
 //
 // Состав назначения сервер собирает САМ по vorId: клиент присылает только подрядчика и отборы,
-// поэтому назначить работу вне этого ВОР невозможно даже подделанным запросом (в отличие от
-// общего /contractors/assignments/bulk, который принимает произвольные itemIds и ограничен
-// 2000 строками — здесь предел задаёт сам состав ВОР).
+// поэтому назначить работу вне этого ВОР невозможно даже подделанным запросом — предел области
+// задаёт сам состав ВОР.
 //
 // Локация и тип строки берутся ИСТОРИЧЕСКИЕ — из построчного снимка ВОР: отбирать надо по тому,
 // что подрядчик видит в присланном файле, а не по тому, во что строку успели переправить после
@@ -20,7 +20,7 @@ import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { loadProjectId } from '../../lib/estimate-detail.js';
 import { recordAuditBatch } from '../../lib/audit.js';
 import { lockEstimateRequests } from '../../lib/material-requests/access.js';
-import { loadScopeRows, planBulkAssign, allocationValues } from '../../lib/contractors/bulk-assign.js';
+import { loadScopeRows, planBulkAssign, blockedForContractor } from '../../lib/contractors/bulk-assign.js';
 import { clearStaleContractPrices } from '../../lib/vor/contract-prices.js';
 import {
   loadWorkbook,
@@ -289,8 +289,8 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
         });
         const plan = planBulkAssign(rows, 'replace');
 
-        // Снятие чужих — строго ДО вставки: validate_item_contractor() (0020) запрещает
-        // «весь объём», пока на строке есть другой подрядчик.
+        // Снятие чужих — строго ДО вставки: на строке может быть только один исполнитель
+        // (uq_eic_item, 0083), и снятые записи нужны для аудита и счётчика перезаписей.
         let removedRows: Record<string, unknown>[] = [];
         if (plan.removeItemIds.length > 0) {
           const res = await client.query(
@@ -302,21 +302,21 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
           removedRows = res.rows;
         }
 
-        const { qty, percent } = allocationValues({ type: 'whole' });
         let assignedRows: Record<string, unknown>[] = [];
         if (plan.assignItemIds.length > 0) {
+          // Конфликт по item_id, а не по паре: строка достаётся подрядчику целиком, и остаточная
+          // чужая запись (гонка) должна перезаписаться, а не уронить запрос уникальностью.
           const res = await client.query(
             `INSERT INTO estimate_item_contractors
-               (item_id, estimate_id, contractor_id, assigned_qty, assigned_percent, assigned_by)
-             SELECT x, $2::uuid, $3::uuid, $4::numeric, $5::numeric, $6::uuid
+               (item_id, estimate_id, contractor_id, assigned_by)
+             SELECT x, $2::uuid, $3::uuid, $4::uuid
                FROM unnest($1::uuid[]) AS x
-             ON CONFLICT (item_id, contractor_id)
-               DO UPDATE SET assigned_qty = EXCLUDED.assigned_qty,
-                             assigned_percent = EXCLUDED.assigned_percent,
+             ON CONFLICT (item_id)
+               DO UPDATE SET contractor_id = EXCLUDED.contractor_id,
                              assigned_by = EXCLUDED.assigned_by,
                              updated_at = now()
              RETURNING *`,
-            [plan.assignItemIds, vor.estimateId, body.contractorId, qty, percent, userId],
+            [plan.assignItemIds, vor.estimateId, body.contractorId, userId],
           );
           assignedRows = res.rows;
 
@@ -329,7 +329,34 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
              ON CONFLICT (project_id, contractor_id) DO NOTHING`,
             [vor.estimateId, body.contractorId, userId],
           );
+
+          // Реквизиты договора: форма приходит с подставленными текущими значениями, поэтому
+          // пустое поле — осознанная очистка, а не «не менять».
+          await client.query(
+            `INSERT INTO estimate_vor_contractors
+               (vor_id, contractor_id, contract_number, contract_date, assigned_by)
+             VALUES ($1::uuid, $2::uuid, $3, $4::date, $5::uuid)
+             ON CONFLICT (vor_id, contractor_id)
+               DO UPDATE SET contract_number = EXCLUDED.contract_number,
+                             contract_date   = EXCLUDED.contract_date,
+                             updated_at      = now()`,
+            [vor.id, body.contractorId, body.contractNumber ?? null, body.contractDate ?? null, userId],
+          );
         }
+
+        // Подрядчик, у которого в этом ВОР не осталось ни одной строки (его перезаписали
+        // целиком), из реестра договоров уходит — иначе в столбце «Подрядчики» висел бы тот,
+        // кто здесь уже ничего не делает.
+        await client.query(
+          `DELETE FROM estimate_vor_contractors vc
+            WHERE vc.vor_id = $1::uuid
+              AND NOT EXISTS (
+                SELECT 1 FROM estimate_vor_items vi
+                  JOIN estimate_item_contractors eic
+                    ON eic.item_id = vi.item_id AND eic.contractor_id = vc.contractor_id
+                 WHERE vi.vor_id = vc.vor_id)`,
+          [vor.id],
+        );
 
         // Договорные цены прежних исполнителей — снять: новому подрядчику чужой прайс не наследуется.
         const clearedPrices = await clearStaleContractPrices(client, itemIds);
@@ -372,6 +399,125 @@ export function registerVorAssignRoutes(fastify: FastifyInstance): void {
             clearedPrices,
           },
         });
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // DELETE /:id/vors/:vorId/contractors/:contractorId — снять подрядчика со всех строк этого ВОР.
+  //
+  // Обратная операция к назначению и единственный способ снятия: в смете исполнителя больше не
+  // трогают. Строка, по которой этот подрядчик уже оформил заявку на материалы, остаётся за ним —
+  // иначе заявка осталась бы без сметного основания; чужие заявки снятию не мешают.
+  fastify.delete<{ Params: { id: string; vorId: string; contractorId: string } }>(
+    '/:id/vors/:vorId/contractors/:contractorId',
+    { preHandler: [requireRole(...ROLES)] },
+    async (request, reply) => {
+      const resolved = await resolveVor(fastify, request);
+      if ('error' in resolved)
+        return reply.status(resolved.error.status).send({ error: resolved.error.message });
+      const contractorId = z.string().uuid().safeParse(request.params.contractorId);
+      if (!contractorId.success) return reply.status(400).send({ error: 'Некорректный id подрядчика' });
+      const { vor } = resolved;
+      const userId = request.currentUser.id;
+
+      const { rows: targetRows } = await fastify.pool.query(
+        `SELECT vi.item_id
+           FROM estimate_vor_items vi
+           JOIN estimate_item_contractors eic
+             ON eic.item_id = vi.item_id AND eic.contractor_id = $2::uuid
+          WHERE vi.vor_id = $1::uuid`,
+        [vor.id, contractorId.data],
+      );
+      const itemIds = targetRows.map((r) => r.item_id as string);
+
+      // Строк за подрядчиком нет (сняли/удалили из сметы) — осталась только договорная запись.
+      if (itemIds.length === 0) {
+        await fastify.pool.query(
+          'DELETE FROM estimate_vor_contractors WHERE vor_id = $1::uuid AND contractor_id = $2::uuid',
+          [vor.id, contractorId.data],
+        );
+        return reply.send({ data: { cleared: 0, blocked: [], clearedPrices: 0 } });
+      }
+
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        await lockEstimateRequests(client, vor.estimateId);
+        await client.query(
+          `SELECT id FROM estimate_items
+            WHERE id = ANY($1::uuid[]) AND estimate_id = $2::uuid
+            ORDER BY id
+              FOR UPDATE`,
+          [itemIds, vor.estimateId],
+        );
+
+        // targetContractorId = null: при снятии «чужими» считаются все подрядчики строки,
+        // включая снимаемого — иначе его собственная заявка не попала бы в защиту.
+        const scope = await loadScopeRows(client, {
+          estimateId: vor.estimateId,
+          itemIds,
+          targetContractorId: null,
+        });
+        const blocked = blockedForContractor(scope, contractorId.data);
+        const blockedIds = new Set(blocked.map((b) => b.itemId));
+        const clearableIds = itemIds.filter((id) => !blockedIds.has(id));
+
+        if (clearableIds.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(409).send({
+            error: 'По всем строкам этого подрядчика уже оформлены заявки на материалы — снять его нельзя',
+            code: 'ASSIGNMENT_LOCKED_BY_REQUESTS',
+          });
+        }
+
+        const { rows: removed } = await client.query(
+          `DELETE FROM estimate_item_contractors
+            WHERE item_id = ANY($1::uuid[]) AND contractor_id = $2::uuid
+            RETURNING *`,
+          [clearableIds, contractorId.data],
+        );
+
+        // Исполнителя сняли — его договорная цена на этих строках больше ничья.
+        const clearedPrices = await clearStaleContractPrices(client, clearableIds);
+
+        // Договорная запись уходит только если у подрядчика не осталось строк ВОР: при частичном
+        // снятии (часть защищена заявками) реквизиты договора ещё нужны.
+        await client.query(
+          `DELETE FROM estimate_vor_contractors vc
+            WHERE vc.vor_id = $1::uuid AND vc.contractor_id = $2::uuid
+              AND NOT EXISTS (
+                SELECT 1 FROM estimate_vor_items vi
+                  JOIN estimate_item_contractors eic
+                    ON eic.item_id = vi.item_id AND eic.contractor_id = vc.contractor_id
+                 WHERE vi.vor_id = vc.vor_id)`,
+          [vor.id, contractorId.data],
+        );
+
+        const auditInputs = removed.map((r) => ({
+          estimateId: r.estimate_id as string,
+          entityType: 'estimate_item_contractor',
+          entityId: r.id as string,
+          action: 'delete',
+          userId,
+          changes: { before: r, reason: 'vor_unassign', vorId: vor.id },
+        }));
+        for (let i = 0; i < auditInputs.length; i += 500) {
+          await recordAuditBatch(client, auditInputs.slice(i, i + 500));
+        }
+
+        await client.query('COMMIT');
+
+        if (removed.length > 0 || clearedPrices > 0) {
+          const projectId = await loadProjectId(fastify.pool, vor.estimateId);
+          await emitEstimateChanged(fastify, 'contractor_cleared', vor.estimateId, projectId, userId);
+        }
+
+        return reply.send({ data: { cleared: removed.length, blocked, clearedPrices } });
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;

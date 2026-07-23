@@ -2,24 +2,27 @@ import type { ModalStaticFunctions } from 'antd/es/modal/confirm';
 import type { AssignBlockedItem } from '@estimat/shared';
 
 /**
- * Отчёт «назначено не на все строки»: по каким работам исполнитель не сменился и почему.
- * Общий для назначения из таблицы сметы и из модалки ВОР — текст один и тот же, а расходиться
- * двум объяснениям одного и того же запрета незачем.
+ * Отчёт «сработало не на всех строках»: по каким работам исполнитель не сменился и почему.
+ * Общий для назначения и снятия подрядчика — запрет в обоих случаях один и тот же (оформленная
+ * заявка на материалы), расходиться двум объяснениям незачем; различается только заголовок.
  */
 export function showBlockedReport(
   modal: Pick<ModalStaticFunctions, 'info'>,
   blocked: AssignBlockedItem[],
   nameById: Map<string, string>,
+  variant: 'assign' | 'unassign' = 'assign',
 ): void {
   if (blocked.length === 0) return;
   const shown = blocked.slice(0, 20);
   modal.info({
-    title: 'Назначено не на все строки',
+    title: variant === 'unassign' ? 'Снято не со всех строк' : 'Назначено не на все строки',
     width: 520,
     content: (
       <div>
         <p style={{ marginTop: 0 }}>
-          По этим строкам подрядчик уже оформил заявку на материалы — исполнитель у них не менялся.
+          {variant === 'unassign'
+            ? 'По этим строкам подрядчик уже оформил заявку на материалы — они остались за ним.'
+            : 'По этим строкам подрядчик уже оформил заявку на материалы — исполнитель у них не менялся.'}
         </p>
         <ul style={{ paddingLeft: 18, margin: 0 }}>
           {shown.map((b) => (

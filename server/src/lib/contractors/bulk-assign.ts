@@ -7,14 +7,14 @@
  * не могут разойтись.
  *
  * Что значит «защищена». По строке уже заказаны материалы у этого подрядчика, поэтому снять
- * или заменить его нельзя — заявка осталась бы без сметного основания. Изменение доли того же
- * подрядчика защитой не запрещено: заявка при этом не осиротеет.
+ * или заменить его нельзя — заявка осталась бы без сметного основания.
  *
  * Защита действует на СТРОКУ целиком, а не на отдельное назначение: если на строке защищён хотя
- * бы один из подрядчиков, строку не трогаем вовсе. Иначе после снятия незащищённых на строке
- * остался бы защищённый плюс новый, и validate_item_contractor() (0020) отклонил бы «весь объём».
+ * бы один из подрядчиков, строку не трогаем вовсе — иначе на ней оказалось бы два исполнителя,
+ * что запрещено индексом uq_eic_item (0083). Исключение — снятие конкретного подрядчика, см.
+ * blockedForContractor.
  */
-import type { AssignBlockedItem, BulkAssignAllocation } from '@estimat/shared';
+import type { AssignBlockedItem } from '@estimat/shared';
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> };
 
@@ -176,12 +176,24 @@ export async function loadScopeRows(
   return [...byItem.values()];
 }
 
-/** Значения assigned_qty / assigned_percent для выбранной доли. */
-export function allocationValues(allocation: BulkAssignAllocation): {
-  qty: number | null;
-  percent: number | null;
-} {
-  return allocation.type === 'percent'
-    ? { qty: null, percent: allocation.percent }
-    : { qty: null, percent: null }; // «весь объём» — оба NULL (см. validate_item_contractor)
+/**
+ * Строки, с которых снимаемого подрядчика убрать нельзя. Блокирует только ЕГО собственная
+ * заявка: чужая заявка на этой же строке принадлежит другому подрядчику и снятию не мешает.
+ *
+ * Ожидает скоуп, собранный с targetContractorId = null (при снятии «чужими» считаются все
+ * подрядчики строки, включая снимаемого).
+ */
+export function blockedForContractor(rows: ScopeRow[], contractorId: string): AssignBlockedItem[] {
+  const blocked: AssignBlockedItem[] = [];
+  for (const row of rows) {
+    const locked = row.lockedLinked.length > 0 ? row.lockedLinked : row.lockedLegacy;
+    const held = locked.filter((c) => c.contractorId === contractorId);
+    if (held.length === 0) continue;
+    blocked.push({
+      itemId: row.itemId,
+      contractors: held.map((c) => ({ contractorId: c.contractorId, contractorName: c.contractorName })),
+      reason: row.lockedLinked.length > 0 ? 'material_requests' : 'material_requests_legacy',
+    });
+  }
+  return blocked;
 }

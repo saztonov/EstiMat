@@ -1,25 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Alert, Button, Divider, Modal, Radio, Select, Space, Spin, Upload } from 'antd';
+import { App, Alert, Button, DatePicker, Divider, Input, Modal, Radio, Select, Space, Spin, Upload } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
+import dayjs, { type Dayjs } from 'dayjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   filterVorScope,
   type Organization,
   type VorAssignFilters,
   type VorAssignResult,
+  type VorContractor,
   type VorPriceImportResult,
   type VorPriceIssue,
   type VorScopeItem,
 } from '@estimat/shared';
 import { api, ApiError } from '../../../services/api';
-import { ContractorSelect } from '../assign/AssignFields';
-import { showBlockedReport } from '../assign/blockedReport';
+import { ContractorSelect } from './ContractorSelect';
+import { showBlockedReport } from './blockedReport';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   estimateId: string;
-  vor: { id: string; name: string } | null;
+  /** contractors — текущие подрядчики ВОР: по ним подставляются реквизиты договора. */
+  vor: { id: string; name: string; contractors?: VorContractor[] } | null;
   onChanged: () => void;
 }
 
@@ -97,6 +100,8 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
   const [contractorId, setContractorId] = useState<string | undefined>();
+  const [contractNumber, setContractNumber] = useState('');
+  const [contractDate, setContractDate] = useState<Dayjs | null>(null);
   const [scope, setScope] = useState<'all' | 'filters'>('all');
   const [filters, setFilters] = useState<VorAssignFilters>(EMPTY_FILTERS);
   const [assignedContractorId, setAssignedContractorId] = useState<string | null>(null);
@@ -109,6 +114,8 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
   useEffect(() => {
     if (!open) return;
     setContractorId(undefined);
+    setContractNumber('');
+    setContractDate(null);
     setScope('all');
     setFilters(EMPTY_FILTERS);
     setAssignedContractorId(null);
@@ -116,6 +123,15 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
     setPriceIssues(null);
     setPriceError(null);
   }, [open, vor?.id]);
+
+  // Выбрали подрядчика, у которого по этому ВОР уже есть договор — показываем его реквизиты.
+  // Сохранение всегда пишет то, что в форме: очищенное поле означает «убрать», а не «не менять».
+  const pickContractor = (id: string) => {
+    setContractorId(id);
+    const existing = vor?.contractors?.find((c) => c.contractorId === id);
+    setContractNumber(existing?.contractNumber ?? '');
+    setContractDate(existing?.contractDate ? dayjs(existing.contractDate) : null);
+  };
 
   const { data: orgsData } = useQuery({
     queryKey: ['organizations'],
@@ -177,6 +193,8 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
           contractorId,
           scope,
           filters,
+          contractNumber: contractNumber.trim() || null,
+          contractDate: contractDate ? contractDate.format('YYYY-MM-DD') : null,
         })
         .then((r) => r.data),
     onSuccess: (res) => {
@@ -189,6 +207,8 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
       showBlockedReport(modal, res.blocked, new Map(items.map((it) => [it.itemId, it.description])));
       setAssignedContractorId(contractorId ?? null);
       queryClient.invalidateQueries({ queryKey: ['vor-scope', estimateId, vor?.id] });
+      // Столбцы «Подрядчики» и «Договор» реестра берутся из списка ВОР — он устарел.
+      queryClient.invalidateQueries({ queryKey: ['estimate-vor', estimateId] });
       onChanged();
     },
     onError: (e: Error) => message.error(e.message),
@@ -262,8 +282,29 @@ export function VorAssignModal({ open, onClose, estimateId, vor, onChanged }: Pr
             <ContractorSelect
               options={contractorOptions}
               value={contractorId}
-              onChange={(v) => setContractorId(v)}
+              onChange={pickContractor}
             />
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>
+              Договор <span style={{ color: 'var(--est-text-tertiary)', fontWeight: 400 }}>— необязательно</span>
+            </div>
+            <Space.Compact style={{ width: '100%' }}>
+              <Input
+                placeholder="Номер договора"
+                value={contractNumber}
+                maxLength={150}
+                onChange={(e) => setContractNumber(e.target.value)}
+              />
+              <DatePicker
+                placeholder="Дата договора"
+                format="DD.MM.YYYY"
+                style={{ width: 180 }}
+                value={contractDate}
+                onChange={(d) => setContractDate(d)}
+              />
+            </Space.Compact>
           </div>
 
           <div>
