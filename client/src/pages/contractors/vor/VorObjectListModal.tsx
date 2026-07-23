@@ -27,9 +27,11 @@ function TagList({ values }: { values: string[] }) {
   return (
     <Space size={4} wrap>
       {shown.map((v) => (
-        <Tag key={v} style={{ marginInlineEnd: 0 }}>
-          {v}
-        </Tag>
+        <Tooltip key={v} title={v}>
+          <Tag style={{ marginInlineEnd: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {v}
+          </Tag>
+        </Tooltip>
       ))}
       {values.length > shown.length && (
         <Tooltip title={values.join(', ')}>
@@ -71,7 +73,7 @@ export function VorObjectListModal({ open, onClose, estimateId, focusVorId = nul
       title: 'Автор',
       dataIndex: 'createdByName',
       key: 'createdByName',
-      width: 170,
+      width: 240,
       ellipsis: true,
       filters: uniqueFilters(data ?? [], (r) => r.createdByName),
       filterSearch: true,
@@ -93,7 +95,7 @@ export function VorObjectListModal({ open, onClose, estimateId, focusVorId = nul
     {
       title: 'Типы',
       key: 'types',
-      width: 220,
+      width: 300,
       render: (_v, r) => <TagList values={r.facets.types} />,
     },
     {
@@ -144,8 +146,7 @@ export function VorObjectListModal({ open, onClose, estimateId, focusVorId = nul
         open={open}
         onCancel={onClose}
         footer={null}
-        width="90%"
-        style={{ maxWidth: 1200 }}
+        width="85%"
         destroyOnClose
       >
         <Table<EstimateVor>
@@ -154,6 +155,7 @@ export function VorObjectListModal({ open, onClose, estimateId, focusVorId = nul
           loading={isLoading}
           columns={columns}
           dataSource={data ?? []}
+          scroll={{ x: 1250 }}
           pagination={DEFAULT_PAGINATION}
           onRow={(r) => ({
             style: r.id === focusVorId ? { background: 'var(--est-warning-bg)' } : undefined,
