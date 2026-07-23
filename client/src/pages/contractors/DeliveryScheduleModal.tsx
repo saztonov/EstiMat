@@ -403,8 +403,17 @@ export function DeliveryScheduleModal({ open, lines, estimateId, contractorId, r
   return (
     <Modal
       open={open}
-      title="График поставки материалов"
+      title="Поставка давальческих материалов"
       width="80vw"
+      // Окно фиксированной высоты: тело — flex-колонка, прокрутка живёт внутри вкладок, а шапка,
+      // переключатели и кнопки неподвижны. centered, а не top: '5vh': у .ant-modal есть
+      // padding-bottom, и с ним 90vh не помещается в экран — обёртка окна получала бы свою
+      // прокрутку. Класс ant-modal-centered сам обнуляет top и этот отступ.
+      centered
+      styles={{
+        content: { height: '90vh', display: 'flex', flexDirection: 'column' },
+        body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+      }}
       onCancel={onCancel}
       onOk={onOk}
       okText="Подтвердить заявку"
@@ -450,8 +459,9 @@ export function DeliveryScheduleModal({ open, lines, estimateId, contractorId, r
                 )}
                 {fallbackNotice && <Alert type="info" showIcon style={{ marginBottom: 8 }} message={fallbackNotice} />}
                 {/* Скроллер общий на все блоки: у таблицы внутри карточки остаётся только
-                    горизонтальный, иначе на экране было бы два вложенных вертикальных. */}
-                <div style={{ maxHeight: '52vh', overflow: 'auto' }}>
+                    горизонтальный, иначе на экране было бы два вложенных вертикальных. Высоту
+                    задаёт flex-каркас окна — он забирает всё, что осталось от 90vh. */}
+                <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
                   {smart && smartJob.isLoading ? (
                     <Spin style={{ margin: 24 }} />
                   ) : (
@@ -477,7 +487,7 @@ export function DeliveryScheduleModal({ open, lines, estimateId, contractorId, r
           {
             key: 'gantt',
             label: 'График поставки',
-            children: <DeliveryGantt materials={ganttMaterials} />,
+            children: <DeliveryGantt materials={ganttMaterials} fill />,
           },
         ]}
       />

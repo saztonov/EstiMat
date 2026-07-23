@@ -34,8 +34,12 @@ const num = (v: number) => Math.round(v * 1e4) / 1e4;
  * даты. Ширина трека растёт с диапазоном дат (поставка на несколько месяцев переваривается
  * горизонтальным скроллом, метки не налезают и не выходят за модалку). Переиспользуется в окне
  * создания и карточке заявки.
+ *
+ * fill — режим «во всю высоту контейнера с липкой шапкой» для окон фиксированной высоты: диаграмма
+ * забирает остаток высоты flex-колонки и крутит строки сама, а не растягивает окно под себя. Обе оси
+ * крутит один и тот же контейнер, поэтому шапка едет с треком по горизонтали без синхронизации.
  */
-export function DeliveryGantt({ materials }: { materials: GanttMaterial[] }) {
+export function DeliveryGantt({ materials, fill }: { materials: GanttMaterial[]; fill?: boolean }) {
   const withSchedule = materials.filter((m) => m.schedule.length > 0);
   const allDates = Array.from(new Set(withSchedule.flatMap((m) => m.schedule.map((s) => s.date.slice(0, 10))))).sort();
   if (allDates.length === 0)
@@ -53,10 +57,18 @@ export function DeliveryGantt({ materials }: { materials: GanttMaterial[] }) {
   const colHead: CSSProperties = { fontWeight: 600, fontSize: 12, color: 'var(--est-text-secondary)' };
 
   return (
-    <div style={{ width: '100%', overflowX: 'auto' }}>
+    <div style={{ width: '100%', overflowX: 'auto', ...(fill && { flex: 1, minHeight: 0, overflowY: 'auto' }) }}>
       <div style={{ minWidth: NAME_W + QTY_W + trackW }}>
-        {/* Заголовок столбцов + ось дат */}
-        <div style={{ display: 'flex', alignItems: 'flex-end', marginBottom: 8, borderBottom: '1px solid var(--est-border)', paddingBottom: 4 }}>
+        {/* Заголовок столбцов + ось дат. В режиме fill он липкий, и отступ до первой строки должен
+            быть внутренним: через margin строки просвечивали бы в незакрашенной щели. */}
+        <div
+          style={{
+            display: 'flex', alignItems: 'flex-end', borderBottom: '1px solid var(--est-border)',
+            ...(fill
+              ? { position: 'sticky', top: 0, zIndex: 1, background: 'var(--est-bg-container)', paddingBottom: 12 }
+              : { marginBottom: 8, paddingBottom: 4 }),
+          }}
+        >
           <div style={{ width: NAME_W, flexShrink: 0, ...colHead }}>Наименование</div>
           <div style={{ width: QTY_W, flexShrink: 0, textAlign: 'right', paddingRight: 12, ...colHead }}>Кол-во</div>
           <div style={{ position: 'relative', width: trackW, flexShrink: 0, height: 18 }}>
