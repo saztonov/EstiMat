@@ -31,13 +31,16 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
 
   // ============================================================
-  // GET /api/contractors/estimates — объекты/сметы для раздела + счётчики
+  // GET /api/contractors/estimates — объекты/сметы для раздела + счётчики.
+  // Денежных итогов здесь нет: раздел про раздачу работ подрядчикам, а не про суммы.
   // ============================================================
   fastify.get('/estimates', async (request) => {
     const user = request.currentUser;
 
-    // Подрядчик: объекты, назначенные его организации (project_contractors); счётчики —
+    // Подрядчик: объекты, назначенные его организации (project_contractors); счётчик строк —
     // по его строкам. Объект без заведённой сметы тоже виден (estimate_id=null → некликабелен).
+    // Договоры — только свои: фильтр по $1 стоит внутри предагрегата, поэтому чужие номера и
+    // даты не покидают сервер даже как промежуточный результат.
     if (isContractor(user)) {
       if (!user.orgId) return { data: [] };
       const { rows } = await fastify.pool.query(
@@ -46,16 +49,26 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
                 p.address, p.image_url,
                 cc.name AS cost_category_name,
                 COUNT(DISTINCT eic.item_id)::int AS items_total,
-                COALESCE(SUM(ei.quantity * ei.unit_price), 0)::numeric AS my_amount
+                COALESCE(cs.contracts, '[]'::jsonb) AS contracts
            FROM project_contractors pc
            JOIN projects p        ON p.id = pc.project_id
            LEFT JOIN estimates e  ON e.project_id = p.id
            LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
            LEFT JOIN estimate_item_contractors eic
                   ON eic.estimate_id = e.id AND eic.contractor_id = pc.contractor_id
-           LEFT JOIN estimate_items ei ON ei.id = eic.item_id
+           LEFT JOIN (
+             SELECT v.estimate_id,
+                    jsonb_agg(
+                      jsonb_build_object('number', vc.contract_number, 'date', vc.contract_date::text)
+                      ORDER BY vc.contract_date DESC NULLS LAST, vc.assigned_at DESC, vc.id
+                    ) AS contracts
+               FROM estimate_vor_contractors vc
+               JOIN estimate_vors v ON v.id = vc.vor_id
+              WHERE vc.contractor_id = $1
+              GROUP BY v.estimate_id
+           ) cs ON cs.estimate_id = e.id
           WHERE pc.contractor_id = $1
-          GROUP BY e.id, p.id, cc.name
+          GROUP BY e.id, p.id, cc.name, cs.contracts
           ORDER BY p.code`,
         [user.orgId],
       );
@@ -64,28 +77,31 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
 
     // Инженер/админ/менеджер: все объекты (карточка = объект, у объекта одна смета).
     // Корень — projects, смета через LEFT JOIN: объекты без заведённой сметы тоже
-    // попадают в галерею (estimate_id = NULL, счётчики 0). Счётчики назначено/без
-    // подрядчика/объём без подрядчика — по строкам сметы объекта.
+    // попадают в галерею (estimate_id = NULL, счётчики 0). Счётчик строк — по смете объекта,
+    // ВОР — по реестру выгрузок: назначенным считается ВОР с договорной связкой, даже если
+    // живых строк за подрядчиком не осталось (то же, что показывает окно «ВОР объекта»).
     const { rows } = await fastify.pool.query(
-      `SELECT e.id AS estimate_id, e.project_id, e.work_type, e.total_amount,
+      `SELECT e.id AS estimate_id, e.project_id, e.work_type,
               p.code AS project_code, p.name AS project_name,
               p.address, p.image_url,
               cc.name AS cost_category_name,
               COUNT(ei.id)::int AS items_total,
-              COUNT(ei.id) FILTER (WHERE asg.cnt > 0)::int AS items_assigned,
-              COUNT(ei.id) FILTER (WHERE COALESCE(asg.cnt, 0) = 0)::int AS items_unassigned,
-              COALESCE(SUM(ei.quantity * ei.unit_price)
-                       FILTER (WHERE COALESCE(asg.cnt, 0) = 0), 0)::numeric AS unassigned_amount
+              COALESCE(vs.vors_total, 0)    AS vors_total,
+              COALESCE(vs.vors_assigned, 0) AS vors_assigned
          FROM projects p
          LEFT JOIN estimates e        ON e.project_id = p.id
          LEFT JOIN cost_categories cc ON e.cost_category_id = cc.id
          LEFT JOIN estimate_items ei  ON ei.estimate_id = e.id
-         LEFT JOIN LATERAL (
-           SELECT COUNT(*) AS cnt
-             FROM estimate_item_contractors eic
-            WHERE eic.item_id = ei.id
-         ) asg ON true
-        GROUP BY p.id, e.id, cc.name
+         LEFT JOIN (
+           SELECT v.estimate_id,
+                  COUNT(*)::int AS vors_total,
+                  COUNT(*) FILTER (
+                    WHERE EXISTS (SELECT 1 FROM estimate_vor_contractors vc WHERE vc.vor_id = v.id)
+                  )::int AS vors_assigned
+             FROM estimate_vors v
+            GROUP BY v.estimate_id
+         ) vs ON vs.estimate_id = e.id
+        GROUP BY p.id, e.id, cc.name, vs.vors_total, vs.vors_assigned
         ORDER BY p.code`,
     );
     return { data: rows.map((r) => withImageSrc(fastify, r)) };

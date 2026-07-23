@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { Card, Row, Col, Tag, Empty, Spin, Space, Button, Tabs } from 'antd';
+import { Card, Row, Col, Tag, Empty, Spin, Space, Button, Tabs, Tooltip } from 'antd';
 import { ArrowLeftOutlined, FileExcelOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api, assetUrl } from '../../services/api';
@@ -9,20 +10,17 @@ import { useAuthStore } from '../../store/authStore';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { useProjectZones } from '../../hooks/useProjectLocations';
 import { buildZoneIndex, type ZoneIndex } from '../estimates/components/LocationBadges';
-import {
-  formatMoney,
-  type CostTypeCiphers,
-  type EstimateDetail,
-  type EstimateItem,
-} from '../estimates/components/types';
+import type { CostTypeCiphers, EstimateDetail, EstimateItem } from '../estimates/components/types';
 import { ContractorsSmetaTab } from './ContractorsSmetaTab';
 import { ContractorsMaterialsTab } from './ContractorsMaterialsTab';
 import { ContractorsRequestsTab } from './ContractorsRequestsTab';
 import { VorObjectListModal, type ContractFilter } from './vor/VorObjectListModal';
+import { dedupeContracts, formatContractLabel, type ContractRef } from './vor/contractLabel';
 import { useMaterialsSummary } from './materials/useMaterialsSummary';
 
 // Строка списка объектов раздела (поля зависят от роли — см. /api/contractors/estimates).
 // Карточка = объект; у объекта одна смета (estimate_id = null, если смета не заведена).
+// Денежных итогов здесь нет: раздел про раздачу работ подрядчикам, а не про суммы.
 interface ContractorEstimateRow {
   estimate_id: string | null;
   project_id: string;
@@ -34,18 +32,44 @@ interface ContractorEstimateRow {
   work_type: string | null;
   cost_category_name: string | null;
   items_total: number;
-  // инженер/админ:
-  items_assigned?: number;
-  items_unassigned?: number;
-  unassigned_amount?: string;
-  // подрядчик:
-  my_amount?: string;
+  // инженер/админ/руководитель:
+  vors_total?: number;
+  vors_assigned?: number;
+  // подрядчик — его собственные договорные связки по этому объекту:
+  contracts?: ContractRef[];
 }
+
+// Бейдж в две строки: показатели читаются парой, поэтому строки — блочные элементы (Tag сам по
+// себе не переносит содержимое), а высота строки фиксирована, чтобы бейджи стояли вровень.
+const stackTag: CSSProperties = { marginInlineEnd: 0, lineHeight: '18px', padding: '2px 8px' };
 
 /** Ключи вкладок карточки сметы — ими же валидируется ?tab из ссылки. */
 const TAB_KEYS = ['smeta', 'materials', 'requests'];
 
-function ObjectList() {
+/** Договоры подрядчика по объекту: число — в бейдже, реквизиты — в подсказке. */
+function ContractsTag({ contracts }: { contracts: ContractRef[] }) {
+  return (
+    <Tooltip
+      title={
+        contracts.length === 0 ? (
+          'Договоров нет'
+        ) : (
+          // Список, а не строка с \n: перенос в подсказке иначе не гарантирован. Договоров по
+          // объекту бывает много — ограничиваем высоту вместо подсказки во весь экран.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 200, overflowY: 'auto' }}>
+            {contracts.map((c, i) => (
+              <span key={`${c.number ?? ''}|${c.date ?? ''}|${i}`}>{formatContractLabel(c)}</span>
+            ))}
+          </div>
+        )
+      }
+    >
+      <Tag color="geekblue">Договоров: {contracts.length}</Tag>
+    </Tooltip>
+  );
+}
+
+function ObjectList({ viewerIsContractor }: { viewerIsContractor: boolean }) {
   const navigate = useNavigate();
   const { data, isLoading } = useQuery({
     queryKey: ['contractor-estimates'],
@@ -62,6 +86,11 @@ function ObjectList() {
       {rows.map((r) => {
         const clickable = r.estimate_id != null;
         const src = assetUrl(r.image_src ?? r.image_url);
+        const vorsTotal = r.vors_total ?? 0;
+        const vorsAssigned = r.vors_assigned ?? 0;
+        const vorsUnassigned = Math.max(0, vorsTotal - vorsAssigned);
+        // Один договор нередко раздан на несколько ВОР — для подрядчика это один договор.
+        const contracts = dedupeContracts(r.contracts ?? []);
         return (
         <Col key={r.project_id} xs={24} sm={12} lg={8} xl={6}>
           <Card
@@ -80,21 +109,21 @@ function ObjectList() {
             <div style={{ color: 'var(--est-text-tertiary)', fontSize: 13, marginBottom: 12, minHeight: 18 }}>
               {r.address || '—'}
             </div>
-            {r.items_unassigned != null ? (
-              <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                <Space wrap>
-                  <Tag color="blue">Всего строк: {r.items_total}</Tag>
-                  <Tag color="green">Назначено: {r.items_assigned ?? 0}</Tag>
-                  {(r.items_unassigned ?? 0) > 0 && <Tag color="orange">Без подрядчика: {r.items_unassigned}</Tag>}
-                </Space>
-                {Number(r.unassigned_amount ?? 0) > 0 && (
-                  <span style={{ color: 'var(--est-orange)' }}>Нераспределено: {formatMoney(r.unassigned_amount)}</span>
-                )}
+            {viewerIsContractor ? (
+              <Space wrap size={8}>
+                <ContractsTag contracts={contracts} />
+                <Tag color="blue">Мои строки: {r.items_total}</Tag>
               </Space>
             ) : (
-              <Space wrap>
-                <Tag color="blue">Мои строки: {r.items_total}</Tag>
-                <span style={{ color: 'var(--est-primary)' }}>{formatMoney(r.my_amount)}</span>
+              <Space wrap size={8}>
+                <Tag color="blue" style={stackTag}>
+                  <div>Всего строк: {r.items_total}</div>
+                  <div>Всего ВОРов: {vorsTotal}</div>
+                </Tag>
+                <Tag color={vorsUnassigned > 0 ? 'orange' : 'green'} style={stackTag}>
+                  <div>Назначено ВОР: {vorsAssigned}</div>
+                  <div>Не назначено ВОР: {vorsUnassigned}</div>
+                </Tag>
               </Space>
             )}
           </Card>
@@ -233,7 +262,7 @@ export function ContractorsPage() {
         style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
         styles={{ header: { paddingLeft: 48 }, body: { flex: 1, overflow: 'auto' } }}
       >
-        <ObjectList />
+        <ObjectList viewerIsContractor={viewerIsContractor} />
       </Card>
     );
   }

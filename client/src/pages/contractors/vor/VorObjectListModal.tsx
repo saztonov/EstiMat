@@ -18,6 +18,7 @@ import { useColumnSearch, uniqueFilters } from '../../../lib/tableColumnSearch';
 import { VorPreviewModal } from '../../estimates/components/VorPreviewModal';
 import { VorAssignModal } from './VorAssignModal';
 import { showBlockedReport } from './blockedReport';
+import { formatContractDate } from './contractLabel';
 
 /** Отбор «строки одного договора» — что показать во вкладке «Смета» по кнопке перехода. */
 export interface ContractFilter {
@@ -69,12 +70,6 @@ const compactTag: CSSProperties = {
   padding: '0 4px',
 };
 const compactBtn: CSSProperties = { width: 22, minWidth: 22, padding: 0 };
-
-function formatContractDate(iso: string | null): string {
-  if (!iso) return '';
-  const [y, m, d] = iso.split('-');
-  return `${d}.${m}.${y}`;
-}
 
 // Список значений колонкой тегов: длинные перечисления не должны растягивать строку таблицы.
 // Цвет — признак КОЛОНКИ, а не значения: рядом стоящие «Местоположения» и «Типы» в строке из
