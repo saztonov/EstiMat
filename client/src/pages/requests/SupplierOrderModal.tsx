@@ -6,7 +6,8 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   MANUAL_VAT_RATES, PAYMENT_TYPES, PROCUREMENT_ASSIGN_ROLES,
-  type ManualVatRate, type PaymentType,
+  SOURCING_STATUS_LABELS, TEMP_ALLOW_ANY_STATUS_ORDER_DELETE,
+  type ManualVatRate, type PaymentType, type SourcingStatus,
 } from '@estimat/shared';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
@@ -233,6 +234,9 @@ function OrderView({
   const canEditItems = status === 'forming' || status === 'sourcing' || (status === 'awarded' && canApprove);
   const canCancel = ['forming', 'sourcing', 'approval'].includes(status) || (status === 'awarded' && canApprove);
   const canRevokeAward = status === 'awarded' && canApprove && !isTender;
+  // TODO(temp): убрать вместе с TEMP_ALLOW_ANY_STATUS_ORDER_DELETE (@estimat/shared).
+  const canTempDelete = TEMP_ALLOW_ANY_STATUS_ORDER_DELETE && role === 'admin'
+    && !isTender && status !== 'forming';
 
   /** Отмена и смена поставщика требуют причины — спрашиваем её в одном месте. */
   function askReason(opts: {
@@ -274,8 +278,8 @@ function OrderView({
       ...(canRevokeAward
         ? [{ key: 'revoke', icon: <SwapOutlined />, label: 'Сменить поставщика' }]
         : []),
-      ...(status === 'forming'
-        ? [{ key: 'del', danger: true, icon: <DeleteOutlined />, label: 'Удалить черновик' }]
+      ...(status === 'forming' || canTempDelete
+        ? [{ key: 'del', danger: true, icon: <DeleteOutlined />, label: status === 'forming' ? 'Удалить черновик' : 'Удалить заказ' }]
         : []),
       ...(canCancel
         ? [{ key: 'cancel', danger: true, icon: <StopOutlined />, label: 'Отменить заказ' }]
@@ -285,7 +289,10 @@ function OrderView({
       if (key === 'items') setItemsEditOpen(true);
       if (key === 'del') {
         modal.confirm({
-          title: 'Удалить формируемый заказ?', okText: 'Удалить', okButtonProps: { danger: true },
+          title: status === 'forming' ? 'Удалить формируемый заказ?' : 'Удалить заказ?',
+          content: status === 'forming' ? undefined
+            : `Заказ в статусе «${SOURCING_STATUS_LABELS[status as SourcingStatus] ?? status}». Будут удалены предложения поставщиков с файлами, счета, цены, график и платежи — без возможности восстановления. Материалы вернутся в свод. Только для тестовых заказов.`,
+          okText: 'Удалить', okButtonProps: { danger: true },
           onOk: () => api.delete(`/supplier-orders/${orderId}`).then(() => { message.success('Заказ удалён'); onChanged(); onClose(); }).catch((e) => message.error(e.message)),
         });
       }

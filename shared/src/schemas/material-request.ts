@@ -138,6 +138,30 @@ export const overplacedPayloadSchema = z.object({
 });
 export type OverplacedPayload = z.infer<typeof overplacedPayloadSchema>;
 
+/**
+ * Нагрузка отказа «материалы заявки в активной закупке» (409 при удалении заявки).
+ * Тот же принцип, что у OVERPLACED: одна схема, разбирают обе стороны.
+ */
+export const REQUEST_IN_PURCHASE_CODE = 'REQUEST_IN_ACTIVE_PURCHASE';
+
+export const blockingOrderSchema = z.object({
+  id: z.string().uuid(),
+  /** Номер вида «З-002». */
+  number: z.string(),
+  /** Сырой sourcing_status — подпись клиент берёт из SOURCING_STATUS_LABELS. */
+  status: z.string(),
+  /** 'manual' | 'tender' | null — различает подпись «Заказ»/«Тендер». */
+  procurementMethod: z.string().nullable(),
+  /** У тендера до присуждения обычно null. */
+  supplier: z.string().nullable(),
+});
+export type BlockingOrder = z.infer<typeof blockingOrderSchema>;
+
+export const requestInPurchasePayloadSchema = z.object({
+  orders: z.array(blockingOrderSchema).min(1),
+});
+export type RequestInPurchasePayload = z.infer<typeof requestInPurchasePayloadSchema>;
+
 // Проверка графика поставки строк su10 (общая для создания и завершения доработки): у каждой
 // строки непустой график, даты уникальны, сумма по датам равна количеству. Возвращает текст
 // ошибки или null. На сервере тип заявки берётся из БД, поэтому проверка вызывается отдельно.

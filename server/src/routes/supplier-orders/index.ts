@@ -15,14 +15,14 @@ import {
 import { config } from '../../config.js';
 import { recalcRequestStatus } from '../../lib/requests/status-recalc.js';
 import { recordAudit } from '../../lib/audit.js';
-import { appendOrderAudit } from '../../lib/supplier-orders/helpers.js';
+import { appendOrderAudit, orderDeletionDenial } from '../../lib/supplier-orders/helpers.js';
 import { recalcOrderAmount } from '../../lib/supplier-orders/pricing.js';
 import { replaceSchedule, reconcileScheduleAfterQtyChange, dropScheduleForAgg } from '../../lib/supplier-orders/schedule.js';
 import { assertRemainingFits } from '../../lib/supplier-orders/allocation.js';
 import supplierOrderInvoiceRoutes from './invoices.js';
 import { assertOrderAccess, assertOrderAccessForOrder, decideOrderAccess } from '../../lib/procurement/access.js';
 import { resolveResponsibles, scopeKey } from '../../lib/procurement/responsibles.js';
-import { PROCUREMENT_ASSIGN_ROLES, type Role } from '@estimat/shared';
+import { PROCUREMENT_ASSIGN_ROLES, TEMP_ALLOW_ANY_STATUS_ORDER_DELETE, type Role } from '@estimat/shared';
 import type { Pool, PoolClient } from 'pg';
 import { exportSupplierOrderXlsx, SupplierOrderExportError } from '../../lib/supplier-order-export/index.js';
 import { refreshTenderLot } from '../../lib/tender/sync.js';
@@ -923,7 +923,9 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
   });
 
   // ============================================================
-  // DELETE /:id — удалить формируемый лот целиком (позиции CASCADE)
+  // DELETE /:id — удалить формируемый лот целиком (позиции CASCADE).
+  //   TODO(temp): пока действует TEMP_ALLOW_ANY_STATUS_ORDER_DELETE, админ может удалить
+  //   нетендерный лот в любом статусе (см. orderDeletionDenial) — вместе с КП, счетами и файлами.
   // ============================================================
   fastify.delete<{ Params: { id: string } }>('/:id', async (request, reply) => {
     const user = request.currentUser;
@@ -931,24 +933,50 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        `SELECT id, project_id, sourcing_status, created_by FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
+        `SELECT id, project_id, sourcing_status, procurement_method, tender_portal_id, created_by
+           FROM supplier_orders WHERE id = $1 AND kind = 'sourcing' FOR UPDATE`,
         [request.params.id],
       );
       const lot = rows[0];
       if (!lot) { await client.query('ROLLBACK'); return reply.status(404).send({ error: 'Заказ не найден' }); }
       const access = await assertOrderAccessForOrder(client, user, lot.id);
       if (!access.ok) { await client.query('ROLLBACK'); return reply.status(403).send({ error: access.reason }); }
-      if (lot.sourcing_status !== 'forming') {
+      const { rows: pending } = await client.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM integration_outbox o
+            WHERE o.aggregate_type = 'supplier_order' AND o.aggregate_id = $1
+              AND o.status IN ('queued', 'retry_wait', 'waiting_config')
+         ) AS pending`,
+        [lot.id],
+      );
+      const denial = orderDeletionDenial({
+        sourcingStatus: lot.sourcing_status as string,
+        procurementMethod: (lot.procurement_method as string | null) ?? null,
+        tenderPortalId: (lot.tender_portal_id as string | null) ?? null,
+        hasPendingOutbox: pending[0].pending === true,
+        userRole: user.role,
+        tempAnyStatusAllowed: TEMP_ALLOW_ANY_STATUS_ORDER_DELETE,
+      });
+      if (denial) {
         await client.query('ROLLBACK');
-        return reply.status(409).send({ error: 'Удалить можно только формируемый заказ' });
+        return reply.status(409).send({ error: denial });
       }
       const { rows: reqRows } = await client.query('SELECT DISTINCT request_id FROM supplier_order_items WHERE order_id = $1', [lot.id]);
-      // Соберём ключи S3-объектов предложений до каскадного удаления (БД каскад файлы в S3 не чистит).
+      // Соберём ключи S3-объектов предложений и счетов до каскадного удаления (БД каскад файлы
+      // в S3 не чистит). Файлы платежей не трогаем: payments.file_id указывает на файл заявки.
       const { rows: fileRows } = await client.query(
-        `SELECT file_key FROM supplier_order_offers WHERE order_id = $1 AND file_key IS NOT NULL`, [lot.id],
+        `SELECT file_key FROM supplier_order_offers   WHERE order_id = $1 AND file_key IS NOT NULL
+         UNION ALL
+         SELECT file_key FROM supplier_order_invoices WHERE order_id = $1 AND file_key IS NOT NULL`,
+        [lot.id],
       );
       await client.query('DELETE FROM supplier_orders WHERE id = $1', [lot.id]);
-      await appendOrderAudit(client, { orderId: lot.id, action: 'deleted', userId: user.id, projectId: lot.project_id });
+      await appendOrderAudit(client, {
+        orderId: lot.id, action: 'deleted', userId: user.id, projectId: lot.project_id,
+        changes: lot.sourcing_status !== 'forming'
+          ? { reason: 'temp_any_status_delete', status: lot.sourcing_status, procurementMethod: lot.procurement_method ?? null }
+          : undefined,
+      });
       for (const r of reqRows) if (r.request_id) await recalcRequestStatus(client, r.request_id, user.id);
       await client.query('COMMIT');
       if (fastify.storage) for (const f of fileRows) await fastify.storage.deleteObject(f.file_key).catch(() => {});

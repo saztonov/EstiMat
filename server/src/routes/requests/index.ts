@@ -21,6 +21,8 @@ import {
   orderEditSchema,
   setFileRejectionSchema,
   OVERPLACED_CODE, type OverplacedPayload,
+  REQUEST_IN_PURCHASE_CODE, type RequestInPurchasePayload,
+  SOURCING_STATUS_LABELS, type SourcingStatus,
 } from '@estimat/shared';
 import {
   assertContractorEstimateAccess,
@@ -1882,7 +1884,8 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       // новый лот из материалов этой заявки.
       const lockLots = async () => {
         const { rows } = await client.query(
-          `SELECT so.id, so.sourcing_status, so.project_id, so.tender_portal_id
+          `SELECT so.id, so.order_no, so.supplier_name, so.procurement_method,
+                  so.sourcing_status, so.project_id, so.tender_portal_id
              FROM supplier_orders so
             WHERE so.kind = 'sourcing'
               AND so.id IN (SELECT order_id FROM supplier_order_items WHERE request_id = $1)
@@ -1901,6 +1904,34 @@ export default async function requestRoutes(fastify: FastifyInstance) {
       // мог собраться, пока мы их брали: перечитываем список уже окончательно.
       const lockRows = await lockLots();
 
+      // Материалы заявки в лотах с замороженным составом — удаление блокируем: изъятие позиций
+      // осиротило бы закупку с ценами и финансами (пустой awarded-лот нечем удалить штатно).
+      // Сначала снабжение отменяет/удаляет сами заказы. Проверка после блокировок — race-free,
+      // до любых изменений — ROLLBACK чистый.
+      const frozen = lockRows.filter((l) =>
+        (FROZEN_LOT_STATUSES as readonly string[]).includes(l.sourcing_status as string));
+      if (frozen.length > 0) {
+        await client.query('ROLLBACK');
+        const payload: RequestInPurchasePayload = {
+          orders: frozen.map((l) => ({
+            id: l.id as string,
+            number: `З-${String(l.order_no ?? 0).padStart(3, '0')}`,
+            status: l.sourcing_status as string,
+            procurementMethod: (l.procurement_method as string | null) ?? null,
+            supplier: (l.supplier_name as string | null) ?? null,
+          })),
+        };
+        const list = payload.orders
+          .map((o) => `${o.procurementMethod === 'tender' ? 'тендер' : 'заказ'} ${o.number}`
+            + ` (${SOURCING_STATUS_LABELS[o.status as SourcingStatus] ?? o.status}${o.supplier ? `, ${o.supplier}` : ''})`)
+          .join('; ');
+        return reply.status(409).send({
+          error: `Материалы заявки находятся в активных закупках: ${list}. Сначала отмените или удалите эти заказы.`,
+          code: REQUEST_IN_PURCHASE_CODE,
+          data: payload,
+        });
+      }
+
       // Ключи файлов — удалим объекты из S3 после COMMIT (best-effort).
       const { rows: files } = await client.query(
         `SELECT file_key FROM material_request_files WHERE request_id = $1`,
@@ -1918,9 +1949,11 @@ export default async function requestRoutes(fastify: FastifyInstance) {
           `SELECT EXISTS (SELECT 1 FROM supplier_order_items WHERE order_id = $1) AS has_items`,
           [orderId],
         );
-        // Опустевший лот удаляем, только если за ним нет внешнего тендера и незавершённых команд
-        // (у integration_outbox нет FK на лот: воркер не найдёт лот и сочтёт команду доставленной,
-        // оставив тендер жить на портале) и он не в закупке/не присуждён (там цены и платежи).
+        // FROZEN-статусы отсечены 409-гвардом выше — здесь лоты только из DELETABLE_LOT_STATUSES
+        // (явный allow-list оставлен как защита от будущих статусов). Опустевший лот удаляем,
+        // только если за ним нет внешнего тендера и незавершённых команд (у integration_outbox
+        // нет FK на лот: воркер не найдёт лот и сочтёт команду доставленной, оставив тендер жить
+        // на портале).
         const canDelete =
           !cnt[0].has_items
           && (DELETABLE_LOT_STATUSES as readonly string[]).includes(lot.sourcing_status as string)
@@ -1935,9 +1968,12 @@ export default async function requestRoutes(fastify: FastifyInstance) {
             [orderId],
           );
           if (!pending[0].pending) {
-            // Файлы предложений — до каскадного удаления (БД каскад объекты в S3 не чистит).
+            // Файлы предложений и счетов — до каскадного удаления (БД каскад объекты в S3 не
+            // чистит; счета бывают у cancelled-лота после отмены присуждённого).
             const { rows: offerFiles } = await client.query(
-              `SELECT file_key FROM supplier_order_offers WHERE order_id = $1 AND file_key IS NOT NULL`,
+              `SELECT file_key FROM supplier_order_offers   WHERE order_id = $1 AND file_key IS NOT NULL
+               UNION ALL
+               SELECT file_key FROM supplier_order_invoices WHERE order_id = $1 AND file_key IS NOT NULL`,
               [orderId],
             );
             for (const o of offerFiles) fileKeys.push(o.file_key as string);

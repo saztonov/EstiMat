@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   PURCHASE_KINDS, PURCHASE_KIND_LABELS,
   SOURCING_STATUS_LABELS, REQUEST_STATUS_LABELS, PROCUREMENT_ASSIGN_ROLES,
+  TEMP_ALLOW_ANY_STATUS_ORDER_DELETE,
   type PurchaseKind, type SourcingStatus, type RequestStatus,
 } from '@estimat/shared';
 import { api } from '../../services/api';
@@ -146,7 +147,11 @@ export function PurchasesRegistryTab() {
       render: (_v, r) => {
         const row = leaf(r);
         const isManualOrder = row.link_kind === 'order' && row.kind_tag === 'supplier_order';
-        const canDelete = isManualOrder && row.status === 'forming' && (isAdmin || row.created_by === user?.id);
+        // TODO(temp): убрать ветку с TEMP_ALLOW_ANY_STATUS_ORDER_DELETE вместе с флагом.
+        const canDelete = isManualOrder && (
+          (row.status === 'forming' && (isAdmin || row.created_by === user?.id))
+          || (TEMP_ALLOW_ANY_STATUS_ORDER_DELETE && isAdmin)
+        );
         const canCancel = isManualOrder && row.status === 'sourcing';
         return (
           <Space size={4}>
@@ -156,7 +161,10 @@ export function PurchasesRegistryTab() {
                 okText="Отменить" onConfirm={() => cancelMut.mutate(row.id)} icon={<StopOutlined />} type="text" />
             )}
             {canDelete && (
-              <ConfirmIconButton tooltip="Удалить заказ" title="Удалить заказ?" description="Позиции вернутся в свод материалов."
+              <ConfirmIconButton tooltip="Удалить заказ" title="Удалить заказ?"
+                description={row.status === 'forming'
+                  ? 'Позиции вернутся в свод материалов.'
+                  : `Заказ в статусе «${SOURCING_STATUS_LABELS[row.status as SourcingStatus] ?? row.status}». Будут удалены предложения поставщиков с файлами, счета, цены, график и платежи — без возможности восстановления. Только для тестовых заказов.`}
                 onConfirm={() => delMut.mutate(row.id)} icon={<DeleteOutlined />} type="text" danger />
             )}
           </Space>

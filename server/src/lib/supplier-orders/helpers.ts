@@ -18,6 +18,30 @@ export const FROZEN_LOT_STATUSES = ['sourcing', 'approval', 'awarded', 'cancel_p
 // FROZEN_LOT_STATUSES не удаляем — за ними внешний тендер (см. outbox-worker) и/или финансы.
 export const DELETABLE_LOT_STATUSES = ['forming', 'cancelled', 'no_award'] as const;
 
+export interface OrderDeletionInput {
+  sourcingStatus: string;
+  procurementMethod: string | null;
+  tenderPortalId: string | null;
+  hasPendingOutbox: boolean;
+  userRole: string;
+  /** TEMP_ALLOW_ANY_STATUS_ORDER_DELETE из @estimat/shared. */
+  tempAnyStatusAllowed: boolean;
+}
+
+/**
+ * Можно ли удалить лот целиком (DELETE /supplier-orders/:id): null — можно, иначе текст 409.
+ * Внешний тендер и незавершённые команды outbox блокируют всегда: у integration_outbox нет FK
+ * на лот — воркер не найдёт лот, сочтёт команду доставленной и оставит тендер жить на портале.
+ */
+export function orderDeletionDenial(i: OrderDeletionInput): string | null {
+  if (i.tenderPortalId) return 'За заказом внешний тендер — сначала отмените его';
+  if (i.hasPendingOutbox) return 'По заказу есть незавершённые операции интеграции — повторите позже';
+  if (i.sourcingStatus === 'forming') return null;
+  // TODO(temp): ветка ниже удаляется вместе с TEMP_ALLOW_ANY_STATUS_ORDER_DELETE (@estimat/shared).
+  if (i.tempAnyStatusAllowed && i.userRole === 'admin' && i.procurementMethod !== 'tender') return null;
+  return 'Удалить можно только формируемый заказ';
+}
+
 /**
  * Записать доменное событие заказа. Возвращает id записи журнала: детализация правки состава
  * (supplier_order_item_edits) ссылается на операцию, а не дублирует её реквизиты.
