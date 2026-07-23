@@ -34,9 +34,13 @@ export function RdSection({ collapsed, onToggle }: Props) {
   const [userExpanded, setUserExpanded] = useState<Key[]>([]);
   const [viewerDoc, setViewerDoc] = useState<RdDocPayload | null>(null);
 
+  // Не грузим, пока секция свёрнута (как в соседних «Работы»/«Материалы»): по умолчанию она
+  // свёрнута, а запрос уходит во внешний портал РД и на холодном кэше стоит секунд серверного
+  // времени — на открытии сметы это была плата ни за что.
   const { data, isLoading } = useQuery({
     queryKey: ['rd-tree'],
-    queryFn: () => api.get<RdTreeResponse>('/rd/tree'),
+    queryFn: ({ signal }) => api.get<RdTreeResponse>('/rd/tree', { signal }),
+    enabled: !collapsed,
     staleTime: 5 * 60_000,
   });
 

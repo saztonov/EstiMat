@@ -445,7 +445,10 @@ export default async function rateRoutes(fastify: FastifyInstance) {
     const rates = await fastify.pool.query(
       // type_count — число активных видов (в активных категориях), к которым привязана расценка;
       // оконный COUNT по r.id вместо коррелированного LATERAL на каждую строку.
-      `SELECT rct.cost_type_id, r.*,
+      // Поля перечислены явно, без r.*: дерево грузится на каждом открытии сметы, а состав работы
+      // (r.description) — многострочный текст на каждую из полутора тысяч работ, и в дереве он не
+      // показывается. В справочнике («Работы») состав нужен и приходит через GET /api/rates.
+      `SELECT rct.cost_type_id, r.id, r.name, r.code, r.unit, r.price, r.is_active,
               (COUNT(*) OVER (PARTITION BY r.id))::int AS type_count
        FROM rates r
        JOIN rate_cost_types rct ON rct.rate_id = r.id

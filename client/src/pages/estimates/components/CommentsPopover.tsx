@@ -16,11 +16,11 @@ interface Props {
 
 const fmt = (s: string) => new Date(s).toLocaleString('ru-RU');
 
-// Комментарии (примечания) к работе или виду работ. Иконка-конверт с бейджем количества;
-// по клику — Popover 500px: лента (newest-first) + добавление/редактирование/удаление.
-// Тексты грузятся лениво при открытии; бейдж-счётчик приходит из детализации сметы.
-export function CommentsPopover({ estimateId, targetType, targetId, count }: Props) {
-  const [open, setOpen] = useState(false);
+// Лента и форма живут в отдельном компоненте, который монтируется ТОЛЬКО при открытом поповере.
+// Раньше запрос и три мутации объявлялись прямо в ячейке: на смете в 500 строк это давало
+// полторы тысячи наблюдателей react-query и столько же mutation-наблюдателей, а вся разметка
+// ленты пересобиралась на каждый рендер дерева — при том что открыт поповер всегда один.
+function CommentsContent({ estimateId, targetType, targetId }: Omit<Props, 'count'>) {
   const [draft, setDraft] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
@@ -32,7 +32,6 @@ export function CommentsPopover({ estimateId, targetType, targetId, count }: Pro
   const { data, isLoading } = useQuery({
     queryKey,
     queryFn: () => getComments(estimateId, targetType, targetId),
-    enabled: open,
   });
   const comments = data?.data ?? [];
 
@@ -70,7 +69,7 @@ export function CommentsPopover({ estimateId, targetType, targetId, count }: Pro
     if (b && editingId) updateM.mutate({ id: editingId, body: b });
   };
 
-  const content = (
+  return (
     <div style={{ width: '100%' }}>
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: '12px 0' }}><Spin size="small" /></div>
@@ -140,14 +139,23 @@ export function CommentsPopover({ estimateId, targetType, targetId, count }: Pro
       </div>
     </div>
   );
+}
+
+// Комментарии (примечания) к работе или виду работ. Иконка-конверт с бейджем количества;
+// по клику — Popover 500px: лента (newest-first) + добавление/редактирование/удаление.
+// Тексты грузятся лениво при открытии; бейдж-счётчик приходит из детализации сметы.
+export function CommentsPopover({ estimateId, targetType, targetId, count }: Props) {
+  const [open, setOpen] = useState(false);
 
   return (
     <Popover
       trigger="click"
       open={open}
-      onOpenChange={(o) => { setOpen(o); if (!o) setEditingId(null); }}
+      onOpenChange={setOpen}
       title="Комментарии"
-      content={content}
+      // destroyOnHidden не нужен: содержимое и так монтируется только при open, а вместе с ним
+      // сбрасывается черновик и режим правки комментария.
+      content={open ? <CommentsContent estimateId={estimateId} targetType={targetType} targetId={targetId} /> : null}
       overlayStyle={{ width: 500, maxWidth: '90vw' }}
     >
       <Badge count={count ?? 0} size="small">

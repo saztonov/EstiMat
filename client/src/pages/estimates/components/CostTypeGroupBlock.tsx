@@ -44,7 +44,6 @@ interface Props {
   group: CostTypeGroup;
   index: number;
   editable: boolean;
-  orgs?: Organization[];
   onCreateWork?: (costTypeId: string | null, payload: SaveWorkPayload) => Promise<void>;
   onUpdateWork?: (workId: string, payload: SaveWorkPayload) => Promise<void>;
   onDeleteWork?: (workId: string) => void;
@@ -74,8 +73,6 @@ interface Props {
   selectWorksMode?: boolean;
   selectedWorkIds?: Set<string>;
   onToggleWork?: (id: string, selected: boolean) => void;
-  onSetContractor?: (costTypeId: string, contractorId: string) => void;
-  onClearContractor?: (costTypeId: string) => void;
   collapsible?: boolean;
   defaultCollapsed?: boolean;
   /** Управляемое сворачивание (для «свернуть/развернуть всё»). Если задан onToggleCollapsed —
@@ -123,6 +120,10 @@ interface Props {
 
 const noopAsync = async () => {};
 const noop = () => {};
+// Пустой набор лидирующих колонок вынесен в константу: дефолт-значение `= []` создавало новый
+// массив на КАЖДЫЙ рендер, а он стоит в deps useMemo колонок — из-за этого колонки пересобирались
+// всегда, хотя мемоизация задумывалась именно чтобы этого не делать.
+const NO_LEADING_COLUMNS: ColumnsType<EstimateItem> = [];
 
 // Метка «В» строки в ячейке раскрытия: три состояния, различимые не только цветом (для дальтонизма).
 // В — в ВОР без изменений (синий); В! — изменилась после выгрузки (оранжевый); В? — старый ВОР
@@ -184,7 +185,6 @@ function CostTypeGroupBlockImpl({
   group,
   index,
   editable,
-  orgs,
   onCreateWork = noopAsync,
   onUpdateWork = noopAsync,
   onDeleteWork = noop,
@@ -205,8 +205,6 @@ function CostTypeGroupBlockImpl({
   selectWorksMode = false,
   selectedWorkIds,
   onToggleWork,
-  onSetContractor = noop,
-  onClearContractor = noop,
   collapsible = false,
   defaultCollapsed = false,
   collapsed: controlledCollapsed,
@@ -217,7 +215,7 @@ function CostTypeGroupBlockImpl({
   showLocationColumn = false,
   zones = [],
   projectId = '',
-  leadingColumns = [],
+  leadingColumns = NO_LEADING_COLUMNS,
   showPrices = true,
   priceMode = 'base',
   headerExtra,

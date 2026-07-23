@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, Tag, App } from 'antd';
+import { useState, type CSSProperties } from 'react';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, Tag, Tooltip, App } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined, SearchOutlined, ApartmentOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -18,12 +18,25 @@ interface RateCostType {
   isPrimary: boolean;
 }
 
+// Состав работы — многострочный текст, в таблице показываем ровно две строки с многоточием
+// (полный текст — в подсказке). maxHeight страхует браузеры без line-clamp.
+const compositionCell: CSSProperties = {
+  display: '-webkit-box',
+  WebkitBoxOrient: 'vertical',
+  WebkitLineClamp: 2,
+  overflow: 'hidden',
+  overflowWrap: 'anywhere',
+  maxHeight: '2.9em',
+  whiteSpace: 'pre-wrap',
+};
+
 interface Rate {
   id: string;
   name: string;
   code: string | null;
   unit: string;
   price: string;
+  /** Состав работы: расшифровка операций, попадает в примечание выгрузки ВОР. */
   description: string | null;
   cost_types: RateCostType[];
   // derived-поля основного вида (для совместимости/сортировки)
@@ -201,8 +214,9 @@ export function RatesPanel() {
     else if (!primary || !ids.includes(primary)) form.setFieldValue('primaryCostTypeId', ids[0]);
   }
 
+  // Колонка «Код» из таблицы убрана: код заполнен у единиц работ и только съедал ширину.
+  // Само поле остаётся в форме — из него собирается наименование вида «[код] Название» в смете.
   const columns: ColumnsType<Rate> = [
-    { title: 'Код', dataIndex: 'code', width: 100, sorter: (a, b) => (a.code || '').localeCompare(b.code || '') },
     {
       title: 'Наименование',
       key: 'name',
@@ -222,6 +236,17 @@ export function RatesPanel() {
           )}
         </div>
       ),
+    },
+    {
+      title: 'Состав работы',
+      dataIndex: 'description',
+      width: 420,
+      render: (v: string | null) =>
+        v ? (
+          <Tooltip title={v} styles={{ body: { maxWidth: 520, whiteSpace: 'pre-wrap' } }}>
+            <div style={compositionCell}>{v}</div>
+          </Tooltip>
+        ) : null,
     },
     { title: 'Ед. изм.', dataIndex: 'unit', width: 80, sorter: (a, b) => a.unit.localeCompare(b.unit) },
     {
@@ -305,7 +330,7 @@ export function RatesPanel() {
         columns={columns}
         dataSource={filteredRates}
         loading={isLoading}
-        scroll={{ x: 860, y: 'flex' }}
+        scroll={{ x: 1200, y: 'flex' }}
         pagination={DEFAULT_PAGINATION}
       />
 
@@ -367,8 +392,12 @@ export function RatesPanel() {
           <Form.Item name="price" label="Цена">
             <InputNumber style={{ width: '100%' }} min={0} />
           </Form.Item>
-          <Form.Item name="description" label="Описание">
-            <Input.TextArea />
+          <Form.Item
+            name="description"
+            label="Состав работы"
+            tooltip="Расшифровка операций. Печатается в примечании выгрузки ВОР следом за комментариями строки."
+          >
+            <Input.TextArea autoSize={{ minRows: 4, maxRows: 10 }} />
           </Form.Item>
         </Form>
       </Modal>

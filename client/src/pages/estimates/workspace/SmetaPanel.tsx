@@ -20,6 +20,7 @@ import { useEstimateReveal } from './useEstimateReveal';
 import { SmetaSelectionToolbar } from './SmetaSelectionToolbar';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useEstimateExpandStore } from '../../../store/estimateExpandStore';
+import { useEstimateVorMarksStore } from '../../../store/estimateVorMarksStore';
 import { useWorkspaceLayoutStore } from '../../../store/workspaceLayoutStore';
 import { useProjectZones } from '../../../hooks/useProjectLocations';
 import { useAuthStore } from '../../../store/authStore';
@@ -33,13 +34,7 @@ import { VorExportModal } from '../components/VorExportModal';
 import { VorListModal } from '../components/VorListModal';
 import { useLocationContextStore } from '../../../store/locationContextStore';
 import { findZone, formatLocationsLabel } from '../components/location';
-import type { VorFilterSelection, VorFilterSnapshot, VorMark, VorMarksMap } from '@estimat/shared';
-
-interface Organization {
-  id: string;
-  name: string;
-  type?: string;
-}
+import type { VorFilterSelection, VorFilterSnapshot, VorMarksMap } from '@estimat/shared';
 
 interface Props {
   groups: CostTypeGroup[];
@@ -47,7 +42,6 @@ interface Props {
   totalItems: number;
   groupCount: number;
   editable: boolean;
-  orgs?: Organization[];
   estimateId: string;
   projectId: string;
   onAddCostType: () => void;
@@ -87,7 +81,6 @@ const groupsTotal = (gs: CostTypeGroup[]) =>
 export function SmetaPanel({
   groups,
   editable,
-  orgs,
   estimateId,
   projectId,
   onAddCostType,
@@ -241,13 +234,21 @@ export function SmetaPanel({
   // пересоздаётся, поэтому memo-обёртки SmetaGroupBlock не ререндерятся при не связанных изменениях.
   // Раскрытие материалов и свёрнутость вида в blockProps НЕ входят — их адаптер берёт из store.
 
-  // Отметки строк: в какие ВОР входит каждая работа (для метки «В»). Отдельный лёгкий запрос.
-  // Объявлено до blockProps — vorByItem/onOpenVor уходят в дерево блоков через blockProps.
+  // Отметки строк: в какие ВОР входит каждая работа (для метки «В»). Отдельный лёгкий запрос,
+  // который завершается уже после первой отрисовки дерева. Результат кладём в store, а блоки
+  // подписываются на срез по своим работам (см. estimateVorMarksStore): раньше карта отметок
+  // ехала в общем blockProps и её приход перерисовывал все блоки видов работ разом.
+  // staleTime: при возврате на смету отметки берутся из кэша и лишнего рендера нет; после
+  // экспорта и удаления ВОР запрос инвалидируется явно.
   const { data: vorMarks } = useQuery({
     queryKey: ['estimate-vor-marks', estimateId],
     queryFn: () => api.get<{ data: VorMarksMap }>(`/estimates/${estimateId}/vors/marks`).then((r) => r.data),
+    staleTime: 5 * 60_000,
   });
-  const vorByItem = useMemo(() => new Map<string, VorMark>(Object.entries(vorMarks ?? {})), [vorMarks]);
+  const setVorMarks = useEstimateVorMarksStore((s) => s.setMarks);
+  useEffect(() => {
+    setVorMarks(vorMarks ?? {});
+  }, [vorMarks, setVorMarks]);
 
   // Модалка списка ВОР: состояние + открытие с подсветкой конкретного ВОР (клик по метке «В»).
   const [vorListOpen, setVorListOpen] = useState(false);
@@ -262,7 +263,6 @@ export function SmetaPanel({
   const blockProps = useMemo(
     () => ({
       editable,
-      orgs,
       collapsible: true,
       showCategoryInTitle: false,
       onCreateWork,
@@ -279,8 +279,6 @@ export function SmetaPanel({
       onToggleVolumeType,
       onReassignMaterial,
       allWorks,
-      onSetContractor,
-      onClearContractor,
       selectionMode,
       selectedIds,
       onToggleMaterial: toggleMaterial,
@@ -294,18 +292,18 @@ export function SmetaPanel({
       onOpenHistory: openRowHistory,
       columnPrefs,
       canEditCiphers: canBulkDelete,
-      // Отметки «В» на строках (в какие ВОР входит работа) + клик по метке.
-      vorByItem,
+      // Сами отметки «В» блок берёт из store срезом по своим работам — здесь только обработчик
+      // клика по метке (он стабилен и дерево не трогает).
       onOpenVor,
       // Мобильный режим: горизонтальный скролл таблицы работ (min-width в px).
       tableScrollX: isMobile ? (isPhone ? 560 : 880) : undefined,
     }),
     [
-      editable, orgs, onCreateWork, onUpdateWork, onDeleteWork, onReorderWorks,
+      editable, onCreateWork, onUpdateWork, onDeleteWork, onReorderWorks,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onConfirmWork,
       onToggleVolumeType, onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
       toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId, estimateId, openRowHistory,
-      columnPrefs, canBulkDelete, vorByItem, onOpenVor, isMobile, isPhone,
+      columnPrefs, canBulkDelete, onOpenVor, isMobile, isPhone,
     ],
   );
 
@@ -506,7 +504,7 @@ export function SmetaPanel({
               </>
             )}
             <LocationFilterPopover
-              zones={zonesData?.data.roots ?? []}
+              zones={zoneRoots}
               typeOptions={locationTypeOptions}
               value={{
                 zoneIds: filterZoneIds,
@@ -530,7 +528,7 @@ export function SmetaPanel({
               <EstimateFilterSettingsPopover
                 estimateId={estimateId}
                 projectId={projectId}
-                zones={zonesData?.data.roots ?? []}
+                zones={zoneRoots}
                 editable={editable}
                 onAssignLocation={canBulkDelete ? startAssignLocation : undefined}
               />
@@ -651,7 +649,7 @@ export function SmetaPanel({
       <ReplicateWorksModal
         open={replicateOpen}
         sourceWorks={selectedSourceWorks}
-        zones={zonesData?.data.roots ?? []}
+        zones={zoneRoots}
         projectId={projectId}
         loading={replicating}
         onCancel={() => setReplicateOpen(false)}

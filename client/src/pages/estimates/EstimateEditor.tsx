@@ -16,15 +16,8 @@ import { EstimateWorkspace } from './workspace/EstimateWorkspace';
 import type { RateLeafPayload } from './workspace/types';
 import type { AssignLocation } from './workspace/useSmetaSelection';
 
-interface Organization {
-  id: string;
-  name: string;
-  type?: string;
-}
-
 interface Props {
   estimate: EstimateDetail;
-  orgs?: Organization[];
   onBack: () => void;
   /** Ключ запроса, который загрузил эту смету — его инвалидируем после мутаций. */
   refetchKey: QueryKey;
@@ -32,7 +25,7 @@ interface Props {
 
 // Редактор сметы: 3-панельный workspace + все мутации, привязанные к estimate.id.
 // Используется и объектной страницей (/projects/:id), и /estimates/:id.
-export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
+export function EstimateEditor({ estimate, onBack, refetchKey }: Props) {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
 
@@ -513,7 +506,6 @@ export function EstimateEditor({ estimate, orgs, onBack, refetchKey }: Props) {
       <EstimateWorkspace
         estimate={estimate}
         groups={groups}
-        orgs={orgs}
         onEstimateChanged={invalidate}
         totalItems={totalItems}
         groupCount={groups.length}

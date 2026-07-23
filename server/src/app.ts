@@ -8,6 +8,7 @@ import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
+import compress from '@fastify/compress';
 import { mkdir } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -56,7 +57,19 @@ export async function buildApp() {
     credentials: true, // разрешить cookie (httpOnly JWT)
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'], // дефолт @fastify/cors — лишь GET,HEAD,POST
     allowedHeaders: ['Content-Type'], // заголовки запроса; Authorization не нужен — токен в cookie
+    // Server-Timing читается фронтом с другого домена — без exposedHeaders браузер его прячет,
+    // и в DevTools не видно, где время: на сервере или на передаче.
+    exposedHeaders: ['Server-Timing'],
     maxAge: 86400, // время кэша preflight в браузере, сек (24 ч) — меньше лишних OPTIONS
+  });
+
+  // Сжатие ответов. Детализация сметы — это мегабайты JSON с многократно повторяющимися именами
+  // ключей, они ужимаются в разы; ни Fastify, ни nginx перед ним раньше ничего не сжимали.
+  // Порог 1 КБ: мелкие ответы дешевле отдать как есть, чем тратить CPU на сжатие.
+  await app.register(compress, {
+    global: true,
+    threshold: 1024,
+    encodings: ['br', 'gzip', 'deflate'],
   });
 
   // Cookies
@@ -107,6 +120,21 @@ export async function buildApp() {
       decorateReply: false,
     });
   }
+
+  // Server-Timing: сколько времени запрос провёл в приложении. В DevTools → Network → Timing
+  // это отдельная полоса, поэтому «медленный сервер» сразу отличим от «медленной передачи» —
+  // без него по одному общему Time не понять, куда ушли секунды на тяжёлых ответах (смета).
+  app.addHook('onRequest', async (request) => {
+    (request as unknown as { startedAt: bigint }).startedAt = process.hrtime.bigint();
+  });
+  app.addHook('onSend', async (request, reply, payload) => {
+    const startedAt = (request as unknown as { startedAt?: bigint }).startedAt;
+    if (startedAt !== undefined) {
+      const ms = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      reply.header('Server-Timing', `app;dur=${ms.toFixed(1)}`);
+    }
+    return payload;
+  });
 
   // Database plugin
   await app.register(import('./plugins/database.js'));

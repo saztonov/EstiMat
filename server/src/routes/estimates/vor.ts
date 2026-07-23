@@ -494,6 +494,9 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
       });
       const manifestOk = manifest !== null;
       const baseItems: VorItemSnapshot[] = manifest?.items ?? [];
+      // Схема содержимого ЭТОГО ВОР — по ней diff решает, сравнивать ли состав работы: в снимках
+      // v1 состава нет, и сравнение дало бы ложное «состав добавлен» у каждой строки.
+      const vorSchemaVersion = rows[0].content_schema_version as number;
 
       if (!manifestOk) {
         // Подробностей нет — отдаём только счётчики по построчным хэшам.
@@ -526,7 +529,7 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
         const before = { ...b, locationLabel: formatVorLocations(b.locations, zoneNameById) };
         const cur = curSnap.get(b.itemId);
         const after = cur ? { ...cur, locationLabel: formatVorLocations(cur.locations, zoneNameById) } : null;
-        const d = diffItem(before, after);
+        const d = diffItem(before, after, vorSchemaVersion);
         if (d.state === 'changed') counts.changed += 1;
         else if (d.state === 'deleted') counts.deleted += 1;
         return d;

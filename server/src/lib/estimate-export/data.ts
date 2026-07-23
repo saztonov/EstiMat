@@ -56,6 +56,9 @@ export interface ExportRow {
   volume: number | null; // G: объём (quantity)
   coef: number | null; //  H: коэффициент расхода (qty_ratio, только материал)
   notes?: string | null; // O: примечания (комментарии) работы, несколько склеены через \n
+  /** O (следом за notes): состав работы из справочника. Отдельное поле, а не часть notes —
+   *  канонизатор v1 не должен видеть состав в примечаниях, иначе старые ВОР «покраснеют». */
+  composition?: string | null;
   /** Строка сметы, породившая запись (у материала — его работа). В видимые листы не попадает:
    *  идёт в служебный лист-якорь, по которому цены из заполненного файла ложатся обратно.
    *  Сбор из БД проставляет его всегда; необязателен ради тестовых фикстур раскладки (selfcheck),
@@ -127,13 +130,15 @@ export async function gatherExportModel(
   return withReadSnapshot(pool, async (client) => {
     const works = await client.query(
       `SELECT ei.id, ei.description, ei.quantity, ei.unit, ei.locations,
-              lt.name AS location_type_name
+              lt.name AS location_type_name,
+              r.description AS composition
          FROM estimate_items ei
          LEFT JOIN cost_types ct   ON ei.cost_type_id = ct.id
          LEFT JOIN cost_categories cc ON ei.cost_category_id = cc.id
          LEFT JOIN project_zones z ON ei.zone_id = z.id
          LEFT JOIN room_types rt   ON ei.room_type_id = rt.id
          LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
+         LEFT JOIN rates r         ON ei.rate_id = r.id
         WHERE ei.estimate_id = $1 AND ei.id = ANY($2::uuid[])
         ORDER BY ${ITEMS_CANONICAL_ORDER_BY}, ei.id`,
       [estimateId, ids],
@@ -185,6 +190,9 @@ export async function gatherExportModel(
       }
       workNo += 1;
       const notes = (notesByItem.get(itemId) ?? []).map((n) => n.body as string).join('\n') || null;
+      // Состав работы берём из справочника по rate_id; у строк, набранных вручную (без ссылки
+      // на справочник), его нет — в примечании останутся только комментарии.
+      const composition = ((w.composition as string | null) ?? '').trim() || null;
       block.rows.push({
         kind: 'work',
         number: String(workNo),
@@ -194,6 +202,7 @@ export async function gatherExportModel(
         volume: num(w.quantity),
         coef: null,
         notes,
+        composition,
         itemId,
       });
       const itemMats = matsByItem.get(itemId) ?? [];
@@ -220,6 +229,7 @@ export async function gatherExportModel(
         locations: normalizeLocations(w.locations),
         locationLabel: label,
         notes,
+        composition,
         materials: itemMats.map(toMaterialSnapshot),
       };
       items.push(snap);
@@ -253,10 +263,15 @@ export async function gatherVorItemSnapshots(
   if (itemIds.length === 0) return new Map();
   return withReadSnapshot(pool, async (client) => {
     const works = await client.query(
+      // Состав работы (r.description) обязателен и здесь: по этому снимку считается ТЕКУЩИЙ хэш
+      // строки. Без него у ВОР схемы v2 текущий хэш никогда не совпал бы с сохранённым, и все
+      // такие ВОР висели бы «изменено».
       `SELECT ei.id, ei.description, ei.quantity, ei.unit, ei.locations,
-              lt.name AS location_type_name
+              lt.name AS location_type_name,
+              r.description AS composition
          FROM estimate_items ei
          LEFT JOIN project_location_types lt ON ei.location_type_id = lt.id
+         LEFT JOIN rates r ON ei.rate_id = r.id
         WHERE ei.estimate_id = $1 AND ei.id = ANY($2::uuid[])`,
       [estimateId, itemIds],
     );
@@ -290,6 +305,7 @@ export async function gatherVorItemSnapshots(
         locations: normalizeLocations(w.locations),
         locationLabel: '',
         notes: (notesByItem.get(itemId) ?? []).map((n) => n.body as string).join('\n') || null,
+        composition: ((w.composition as string | null) ?? '').trim() || null,
         materials: itemMats.map(toMaterialSnapshot),
       });
     }

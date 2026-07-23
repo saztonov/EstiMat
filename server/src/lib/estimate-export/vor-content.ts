@@ -13,8 +13,9 @@
 import { createHash } from 'node:crypto';
 
 /** Версия формулы хэша + схемы снимка. Bump при изменении канона (старые ВОР не «краснеют»:
- *  для них хэш пересчитывается их же версией — канонизатор каждой версии сохраняется). */
-export const VOR_CONTENT_SCHEMA_VERSION = 1;
+ *  для них хэш пересчитывается их же версией — канонизатор каждой версии сохраняется).
+ *  v2 добавил состав работы из справочника (он печатается в колонке «Примечание» файла). */
+export const VOR_CONTENT_SCHEMA_VERSION = 2;
 
 export interface VorItemLocation {
   zoneId: string | null;
@@ -40,6 +41,10 @@ export interface VorItemSnapshot {
   /** Человекочитаемая метка локации (как её видел файл) — только для показа. */
   locationLabel: string;
   notes: string | null;
+  /** Состав работы из справочника (rates.description) на момент выгрузки. Печатается в колонке
+   *  «Примечание» следом за комментариями. В хэш входит только со схемы v2: снимки v1 его не
+   *  содержат, и канонизатор v1 его игнорирует — старые ВОР от появления состава не «краснеют». */
+  composition?: string | null;
   /** В файловом порядке (для показа); хэш сортирует их канонически. */
   materials: VorMaterialSnapshot[];
 }
@@ -76,8 +81,9 @@ export function normalizeLocations(raw: unknown): VorItemLocation[] {
 
 // ── Канонизация и хэш ────────────────────────────────────────────────────────
 
-function canonicalV1(it: VorItemSnapshot): string {
-  const materials = it.materials
+// Канонический порядок материалов — общий для всех версий.
+function canonicalMaterials(it: VorItemSnapshot) {
+  return it.materials
     .map((m) => ({ n: m.name, u: m.unit, q: m.volume, c: m.coef }))
     .sort(
       (a, b) =>
@@ -86,6 +92,11 @@ function canonicalV1(it: VorItemSnapshot): string {
         (a.q ?? 0) - (b.q ?? 0) ||
         (a.c ?? 0) - (b.c ?? 0),
     );
+}
+
+// v1 — БЕЗ состава работы. Менять эту функцию нельзя: по ней пересчитываются хэши всех ВОР,
+// выгруженных до появления состава, и любая правка «покрасит» их разом.
+function canonicalV1(it: VorItemSnapshot): string {
   return JSON.stringify({
     n: it.name,
     u: it.unit,
@@ -93,12 +104,28 @@ function canonicalV1(it: VorItemSnapshot): string {
     t: it.typeName,
     l: it.locations,
     x: it.notes,
-    m: materials,
+    m: canonicalMaterials(it),
+  });
+}
+
+// v2 — то же плюс состав работы (ключ 'c'): он попадает в файл, значит правка состава в
+// справочнике делает ранее выгруженный ВОР неактуальным. Пусто и отсутствие эквивалентны.
+function canonicalV2(it: VorItemSnapshot): string {
+  return JSON.stringify({
+    n: it.name,
+    u: it.unit,
+    q: it.volume,
+    t: it.typeName,
+    l: it.locations,
+    x: it.notes,
+    c: it.composition ?? null,
+    m: canonicalMaterials(it),
   });
 }
 
 const CANONICALIZERS: Record<number, (it: VorItemSnapshot) => string> = {
   1: canonicalV1,
+  2: canonicalV2,
 };
 
 /** Поддерживается ли версия схемы текущим кодом (иначе статус ВОР — «unknown»). */
@@ -218,8 +245,14 @@ export function formatVorLocations(locs: VorItemLocation[], zoneNameById: Map<st
     .join('; ');
 }
 
-/** diff одной работы: снимок в ВОР (before) против текущего состояния (after; null = удалена). */
-export function diffItem(before: VorItemSnapshot, after: VorItemSnapshot | null): VorItemDiff {
+/** diff одной работы: снимок в ВОР (before) против текущего состояния (after; null = удалена).
+ *  `version` — схема содержимого этого ВОР: состав работы сравниваем только с v2, иначе снимок
+ *  v1 (в котором состава нет) давал бы ложное «состав добавлен» у каждой работы. */
+export function diffItem(
+  before: VorItemSnapshot,
+  after: VorItemSnapshot | null,
+  version: number = VOR_CONTENT_SCHEMA_VERSION,
+): VorItemDiff {
   if (!after) return { itemId: before.itemId, name: before.name, state: 'deleted', fields: [], materials: [] };
   const fields: VorFieldChange[] = [];
   const push = (key: string, label: string, bv: string | null, av: string | null) => {
@@ -238,6 +271,9 @@ export function diffItem(before: VorItemSnapshot, after: VorItemSnapshot | null)
     });
   }
   push('notes', 'примечания', before.notes, after.notes);
+  if (version >= 2) {
+    push('composition', 'состав работы', before.composition ?? null, after.composition ?? null);
+  }
   const materials = diffMaterials(before.materials, after.materials);
   const state: VorItemDiffState = fields.length > 0 || materials.length > 0 ? 'changed' : 'unchanged';
   return { itemId: after.itemId, name: after.name, state, fields, materials };

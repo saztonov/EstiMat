@@ -24,6 +24,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1065.0",
     "@estimat/shared": "*",
     "@fastify/autoload": "^6.0.0",
+    "@fastify/compress": "^8.3.1",
     "@fastify/cookie": "^11.0.0",
     "@fastify/cors": "^11.0.0",
     "@fastify/helmet": "^13.0.0",

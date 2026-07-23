@@ -79,6 +79,11 @@ function FiltersDetail({ f }: { f: VorFilterSnapshot }) {
   );
 }
 
+// Ячейки с длинным текстом (название, автор, сводка фильтров) переносим по словам вместо
+// многоточия: сметчику нужно видеть значение целиком, а не гадать по обрезку. Ширины окна для
+// этого мало — длинные шифры РД и ФИО не влезают в строку на любом разумном размере модалки.
+const wrapCell = () => ({ style: { whiteSpace: 'normal' as const, wordBreak: 'break-word' as const } });
+
 // Короткая сводка фильтров для ячейки таблицы.
 function filtersShort(f: VorFilterSnapshot): string {
   const parts: string[] = [];
@@ -137,7 +142,7 @@ export function VorListModal({
   }, [open, focusVorId, data]);
 
   const columns: ColumnsType<EstimateVor> = [
-    { title: 'Название', dataIndex: 'name', key: 'name', ellipsis: true, ...getColumnSearchProps((r) => r.name) },
+    { title: 'Название', dataIndex: 'name', key: 'name', onCell: wrapCell, ...getColumnSearchProps((r) => r.name) },
     {
       title: 'Дата',
       dataIndex: 'createdAt',
@@ -155,8 +160,8 @@ export function VorListModal({
       title: 'Автор',
       dataIndex: 'createdByName',
       key: 'createdByName',
-      width: 160,
-      ellipsis: true,
+      width: 220,
+      onCell: wrapCell,
       filters: uniqueFilters(data ?? [], (r) => r.createdByName),
       filterSearch: true,
       onFilter: (value, record) => record.createdByName === value,
@@ -164,7 +169,7 @@ export function VorListModal({
     {
       title: 'Фильтры',
       key: 'filters',
-      ellipsis: true,
+      onCell: wrapCell,
       render: (_v, r) => (
         <Popover content={<FiltersDetail f={r.filters} />} title="Применённые фильтры">
           <span style={{ cursor: 'help', color: 'var(--est-text-secondary)' }}>{filtersShort(r.filters)}</span>
@@ -250,7 +255,10 @@ export function VorListModal({
 
   return (
     <>
-      <Modal title="ВОР" open={open} onCancel={onClose} footer={null} width="90%" style={{ maxWidth: 1100 }} destroyOnClose>
+      {/* 80% ширины экрана: при maxWidth 1100 окно на широком мониторе оставалось узким, и на две
+          резиновые колонки (название + фильтры) приходилось ~340px на двоих. Потолок 1800 держит
+          строки читаемыми на сверхшироких мониторах. */}
+      <Modal title="ВОР" open={open} onCancel={onClose} footer={null} width="80%" style={{ maxWidth: 1800 }} destroyOnClose>
         {onExport && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
             <Button type="primary" icon={<FileExcelOutlined />} onClick={onExport}>

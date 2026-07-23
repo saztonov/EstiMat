@@ -19,12 +19,20 @@ import {
   CODE_MATERIAL,
   ITOGO_LABEL,
   NDS_LABEL,
+  NOTE_COL_WIDTH,
   ANCHOR_SHEET,
   ANCHOR_MARKER,
   ANCHOR_DATA_START_ROW,
   ANCHOR_COL,
 } from './layout.js';
 import type { ExportBlock } from './data.js';
+import {
+  contentHash,
+  diffItem,
+  isSupportedSchemaVersion,
+  VOR_CONTENT_SCHEMA_VERSION,
+  type VorItemSnapshot,
+} from './vor-content.js';
 
 // Тестовый объект — проверяем автоподстановку названия/адреса в шапку (C5/C6).
 const PROJECT = { name: 'ЖК Тестовый', address: 'г. Москва, ул. Тестовая, д. 1' };
@@ -375,6 +383,92 @@ const mixed: ExportBlock[] = [
   // Видимые листы не пострадали: КП на месте и активен, справочники заполнены.
   assert(!!wbA.getWorksheet(KP_SHEET) && !!wbA.getWorksheet(BSM_SHEET) && !!wbA.getWorksheet(BSR_SHEET), 'видимые листы должны остаться');
   console.log('selfcheck якорь ok: лист very hidden, id ВОР, соответствие строк UUID');
+}
+
+// 7) Колонка «Примечание» (O): комментарии строки, следом состав работы из справочника — подряд,
+//    без разделителя; ширина колонки расширена под этот текст, строка выросла по числу строк.
+{
+  const noteBlocks: ExportBlock[] = [
+    {
+      locationLabel: 'Корпус 1',
+      rows: [
+        { kind: 'work', number: '1', typeName: null, name: 'С комментарием и составом', unit: 'м2', volume: 1, coef: null,
+          notes: 'Уточнить у ГИПа', composition: 'Очистка основания, грунтовка в два слоя, укладка плитки на клей.' },
+        { kind: 'work', number: '2', typeName: null, name: 'Только состав', unit: 'м2', volume: 1, coef: null,
+          composition: 'Разметка, монтаж каркаса.' },
+        { kind: 'work', number: '3', typeName: null, name: 'Только комментарий', unit: 'м2', volume: 1, coef: null, notes: 'Без справочника' },
+        { kind: 'work', number: '4', typeName: null, name: 'Без примечаний', unit: 'м2', volume: 1, coef: null },
+      ],
+    },
+  ];
+  const rN = buildReferenceLists(noteBlocks);
+  const wbN = new ExcelJS.Workbook();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await wbN.xlsx.load((await exportKpWorkbook(noteBlocks, { materials: rN.materials, works: rN.works }, PROJECT)) as any);
+  const kpN = wbN.getWorksheet(KP_SHEET)!;
+  const noteAt = (offset: number) => String(kpN.getRow(TABLE_START_ROW + offset).getCell(COL.note).value ?? '');
+
+  assert(
+    noteAt(1) === 'Уточнить у ГИПа\nОчистка основания, грунтовка в два слоя, укладка плитки на клей.',
+    `комментарий должен идти перед составом через перенос, получено «${noteAt(1)}»`,
+  );
+  assert(noteAt(2) === 'Разметка, монтаж каркаса.', `без комментариев печатается только состав, получено «${noteAt(2)}»`);
+  assert(noteAt(3) === 'Без справочника', `без состава печатаются только комментарии, получено «${noteAt(3)}»`);
+  assert(noteAt(4) === '', `у работы без примечаний ячейка O должна быть пустой, получено «${noteAt(4)}»`);
+  assert(
+    kpN.getColumn(COL.note).width === NOTE_COL_WIDTH,
+    `ширина колонки O должна быть ${NOTE_COL_WIDTH}, получено ${kpN.getColumn(COL.note).width}`,
+  );
+  assert(
+    (kpN.getRow(TABLE_START_ROW + 1).height ?? 0) >= 30,
+    'строка с двумя строками примечания должна быть выше однострочной',
+  );
+  assert(
+    kpN.getRow(TABLE_START_ROW + 1).getCell(COL.note).alignment?.wrapText === true,
+    'у ячейки примечания должен быть включён перенос по словам',
+  );
+  console.log('selfcheck примечание ok: комментарии + состав работы, ширина O, высота строки');
+}
+
+// 8) Версионирование содержимого: v1 состав работы НЕ видит (иначе все ВОР, выгруженные до его
+//    появления, разом стали бы «изменено»), v2 — видит. Это главная гарантия совместимости.
+{
+  const base: VorItemSnapshot = {
+    itemId: 'aaaaaaaa-0000-4000-8000-000000000001',
+    name: 'Устройство стен из камня',
+    unit: 'м2',
+    volume: 255.4,
+    typeName: 'СВ-3.3',
+    locations: [{ zoneId: null, floors: [2, 3] }],
+    locationLabel: '',
+    notes: 'Уточнить у ГИПа',
+    materials: [],
+  };
+  const withComposition: VorItemSnapshot = { ...base, composition: 'Очистка основания, грунтовка.' };
+  const otherComposition: VorItemSnapshot = { ...base, composition: 'Совсем другой состав.' };
+
+  assert(
+    contentHash(base, 1).equals(contentHash(withComposition, 1)),
+    'v1: появление состава работы не должно менять хэш — иначе старые ВОР «краснеют»',
+  );
+  assert(
+    !contentHash(base, 2).equals(contentHash(withComposition, 2)),
+    'v2: состав работы обязан входить в хэш',
+  );
+  assert(
+    !contentHash(withComposition, 2).equals(contentHash(otherComposition, 2)),
+    'v2: правка состава в справочнике должна делать ВОР неактуальным',
+  );
+  assert(VOR_CONTENT_SCHEMA_VERSION === 2, 'новые ВОР должны выгружаться по схеме v2');
+  assert(isSupportedSchemaVersion(1) && isSupportedSchemaVersion(2), 'обе версии схемы должны поддерживаться');
+
+  // diff: у снимка v1 состава нет — сравнивать его нельзя, иначе каждая строка покажет ложное
+  // «состав работы добавлен».
+  const hasComposition = (version: number) =>
+    diffItem(base, withComposition, version).fields.some((f) => f.key === 'composition');
+  assert(!hasComposition(1), 'diff v1 не должен показывать изменение состава работы');
+  assert(hasComposition(2), 'diff v2 должен показывать изменение состава работы');
+  console.log('selfcheck версия содержимого ok: v1 состав игнорирует, v2 учитывает (хэш и diff)');
 }
 
 const out = resolve(process.cwd(), '..', 'temp', '__selfcheck_kp.xlsx');

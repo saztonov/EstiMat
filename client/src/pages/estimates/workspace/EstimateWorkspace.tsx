@@ -13,16 +13,9 @@ import type { CostTypeGroup, EstimateDetail } from '../components/types';
 import type { RateLeafPayload } from './types';
 import type { AssignLocation } from './useSmetaSelection';
 
-interface Organization {
-  id: string;
-  name: string;
-  type?: string;
-}
-
 interface Props {
   estimate: EstimateDetail;
   groups: CostTypeGroup[];
-  orgs?: Organization[];
   totalItems: number;
   groupCount: number;
   onBack: () => void;
@@ -128,7 +121,7 @@ function RefsRail({ onClick }: { onClick: () => void }) {
 }
 
 export function EstimateWorkspace(props: Props) {
-  const { estimate, groups, orgs, totalItems, groupCount } = props;
+  const { estimate, groups, totalItems, groupCount } = props;
   const {
     visibility, aiExpanded, refsExpanded, colSizes, refsDrawerOpen,
     setColSizes, setAiExpanded, setRefsExpanded, setRefsDrawerOpen,
@@ -143,7 +136,6 @@ export function EstimateWorkspace(props: Props) {
       totalItems={totalItems}
       groupCount={groupCount}
       editable
-      orgs={orgs}
       estimateId={estimate.id}
       projectId={estimate.project_id}
       onAddCostType={props.onAddCostType}

@@ -32,6 +32,7 @@ import {
   REF_DATA_START_ROW,
   REF_COL,
   REF_SUBTOTAL_STYLE_ROW,
+  NOTE_COL_WIDTH,
   ANCHOR_SHEET,
   ANCHOR_MARKER,
   ANCHOR_VERSION,
@@ -308,6 +309,23 @@ function refLookup(sheet: string, row: number): string {
   return `_xlfn.XLOOKUP(${D}${row},${nameRange},${priceRange},0,0,1)`;
 }
 
+// Высота одной строки текста примечания и потолок высоты ячейки. Потолок нужен, чтобы одна
+// работа с аномально длинным составом не растянула строку на пол-листа; 12 строк с запасом
+// вмещают обычный состав работы, остальное доступно прокруткой внутри ячейки.
+const NOTE_LINE_H = 15;
+const NOTE_MAX_LINES = 12;
+
+// Сколько строк займёт текст в колонке «Примечание» с учётом переноса по ширине. Excel ширину
+// задаёт в «символах», поэтому оцениваем по длине абзаца; символ-в-символ не совпадёт (шрифт
+// пропорциональный), но для высоты строки этой точности достаточно.
+function wrappedLineCount(text: string): number {
+  const perLine = Math.max(1, Math.floor(NOTE_COL_WIDTH) - 2);
+  const lines = text
+    .split('\n')
+    .reduce((sum, para) => sum + Math.max(1, Math.ceil(para.length / perLine)), 0);
+  return Math.min(lines, NOTE_MAX_LINES);
+}
+
 /** Строка служебного листа-якоря: какая строка «КП» какой работе/материалу сметы соответствует. */
 interface AnchorRow {
   row: number;
@@ -360,6 +378,9 @@ export async function exportKpWorkbook(
   ws.getCell('C5').value = project.name ?? null;
   ws.getCell('C6').value = project.address ?? null;
   ws.getCell('C7').value = project.ciphers ?? null;
+
+  // Ширина «Примечания»: в шаблоне колонка узкая, а теперь в неё попадает ещё и состав работы.
+  ws.getColumn(COL.note).width = NOTE_COL_WIDTH;
 
   // КП — активный лист по умолчанию (индекс 0). В шаблоне унаследован activeTab=2 (РАБОТЫ) —
   // переопределяем. activeTab (workbook) и tabSelected (пер-лист) в ExcelJS не синхронизированы,
@@ -481,14 +502,16 @@ export async function exportKpWorkbook(
         setFormula(row, COL.costMat, `${I}${r}*${G}${r}`);
         setFormula(row, COL.costSmr, `${J}${r}*${G}${r}`);
         setFormula(row, COL.costTotal, `SUM(${L}${r}:${M}${r})`);
-        // Примечания работы → столбец «Примечание» (O). Несколько — в одной ячейке с переносами.
-        if (item.notes) {
+        // Столбец «Примечание» (O): сперва комментарии работы, следом состав работы из
+        // справочника — подряд, без разделителя. Всё в одной ячейке с переносами.
+        const noteText = [item.notes, item.composition].filter(Boolean).join('\n');
+        if (noteText) {
           const noteCell = row.getCell(COL.note);
-          noteCell.value = item.notes;
+          noteCell.value = noteText;
           // Мерджим поверх стиля образца — не затираем рамку/шрифт шаблона.
           noteCell.alignment = { ...noteCell.alignment, wrapText: true, vertical: 'top' };
-          const lineCount = item.notes.split('\n').length;
-          if (lineCount > 1) row.height = Math.max(row.height ?? 15, 15 * lineCount);
+          const lineCount = wrappedLineCount(noteText);
+          if (lineCount > 1) row.height = Math.max(row.height ?? 15, NOTE_LINE_H * lineCount);
         }
       } else {
         row.getCell(COL.coef).value = item.coef ?? null;

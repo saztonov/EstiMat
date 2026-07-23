@@ -14,15 +14,14 @@ interface Props {
 
 const fmt = (s?: string | null) => (s ? new Date(s).toLocaleString('ru-RU') : '—');
 
-// Инфо-поповер строки сметы: создатель/время создания + суть последней содержательной
-// правки (ленивый запрос истории при открытии) + ссылка на полную историю строки.
-export function RowInfoPopover({ item, onOpenHistory }: Props) {
-  const [open, setOpen] = useState(false);
-
+// Содержимое поповера вынесено в отдельный компонент и монтируется ТОЛЬКО когда поповер открыт.
+// Пока запрос жил в самой ячейке, на смете в 500 строк создавалось столько же наблюдателей
+// react-query (пусть и с enabled: false) и на каждый рендер дерева заново строилась вся эта
+// разметка — при том что открыт поповер всегда максимум один.
+function RowInfoContent({ item, onOpenHistory, onClose }: Props & { onClose: () => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ['estimate-history', item.estimate_id, item.id, 'last'],
     queryFn: () => getEstimateHistory(item.estimate_id, { entityId: item.id, limit: 20 }),
-    enabled: open,
   });
 
   // Записи отсортированы по времени DESC — берём самую свежую с понятными изменениями
@@ -35,7 +34,7 @@ export function RowInfoPopover({ item, onOpenHistory }: Props) {
   // «ИИ-ассистент»; иначе прочерк.
   const creator = item.created_by_name ?? (item.source === 'ai' ? 'ИИ-ассистент' : '—');
 
-  const content = (
+  return (
     <div style={{ minWidth: 240, maxWidth: 340, fontSize: 13 }}>
       <div>
         Создал: <strong>{creator}</strong>
@@ -83,7 +82,7 @@ export function RowInfoPopover({ item, onOpenHistory }: Props) {
           <Divider style={{ margin: '8px 0' }} />
           <Typography.Link
             onClick={() => {
-              setOpen(false);
+              onClose();
               onOpenHistory(item);
             }}
           >
@@ -93,9 +92,23 @@ export function RowInfoPopover({ item, onOpenHistory }: Props) {
       )}
     </div>
   );
+}
+
+// Инфо-поповер строки сметы: создатель/время создания + суть последней содержательной
+// правки (ленивый запрос истории при открытии) + ссылка на полную историю строки.
+export function RowInfoPopover({ item, onOpenHistory }: Props) {
+  const [open, setOpen] = useState(false);
 
   return (
-    <Popover trigger="click" title="Информация о строке" content={content} open={open} onOpenChange={setOpen}>
+    <Popover
+      trigger="click"
+      title="Информация о строке"
+      content={
+        open ? <RowInfoContent item={item} onOpenHistory={onOpenHistory} onClose={() => setOpen(false)} /> : null
+      }
+      open={open}
+      onOpenChange={setOpen}
+    >
       <Button type="text" size="small" icon={<InfoCircleOutlined />} title="Информация о строке" />
     </Popover>
   );

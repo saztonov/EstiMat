@@ -2,14 +2,9 @@ import { useParams, useNavigate } from 'react-router';
 import { Spin } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { useProjectZones } from '../../hooks/useProjectLocations';
 import type { EstimateDetail } from './components/types';
 import { EstimateEditor } from './EstimateEditor';
-
-interface Organization {
-  id: string;
-  name: string;
-  type?: string;
-}
 
 // Прямой доступ к конкретной смете /estimates/:id. Основной вход —
 // объектная страница /projects/:id (единая смета на объект).
@@ -25,10 +20,10 @@ export function EstimateDetailPage() {
     refetchOnWindowFocus: true, // fallback к realtime: при возврате на вкладку, если данные устарели
   });
 
-  const { data: orgsData } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => api.get<{ data: Organization[] }>('/organizations'),
-  });
+  // Зоны объекта: здесь projectId известен только из самой сметы, поэтому параллельно со сметой
+  // (как на странице объекта) запрос не запустить — стартуем сразу, как пришла шапка, всё равно
+  // раньше, чем это сделала бы таблица работ.
+  useProjectZones(data?.data.project_id);
 
   if (isLoading) return <Spin size="large" />;
   if (!data?.data) return <div>Смета не найдена</div>;
@@ -36,7 +31,6 @@ export function EstimateDetailPage() {
   return (
     <EstimateEditor
       estimate={data.data}
-      orgs={orgsData?.data}
       onBack={() => navigate('/estimates')}
       refetchKey={['estimate', id]}
     />
