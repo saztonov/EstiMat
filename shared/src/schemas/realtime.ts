@@ -25,6 +25,7 @@ export const estimateChangeReasonSchema = z.enum([
   'undo_applied',
   'vor_created',
   'vor_deleted',
+  'contract_prices_applied',
 ]);
 export type EstimateChangeReason = z.infer<typeof estimateChangeReasonSchema>;
 

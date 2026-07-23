@@ -82,6 +82,10 @@ export interface EstimateMaterial {
    *  null — ручное количество. Числовой, приходит строкой из NUMERIC. */
   qty_ratio?: string | null;
   material_name: string | null;
+  /** Договорная цена (из заполненного подрядчиком ВОР) и сумма по ней. null — цены ещё нет:
+   *  в разделе «Подрядчики» это прочерк, а не ноль. Базовые unit_price/total не заменяют. */
+  contract_unit_price?: string | null;
+  contract_total?: string | null;
   /** 'suggested' — добавлен автоматически по типовому набору расценки («предложение»),
    *  требует подтверждения ✓ или удаления ✗; 'confirmed' — подтверждён. */
   status: 'suggested' | 'confirmed';
@@ -111,6 +115,9 @@ export interface EstimateItem {
   unit: string;
   unit_price: string;
   total: string;
+  /** Договорная цена работы (из заполненного подрядчиком ВОР) и сумма по ней; null — цены нет. */
+  contract_unit_price?: string | null;
+  contract_total?: string | null;
   sort_order: number;
   rate_name: string | null;
   rate_code: string | null;
@@ -223,6 +230,42 @@ export interface CostTypeGroup {
 
 export const formatMoney = (v: string | number | null | undefined) =>
   `${Number(v ?? 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`;
+
+/**
+ * Какие цены показывают столбцы «Цена»/«Сумма»: базовые из справочника расценок («Смета») или
+ * договорные из заполненного подрядчиком ВОР («Подрядчики»). Базовые в разделе подрядчиков не
+ * показываются вовсе — там цена означает договор, а не расценку.
+ */
+export type PriceMode = 'base' | 'contract';
+
+interface PricedRow {
+  unit_price: string;
+  total: string;
+  contract_unit_price?: string | null;
+  contract_total?: string | null;
+}
+
+/** Цена строки в выбранном режиме; null — договорной цены ещё нет. */
+export const priceOf = (r: PricedRow, mode: PriceMode): string | null =>
+  mode === 'contract' ? r.contract_unit_price ?? null : r.unit_price;
+
+/** Сумма строки в выбранном режиме; null — договорной цены ещё нет. */
+export const totalOf = (r: PricedRow, mode: PriceMode): string | null =>
+  mode === 'contract' ? r.contract_total ?? null : r.total;
+
+/** Деньги или прочерк: «нет договорной цены» — это не ноль, и выглядеть как ноль не должно. */
+export const formatMoneyOrDash = (v: string | number | null | undefined) =>
+  v === null || v === undefined ? '—' : formatMoney(v);
+
+/** Сумма работ с их материалами в выбранном режиме (строки без договорной цены идут нулём). */
+export const sumWorksTotal = (works: EstimateItem[], mode: PriceMode): number =>
+  works.reduce(
+    (acc, w) =>
+      acc +
+      Number(totalOf(w, mode) ?? 0) +
+      w.materials.reduce((a, m) => a + Number(totalOf(m, mode) ?? 0), 0),
+    0,
+  );
 
 const GROUP_NONE = '__none__';
 

@@ -13,6 +13,7 @@ import {
 import { assertEstimateAccess, ChatAccessError, isContractor } from '../../lib/chat/access.js';
 import { lockEstimateRequests } from '../../lib/material-requests/access.js';
 import { loadScopeRows, planBulkAssign, allocationValues } from '../../lib/contractors/bulk-assign.js';
+import { clearStaleContractPrices } from '../../lib/vor/contract-prices.js';
 import {
   assignItemContractorsSchema,
   bulkAssignItemContractorsSchema,
@@ -27,6 +28,23 @@ const EPS = 1e-6;
 
 // Один пункт «сырого плана» назначения до блокировки/расчёта.
 type PlanItem = { itemId: string; percent?: number; qty?: number; remainder?: boolean };
+
+// Договорные поля — только для сотрудников: в кабинете подрядчика их быть не должно ни в
+// интерфейсе, ни в ответе API (выборки идут через ei.*/em.*, поэтому чистим явно).
+const CONTRACT_PRICE_FIELDS = [
+  'contract_unit_price',
+  'contract_total',
+  'contract_price_vor_id',
+  'contract_price_contractor_id',
+  'contract_price_updated_at',
+  'contract_price_updated_by',
+] as const;
+
+function stripContractPrice<T extends Record<string, unknown>>(row: T): T {
+  const out = { ...row };
+  for (const f of CONTRACT_PRICE_FIELDS) delete out[f];
+  return out;
+}
 
 export default async function contractorRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -200,9 +218,11 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
         : [];
 
       // Бакетизация за один проход вместо .filter() внутри .map() (порядок задан ORDER BY).
-      const materialsByItem = bucketBy(materials, (m) => m.item_id as string);
+      // Договорные цены снимаем с ответа: они предназначены сотрудникам (раздел «Подрядчики»),
+      // а выборка идёт через ei.*/em.* — иначе новая колонка автоматически уехала бы подрядчику.
+      const materialsByItem = bucketBy(materials.map(stripContractPrice), (m) => m.item_id as string);
       const itemsWithMaterials = items.rows.map((it) => ({
-        ...it,
+        ...stripContractPrice(it),
         materials: materialsByItem.get(it.id as string) ?? [],
       }));
 
@@ -342,6 +362,10 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
         }
         await recordAuditBatch(client, auditInputs);
 
+        // Договорная цена принадлежит подрядчику: после смены состава исполнителей строки
+        // цена прежнего снимается, иначе новый молча унаследовал бы чужой прайс.
+        await clearStaleContractPrices(client, toUpsert.map((u) => u.itemId));
+
         // Авто-синк: объекты затронутых смет становятся видимыми подрядчику в его кабинете.
         // Снятие исполнителя (DELETE /assignments) эту связку НЕ убирает.
         const affectedEstimateIds = [...new Set(toUpsert.map((u) => u.estimateId))];
@@ -460,6 +484,9 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
             [body.estimateId, body.contractorId, userId],
           );
         }
+
+        // Договорные цены прежних исполнителей — снять (см. clearStaleContractPrices).
+        await clearStaleContractPrices(client, scopeIds);
 
         // Аудит чанками: recordAuditBatch кладёт 9 параметров на запись, а строк тут до 2000.
         const auditInputs = [
@@ -602,6 +629,9 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
             })),
           );
         }
+
+        // Исполнителя сняли — договорная цена строки больше ничья (см. clearStaleContractPrices).
+        await clearStaleContractPrices(client, clearableIds);
 
         await client.query('COMMIT');
 

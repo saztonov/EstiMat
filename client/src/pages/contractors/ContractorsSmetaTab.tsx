@@ -22,10 +22,10 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import type { BulkAssignResult, Organization, VorMark, VorMarksMap } from '@estimat/shared';
 import { api, apiFetch } from '../../services/api';
 import { CostTypeGroupBlock } from '../estimates/components/CostTypeGroupBlock';
-import { VorListModal } from '../estimates/components/VorListModal';
 import {
   buildCostTypeGroups,
   formatMoney,
+  sumWorksTotal,
   type CostTypeCiphers,
   type CostTypeGroup,
   type EstimateItem,
@@ -44,6 +44,7 @@ import { RowAssignPopover } from './assign/RowAssignPopover';
 import { GroupAssignPopover } from './assign/GroupAssignPopover';
 import { GroupSelectionBar } from './assign/GroupSelectionBar';
 import { countUnassigned, useAssignPlan } from './assign/useAssignPlan';
+import { showBlockedReport } from './assign/blockedReport';
 import { allocationLabel, type AssignInput, type BulkAssignDraft } from './assign/types';
 
 interface Props {
@@ -59,6 +60,8 @@ interface Props {
   zones: ZoneNode[];
   zoneIndex: ZoneIndex;
   onChanged: () => void;
+  /** Открыть реестр ВОР объекта (он один на раздел — им же владеет страница). */
+  onOpenVorRegistry: () => void;
 }
 
 const NO_CATEGORY = '__none__';
@@ -81,6 +84,7 @@ export function ContractorsSmetaTab({
   zones,
   zoneIndex,
   onChanged,
+  onOpenVorRegistry,
 }: Props) {
   const { message, modal } = App.useApp();
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
@@ -133,10 +137,10 @@ export function ContractorsSmetaTab({
     () => (viewerIsContractor ? undefined : new Map<string, VorMark>(Object.entries(vorMarks ?? {}))),
     [viewerIsContractor, vorMarks],
   );
-  const [vorListOpen, setVorListOpen] = useState(false);
-  // Клик по метке «В» — открыть список ВОР сметы. Конкретный ВОР не подсвечиваем: агрегатная
+  // Клик по метке «В» — открыть реестр ВОР объекта (тот же, что по кнопке «ВОР»: двух разных
+  // списков ВОР в одном разделе быть не должно). Конкретный ВОР не подсвечиваем: агрегатная
   // отметка не хранит его id (как и на «Смете»).
-  const openVorList = useCallback(() => setVorListOpen(true), []);
+  const openVorList = useCallback(() => onOpenVorRegistry(), [onOpenVorRegistry]);
 
   // Локационный отбор раздела (корпус/этажи/тип) — своё состояние, не связано со страницей «Смета».
   const {
@@ -272,40 +276,7 @@ export function ContractorsSmetaTab({
       if (res.replacedRows > 0) parts.push(`перезаписано: ${res.replacedRows}`);
       if (res.blocked.length > 0) parts.push(`пропущено: ${res.blocked.length}`);
       message.success(parts.join(' · '));
-
-      if (res.blocked.length > 0) {
-        const shown = res.blocked.slice(0, 20);
-        modal.info({
-          title: 'Назначено не на все строки',
-          width: 520,
-          content: (
-            <div>
-              <p style={{ marginTop: 0 }}>
-                По этим строкам подрядчик уже оформил заявку на материалы — исполнитель у них не
-                менялся.
-              </p>
-              <ul style={{ paddingLeft: 18, margin: 0 }}>
-                {shown.map((b) => (
-                  <li key={b.itemId}>
-                    {nameById.get(b.itemId) ?? 'Строка сметы'}
-                    {b.contractors.length > 0 && (
-                      <span style={{ color: 'var(--est-text-tertiary)' }}>
-                        {' '}
-                        — {b.contractors.map((c) => c.contractorName ?? '—').join(', ')}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {res.blocked.length > shown.length && (
-                <p style={{ marginBottom: 0, color: 'var(--est-text-tertiary)' }}>
-                  …и ещё {res.blocked.length - shown.length}
-                </p>
-              )}
-            </div>
-          ),
-        });
-      }
+      showBlockedReport(modal, res.blocked, nameById);
     },
     [message, modal],
   );
@@ -472,13 +443,9 @@ export function ContractorsSmetaTab({
     exitSelect(); // все блоки свёрнуты — отмечать больше нечего
   };
 
-  // Сумма по набору видов работ (работы + их материалы).
+  // Сумма по набору видов работ (работы + их материалы) — по договорным ценам, как и столбцы.
   const groupsTotal = (gs: CostTypeGroup[]) =>
-    gs.reduce(
-      (acc, g) =>
-        acc + g.works.reduce((a, w) => a + num(w.total) + w.materials.reduce((mm, m) => mm + num(m.total), 0), 0),
-      0,
-    );
+    gs.reduce((acc, g) => acc + sumWorksTotal(g.works, 'contract'), 0);
 
   // Ячейка «Исполнитель»: чипы подрядчиков + статус остатка. Клик по всему блоку — назначение.
   const renderExecutor = (it: EstimateItem) => {
@@ -705,6 +672,9 @@ export function ContractorsSmetaTab({
                     // назначения подрядчиков сервер выводит из itemIds и его не требуют.
                     estimateId={estimateId}
                     showPrices={showPrices}
+                    // В разделе «Подрядчики» цена означает договор, а не расценку справочника:
+                    // показываем цены из заполненного ВОР, у неоценённых строк — прочерк.
+                    priceMode="contract"
                     vorByItem={vorByItem}
                     onOpenVor={openVorList}
                     leadingColumns={executorColumn}
@@ -742,16 +712,6 @@ export function ContractorsSmetaTab({
         );
       })}
       </div>
-
-      {/* Список ВОР по клику на метку «В». Только просмотр: экспорт, переход к фильтрам сметы
-          и удаление ВОР — операции раздела «Смета». */}
-      <VorListModal
-        open={vorListOpen}
-        onClose={() => setVorListOpen(false)}
-        estimateId={estimateId}
-        focusVorId={null}
-        readOnly
-      />
     </div>
   );
 }

@@ -26,8 +26,8 @@ import { CommentsPopover } from './CommentsPopover';
 import { CostTypeCipherSelect } from './CostTypeCipherSelect';
 import type { ColumnPrefs } from '../../../store/smetaColumnsStore';
 import type { ZoneNode } from './location';
-import type { CostTypeGroup, EstimateItem, Organization, SaveWorkPayload, SaveMaterialPayload, WorkEdit } from './types';
-import { formatMoney, DRAFT_ID } from './types';
+import type { CostTypeGroup, EstimateItem, Organization, PriceMode, SaveWorkPayload, SaveMaterialPayload, WorkEdit } from './types';
+import { formatMoney, sumWorksTotal, DRAFT_ID } from './types';
 
 interface Rate {
   id: string;
@@ -99,6 +99,9 @@ interface Props {
   leadingColumns?: ColumnsType<EstimateItem>;
   /** Показывать колонки «Цена»/«Сумма» и сумму группы (false — скрываем деньги). */
   showPrices?: boolean;
+  /** Какие это цены: базовые из справочника расценок (по умолчанию) или договорные из ВОР
+   *  (раздел «Подрядчики»). Влияет и на столбцы, и на сумму группы. */
+  priceMode?: PriceMode;
   /** Дополнительный контент в шапке блока вида работ (напр. «Назначить на весь вид»). */
   headerExtra?: ReactNode;
   /** Scroll-контейнер сметы — root для IntersectionObserver ленивых материалов. Передаётся
@@ -216,6 +219,7 @@ function CostTypeGroupBlockImpl({
   projectId = '',
   leadingColumns = [],
   showPrices = true,
+  priceMode = 'base',
   headerExtra,
   scrollRootRef,
   onOpenHistory,
@@ -286,12 +290,8 @@ function CostTypeGroupBlockImpl({
       : group.costTypeName ?? 'Без вида работ';
 
   const groupTotal = useMemo(
-    () =>
-      group.works.reduce(
-        (acc, w) => acc + Number(w.total ?? 0) + w.materials.reduce((a, m) => a + Number(m.total ?? 0), 0),
-        0,
-      ),
-    [group.works],
+    () => sumWorksTotal(group.works, priceMode),
+    [group.works, priceMode],
   );
 
   const rows: EstimateItem[] = useMemo(() => {
@@ -448,7 +448,7 @@ function CostTypeGroupBlockImpl({
     () => {
       const built = buildWorksColumns({
         group, editing, setEditing, saving, nameOptions, dndEnabled, leadingColumns,
-        editable, deleteMode, selectionMode, showPrices, showLocationColumn, zones, projectId,
+        editable, deleteMode, selectionMode, showPrices, priceMode, showLocationColumn, zones, projectId,
         isRowInEdit, isWorkExpanded, setWorkExpanded, commit, selectRate, startEditWork,
         onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
       });
@@ -459,7 +459,7 @@ function CostTypeGroupBlockImpl({
     [
       dndEnabled, group.works.length, group.costTypeId, leadingColumns,
       editing, saving, nameOptions, ratesData,
-      editable, deleteMode, selectionMode, showPrices, showLocationColumn, zones, projectId,
+      editable, deleteMode, selectionMode, showPrices, priceMode, showLocationColumn, zones, projectId,
       materialsControlled, expandedWorkIds, expandedKeys, onWorkExpandChange,
       onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
       columnPrefs,
@@ -530,6 +530,7 @@ function CostTypeGroupBlockImpl({
               work={r}
               editable={editable}
               showPrices={showPrices}
+              priceMode={priceMode}
               onCreate={onCreateMaterial}
               onUpdate={onUpdateMaterial}
               onDelete={onDeleteMaterial}
@@ -548,6 +549,7 @@ function CostTypeGroupBlockImpl({
               work={r}
               editable={editable}
               showPrices={showPrices}
+              priceMode={priceMode}
               onCreate={onCreateMaterial}
               onUpdate={onUpdateMaterial}
               onDelete={onDeleteMaterial}
@@ -568,7 +570,7 @@ function CostTypeGroupBlockImpl({
     [
       effectiveExpandedKeys, materialsControlled, onWorkExpandChange, materialsIndent,
       expandColumnWidth,
-      useLazyMaterials, scrollRootRef, editable, showPrices,
+      useLazyMaterials, scrollRootRef, editable, showPrices, priceMode,
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onReassignMaterial,
       allWorks, selectionMode, selectedIds, onToggleMaterial, deleteMode, selectedWorkIds,
       tableScrollX, vorByItem, onOpenVor,

@@ -61,6 +61,18 @@ export const REF_COL = { num: 1, name: 2, unit: 3, volume: 4, price: 5, total: 6
 // оформление и переносит итог под фактические данные.
 export const REF_SUBTOTAL_STYLE_ROW = { materials: 15, works: 12 } as const;
 
+// Служебный лист-якорь (very hidden): по нему загруженный обратно файл узнаётся как «этот ВОР», а
+// его строки сопоставляются с работами и материалами сметы по UUID — устойчиво к тому, что
+// подрядчик отсортировал, вставил или удалил строки в «КП». В старых ВОР листа нет: там
+// сопоставление позиционное, по построчному снимку (см. vor-prices.ts).
+// Раскладка: A1 — метка формата, B1 — версия; A2 — vorId; строка 3 — шапка; данные с 4-й:
+// A = номер строки «КП», B = вид ('work' | 'material'), C = itemId, D = materialId (у работы пусто).
+export const ANCHOR_SHEET = '_ESTIMAT';
+export const ANCHOR_MARKER = 'ESTIMAT_VOR';
+export const ANCHOR_VERSION = 1;
+export const ANCHOR_DATA_START_ROW = 4;
+export const ANCHOR_COL = { row: 1, kind: 2, itemId: 3, materialId: 4 } as const;
+
 // Номер колонки → буква (1→A, 27→AA).
 export function colLetter(col: number): string {
   let s = '';

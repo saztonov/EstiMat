@@ -19,6 +19,10 @@ import {
   CODE_MATERIAL,
   ITOGO_LABEL,
   NDS_LABEL,
+  ANCHOR_SHEET,
+  ANCHOR_MARKER,
+  ANCHOR_DATA_START_ROW,
+  ANCHOR_COL,
 } from './layout.js';
 import type { ExportBlock } from './data.js';
 
@@ -331,6 +335,46 @@ const mixed: ExportBlock[] = [
     assert(!/<row r="(?:1[5-9]|[2-9]\d|\d{3,})"/.test(xml), `крупный: ${xmlPath} содержит строки ниже 14 (used range не обрезан)`);
   }
   console.log('selfcheck крупный экспорт ok: автофильтр/УФ/dimension тянутся до фактической строки, без недотягивания');
+}
+
+// 6) Служебный лист-якорь: без vorId его нет вовсе; с vorId — very hidden, с id ВОР и строками
+//    «строка «КП» → UUID работы/материала». По нему заполненный подрядчиком файл узнаётся при
+//    обратной загрузке договорных цен.
+{
+  const anchored: ExportBlock[] = [
+    {
+      locationLabel: 'Корпус 1',
+      rows: [
+        { kind: 'work', number: '1', typeName: null, name: 'Работа', unit: 'м2', volume: 3, coef: null, itemId: 'aaaaaaaa-0000-4000-8000-000000000001' },
+        { kind: 'material', number: '1.1', typeName: null, name: 'Материал', unit: 'кг', volume: 3, coef: 1, itemId: 'aaaaaaaa-0000-4000-8000-000000000001', materialId: 'bbbbbbbb-0000-4000-8000-000000000001' },
+      ],
+    },
+  ];
+  const r = buildReferenceLists(anchored);
+  const refs = { materials: r.materials, works: r.works };
+  const vorId = 'cccccccc-0000-4000-8000-000000000001';
+
+  const withoutAnchor = new ExcelJS.Workbook();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await withoutAnchor.xlsx.load((await exportKpWorkbook(anchored, refs, PROJECT)) as any);
+  assert(!withoutAnchor.getWorksheet(ANCHOR_SHEET), 'без vorId служебного листа быть не должно');
+
+  const wbA = new ExcelJS.Workbook();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await wbA.xlsx.load((await exportKpWorkbook(anchored, refs, PROJECT, vorId)) as any);
+  const anchor = wbA.getWorksheet(ANCHOR_SHEET);
+  assert(!!anchor, `лист ${ANCHOR_SHEET} не создан`);
+  assert(anchor!.state === 'veryHidden', `лист ${ANCHOR_SHEET} должен быть veryHidden, получено ${anchor!.state}`);
+  assert(String(anchor!.getCell(1, 1).value) === ANCHOR_MARKER, 'метка формата в A1 не совпала');
+  assert(String(anchor!.getCell(2, 1).value) === vorId, 'id ВОР в A2 не совпал');
+  const first = anchor!.getRow(ANCHOR_DATA_START_ROW);
+  const second = anchor!.getRow(ANCHOR_DATA_START_ROW + 1);
+  assert(Number(first.getCell(ANCHOR_COL.row).value) === TABLE_START_ROW + 1, 'первая якорная строка — работа под строкой-локацией');
+  assert(String(first.getCell(ANCHOR_COL.kind).value) === 'work', 'вид первой якорной строки должен быть work');
+  assert(String(second.getCell(ANCHOR_COL.materialId).value) === 'bbbbbbbb-0000-4000-8000-000000000001', 'materialId материала не совпал');
+  // Видимые листы не пострадали: КП на месте и активен, справочники заполнены.
+  assert(!!wbA.getWorksheet(KP_SHEET) && !!wbA.getWorksheet(BSM_SHEET) && !!wbA.getWorksheet(BSR_SHEET), 'видимые листы должны остаться');
+  console.log('selfcheck якорь ok: лист very hidden, id ВОР, соответствие строк UUID');
 }
 
 const out = resolve(process.cwd(), '..', 'temp', '__selfcheck_kp.xlsx');

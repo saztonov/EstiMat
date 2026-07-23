@@ -7,7 +7,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { assertEstimateAccess, ChatAccessError } from '../../lib/chat/access.js';
 import { emitEstimateChanged } from '../../lib/realtime/emit.js';
 import { loadProjectId } from '../../lib/estimate-detail.js';
-import { exportEstimateKp, ExportError } from '../../lib/estimate-export/index.js';
+import { buildContentFacets, exportEstimateKp, ExportError } from '../../lib/estimate-export/index.js';
 import { gatherVorItemSnapshots } from '../../lib/estimate-export/data.js';
 import { renderXlsxPreview } from '../../lib/estimate-export/xlsx-preview.js';
 import {
@@ -20,6 +20,7 @@ import {
 } from '../../lib/estimate-export/vor-content.js';
 import {
   createEstimateVorInputSchema,
+  type VorContentFacets,
   type VorCounts,
   type VorFilterSnapshot,
   type VorItemState,
@@ -102,7 +103,35 @@ async function readObjectBuffer(fastify: FastifyInstance, key: string): Promise<
   return Buffer.concat(chunks);
 }
 
-interface VorItemStateRow {
+/** Метаданные снимка ВОР из БД (нужны и diff'у, и импорту цен, и фасетам реестра). */
+export interface VorSnapshotMeta {
+  snapshotKey: string | null;
+  snapshotChecksum: Buffer | null;
+  version: number;
+}
+
+/**
+ * Построчный снимок ВОР из S3. null — снимка нет или он непригоден: легаси-ВОР (version 0),
+ * неподдерживаемая версия схемы, отсутствующий/повреждённый объект. Вызывающий решает сам,
+ * что это значит: для diff — «подробности недоступны», для импорта цен — отказ.
+ */
+export async function loadVorManifest(
+  fastify: FastifyInstance,
+  meta: VorSnapshotMeta,
+): Promise<VorManifest | null> {
+  const { snapshotKey, snapshotChecksum, version } = meta;
+  if (!snapshotKey || version < 1 || !isSupportedSchemaVersion(version) || !fastify.storage) return null;
+  try {
+    const gz = await readObjectBuffer(fastify, snapshotKey);
+    if (snapshotChecksum && !createHash('sha256').update(gz).digest().equals(snapshotChecksum)) return null;
+    return JSON.parse(gunzipSync(gz).toString()) as VorManifest;
+  } catch (err) {
+    fastify.log.warn({ err, snapshotKey }, 'vor manifest read/parse failed');
+    return null;
+  }
+}
+
+export interface VorItemStateRow {
   itemId: string;
   vorId: string;
   name: string;
@@ -112,7 +141,7 @@ interface VorItemStateRow {
 
 // Рассчитать статус каждой пары (ВОР, строка) сметы: сравнить построчный baseline-хэш с хэшем
 // текущего состояния строки. Один сбор текущего состояния на все уникальные живые строки ВОР.
-async function loadVorItemStates(
+export async function loadVorItemStates(
   fastify: FastifyInstance,
   estimateId: string,
 ): Promise<VorItemStateRow[]> {
@@ -197,15 +226,23 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
         return streamStoredFile(fastify, reply, existing[0].file_key, existing[0].file_name, 'attachment');
       }
 
+      // id ВОР — ДО сборки книги: он уходит в служебный лист-якорь файла, по которому потом
+      // распознаётся заполненный подрядчиком ВОР при загрузке договорных цен.
+      const vorId = randomUUID();
+
       // Собрать .xlsx + построчный снимок (manifest) + хэши. Конфликт единиц (без
       // ignoreUnitConflicts) → 409 ДО любых записей/загрузок.
       let buffer: Buffer;
       let manifest: VorManifest;
       let hashByItem: Map<string, Buffer>;
+      let facets: VorContentFacets;
       try {
-        ({ buffer, manifest, hashByItem } = await exportEstimateKp(fastify.pool, estimateId, body.items, {
-          ignoreUnitConflicts: body.ignoreUnitConflicts,
-        }));
+        ({ buffer, manifest, hashByItem, facets } = await exportEstimateKp(
+          fastify.pool,
+          estimateId,
+          body.items,
+          { ignoreUnitConflicts: body.ignoreUnitConflicts, vorId },
+        ));
       } catch (err) {
         if (err instanceof ExportError)
           return reply.status(err.status).send({ error: err.message, code: err.code, data: err.data });
@@ -214,7 +251,6 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
 
       const snapshot = await buildFilterSnapshot(fastify.pool, body.filters);
       const fileName = toFileName(body.name);
-      const vorId = randomUUID();
       const fileKey = `estimate-vors/${estimateId}/${vorId}.xlsx`;
       const snapshotKey = `estimate-vors/${estimateId}/${vorId}.snapshot.json.gz`;
       const checksum = createHash('sha256').update(buffer).digest('hex');
@@ -232,12 +268,13 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
           `INSERT INTO estimate_vors
              (id, estimate_id, request_id, name, filters, file_key, file_name, file_size, mime_type,
               checksum, created_by, created_by_name,
-              content_schema_version, snapshot_key, snapshot_checksum, snapshot_size)
-           VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+              content_schema_version, snapshot_key, snapshot_checksum, snapshot_size, content_facets)
+           VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)`,
           [
             vorId, estimateId, body.requestId, body.name, JSON.stringify(snapshot), fileKey, fileName,
             buffer.length, XLSX_MIME, checksum, request.currentUser.id, request.currentUser.fullName,
             manifest.schemaVersion, snapshotKey, snapshotChecksum, manifestGz.length,
+            JSON.stringify(facets),
           ],
         );
         // content_hash передаём как hex-строки + decode() — node-pg ненадёжно сериализует bytea[].
@@ -300,10 +337,33 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
       }
       const { rows } = await fastify.pool.query(
         `SELECT id, name, file_name, filters, created_at, created_by, created_by_name,
-                content_schema_version, snapshot_key
+                content_schema_version, snapshot_key, snapshot_checksum, content_facets
            FROM estimate_vors WHERE estimate_id = $1 ORDER BY created_at DESC`,
         [id.data],
       );
+      // Фасеты (местоположения/типы строк ВОР) пишутся при создании; у ВОР, созданных раньше,
+      // их нет — досчитываем из снимка при первом показе реестра и сохраняем, чтобы следующий
+      // раз обошёлся без похода в S3.
+      const facetsByVor = new Map<string, VorContentFacets>();
+      for (const r of rows) {
+        const stored = r.content_facets as VorContentFacets | null;
+        if (stored) {
+          facetsByVor.set(r.id as string, stored);
+          continue;
+        }
+        const manifest = await loadVorManifest(fastify, {
+          snapshotKey: r.snapshot_key as string | null,
+          snapshotChecksum: r.snapshot_checksum as Buffer | null,
+          version: r.content_schema_version as number,
+        });
+        if (!manifest) continue; // легаси-ВОР без снимка: фасетов взять неоткуда
+        const facets = buildContentFacets(manifest);
+        facetsByVor.set(r.id as string, facets);
+        await fastify.pool.query(
+          'UPDATE estimate_vors SET content_facets = $2::jsonb WHERE id = $1 AND content_facets IS NULL',
+          [r.id, JSON.stringify(facets)],
+        );
+      }
       // Счётчики актуальности по каждому ВОР (изменено/удалено/неизвестно из построчных статусов).
       const states = await loadVorItemStates(fastify, id.data);
       const countsByVor = new Map<string, VorCounts>();
@@ -327,6 +387,7 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
         canDelete: isAdmin || r.created_by === request.currentUser.id,
         diffAvailable: !!r.snapshot_key && (r.content_schema_version as number) >= 1,
         counts: countsByVor.get(r.id as string) ?? emptyCounts,
+        facets: facetsByVor.get(r.id as string) ?? { locations: [], types: [] },
       }));
       return reply.send({ data });
     },
@@ -424,26 +485,15 @@ export function registerVorRoutes(fastify: FastifyInstance): void {
         [vorId.data, id.data],
       );
       if (!rows[0]) return reply.status(404).send({ error: 'ВОР не найден' });
-      const version = rows[0].content_schema_version as number;
-      const snapshotKey = rows[0].snapshot_key as string | null;
-      const snapshotChecksum = rows[0].snapshot_checksum as Buffer | null;
-
       // Прочитать и проверить manifest. Отсутствие/повреждение/неподдерживаемая версия → статусы
       // из построчных хэшей, но подробности «было → стало» недоступны (manifestOk=false).
-      let manifestOk = false;
-      let baseItems: VorItemSnapshot[] = [];
-      if (snapshotKey && version >= 1 && isSupportedSchemaVersion(version) && fastify.storage) {
-        try {
-          const gz = await readObjectBuffer(fastify, snapshotKey);
-          if (!snapshotChecksum || createHash('sha256').update(gz).digest().equals(snapshotChecksum)) {
-            const manifest = JSON.parse(gunzipSync(gz).toString()) as VorManifest;
-            baseItems = manifest.items ?? [];
-            manifestOk = true;
-          }
-        } catch (err) {
-          fastify.log.warn({ err, snapshotKey }, 'vor manifest read/parse failed');
-        }
-      }
+      const manifest = await loadVorManifest(fastify, {
+        snapshotKey: rows[0].snapshot_key as string | null,
+        snapshotChecksum: rows[0].snapshot_checksum as Buffer | null,
+        version: rows[0].content_schema_version as number,
+      });
+      const manifestOk = manifest !== null;
+      const baseItems: VorItemSnapshot[] = manifest?.items ?? [];
 
       if (!manifestOk) {
         // Подробностей нет — отдаём только счётчики по построчным хэшам.

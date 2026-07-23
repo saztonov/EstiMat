@@ -15,8 +15,8 @@ import { LocationCell } from './LocationCell';
 import { RowInfoPopover } from './RowInfoPopover';
 import { CommentsPopover } from './CommentsPopover';
 import type { ZoneNode } from './location';
-import type { CostTypeGroup, EstimateItem, SaveWorkPayload, WorkEdit } from './types';
-import { formatMoney, DRAFT_ID } from './types';
+import type { CostTypeGroup, EstimateItem, PriceMode, SaveWorkPayload, WorkEdit } from './types';
+import { formatMoney, formatMoneyOrDash, priceOf, totalOf, DRAFT_ID } from './types';
 import type { ColumnPrefs } from '../../../store/smetaColumnsStore';
 
 export interface WorksColumnsCtx {
@@ -32,6 +32,8 @@ export interface WorksColumnsCtx {
   deleteMode: boolean;
   selectionMode: boolean;
   showPrices: boolean;
+  /** Какие цены в столбцах «Цена»/«Сумма»: базовые из справочника или договорные из ВОР. */
+  priceMode: PriceMode;
   showLocationColumn: boolean;
   zones: ZoneNode[];
   projectId: string;
@@ -51,7 +53,7 @@ export interface WorksColumnsCtx {
 export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateItem> {
   const {
     group, editing, setEditing, saving, nameOptions, dndEnabled, leadingColumns,
-    editable, deleteMode, selectionMode, showPrices, showLocationColumn, zones, projectId,
+    editable, deleteMode, selectionMode, showPrices, priceMode, showLocationColumn, zones, projectId,
     isRowInEdit, isWorkExpanded, setWorkExpanded, commit, selectRate, startEditWork,
     onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
   } = ctx;
@@ -156,13 +158,13 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
     },
     ...(showPrices
       ? [
-          { title: 'Цена', key: 'unit_price', dataIndex: 'unit_price', width: 95, align: 'right' as const, render: (v: string, r: EstimateItem) =>
+          { title: 'Цена', key: 'unit_price', width: 95, align: 'right' as const, render: (_v: unknown, r: EstimateItem) =>
               isRowInEdit(r) && editing ? (
                 <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
-              ) : formatMoney(v),
+              ) : formatMoneyOrDash(priceOf(r, priceMode)),
           },
-          { title: 'Сумма', key: 'total', dataIndex: 'total', width: 105, align: 'right' as const, render: (v: string, r: EstimateItem) =>
-              isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
+          { title: 'Сумма', key: 'total', width: 105, align: 'right' as const, render: (_v: unknown, r: EstimateItem) =>
+              isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoneyOrDash(totalOf(r, priceMode))}</strong>,
           },
         ]
       : []),

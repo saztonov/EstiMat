@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../../../services/api';
 import { WorkTreeSelect, type WorkOption } from './WorkTreeSelect';
 import { buildMaterialsColumns } from './materialsColumns';
-import type { EstimateItem, EstimateMaterial, SaveMaterialPayload, MaterialEdit } from './types';
+import type { EstimateItem, EstimateMaterial, PriceMode, SaveMaterialPayload, MaterialEdit } from './types';
 import { DRAFT_ID } from './types';
 
 interface Material {
@@ -21,6 +21,8 @@ export interface MaterialsSubTableProps {
   editable: boolean;
   /** Показывать колонки «Цена»/«Сумма» (false — скрываем деньги, напр. для подрядчика). */
   showPrices?: boolean;
+  /** Базовые цены справочника (по умолчанию) или договорные из ВОР (раздел «Подрядчики»). */
+  priceMode?: PriceMode;
   onCreate: (workId: string, payload: SaveMaterialPayload) => Promise<void>;
   onUpdate: (materialId: string, payload: SaveMaterialPayload) => Promise<void>;
   onDelete: (materialId: string) => void;
@@ -44,6 +46,7 @@ function MaterialsSubTableImpl({
   work,
   editable,
   showPrices = true,
+  priceMode = 'base',
   onCreate,
   onUpdate,
   onDelete,
@@ -193,12 +196,12 @@ function MaterialsSubTableImpl({
     () =>
       buildMaterialsColumns({
         editing, setEditing, saving, workQty, nameOptions,
-        editable, deleteMode, showPrices,
+        editable, deleteMode, showPrices, priceMode,
         isRowInEdit, selectRef, commit, reassignBtn, onConfirm, onDelete,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
-      editing, saving, nameOptions, materialsData, editable, deleteMode, showPrices, workQty,
+      editing, saving, nameOptions, materialsData, editable, deleteMode, showPrices, priceMode, workQty,
       onConfirm, onDelete, onReassign, onUpdate, onCreate, works, work.id,
     ],
   );

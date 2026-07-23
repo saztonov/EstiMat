@@ -10,8 +10,8 @@ import { Button, Popconfirm, Space, Tag, AutoComplete, InputNumber, Tooltip } fr
 import type { ColumnsType } from 'antd/es/table';
 import { DeleteOutlined, CheckOutlined, CloseOutlined, EditOutlined } from '@ant-design/icons';
 import { UnitSelect } from '../../../components/UnitSelect';
-import type { EstimateMaterial, MaterialEdit } from './types';
-import { formatMoney } from './types';
+import type { EstimateMaterial, MaterialEdit, PriceMode } from './types';
+import { formatMoney, formatMoneyOrDash, priceOf, totalOf } from './types';
 
 export interface MaterialsColumnsCtx {
   editing: MaterialEdit | null;
@@ -23,6 +23,8 @@ export interface MaterialsColumnsCtx {
   editable: boolean;
   deleteMode: boolean;
   showPrices: boolean;
+  /** Базовые цены справочника или договорные из ВОР (раздел «Подрядчики»). */
+  priceMode: PriceMode;
   isRowInEdit: (r: EstimateMaterial) => boolean;
   selectRef: (id: string) => void;
   commit: () => void;
@@ -34,7 +36,7 @@ export interface MaterialsColumnsCtx {
 export function buildMaterialsColumns(ctx: MaterialsColumnsCtx): ColumnsType<EstimateMaterial> {
   const {
     editing, setEditing, saving, workQty, nameOptions,
-    editable, deleteMode, showPrices,
+    editable, deleteMode, showPrices, priceMode,
     isRowInEdit, selectRef, commit, reassignBtn, onConfirm, onDelete,
   } = ctx;
   return [
@@ -126,13 +128,13 @@ export function buildMaterialsColumns(ctx: MaterialsColumnsCtx): ColumnsType<Est
     },
     ...(showPrices
       ? [
-          { title: 'Цена', dataIndex: 'unit_price', width: 90, align: 'right' as const, render: (v: string, r: EstimateMaterial) =>
+          { title: 'Цена', key: 'unit_price', width: 90, align: 'right' as const, render: (_v: unknown, r: EstimateMaterial) =>
               isRowInEdit(r) && editing ? (
                 <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
-              ) : formatMoney(v),
+              ) : formatMoneyOrDash(priceOf(r, priceMode)),
           },
-          { title: 'Сумма', dataIndex: 'total', width: 100, align: 'right' as const, render: (v: string, r: EstimateMaterial) =>
-              isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoney(v)}</strong>,
+          { title: 'Сумма', key: 'total', width: 100, align: 'right' as const, render: (_v: unknown, r: EstimateMaterial) =>
+              isRowInEdit(r) && editing ? <strong>{formatMoney(editing.quantity * editing.unitPrice)}</strong> : <strong>{formatMoneyOrDash(totalOf(r, priceMode))}</strong>,
           },
         ]
       : []),

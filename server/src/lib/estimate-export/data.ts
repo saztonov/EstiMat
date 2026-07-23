@@ -56,6 +56,13 @@ export interface ExportRow {
   volume: number | null; // G: объём (quantity)
   coef: number | null; //  H: коэффициент расхода (qty_ratio, только материал)
   notes?: string | null; // O: примечания (комментарии) работы, несколько склеены через \n
+  /** Строка сметы, породившая запись (у материала — его работа). В видимые листы не попадает:
+   *  идёт в служебный лист-якорь, по которому цены из заполненного файла ложатся обратно.
+   *  Сбор из БД проставляет его всегда; необязателен ради тестовых фикстур раскладки (selfcheck),
+   *  где строки сметы нет и якорь не проверяется. */
+  itemId?: string;
+  /** Материал сметы (только kind='material'). */
+  materialId?: string;
 }
 
 export interface ExportBlock {
@@ -187,6 +194,7 @@ export async function gatherExportModel(
         volume: num(w.quantity),
         coef: null,
         notes,
+        itemId,
       });
       const itemMats = matsByItem.get(itemId) ?? [];
       itemMats.forEach((m, i) => {
@@ -198,6 +206,8 @@ export async function gatherExportModel(
           unit: (m.unit as string | null) ?? null,
           volume: num(m.quantity),
           coef: num(m.qty_ratio),
+          itemId,
+          materialId: m.id as string,
         });
       });
 

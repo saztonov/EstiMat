@@ -8,6 +8,7 @@ import { authenticate } from '../../middleware/authenticate.js';
 import { registerReadRoutes } from './read.js';
 import { registerHistoryRoutes } from './history.js';
 import { registerVorRoutes } from './vor.js';
+import { registerVorAssignRoutes } from './vor-assign.js';
 import { registerCrudRoutes } from './crud.js';
 import { registerContractorRoutes } from './contractors.js';
 import { registerItemRoutes } from './items.js';
@@ -22,6 +23,7 @@ export default async function estimateRoutes(fastify: FastifyInstance) {
   registerReadRoutes(fastify);
   registerHistoryRoutes(fastify);
   registerVorRoutes(fastify);
+  registerVorAssignRoutes(fastify);
   registerCrudRoutes(fastify);
   registerContractorRoutes(fastify);
   registerItemRoutes(fastify);

@@ -32,6 +32,11 @@ import {
   REF_DATA_START_ROW,
   REF_COL,
   REF_SUBTOTAL_STYLE_ROW,
+  ANCHOR_SHEET,
+  ANCHOR_MARKER,
+  ANCHOR_VERSION,
+  ANCHOR_DATA_START_ROW,
+  ANCHOR_COL,
 } from './layout.js';
 import type { ExportBlock } from './data.js';
 import type { ExportRefRow } from './references.js';
@@ -303,11 +308,43 @@ function refLookup(sheet: string, row: number): string {
   return `_xlfn.XLOOKUP(${D}${row},${nameRange},${priceRange},0,0,1)`;
 }
 
-/** Собрать .xlsx (Buffer): заполнить лист «КП» блоками и листы-справочники МАТЕРИАЛЫ/РАБОТЫ. */
+/** Строка служебного листа-якоря: какая строка «КП» какой работе/материалу сметы соответствует. */
+interface AnchorRow {
+  row: number;
+  kind: 'work' | 'material';
+  itemId: string;
+  materialId: string | null;
+}
+
+// Служебный лист-якорь: метка формата, id ВОР и таблица «строка «КП» → UUID». Very hidden —
+// в интерфейсе Excel лист не показывается и не выбирается через «Показать», но переживает
+// обычное сохранение подрядчиком. Оформления нет: лист машинный.
+function writeAnchorSheet(wb: ExcelJS.Workbook, vorId: string, anchors: AnchorRow[]): void {
+  const ws = wb.addWorksheet(ANCHOR_SHEET, { state: 'veryHidden' });
+  ws.getCell(1, 1).value = ANCHOR_MARKER;
+  ws.getCell(1, 2).value = ANCHOR_VERSION;
+  ws.getCell(2, 1).value = vorId;
+  const head = ws.getRow(3);
+  head.getCell(ANCHOR_COL.row).value = 'row';
+  head.getCell(ANCHOR_COL.kind).value = 'kind';
+  head.getCell(ANCHOR_COL.itemId).value = 'itemId';
+  head.getCell(ANCHOR_COL.materialId).value = 'materialId';
+  anchors.forEach((a, i) => {
+    const row = ws.getRow(ANCHOR_DATA_START_ROW + i);
+    row.getCell(ANCHOR_COL.row).value = a.row;
+    row.getCell(ANCHOR_COL.kind).value = a.kind;
+    row.getCell(ANCHOR_COL.itemId).value = a.itemId;
+    row.getCell(ANCHOR_COL.materialId).value = a.materialId;
+  });
+}
+
+/** Собрать .xlsx (Buffer): заполнить лист «КП» блоками и листы-справочники МАТЕРИАЛЫ/РАБОТЫ.
+ *  vorId — id создаваемого ВОР: добавляет служебный лист-якорь для обратной загрузки цен. */
 export async function exportKpWorkbook(
   blocks: ExportBlock[],
   refs: { materials: ExportRefRow[]; works: ExportRefRow[] },
   project: { name: string | null; address: string | null; ciphers?: string | null },
+  vorId?: string,
 ): Promise<Buffer> {
   const templateBuf = await readFile(resolveTemplatePath());
   const wb = new ExcelJS.Workbook();
@@ -380,6 +417,7 @@ export async function exportKpWorkbook(
     row.getCell(col).value = { formula };
   };
 
+  const anchors: AnchorRow[] = [];
   let r = TABLE_START_ROW;
   for (const block of blocks) {
     const locRow = ws.getRow(r);
@@ -423,6 +461,14 @@ export async function exportKpWorkbook(
       row.getCell(COL.name).value = item.name;
       row.getCell(COL.unit).value = item.unit ?? null;
       row.getCell(COL.volume).value = item.volume ?? null;
+      if (item.itemId) {
+        anchors.push({
+          row: r,
+          kind: item.kind,
+          itemId: item.itemId,
+          materialId: item.materialId ?? null,
+        });
+      }
       if (isWork) {
         flushWorkMat(); // завершить предыдущую работу
         workRow = r;
@@ -516,6 +562,9 @@ export async function exportKpWorkbook(
   if (bsm) cropMap[BSM_SHEET] = fillReferenceSheet(bsm, REF_DATA_START_ROW, refs.materials, REF_SUBTOTAL_STYLE_ROW.materials, CODE_MATERIAL);
   const bsr = wb.getWorksheet(BSR_SHEET);
   if (bsr) cropMap[BSR_SHEET] = fillReferenceSheet(bsr, REF_DATA_START_ROW, refs.works, REF_SUBTOTAL_STYLE_ROW.works, CODE_WORK);
+
+  // Якорь — последним: лист служебный, порядок вкладок не важен (он скрыт), а cropMap его не касается.
+  if (vorId) writeAnchorSheet(wb, vorId, anchors);
 
   const out = await wb.xlsx.writeBuffer();
   return sanitizeXlsx(Buffer.from(out as ArrayBuffer), cropMap);

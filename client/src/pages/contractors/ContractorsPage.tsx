@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { Card, Row, Col, Tag, Empty, Spin, Space, Button, Tabs } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, FileExcelOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { api, assetUrl } from '../../services/api';
 import { placeholderCover } from '../../components/shared/placeholderCover';
@@ -18,6 +18,7 @@ import {
 import { ContractorsSmetaTab } from './ContractorsSmetaTab';
 import { ContractorsMaterialsTab } from './ContractorsMaterialsTab';
 import { ContractorsRequestsTab } from './ContractorsRequestsTab';
+import { VorObjectListModal } from './vor/VorObjectListModal';
 import { useMaterialsSummary } from './materials/useMaterialsSummary';
 
 // Строка списка объектов раздела (поля зависят от роли — см. /api/contractors/estimates).
@@ -153,6 +154,7 @@ export function ContractorsPage() {
   // Руководитель уравнен в правах с инженером-сметчиком: назначает подрядчиков и видит цены.
   const canAssign = role === 'admin' || role === 'engineer' || role === 'manager';
   const [tab, setTab] = usePersistedTab('estimat:contractors-tab', 'smeta');
+  const [vorListOpen, setVorListOpen] = useState(false);
 
   // Вкладка из ссылки (вход «Новая заявка» из раздела «Заявки») — один раз при открытии и только
   // на время этого визита: в localStorage не пишем, иначе разовый переход по ссылке молча сменил
@@ -251,6 +253,19 @@ export function ContractorsPage() {
         <Tabs
           activeKey={activeTab}
           onChange={onTabChange}
+          // Кнопка живёт в строке вкладок и только на «Смете»: ВОР — про работы сметы, а на
+          // «Материалах» и «Заявках» она была бы не к месту. Подрядчику ВОР закрыт.
+          tabBarExtraContent={
+            !viewerIsContractor && activeTab === 'smeta'
+              ? {
+                  right: (
+                    <Button icon={<FileExcelOutlined />} onClick={() => setVorListOpen(true)}>
+                      ВОР
+                    </Button>
+                  ),
+                }
+              : undefined
+          }
           items={[
             {
               key: 'smeta',
@@ -266,6 +281,7 @@ export function ContractorsPage() {
                   zones={zones}
                   zoneIndex={zoneIndex}
                   onChanged={() => refetch()}
+                  onOpenVorRegistry={() => setVorListOpen(true)}
                 />
               ),
             },
@@ -290,6 +306,15 @@ export function ContractorsPage() {
               children: <ContractorsRequestsTab estimateId={estimateId} viewerIsContractor={viewerIsContractor} />,
             },
           ]}
+        />
+      )}
+      {/* Один реестр ВОР на весь раздел: и кнопка «ВОР», и метка «В» в строке сметы открывают его. */}
+      {!viewerIsContractor && (
+        <VorObjectListModal
+          open={vorListOpen}
+          onClose={() => setVorListOpen(false)}
+          estimateId={estimateId}
+          onChanged={() => refetch()}
         />
       )}
     </Card>

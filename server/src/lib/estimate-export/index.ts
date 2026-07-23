@@ -13,6 +13,7 @@ import {
 } from './references.js';
 import { exportKpWorkbook } from './writer.js';
 import { VOR_CONTENT_SCHEMA_VERSION, type VorManifest } from './vor-content.js';
+import type { VorContentFacets } from '@estimat/shared';
 
 export { ExportError, ExportUnitConflictError };
 export type { ExportItemRef, ExportRefRow, ExportConflict };
@@ -22,6 +23,22 @@ export interface VorExportResult {
   buffer: Buffer;
   manifest: VorManifest;
   hashByItem: Map<string, Buffer>;
+  facets: VorContentFacets;
+}
+
+/** Местоположения и типы, попавшие в выгрузку — как они выглядели в файле. Реестр ВОР показывает
+ *  именно их: текущее состояние сметы для этого не годится (работу могли изменить или удалить). */
+export function buildContentFacets(manifest: VorManifest): VorContentFacets {
+  const locations = new Set<string>();
+  const types = new Set<string>();
+  for (const it of manifest.items) {
+    const loc = (it.locationLabel ?? '').trim();
+    if (loc) locations.add(loc);
+    const type = (it.typeName ?? '').trim();
+    if (type) types.add(type);
+  }
+  const byRu = (a: string, b: string) => a.localeCompare(b, 'ru');
+  return { locations: [...locations].sort(byRu), types: [...types].sort(byRu) };
 }
 
 /**
@@ -31,12 +48,15 @@ export interface VorExportResult {
  * «Проекты». При конфликте единиц измерения у одинаковых наименований бросает
  * ExportUnitConflictError — если только клиент явно не разрешил пропуск (ignoreUnitConflicts).
  * Возвращает готовый .xlsx (Buffer).
+ *
+ * opts.vorId — id создаваемого ВОР: попадает в служебный лист-якорь, по которому заполненный
+ * подрядчиком файл узнаётся при обратной загрузке цен.
  */
 export async function exportEstimateKp(
   pool: Pool,
   estimateId: string,
   refs: ExportItemRef[],
-  opts?: { ignoreUnitConflicts?: boolean },
+  opts?: { ignoreUnitConflicts?: boolean; vorId?: string },
 ): Promise<VorExportResult> {
   const { blocks, items, hashByItem } = await gatherExportModel(pool, estimateId, refs);
   const { rows: unitRows } = await pool.query('SELECT name, synonyms FROM units');
@@ -69,6 +89,12 @@ export async function exportEstimateKp(
     address: (projectRows[0]?.address as string | null) ?? null,
     ciphers,
   };
-  const buffer = await exportKpWorkbook(blocks, { materials: ref.materials, works: ref.works }, project);
-  return { buffer, manifest: { schemaVersion: VOR_CONTENT_SCHEMA_VERSION, items }, hashByItem };
+  const buffer = await exportKpWorkbook(
+    blocks,
+    { materials: ref.materials, works: ref.works },
+    project,
+    opts?.vorId,
+  );
+  const manifest: VorManifest = { schemaVersion: VOR_CONTENT_SCHEMA_VERSION, items };
+  return { buffer, manifest, hashByItem, facets: buildContentFacets(manifest) };
 }
