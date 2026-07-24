@@ -15,7 +15,6 @@ import { type ColumnFilters } from '../../lib/columnFilters';
 import { useGroupedTable, computeNeedFull } from '../../lib/useGroupedTable';
 import { isGroupRow, type GroupLevel, type GroupNode, type GroupRow } from '../../lib/tableGrouping';
 import { ColumnSettingsButton } from '../../components/table/ColumnSettingsButton';
-import { CipherTags } from '../../components/CipherTags';
 import { contractorRequestsColumnsStore } from './columns/contractorRequestsColumns';
 import { RequestStatusTag, RequestTypeTag, money } from '../requests/requestConstants';
 import { RequestDetailModal } from '../requests/RequestDetailModal';
@@ -110,8 +109,6 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor, active 
     contractor_name: { kind: 'multi' as const, getText: (r: RequestRow) => r.contractor_name },
     status: { kind: 'multi' as const, getText: (r: RequestRow) => r.status, labelOf: (v: string) => REQUEST_STATUS_LABELS[v as keyof typeof REQUEST_STATUS_LABELS] ?? v },
     order_amount: { kind: 'numRange' as const, getNum: (r: RequestRow) => r.order_amount },
-    // Шифров у заявки несколько — отбор текстовый по их склейке (поиск по коду находит заявку).
-    rd_ciphers: { kind: 'text' as const, getText: (r: RequestRow) => (r.rd_ciphers ?? []).join(' ') },
   }), []);
 
   const gt = useGroupedTable<RequestRow>({
@@ -128,8 +125,10 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor, active 
       return c > 0 ? <Badge count={c} size="small"><MessageOutlined style={{ color: 'var(--est-text-tertiary)' }} /></Badge> : null;
     } },
     { title: 'Номер', key: 'number', width: 110, ...gt.hf('number', filterSpecs.number), render: (_v, r) => <strong>{leaf(r).number}</strong> },
-    { title: 'Дата', key: 'created_at', width: 130, ...gt.hf('created_at', filterSpecs.created_at), render: (_v, r) => new Date(leaf(r).created_at).toLocaleString('ru-RU') },
-    { title: 'Вид', key: 'request_type', width: 150, ...gt.hf('request_type', filterSpecs.request_type), render: (_v, r) => <RequestTypeTag type={leaf(r).request_type} /> },
+    // Только дата, без часов: время создания заявки в реестре ничего не решает, а колонку раздувало.
+    { title: 'Дата', key: 'created_at', width: 130, ...gt.hf('created_at', filterSpecs.created_at), render: (_v, r) => new Date(leaf(r).created_at).toLocaleDateString('ru-RU') },
+    // 195: тег «Давальческие материалы» — самый длинный из видов, и при 150 он наезжал на соседа.
+    { title: 'Вид', key: 'request_type', width: 195, ...gt.hf('request_type', filterSpecs.request_type), render: (_v, r) => <RequestTypeTag type={leaf(r).request_type} /> },
     ...(!viewerIsContractor
       ? ([{
           title: 'Подрядчик', key: 'contractor_name', width: 170, ellipsis: { showTitle: true },
@@ -153,10 +152,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor, active 
       },
     },
     { title: 'Статус', key: 'status', width: 140, ...gt.hf('status', filterSpecs.status), render: (_v, r) => { const row = leaf(r); return <RequestStatusTag status={row.status} comment={row.revision_reason} />; } },
-    { title: 'Сумма', key: 'order_amount', width: 120, align: 'right', ...gt.hf('order_amount', filterSpecs.order_amount), render: (_v, r) => money(leaf(r).order_amount) },
-    // Единственная колонка без width: при заданном scroll.x она забирает всё свободное место, и
-    // длинные перечни шифров перестают ломаться на три строки.
-    { title: 'Шифры РД', key: 'rd_ciphers', ...gt.hf('rd_ciphers', filterSpecs.rd_ciphers), render: (_v, r) => <CipherTags codes={leaf(r).rd_ciphers ?? []} /> },
+    { title: 'Сумма', key: 'order_amount', width: 160, align: 'right', ...gt.hf('order_amount', filterSpecs.order_amount), render: (_v, r) => money(leaf(r).order_amount) },
     {
       title: '', key: 'actions', width: 110,
       onCell: () => ({ onClick: (e: { stopPropagation: () => void }) => e.stopPropagation() }),
@@ -208,7 +204,7 @@ export function ContractorsRequestsTab({ estimateId, viewerIsContractor, active 
           pagination={needFull
             ? { ...DEFAULT_PAGINATION }
             : { ...DEFAULT_PAGINATION, current: page, pageSize, total, onChange: (p, ps) => { setPage(p); setPageSize(ps); } }}
-          scroll={{ x: 1300, y: 'flex' }}
+          scroll={{ x: 1200, y: 'flex' }}
           onRow={(r) => (isGroupRow(r) ? {} : {
             onClick: () => setOpenId(leaf(r).id),
             onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(leaf(r).id); } },

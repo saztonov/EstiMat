@@ -5,7 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
 import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
-import { locationBadgeKey, withLocationSpans } from './locationSpans';
+import { locationBadgeKey, withLocationBlocks } from './locationSpans';
 import type { MaterialTreeNode } from './materialTree';
 import type { OrderMaterialRow } from './orderRow';
 import { subtreeRows } from './draftFill';
@@ -112,11 +112,11 @@ function TreeNodeView({
 } & Omit<Props, 'nodes'>) {
   const isCollapsed = collapsed.has(node.key);
   const headFont = HEAD_FONT[Math.min(depth, HEAD_FONT.length - 1)];
-  // Объединение ячеек местоположения считается по строкам ИМЕННО этой таблицы: rowSpan привязан
-  // к порядку dataSource и через границы таблиц не переносится.
-  const cols = useMemo(
-    () => withLocationSpans(columns, node.materials, locationBadgeKey),
-    [columns, node.materials],
+  // Блоки местоположения считаются по строкам ИМЕННО этой таблицы: rowSpan и полосы привязаны
+  // к порядку dataSource и через границы таблиц не переносятся (в каждом узле счёт с белой).
+  const loc = useMemo(
+    () => withLocationBlocks(columns, node.materials, locationBadgeKey, rowClassName),
+    [columns, node.materials, rowClassName],
   );
 
   // Уровни «Локация» и «Тип работы» без подписи читались как случайные бейджи: из заголовка
@@ -172,8 +172,8 @@ function TreeNodeView({
           className="estimat-compact"
           pagination={false}
           dataSource={node.materials}
-          columns={cols}
-          rowClassName={rowClassName}
+          columns={loc.columns}
+          rowClassName={loc.rowClassName}
           scroll={{ x: 1100 }}
         />
       )}

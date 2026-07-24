@@ -11,11 +11,10 @@ export const CONTRACTOR_REQUESTS_COLUMN_DEFS: ColumnDef[] = [
   { key: 'contractor_name', label: 'Подрядчик', groupable: true },
   // «Информация» — кнопка с поповером (договор, ВОР, местоположения и типы, шифры РД). Значения
   // нет, поэтому ни отбора, ни группировки: столбец можно только скрыть или переставить.
+  // Отдельного столбца «Шифры РД» нет: перечень занимал полтаблицы, а в поповере он строкой.
   { key: 'info', label: 'Информация' },
   { key: 'status', label: 'Статус', groupable: true },
   { key: 'order_amount', label: 'Сумма' },
-  // Шифры РД — набор, а не скаляр: уровнем дерева быть не может, поэтому без groupable.
-  { key: 'rd_ciphers', label: 'Шифры РД' },
 ];
 
 export const contractorRequestsColumnsStore = createTableColumnsStore({

@@ -5,6 +5,9 @@
 // показываем одной ячейкой (rowSpan), но не длиннее LOCATION_SPAN_MAX строк: иначе на длинном
 // участке единственная подпись уезжает за пределы экрана и место не видно вовсе.
 //
+// Одного объединения мало: по вертикальной границе ячейки не видно, к каким строкам относится
+// подпись. Поэтому блоки ещё и чередуются фоном (белый/серый) — цвет строки и есть граница блока.
+//
 // Модуль чистый (без React и antd в рантайме) — тестируется в node:test.
 import type { ColumnsType } from 'antd/es/table';
 
@@ -13,6 +16,12 @@ export const LOCATION_SPAN_MAX = 12;
 
 /** Класс объединённой ячейки — оформление в index.css. */
 const BLOCK_CLASS = 'estimat-loc-block';
+
+/** Модификатор объединённой ячейки в «серой» полосе — фон совпадает с фоном её строк. */
+const BLOCK_ALT_CLASS = 'estimat-loc-block--alt';
+
+/** Класс строки «серой» полосы. */
+const STRIPE_CLASS = 'estimat-loc-stripe';
 
 /** Ключ колонки местоположения — общий для всех таблиц с этой колонкой. */
 const LOCATION_COLUMN_KEY = 'location';
@@ -75,21 +84,55 @@ function balancedChunks(len: number, max: number): number[] {
 }
 
 /**
- * Колонки с объединением ячеек «Местоположение» под КОНКРЕТНЫЙ dataSource.
+ * Полосы фона по индексу строки: true — «серая» полоса.
+ *
+ * Полоса переключается на СМЕНЕ местоположения, а не на границе объединённой ячейки: длинный
+ * участок locationRowSpans режет на несколько ячеек (26 → 9+9+8), и смена цвета внутри него
+ * читалась бы как новое место. Первая полоса всегда белая (false) — счёт начинается заново в
+ * каждой таблице, то есть в каждой группе или виде работ.
+ */
+export function locationStripes(keys: readonly string[]): boolean[] {
+  const out = new Array<boolean>(keys.length).fill(false);
+  let alt = false;
+  for (let i = 1; i < keys.length; i++) {
+    if (keys[i] !== keys[i - 1]) alt = !alt;
+    out[i] = alt;
+  }
+  return out;
+}
+
+/** Колонки с объединённой ячейкой местоположения и rowClassName с полосами. */
+export interface LocationBlocks<T> {
+  columns: ColumnsType<T>;
+  /** Готовый rowClassName таблицы: полоса блока + внешний класс строки. */
+  rowClassName: (row: T, index: number) => string;
+}
+
+/**
+ * Разметка блоков местоположения под КОНКРЕТНЫЙ dataSource: объединение соседних ячеек колонки
+ * «Местоположение» и чередование фона строк по блокам.
  *
  * Ключи считаются из самих строк, а не принимаются готовым массивом: индекс в onCell — это индекс
  * в dataSource таблицы, и разъехавшийся с ним список ключей молча сдвинул бы объединение.
  *
  * Годится только для таблиц без сортировки и пагинации: rowSpan привязан к порядку строк.
  */
-export function withLocationSpans<T>(
+export function withLocationBlocks<T>(
   columns: ColumnsType<T>,
   rows: readonly T[],
   keyOf: (row: T) => string,
-): ColumnsType<T> {
-  const spans = locationRowSpans(rows.map(keyOf));
+  rowClass?: (row: T) => string,
+): LocationBlocks<T> {
+  const keys = rows.map(keyOf);
+  const spans = locationRowSpans(keys);
+  const stripes = locationStripes(keys);
+  // Колонки местоположения нет — объединять и размечать полосами нечего: чередование без видимого
+  // признака выглядело бы случайным.
+  const hasLocation = columns.some(
+    (col) => 'key' in col && col.key === LOCATION_COLUMN_KEY && !('children' in col),
+  );
   // Остальные колонки возвращаем ссылочно — мемоизация вышестоящих компонентов не ломается.
-  return columns.map((col) => {
+  const out = columns.map((col) => {
     if (!('key' in col) || col.key !== LOCATION_COLUMN_KEY || 'children' in col) return col;
     const prev = 'onCell' in col ? col.onCell : undefined;
     return {
@@ -101,12 +144,21 @@ export function withLocationSpans<T>(
         if (index === undefined) return base;
         const rowSpan = spans[index] ?? 1;
         if (rowSpan <= 1) return { ...base, rowSpan };
+        const alt = stripes[index] ? BLOCK_ALT_CLASS : '';
         return {
           ...base,
           rowSpan,
-          className: [base.className, BLOCK_CLASS].filter(Boolean).join(' '),
+          className: [base.className, BLOCK_CLASS, alt].filter(Boolean).join(' '),
         };
       },
     };
   });
+
+  return {
+    columns: out,
+    rowClassName: (row: T, index: number) =>
+      [hasLocation && stripes[index] ? STRIPE_CLASS : '', rowClass?.(row) ?? '']
+        .filter(Boolean)
+        .join(' '),
+  };
 }

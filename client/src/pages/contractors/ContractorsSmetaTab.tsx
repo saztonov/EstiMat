@@ -28,7 +28,7 @@ import {
   toLocationSnapshot,
   type ZoneIndex,
 } from '../estimates/components/LocationBadges';
-import { locationBadgeKey, withLocationSpans } from './materials/locationSpans';
+import { locationBadgeKey, withLocationBlocks } from './materials/locationSpans';
 import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
 import { useInitialCollapsedTypes } from '../estimates/workspace/useInitialCollapsedTypes';
 import { useContractorLocationFilter } from './useContractorLocationFilter';
@@ -130,10 +130,10 @@ function ContractorWorksTable({ works, zoneIndex }: { works: EstimateItem[]; zon
     ],
     [zoneIndex],
   );
-  // Ключ объединения считаем той же locationParts, что и рендер, — иначе блок и подпись разъедутся.
-  const cols = useMemo(
+  // Ключ блока считаем той же locationParts, что и рендер, — иначе блок и подпись разъедутся.
+  const loc = useMemo(
     () =>
-      withLocationSpans(columns, works, (it) => {
+      withLocationBlocks(columns, works, (it) => {
         const { zoneNames, floorsLabel, typeLabel } = locationParts(toLocationSnapshot(it), zoneIndex);
         return locationBadgeKey({ zoneNames, floorsLabel, typeLabels: typeLabel ? [typeLabel] : [] });
       }),
@@ -146,7 +146,8 @@ function ContractorWorksTable({ works, zoneIndex }: { works: EstimateItem[]; zon
       className="estimat-compact"
       pagination={false}
       dataSource={works}
-      columns={cols}
+      columns={loc.columns}
+      rowClassName={loc.rowClassName}
       scroll={{ x: 700 }}
     />
   );
