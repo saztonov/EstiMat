@@ -413,7 +413,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   // Ручная работа (rate_id IS NULL) — сопоставлять не с чем, возвращаем пустой список.
   fastify.get<{ Params: { itemId: string } }>(
     '/:itemId/material-suggestions',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const { rows: work } = await fastify.pool.query(
         'SELECT rate_id FROM estimate_items WHERE id = $1',
@@ -467,7 +467,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   // по sort_order, created_at). status='confirmed' ставит сервер.
   fastify.post<{ Params: { itemId: string } }>(
     '/:itemId/materials/batch',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const body = batchCreateEstimateMaterialsSchema.parse(request.body);
       const client = await fastify.pool.connect();
