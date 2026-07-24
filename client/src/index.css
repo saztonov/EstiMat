@@ -183,6 +183,27 @@ body {
 .estimat-tree-leaf:hover .estimat-tree-add {
   opacity: 1;
 }
+/* Галочка «проверенный материал»: серая по умолчанию, зелёная при наведении и когда отмечена. */
+.estimat-tree-verify {
+  color: var(--est-text-tertiary);
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.estimat-tree-leaf:hover .estimat-tree-verify,
+.estimat-tree-verify:hover,
+.estimat-tree-verify.is-verified {
+  color: #52c41a;
+}
+/* Корзина «скрыть работу из справочника»: серая по умолчанию, красная при наведении. */
+.estimat-tree-del {
+  color: var(--est-text-tertiary);
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.estimat-tree-leaf:hover .estimat-tree-del:hover,
+.estimat-tree-del:hover {
+  color: #ff4d4f;
+}
 .estimat-tree-badge {
   font-size: 10px;
   color: var(--est-text-tertiary);
@@ -191,6 +212,10 @@ body {
   padding: 0 6px;
   line-height: 16px;
   white-space: nowrap;
+}
+/* Приглушённая строка таблицы (скрытые/удалённые работы в справочнике). */
+.estimat-row-muted > td {
+  opacity: 0.5;
 }
 /* Выделенная строка работы в окне ввода сметы (клик по строке) */
 .estimat-row-selected > td {

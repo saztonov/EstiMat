@@ -1,8 +1,9 @@
 import { useState, type CSSProperties } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, Tag, Tooltip, App } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined, SearchOutlined, ApartmentOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, Tag, Tooltip, App, Switch } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined, SearchOutlined, ApartmentOutlined, UndoOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { useAuthStore } from '../../store/authStore';
 import { UnitSelect } from '../../components/UnitSelect';
 import { CategoriesTypesModal } from './CategoriesTypesModal';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
@@ -43,6 +44,8 @@ interface Rate {
   cost_type_id: string | null;
   cost_type_name: string | null;
   category_name: string | null;
+  /** Активна ли работа. false — скрытая (удалённая), видна только в режиме «показывать удалённые». */
+  is_active?: boolean;
 }
 
 interface Category { id: string; name: string }
@@ -56,6 +59,9 @@ export function RatesPanel() {
   const [selectedCostTypeId, setSelectedCostTypeId] = useState<string | undefined>();
   const [modalCategoryId, setModalCategoryId] = useState<string | undefined>();
   const [search, setSearch] = useState('');
+  // Режим админа: показывать скрытые (удалённые) работы с возможностью восстановления.
+  const [showDeleted, setShowDeleted] = useState(false);
+  const isAdmin = useAuthStore((s) => s.user?.role) === 'admin';
   const [form] = Form.useForm();
   const watchedTypeIds = (Form.useWatch('costTypeIds', form) as string[] | undefined) ?? [];
   const queryClient = useQueryClient();
@@ -75,10 +81,10 @@ export function RatesPanel() {
     ),
   });
 
-  // Fetch ALL rates once; filtering/search on client
+  // Fetch ALL rates once; filtering/search on client. В режиме showDeleted (админ) — с includeInactive.
   const { data: ratesData, isLoading } = useQuery({
-    queryKey: ['rates'],
-    queryFn: () => api.get<{ data: Rate[] }>('/rates'),
+    queryKey: ['rates', showDeleted],
+    queryFn: () => api.get<{ data: Rate[] }>(`/rates${showDeleted ? '?includeInactive=true' : ''}`),
   });
 
   // Фильтрация на клиенте: поиск по названию игнорирует фильтры категории/вида,
@@ -144,6 +150,15 @@ export function RatesPanel() {
     onSuccess: () => {
       invalidateAll();
       message.success('Работа удалена');
+    },
+    onError: (err: Error) => message.error(err.message),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (id: string) => api.patch(`/rates/${id}/restore`),
+    onSuccess: () => {
+      invalidateAll();
+      message.success('Работа восстановлена');
     },
     onError: (err: Error) => message.error(err.message),
   });
@@ -259,14 +274,20 @@ export function RatesPanel() {
     {
       title: 'Действия',
       width: 100,
-      render: (_: unknown, record: Rate) => (
-        <Space>
-          <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(record)} />
-          <Popconfirm title="Удалить работу?" onConfirm={() => deleteMutation.mutate(record.id)}>
-            <Button type="text" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      ),
+      render: (_: unknown, record: Rate) =>
+        record.is_active === false ? (
+          // Скрытая работа: доступно только восстановление (редактирование выключено).
+          <Tooltip title="Восстановить работу в справочник">
+            <Button type="text" icon={<UndoOutlined />} onClick={() => restoreMutation.mutate(record.id)} />
+          </Tooltip>
+        ) : (
+          <Space>
+            <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(record)} />
+            <Popconfirm title="Удалить работу?" onConfirm={() => deleteMutation.mutate(record.id)}>
+              <Button type="text" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </Space>
+        ),
     },
   ];
 
@@ -322,6 +343,16 @@ export function RatesPanel() {
         >
           <Button icon={<UploadOutlined />} loading={importMutation.isPending}>Импорт Excel</Button>
         </Upload>
+        {isAdmin && (
+          <Tooltip title="Показать скрытые (удалённые) работы с возможностью восстановления">
+            <Switch
+              checked={showDeleted}
+              onChange={setShowDeleted}
+              checkedChildren="Удалённые"
+              unCheckedChildren="Удалённые"
+            />
+          </Tooltip>
+        )}
       </Space>
 
       <Table
@@ -330,6 +361,7 @@ export function RatesPanel() {
         columns={columns}
         dataSource={filteredRates}
         loading={isLoading}
+        rowClassName={(r) => (r.is_active === false ? 'estimat-row-muted' : '')}
         scroll={{ x: 1200, y: 'flex' }}
         pagination={DEFAULT_PAGINATION}
       />

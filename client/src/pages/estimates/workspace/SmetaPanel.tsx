@@ -33,6 +33,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { VorExportModal } from '../components/VorExportModal';
 import { VorListModal } from '../components/VorListModal';
+import { MaterialPickerModal } from '../components/MaterialPickerModal';
 import { useLocationContextStore } from '../../../store/locationContextStore';
 import { findZone, formatLocationsLabel } from '../components/location';
 import type { VorFilterSelection, VorFilterSnapshot, VorMarksMap } from '@estimat/shared';
@@ -269,6 +270,10 @@ export function SmetaPanel({
     setVorListOpen(true);
   }, []);
 
+  // Подбор материалов к работе: строка, для которой открыта модалка (кнопка в действиях строки).
+  const [pickerItem, setPickerItem] = useState<EstimateItem | null>(null);
+  const onPickMaterials = useCallback((item: EstimateItem) => setPickerItem(item), []);
+
   const blockProps = useMemo(
     () => ({
       editable,
@@ -304,6 +309,7 @@ export function SmetaPanel({
       // Сами отметки «В» блок берёт из store срезом по своим работам — здесь только обработчик
       // клика по метке (он стабилен и дерево не трогает).
       onOpenVor,
+      onPickMaterials,
       // Мобильный режим: горизонтальный скролл таблицы работ (min-width в px).
       tableScrollX: isMobile ? (isPhone ? 560 : 880) : undefined,
     }),
@@ -312,7 +318,7 @@ export function SmetaPanel({
       onCreateMaterial, onUpdateMaterial, onDeleteMaterial, onConfirmMaterial, onConfirmWork,
       onToggleVolumeType, onReassignMaterial, allWorks, onSetContractor, onClearContractor, selectionMode, selectedIds,
       toggleMaterial, deleteModeFlag, selectedWorkIds, toggleWork, zoneRoots, projectId, estimateId, openRowHistory,
-      columnPrefs, canBulkDelete, onOpenVor, isMobile, isPhone,
+      columnPrefs, canBulkDelete, onOpenVor, onPickMaterials, isMobile, isPhone,
     ],
   );
 
@@ -695,6 +701,14 @@ export function SmetaPanel({
         focusVorId={vorFocusId}
         onApplyFilters={applyVorFilters}
         onExport={openExport}
+      />
+
+      <MaterialPickerModal
+        open={!!pickerItem}
+        item={pickerItem}
+        estimateId={estimateId}
+        projectId={projectId}
+        onClose={() => setPickerItem(null)}
       />
     </PanelShell>
   );

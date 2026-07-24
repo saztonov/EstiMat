@@ -17,6 +17,12 @@ export const createMaterialSchema = z.object({
 
 export const updateMaterialSchema = createMaterialSchema.partial();
 
+// Отметка «проверенный материал» (курирование каталога) — тоггл is_verified.
+export const setMaterialVerifiedSchema = z.object({
+  verified: z.boolean(),
+});
+
 export type CreateMaterialGroupInput = z.infer<typeof createMaterialGroupSchema>;
 export type CreateMaterialInput = z.infer<typeof createMaterialSchema>;
 export type UpdateMaterialInput = z.infer<typeof updateMaterialSchema>;
+export type SetMaterialVerifiedInput = z.infer<typeof setMaterialVerifiedSchema>;

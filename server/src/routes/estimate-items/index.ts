@@ -11,6 +11,7 @@ import {
   createEstimateMaterialSchema,
   updateEstimateMaterialSchema,
   reassignMaterialsSchema,
+  batchCreateEstimateMaterialsSchema,
 } from '@estimat/shared';
 
 export default async function estimateItemsRoutes(fastify: FastifyInstance) {
@@ -395,6 +396,129 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
         await client.query('COMMIT');
         await emitEstimateChanged(fastify, 'material_deleted', estimateId, projectId, request.currentUser.id, { auditLogId: auditId });
         return { success: true };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // GET /api/estimate-items/:itemId/material-suggestions — подбор материалов к работе.
+  // Показываем только РЕАЛЬНО подтверждённые материалы (status='confirmed' AND needs_review=false)
+  // всех строк с тем же rate_id: авто-подставленные 'suggested' (типовой набор расценки) и
+  // несогласованный ИИ-мусор в подбор не попадают. Дедуп по устойчивому ключу
+  // (material_id, иначе имя+ед.) — не дробим один каталоговый материал из-за отличий в описании.
+  // Ручная работа (rate_id IS NULL) — сопоставлять не с чем, возвращаем пустой список.
+  fastify.get<{ Params: { itemId: string } }>(
+    '/:itemId/material-suggestions',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const { rows: work } = await fastify.pool.query(
+        'SELECT rate_id FROM estimate_items WHERE id = $1',
+        [request.params.itemId],
+      );
+      if (work.length === 0) return reply.status(404).send({ error: 'Работа не найдена' });
+      const rateId = work[0].rate_id as string | null;
+      if (!rateId) return { data: [] };
+
+      const { rows } = await fastify.pool.query(
+        `SELECT
+           COALESCE(em.material_id::text, lower(btrim(em.description)) || '|' || lower(btrim(em.unit))) AS dedup_key,
+           (array_agg(em.material_id ORDER BY em.created_at DESC))[1] AS material_id,
+           (array_agg(em.description ORDER BY em.created_at DESC))[1] AS description,
+           (array_agg(em.unit        ORDER BY em.created_at DESC))[1] AS unit,
+           (array_agg(em.unit_price  ORDER BY em.created_at DESC))[1] AS unit_price,
+           (array_agg(em.qty_ratio   ORDER BY em.created_at DESC))[1] AS qty_ratio,
+           COUNT(*)::int AS use_count
+         FROM estimate_materials em
+         JOIN estimate_items ei ON ei.id = em.item_id
+         WHERE ei.rate_id = $1 AND em.status = 'confirmed' AND em.needs_review = false
+         GROUP BY dedup_key
+         ORDER BY use_count DESC, description`,
+        [rateId],
+      );
+
+      // Ключи материалов, уже добавленных к ТЕКУЩЕЙ строке — чтобы пометить их «уже в смете».
+      const { rows: existing } = await fastify.pool.query(
+        `SELECT DISTINCT COALESCE(material_id::text, lower(btrim(description)) || '|' || lower(btrim(unit))) AS dedup_key
+           FROM estimate_materials WHERE item_id = $1`,
+        [request.params.itemId],
+      );
+      const existingKeys = new Set(existing.map((r) => r.dedup_key as string));
+
+      const data = rows.map((r) => ({
+        material_id: r.material_id as string | null,
+        description: r.description as string,
+        unit: r.unit as string,
+        unit_price: r.unit_price as string,
+        qty_ratio: r.qty_ratio as string | null,
+        use_count: r.use_count as number,
+        already_added: existingKeys.has(r.dedup_key as string),
+      }));
+      return { data };
+    },
+  );
+
+  // POST /api/estimate-items/:itemId/materials/batch — пакетное добавление подобранных материалов.
+  // Одна транзакция вместо N вызовов: одно realtime-событие, один mirror, один аудит-батч.
+  // sort_order дописывается в конец работы, сохраняя порядок массива (детали сметы сортируются
+  // по sort_order, created_at). status='confirmed' ставит сервер.
+  fastify.post<{ Params: { itemId: string } }>(
+    '/:itemId/materials/batch',
+    { preHandler: [requireRole('admin', 'engineer')] },
+    async (request, reply) => {
+      const body = batchCreateEstimateMaterialsSchema.parse(request.body);
+      const client = await fastify.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: work } = await client.query(
+          'SELECT estimate_id, quantity FROM estimate_items WHERE id = $1',
+          [request.params.itemId],
+        );
+        if (work.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.status(404).send({ error: 'Работа не найдена' });
+        }
+        const estimateId = work[0].estimate_id as string;
+        const workQuantity = Number(work[0].quantity);
+        const { rows: baseRows } = await client.query(
+          'SELECT COALESCE(MAX(sort_order), -1) AS base FROM estimate_materials WHERE item_id = $1',
+          [request.params.itemId],
+        );
+        let nextSort = Number(baseRows[0].base);
+
+        const correlationId = randomUUID();
+        const created: Record<string, unknown>[] = [];
+        for (const m of body.materials) {
+          nextSort += 1;
+          // Коэффициент расхода: если задан — количество считает сервер (коэф × объём работы).
+          const qtyRatio = m.qtyRatio ?? null;
+          const quantity = qtyRatio != null ? roundQty(qtyRatio * workQuantity) : m.quantity;
+          const { rows: ins } = await client.query(
+            `INSERT INTO estimate_materials
+               (item_id, estimate_id, material_id, description, quantity, unit, unit_price, sort_order, status, qty_ratio, created_by, updated_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', $9, $10, $10) RETURNING *`,
+            [request.params.itemId, estimateId, m.materialId ?? null, m.description, quantity, m.unit, m.unitPrice, nextSort, qtyRatio, request.currentUser.id],
+          );
+          created.push(ins[0]);
+        }
+
+        // Один mirror на все id (сам фильтрует по инварианту material_id IS NULL AND needs_review=false).
+        const catalogChanged = await mirrorMaterialsToCatalog(client, created.map((c) => c.id as string), request.currentUser.id);
+        const projectId = await loadProjectId(client, estimateId);
+        await recordAuditBatch(
+          client,
+          created.map((m) => ({
+            estimateId, projectId, entityType: 'estimate_material', entityId: m.id as string,
+            action: 'create', userId: request.currentUser.id, correlationId,
+            changes: { after: m, source: 'picker', undoable: true, operationKind: 'material_create' },
+          })),
+        );
+        await client.query('COMMIT');
+        await emitEstimateChanged(fastify, 'material_created', estimateId, projectId, request.currentUser.id);
+        return reply.status(201).send({ data: created, count: created.length, catalogChanged });
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;

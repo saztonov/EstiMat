@@ -48,6 +48,8 @@ export interface MaterialRef {
   group_name?: string | null;
   unit: string;
   unit_price: string;
+  // Отметка «проверенный материал» (курирование каталога). Приходит из GET /materials/tree.
+  is_verified?: boolean;
 }
 export interface MaterialGroupRef {
   id: string;

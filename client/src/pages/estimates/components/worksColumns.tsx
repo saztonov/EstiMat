@@ -8,7 +8,7 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { Table, Button, Popconfirm, Space, Tag, AutoComplete, InputNumber, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DeleteOutlined, CheckOutlined, CloseOutlined, EditOutlined } from '@ant-design/icons';
+import { DeleteOutlined, CheckOutlined, CloseOutlined, EditOutlined, AppstoreAddOutlined } from '@ant-design/icons';
 import { DragHandle } from '../../../components/dndSortable';
 import { UnitSelect } from '../../../components/UnitSelect';
 import { LocationCell } from './LocationCell';
@@ -48,6 +48,8 @@ export interface WorksColumnsCtx {
   onConfirmWork: (workId: string) => void;
   onToggleVolumeType: (itemId: string, current: 'main' | 'additional') => void;
   onOpenHistory?: (item: EstimateItem) => void;
+  /** Открыть подбор материалов к работе (кнопка в действиях). Задаётся только на «Смете». */
+  onPickMaterials?: (item: EstimateItem) => void;
 }
 
 export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateItem> {
@@ -55,7 +57,7 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
     group, editing, setEditing, saving, nameOptions, dndEnabled, leadingColumns,
     editable, deleteMode, selectionMode, showPrices, priceMode, showLocationColumn, zones, projectId,
     isRowInEdit, isWorkExpanded, setWorkExpanded, commit, selectRate, startEditWork,
-    onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
+    onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory, onPickMaterials,
   } = ctx;
   return [
     // Грип-колонка слева (только в режиме DnD). Грип скрыт у черновика и когда работа одна.
@@ -214,7 +216,7 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
       : []),
     ...(editable && !deleteMode
       ? [{
-          title: '', key: 'actions', width: 96,
+          title: '', key: 'actions', width: onPickMaterials ? 128 : 96,
           render: (_: unknown, r: EstimateItem) => {
             if (isRowInEdit(r)) {
               return (
@@ -226,6 +228,13 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
             }
             return (
               <Space size={4}>
+                {onPickMaterials && r.id !== DRAFT_ID && (
+                  <Tooltip title={r.rate_id ? 'Подбор материалов' : 'Нет подбора для ручной работы'}>
+                    <Button type="text" size="small" icon={<AppstoreAddOutlined />}
+                      disabled={!!editing || !r.rate_id}
+                      onClick={() => onPickMaterials(r)} />
+                  </Tooltip>
+                )}
                 <Button type="text" size="small" icon={<EditOutlined />} disabled={!!editing}
                   onClick={() => startEditWork(r)} />
                 <Popconfirm title="Удалить работу со всеми материалами?" onConfirm={() => onDeleteWork(r.id)}>

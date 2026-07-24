@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import type { Key, ReactNode } from 'react';
-import { Input, Tree, Button, Tooltip, Spin, Empty } from 'antd';
-import { SearchOutlined, PlusOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { Input, Tree, Button, Tooltip, Spin, Empty, Popconfirm, App } from 'antd';
+import { SearchOutlined, PlusOutlined, DownOutlined, UpOutlined, DeleteOutlined } from '@ant-design/icons';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useWorkScopeStore } from '../../../store/workScopeStore';
@@ -26,11 +26,25 @@ interface Props {
 // Справочник «Наименования работ»: дерево Категория → Вид работ → Наименование.
 // Перенос в смету: двойной клик по наименованию ИЛИ кнопка «+» при наведении.
 export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [userExpanded, setUserExpanded] = useState<Key[]>([]);
   const lastAdd = useRef<{ id: string; ts: number }>({ id: '', ts: 0 });
   const treeWrapRef = useRef<HTMLDivElement>(null);
   const lastRevealNonce = useRef(0);
+
+  // Скрыть работу из справочника (мягкое удаление — работа остаётся в существующих сметах/ВОР).
+  // Инвалидируем и дерево справочника на «Смете», и вкладку/автодополнение справочника работ.
+  const hideMutation = useMutation({
+    mutationFn: (rateId: string) => api.delete(`/rates/${rateId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rates-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['rates'] });
+      message.success('Работа скрыта из справочника');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
 
   // Запрос «показать в дереве» (двойной клик по виду/категории в смете)
   const revealRequest = useEstimateSelectionStore((s) => s.revealRequest);
@@ -104,6 +118,25 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
           onDoubleClick={() => handleAdd(p)}
           title="Двойной клик — добавить в смету"
         >
+          <Popconfirm
+            title="Скрыть из справочника"
+            description={`Скрыть работу «${p.name}»? Она останется в уже созданных сметах и ВОР.`}
+            okText="Скрыть"
+            cancelText="Отмена"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => hideMutation.mutate(p.rateId)}
+          >
+            <Tooltip title="Скрыть работу из справочника">
+              <Button
+                className="estimat-tree-del"
+                type="text"
+                size="small"
+                icon={<DeleteOutlined />}
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+              />
+            </Tooltip>
+          </Popconfirm>
           <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
             {p.name} · {p.unit}
             {p.typeCount > 1 && (
@@ -123,6 +156,7 @@ export function WorksTreeSection({ onAddRate, collapsed, onToggle }: Props) {
                 e.stopPropagation();
                 handleAdd(p);
               }}
+              onDoubleClick={(e) => e.stopPropagation()}
             />
           </Tooltip>
         </div>

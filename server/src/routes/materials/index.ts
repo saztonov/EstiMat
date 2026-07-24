@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/authenticate.js';
 import { requireRole } from '../../middleware/requireRole.js';
-import { createMaterialGroupSchema, createMaterialSchema, updateMaterialSchema } from '@estimat/shared';
+import { createMaterialGroupSchema, createMaterialSchema, updateMaterialSchema, setMaterialVerifiedSchema } from '@estimat/shared';
 
 export default async function materialRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -43,14 +43,14 @@ export default async function materialRoutes(fastify: FastifyInstance) {
   // Категория → Вид работ → Материалы (зеркало справочника работ). Материалы без группы — отдельно.
   fastify.get('/tree', async () => {
     interface GroupRow { id: string; name: string; parent_id: string | null; code: string | null }
-    interface MatRow { id: string; name: string; group_id: string | null; unit: string; unit_price: string }
+    interface MatRow { id: string; name: string; group_id: string | null; unit: string; unit_price: string; is_verified: boolean }
     interface GroupNode extends GroupRow { children: GroupNode[]; materials: MatRow[] }
 
     const { rows: groups } = await fastify.pool.query(
       'SELECT id, name, parent_id, code FROM material_groups ORDER BY name',
     );
     const { rows: materials } = await fastify.pool.query(
-      'SELECT id, name, group_id, unit, unit_price FROM material_catalog WHERE is_active ORDER BY name',
+      'SELECT id, name, group_id, unit, unit_price, is_verified FROM material_catalog WHERE is_active ORDER BY name',
     );
 
     const byId = new Map<string, GroupNode>();
@@ -139,5 +139,17 @@ export default async function materialRoutes(fastify: FastifyInstance) {
     );
     if (rowCount === 0) return reply.status(404).send({ error: 'Материал не найден' });
     return { success: true };
+  });
+
+  // PATCH /api/materials/:id/verified — отметить/снять «проверенный материал» (курирование каталога,
+  // отдельный флаг от is_active). Влияет на галочку в блоке справочника и фильтр «только проверенные».
+  fastify.patch<{ Params: { id: string } }>('/:id/verified', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+    const { verified } = setMaterialVerifiedSchema.parse(request.body);
+    const { rows } = await fastify.pool.query(
+      'UPDATE material_catalog SET is_verified = $1 WHERE id = $2 RETURNING id, is_verified',
+      [verified, request.params.id],
+    );
+    if (rows.length === 0) return reply.status(404).send({ error: 'Материал не найден' });
+    return { data: rows[0] };
   });
 }

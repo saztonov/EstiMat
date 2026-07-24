@@ -82,6 +82,23 @@ export const reassignMaterialsSchema = z.object({
     .transform((ids) => [...new Set(ids)]),
 });
 
+// Пакетное добавление материалов к работе (подбор из ранее использованных). status не передаётся —
+// сервер ставит 'confirmed'; sort_order сервер дописывает в конец работы, сохраняя порядок массива.
+export const batchMaterialItemSchema = z.object({
+  materialId: z.string().uuid().nullable().optional(),
+  description: z.string().min(1, 'Описание обязательно'),
+  unit: z.string().min(1, 'Единица измерения обязательна'),
+  unitPrice: z.number().min(0, 'Цена не может быть отрицательной'),
+  quantity: z.number().positive('Количество должно быть положительным').default(1),
+  qtyRatio: z.number().positive('Коэффициент должен быть больше 0').nullable().optional(),
+});
+export const batchCreateEstimateMaterialsSchema = z.object({
+  materials: z
+    .array(batchMaterialItemSchema)
+    .min(1, 'Список материалов пуст')
+    .max(200, 'Слишком много материалов за один раз'),
+});
+
 // === Массовое удаление работ и материалов сметы ===
 // Оба списка дедуплицируются; пустой запрос (0 позиций) и >1000 id отклоняются.
 const bulkDeleteIds = z
@@ -182,6 +199,7 @@ export type UpdateEstimateItemInput = z.infer<typeof updateEstimateItemSchema>;
 export type CreateEstimateMaterialInput = z.infer<typeof createEstimateMaterialSchema>;
 export type UpdateEstimateMaterialInput = z.infer<typeof updateEstimateMaterialSchema>;
 export type ReassignMaterialsInput = z.infer<typeof reassignMaterialsSchema>;
+export type BatchCreateEstimateMaterialsInput = z.infer<typeof batchCreateEstimateMaterialsSchema>;
 export type EstimateMaterialStatus = z.infer<typeof estimateMaterialStatusSchema>;
 export type SetEstimateContractorInput = z.infer<typeof setEstimateContractorSchema>;
 export type AssignBlockReason = z.infer<typeof assignBlockReasonSchema>;

@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
 import type { Key, ReactNode } from 'react';
 import { Input, Tree, Spin, Empty, App, Button, Tooltip } from 'antd';
-import { SearchOutlined, PlusOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlusOutlined, DownOutlined, UpOutlined, CheckCircleOutlined, CheckCircleFilled } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
 import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
@@ -47,12 +47,44 @@ interface Props {
 // с поиском. Панель — браузер справочника; материалы в смету добавляются под работой кнопкой
 // «Материал» (нужна активная работа). Двойной клик / «+» подсказывают это.
 export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<Key[]>([]);
+  // Фильтр «только проверенные» (галочка слева от поиска).
+  const [verifiedOnly, setVerifiedOnly] = useState(false);
   const selectedWorkId = useEstimateSelectionStore((s) => s.selectedWorkId);
   const selectedWorkLabel = useEstimateSelectionStore((s) => s.selectedWorkLabel);
   const lastAdd = useRef<{ id: string; ts: number }>({ id: '', ts: 0 });
+
+  // Тоггл «проверенный материал». Перевод В проверенные — с подтверждением (требование
+  // пользователя); снятие отметки — сразу. После — инвалидация каталога (дерево + плоский список).
+  const verifyMutation = useMutation({
+    mutationFn: ({ id, verified }: { id: string; verified: boolean }) =>
+      api.patch(`/materials/${id}/verified`, { verified }),
+    onSuccess: (_res, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['materials-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['materials'] });
+      message.success(vars.verified ? 'Материал отмечен как проверенный' : 'Отметка снята');
+    },
+    onError: (e: Error) => message.error(e.message),
+  });
+
+  function toggleVerified(m?: MaterialRef) {
+    if (!m) return;
+    const next = !m.is_verified;
+    if (next) {
+      modal.confirm({
+        title: 'Отметить материал как проверенный?',
+        content: m.name,
+        okText: 'Отметить',
+        cancelText: 'Отмена',
+        onOk: () => verifyMutation.mutate({ id: m.id, verified: true }),
+      });
+    } else {
+      verifyMutation.mutate({ id: m.id, verified: false });
+    }
+  }
 
   // Каталог большой и меняется редко: держим в кэше (staleTime/gcTime), чтобы при открытии
   // следующей сметы дерево бралось из кэша. Не грузим, пока секция свёрнута (enabled).
@@ -99,21 +131,25 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
   const debouncedSearch = useDebouncedValue(search, 250);
   const { treeData, autoExpand } = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    if (!q) return { treeData: allNodes, autoExpand: [] as string[] };
+    if (!q && !verifiedOnly) return { treeData: allNodes, autoExpand: [] as string[] };
     const exp: string[] = [];
-    // Рекурсивный фильтр: оставляем листья по совпадению, группы — если совпали дети
-    // (раскрываем) или само название группы.
+    // Лист проходит, если удовлетворяет обоим активным условиям (проверенность + поиск).
+    const leafOk = (n: MatNode) =>
+      (!verifiedOnly || n.material?.is_verified) && (!q || n.searchText.includes(q));
+    // Рекурсивный фильтр: оставляем листья по предикату, группы — если совпали дети (раскрываем).
+    // Группу по совпадению её названия показываем только при чистом поиске (без фильтра «проверенные»,
+    // иначе внутри неё оказались бы непроверенные материалы).
     const filterNodes = (nodes: MatNode[]): MatNode[] => {
       const out: MatNode[] = [];
       for (const n of nodes) {
         if (n.isLeaf) {
-          if (n.searchText.includes(q)) out.push(n);
+          if (leafOk(n)) out.push(n);
         } else {
           const kids = filterNodes(n.children ?? []);
           if (kids.length) {
             exp.push(String(n.key));
             out.push({ ...n, children: kids });
-          } else if (n.searchText.includes(q)) {
+          } else if (q && !verifiedOnly && n.searchText.includes(q)) {
             out.push(n);
           }
         }
@@ -121,9 +157,11 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
       return out;
     };
     return { treeData: filterNodes(allNodes), autoExpand: exp };
-  }, [allNodes, debouncedSearch]);
+  }, [allNodes, debouncedSearch, verifiedOnly]);
 
-  const searching = debouncedSearch.trim().length > 0;
+  // Автораскрытие при поиске или включённом фильтре «проверенные» (иначе отфильтрованные листья
+  // остались бы под свёрнутыми группами).
+  const searching = debouncedSearch.trim().length > 0 || verifiedOnly;
 
   // Добавить материал из справочника к выделенной работе.
   // Защита от двойного добавления подряд (клик + дабл-клик).
@@ -150,6 +188,7 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
     if (!node.isLeaf) {
       return <span style={{ fontWeight: 600 }}>{node.title as string}</span>;
     }
+    const verified = !!node.material?.is_verified;
     return (
       <div
         className="estimat-tree-leaf"
@@ -157,6 +196,19 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
         onDoubleClick={() => addToWork(node.material)}
         title="Двойной клик — добавить к выделенной работе"
       >
+        <Tooltip title={verified ? 'Проверенный материал — снять отметку' : 'Отметить как проверенный'}>
+          <Button
+            className={`estimat-tree-verify${verified ? ' is-verified' : ''}`}
+            type="text"
+            size="small"
+            icon={verified ? <CheckCircleFilled /> : <CheckCircleOutlined />}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleVerified(node.material);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          />
+        </Tooltip>
         <span style={{ flex: 1, minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
           {node.title as string}
         </span>
@@ -170,6 +222,7 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
               e.stopPropagation();
               addToWork(node.material);
             }}
+            onDoubleClick={(e) => e.stopPropagation()}
           />
         </Tooltip>
       </div>
@@ -183,6 +236,15 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
   return (
     <SectionShell title="Материалы" meta={meta} collapsed={collapsed} onToggle={onToggle}>
       <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+        <Tooltip title={verifiedOnly ? 'Показаны только проверенные' : 'Показать только проверенные'}>
+          <Button
+            size="small"
+            type={verifiedOnly ? 'primary' : 'default'}
+            icon={<CheckCircleOutlined />}
+            aria-label="Только проверенные материалы"
+            onClick={() => setVerifiedOnly((v) => !v)}
+          />
+        </Tooltip>
         <Input
           allowClear
           size="small"

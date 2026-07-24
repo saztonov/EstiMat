@@ -175,11 +175,14 @@ export default async function rateRoutes(fastify: FastifyInstance) {
     LEFT JOIN cost_types ct ON ct.id = rct.cost_type_id AND ct.is_active
     LEFT JOIN cost_categories cc ON cc.id = ct.category_id AND cc.is_active`;
 
-  // GET /api/rates?costTypeId=
+  // GET /api/rates?costTypeId=&includeInactive=
+  //   includeInactive=true показывает и скрытые (is_active=false) работы — ТОЛЬКО админам
+  //   (режим «показывать удалённые» на вкладке справочника «Работы»).
   fastify.get('/', async (request) => {
-    const { costTypeId } = request.query as { costTypeId?: string };
+    const { costTypeId, includeInactive } = request.query as { costTypeId?: string; includeInactive?: string };
+    const showInactive = includeInactive === 'true' && request.currentUser.role === 'admin';
     const values: string[] = [];
-    let where = 'WHERE r.is_active = true';
+    let where = showInactive ? 'WHERE true' : 'WHERE r.is_active = true';
     if (costTypeId) {
       values.push(costTypeId);
       where += ` AND EXISTS (
@@ -333,6 +336,16 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
     const { rowCount } = await fastify.pool.query(
       'UPDATE rates SET is_active = false WHERE id = $1',
+      [request.params.id],
+    );
+    if (rowCount === 0) return reply.status(404).send({ error: 'Расценка не найдена' });
+    return { success: true };
+  });
+
+  // PATCH /api/rates/:id/restore (вернуть скрытую работу в справочник: is_active=true) — только админ
+  fastify.patch<{ Params: { id: string } }>('/:id/restore', { preHandler: [requireRole('admin')] }, async (request, reply) => {
+    const { rowCount } = await fastify.pool.query(
+      'UPDATE rates SET is_active = true WHERE id = $1',
       [request.params.id],
     );
     if (rowCount === 0) return reply.status(404).send({ error: 'Расценка не найдена' });

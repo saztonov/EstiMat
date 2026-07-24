@@ -118,6 +118,8 @@ interface Props {
   vorByItem?: Map<string, VorMark>;
   /** Клик по метке «В»: открыть список ВОР строки. */
   onOpenVor?: (itemId: string) => void;
+  /** Открыть подбор материалов к работе (кнопка в действиях строки). Задаётся только на «Смете». */
+  onPickMaterials?: (item: EstimateItem) => void;
 }
 
 const noopAsync = async () => {};
@@ -230,6 +232,7 @@ function CostTypeGroupBlockImpl({
   tableScrollX,
   vorByItem,
   onOpenVor,
+  onPickMaterials,
 }: Props) {
   const { message } = App.useApp();
   const [editing, setEditing] = useState<WorkEdit | null>(null);
@@ -451,7 +454,7 @@ function CostTypeGroupBlockImpl({
         group, editing, setEditing, saving, nameOptions, dndEnabled, leadingColumns,
         editable, deleteMode, selectionMode, showPrices, priceMode, showLocationColumn, zones, projectId,
         isRowInEdit, isWorkExpanded, setWorkExpanded, commit, selectRate, startEditWork,
-        onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
+        onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory, onPickMaterials,
       });
       // Пользовательские порядок/видимость столбцов — только на «Смете» (передан columnPrefs).
       return columnPrefs ? applyColumnPrefs(built, columnPrefs) : built;
@@ -462,7 +465,7 @@ function CostTypeGroupBlockImpl({
       editing, saving, nameOptions, ratesData,
       editable, deleteMode, selectionMode, showPrices, priceMode, showLocationColumn, zones, projectId,
       materialsControlled, expandedWorkIds, expandedKeys, onWorkExpandChange,
-      onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory,
+      onCreateWork, onUpdateWork, onDeleteWork, onConfirmWork, onToggleVolumeType, onOpenHistory, onPickMaterials,
       columnPrefs,
     ],
   );
