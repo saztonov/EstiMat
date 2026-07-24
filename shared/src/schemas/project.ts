@@ -17,9 +17,9 @@ const imageUrlSchema = z.preprocess(
 
 export const createProjectSchema = z.object({
   code: z.string().min(3).max(6, 'Код: 3-6 символов'),
-  name: z.string().min(1, 'Название обязательно'),
-  fullName: z.string().nullable().optional(),
-  address: z.string().nullable().optional(),
+  name: z.string().min(1, 'Название обязательно').max(300),
+  fullName: z.string().max(300).nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
   status: z.enum(PROJECT_STATUSES).default('planning'),
   startDate: z.string().nullable().optional(),
   endDate: z.string().nullable().optional(),
@@ -27,6 +27,13 @@ export const createProjectSchema = z.object({
 });
 
 export const updateProjectSchema = createProjectSchema.partial();
+
+// Добавление участника объекта. Роль НЕ принимаем от клиента — берём с самого
+// пользователя на сервере: иначе через это поле можно было бы записать произвольную роль.
+export const addProjectMemberSchema = z.object({
+  userId: z.string().uuid(),
+});
+export type AddProjectMemberInput = z.infer<typeof addProjectMemberSchema>;
 
 export const projectSchema = z.object({
   id: z.string().uuid(),

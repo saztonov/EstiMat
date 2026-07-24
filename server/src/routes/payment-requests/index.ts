@@ -223,9 +223,12 @@ export default async function paymentRequestRoutes(fastify: FastifyInstance) {
       if (file.file.truncated) return reply.status(400).send({ error: 'Файл больше 10 МБ' });
       if (!sniffOk(buffer, ext)) return reply.status(400).send({ error: 'Содержимое файла не соответствует расширению' });
 
-      const documentTypeId = (request.body as { documentTypeId?: string } | undefined)?.documentTypeId
+      const documentTypeIdRaw = (request.body as { documentTypeId?: string } | undefined)?.documentTypeId
         ?? (file.fields as Record<string, { value?: string }> | undefined)?.documentTypeId?.value
         ?? null;
+      // BillHub-справочник хранит id типа документа как непрозрачную строку (TEXT), не UUID —
+      // формат не навязываем, но ограничиваем длину, чтобы не писать в БД произвольный объём.
+      const documentTypeId = documentTypeIdRaw != null ? String(documentTypeIdRaw).slice(0, 100) : null;
 
       // MIME — только из проверенного расширения, не из клиентского content-type.
       const mime = EXT_TO_MIME[ext] ?? 'application/octet-stream';

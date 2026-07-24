@@ -3,7 +3,7 @@ import { Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, Tool
 import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
-import { ORG_TYPE_LABELS, ORG_TYPES } from '@estimat/shared';
+import { ORG_TYPE_LABELS, ORG_TYPES, INN_RE } from '@estimat/shared';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
 
 export function OrganizationsPanel() {
@@ -184,8 +184,22 @@ export function OrganizationsPanel() {
           <Form.Item name="name" label="Название" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="inn" label="ИНН">
-            <Input />
+          <Form.Item
+            name="inn"
+            label="ИНН"
+            rules={[{
+              validator: (_, value) => {
+                const v = String(value ?? '').trim();
+                if (v === '') return Promise.resolve();
+                // Не блокируем ранее сохранённый «грязный» ИНН, если пользователь его не менял.
+                if (editRecord && v === String(editRecord.inn ?? '')) return Promise.resolve();
+                return INN_RE.test(v)
+                  ? Promise.resolve()
+                  : Promise.reject(new Error('ИНН 10 или 12 цифр'));
+              },
+            }]}
+          >
+            <Input maxLength={12} inputMode="numeric" placeholder="10 или 12 цифр" />
           </Form.Item>
           <Form.Item name="type" label="Тип" rules={[{ required: true }]}>
             <Select options={ORG_TYPES.map((t) => ({ value: t, label: ORG_TYPE_LABELS[t] }))} />

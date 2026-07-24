@@ -9,6 +9,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { api } from '../../services/api';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
+import { safeExternalHref } from '../../lib/safeUrl';
 import { type ColumnFilters } from '../../lib/columnFilters';
 import { useGroupedTable, computeNeedFull } from '../../lib/useGroupedTable';
 import { isGroupRow, type GroupLevel, type GroupNode, type GroupRow } from '../../lib/tableGrouping';
@@ -62,7 +63,7 @@ function LetterCell({ row, onRetry }: { row: RequestRow; onRetry: (id: string) =
   const s = row.rp_sync_status;
   if (!s || s === 'synced') {
     return row.payhub_url ? (
-      <a href={row.payhub_url} target="_blank" rel="noopener noreferrer">Открыть <LinkOutlined /></a>
+      <a href={safeExternalHref(row.payhub_url)} target="_blank" rel="noopener noreferrer">Открыть <LinkOutlined /></a>
     ) : (<Tag color="green">создано</Tag>);
   }
   if (s === 'pending') return <Tag icon={<SyncOutlined spin />} color="processing">создаётся…</Tag>;

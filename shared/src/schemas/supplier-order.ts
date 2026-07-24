@@ -3,6 +3,7 @@ import {
   PROCUREMENT_METHODS, TENDER_STATUSES, TENDER_OUTCOMES, TENDER_VAT_RATES,
   MANUAL_VAT_RATES, PAYMENT_TYPES, OFFER_RESPONSE_STATUSES, OFFER_DOC_TYPES,
 } from '../constants/statuses.js';
+import { INN_RE } from './common.js';
 import { deliveryScheduleEntrySchema } from './material-request.js';
 
 // Деньги — десятичной строкой (без float): до 13 знаков целой части и ≤2 дробной. Считаем в SQL numeric.
@@ -80,7 +81,7 @@ export type StartProcurementInput = z.infer<typeof startProcurementSchema>;
 export const addOfferSchema = z.object({
   supplierId: z.string().uuid().nullish(),
   supplierName: z.string().min(1).max(300),
-  supplierInn: z.string().regex(/^\d{10}(\d{2})?$/, 'ИНН 10 или 12 цифр').nullish(),
+  supplierInn: z.string().regex(INN_RE, 'ИНН 10 или 12 цифр').nullish(),
   amount: z.number().positive(),
   currency: z.string().length(3).default('RUB'),
   terms: z.string().max(1000).nullish(),
@@ -126,7 +127,7 @@ export type CreateTenderOrderInput = z.infer<typeof createTenderOrderSchema>;
 export const upsertOfferSchema = z.object({
   supplierId: z.string().uuid().nullish(),
   supplierName: blankToNull(z.string().trim().min(1).max(300).nullish()),
-  supplierInn: z.string().regex(/^\d{10}(\d{2})?$/, 'ИНН 10 или 12 цифр').nullish(),
+  supplierInn: z.string().regex(INN_RE, 'ИНН 10 или 12 цифр').nullish(),
   amount: money2.nullish(),
   responseStatus: z.enum(OFFER_RESPONSE_STATUSES).optional(),
   terms: z.string().max(1000).nullish(),

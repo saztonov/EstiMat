@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requireRole } from '../../middleware/requireRole.js';
 import { withImageSrc } from '../../lib/projectImage.js';
-import { createProjectSchema, updateProjectSchema } from '@estimat/shared';
+import { createProjectSchema, updateProjectSchema, addProjectMemberSchema } from '@estimat/shared';
 import { removeUpload } from './covers.js';
 
 // Объекты: список/галерея, карточка, создание/правка, участники.
@@ -118,11 +118,15 @@ export function registerCoreRoutes(fastify: FastifyInstance): void {
 
   // POST /api/projects/:id/members
   fastify.post<{ Params: { id: string } }>('/:id/members', { preHandler: [requireRole('admin', 'manager')] }, async (request, reply) => {
-    const { userId, role } = request.body as { userId: string; role: string };
+    const { userId } = addProjectMemberSchema.parse(request.body);
+    // Роль участника берём из самой учётки пользователя — клиенту тут доверять нельзя.
+    const { rows: u } = await fastify.pool.query('SELECT role FROM users WHERE id = $1', [userId]);
+    if (u.length === 0) return reply.status(404).send({ error: 'Пользователь не найден' });
+    // Дубликат участника ловит уникальный индекс → глобальный обработчик отдаёт 409.
     const { rows } = await fastify.pool.query(
       `INSERT INTO project_members (project_id, user_id, role)
        VALUES ($1, $2, $3) RETURNING *`,
-      [request.params.id, userId, role],
+      [request.params.id, userId, u[0].role],
     );
     return reply.status(201).send({ data: rows[0] });
   });

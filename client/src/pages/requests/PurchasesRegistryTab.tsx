@@ -12,6 +12,7 @@ import {
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { DEFAULT_PAGINATION } from '../../lib/tableConfig';
+import { safeExternalHref } from '../../lib/safeUrl';
 import { type ColumnFilters } from '../../lib/columnFilters';
 import { useGroupedTable, computeNeedFull } from '../../lib/useGroupedTable';
 import { isGroupRow, type GroupLevel, type GroupNode, type GroupRow } from '../../lib/tableGrouping';
@@ -155,7 +156,7 @@ export function PurchasesRegistryTab() {
         const canCancel = isManualOrder && row.status === 'sourcing';
         return (
           <Space size={4}>
-            {row.tender_url && <a href={row.tender_url} target="_blank" rel="noopener noreferrer"><LinkOutlined /></a>}
+            {row.tender_url && <a href={safeExternalHref(row.tender_url)} target="_blank" rel="noopener noreferrer"><LinkOutlined /></a>}
             {canCancel && (
               <ConfirmIconButton tooltip="Отменить заказ" title="Отменить заказ?" description="Остаток материалов вернётся в свод."
                 okText="Отменить" onConfirm={() => cancelMut.mutate(row.id)} icon={<StopOutlined />} type="text" />

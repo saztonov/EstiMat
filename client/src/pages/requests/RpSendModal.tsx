@@ -4,6 +4,7 @@ import { DownloadOutlined, LinkOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
+import { safeExternalHref } from '../../lib/safeUrl';
 import { svgDataUrlToPngDataUrl, downloadDataUrl } from '../../lib/qr';
 import type { RpConfig } from './types';
 
@@ -222,7 +223,7 @@ export function RpSendModal({
                 </div>
               )}
               {sent.url && (
-                <a href={sent.url} target="_blank" rel="noopener noreferrer">
+                <a href={safeExternalHref(sent.url)} target="_blank" rel="noopener noreferrer">
                   Открыть письмо <LinkOutlined />
                 </a>
               )}

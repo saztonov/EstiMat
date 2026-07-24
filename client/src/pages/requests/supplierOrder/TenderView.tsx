@@ -1,5 +1,6 @@
 import { Button, Space, Descriptions, Popconfirm } from 'antd';
 import { ItemsTable } from './ItemsTable';
+import { safeExternalHref } from '../../../lib/safeUrl';
 import type { SupplierOrderDetail } from '../types';
 
 /**
@@ -18,7 +19,7 @@ export function TenderView({ order, onRefresh, onAward }: {
     <>
       <Descriptions size="small" column={2} style={{ marginBottom: 12 }}>
         <Descriptions.Item label="Статус">{order.tender_sync_status === 'pending' ? 'В очереди на выгрузку' : order.tender_sync_status === 'failed' ? 'Ошибка выгрузки' : (order.tender_status ?? '—')}</Descriptions.Item>
-        <Descriptions.Item label="Портал">{order.tender_url ? <a href={order.tender_url} target="_blank" rel="noopener noreferrer">Открыть</a> : '—'}</Descriptions.Item>
+        <Descriptions.Item label="Портал">{order.tender_url ? <a href={safeExternalHref(order.tender_url)} target="_blank" rel="noopener noreferrer">Открыть</a> : '—'}</Descriptions.Item>
       </Descriptions>
       <ItemsTable order={order} />
       <Space style={{ marginTop: 12 }}>

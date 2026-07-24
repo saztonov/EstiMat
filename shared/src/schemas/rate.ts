@@ -1,15 +1,15 @@
 import { z } from 'zod';
 
 export const createCostCategorySchema = z.object({
-  name: z.string().min(1, 'Название обязательно'),
-  code: z.string().optional(),
+  name: z.string().min(1, 'Название обязательно').max(200),
+  code: z.string().max(50).optional(),
   sortOrder: z.number().int().default(0),
 });
 
 export const createCostTypeSchema = z.object({
   categoryId: z.string().uuid(),
-  name: z.string().min(1, 'Название обязательно'),
-  code: z.string().optional(),
+  name: z.string().min(1, 'Название обязательно').max(200),
+  code: z.string().max(50).optional(),
   sortOrder: z.number().int().default(0),
 });
 
@@ -17,16 +17,16 @@ export const createCostTypeSchema = z.object({
 // помечается основным (primaryCostTypeId). Цена необязательна: пустое/None → 0
 // (AntD InputNumber при очистке отдаёт null, поэтому нормализуем через preprocess).
 const rateBaseSchema = z.object({
-  costTypeIds: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один вид работ'),
+  costTypeIds: z.array(z.string().uuid()).min(1, 'Выберите хотя бы один вид работ').max(50),
   primaryCostTypeId: z.string().uuid().optional(),
-  name: z.string().min(1, 'Название обязательно'),
-  code: z.string().nullable().optional(),
-  unit: z.string().min(1, 'Единица измерения обязательна'),
+  name: z.string().min(1, 'Название обязательно').max(300),
+  code: z.string().max(50).nullable().optional(),
+  unit: z.string().min(1, 'Единица измерения обязательна').max(50),
   price: z.preprocess(
     (v) => (v == null || v === '' ? 0 : v),
     z.number().min(0, 'Цена не может быть отрицательной'),
   ),
-  description: z.string().nullable().optional(),
+  description: z.string().max(2000).nullable().optional(),
 });
 
 // Переходная совместимость: принимаем одиночный costTypeId и нормализуем в массив.

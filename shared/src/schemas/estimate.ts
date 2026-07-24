@@ -71,6 +71,10 @@ export const createEstimateMaterialSchema = z.object({
 
 export const updateEstimateMaterialSchema = createEstimateMaterialSchema.partial().merge(occSchema);
 
+// Одиночный перенос материала к другой работе: :id — материал (path), itemId — целевая работа.
+export const reassignMaterialParamsSchema = z.object({ id: z.string().uuid() });
+export const reassignMaterialSchema = z.object({ itemId: z.string().uuid() });
+
 // Массовый перенос материалов к другой работе (within one estimate).
 // materialIds дедуплицируются; пустой список и >500 элементов отклоняются.
 export const reassignMaterialsSchema = z.object({

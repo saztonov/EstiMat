@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MATERIAL_REQUEST_TYPES, REQUEST_DOC_TYPES } from '../constants/statuses.js';
+import { INN_RE } from './common.js';
 
 // Одна запись графика поставки материала: сколько материала нужно к конкретной дате.
 // Сервер разворачивает график в строки material_request_items (по одной на дату).
@@ -50,7 +51,7 @@ export const createRequestSchema = z
     contractorId: z.string().uuid().optional(),
     // Реквизиты прямого заказа (только own_supplier / own_supply): опциональны при создании.
     supplierName: z.string().min(1).max(300).nullish(),
-    supplierInn: z.string().regex(/^\d{10}(\d{2})?$/, 'ИНН 10 или 12 цифр').nullish(),
+    supplierInn: z.string().regex(INN_RE, 'ИНН 10 или 12 цифр').nullish(),
     resultAmount: z.number().positive().nullish(),
   })
   // Для «Закупка через СУ-10» график поставки обязателен: у каждой строки непустой график,
@@ -181,7 +182,7 @@ export function validateSu10Schedule(lines: { deliverySchedule?: DeliverySchedul
 export const completeRevisionSchema = z.object({
   lines: z.array(materialRequestLineSchema).min(1).optional(),
   supplierName: z.string().min(1).max(300).nullish(),
-  supplierInn: z.string().regex(/^\d{10}(\d{2})?$/, 'ИНН 10 или 12 цифр').nullish(),
+  supplierInn: z.string().regex(INN_RE, 'ИНН 10 или 12 цифр').nullish(),
   resultAmount: z.number().positive().nullish(),
   comment: z.string().max(2000).nullish(),
   expectedVersion: z.number().int().nonnegative().optional(),
@@ -192,7 +193,7 @@ export type CompleteRevisionInput = z.infer<typeof completeRevisionSchema>;
 // Доступно подрядчику (для своих прямых маршрутов) и внутренним ролям.
 export const directSupplierSchema = z.object({
   supplierName: z.string().min(1).max(300),
-  supplierInn: z.string().regex(/^\d{10}(\d{2})?$/, 'ИНН 10 или 12 цифр').nullish(),
+  supplierInn: z.string().regex(INN_RE, 'ИНН 10 или 12 цифр').nullish(),
   resultAmount: z.number().positive(),
   rpNumber: z.string().max(100).nullish(),
   rpDate: z.string().nullish(), // ISO date

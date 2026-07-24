@@ -1,18 +1,21 @@
 import { z } from 'zod';
 
 export const createMaterialGroupSchema = z.object({
-  name: z.string().min(1, 'Название обязательно'),
+  name: z.string().min(1, 'Название обязательно').max(300),
   parentId: z.string().uuid().nullable().optional(),
-  code: z.string().optional(),
+  code: z.string().max(50).optional(),
 });
 
 export const createMaterialSchema = z.object({
-  name: z.string().min(1, 'Название обязательно'),
+  // Лимит 500: в справочнике есть длинные наименования (до ~350 симв.) — 300 обрезало бы их.
+  name: z.string().min(1, 'Название обязательно').max(500),
   groupId: z.string().uuid().nullable().optional(),
-  unit: z.string().min(1, 'Единица измерения обязательна'),
+  unit: z.string().min(1, 'Единица измерения обязательна').max(50),
   unitPrice: z.number().min(0, 'Цена не может быть отрицательной').default(0),
-  description: z.string().nullable().optional(),
-  attributes: z.record(z.unknown()).optional(),
+  description: z.string().max(2000).nullable().optional(),
+  attributes: z.record(z.unknown())
+    .refine((v) => Object.keys(v).length <= 100, 'Слишком много атрибутов')
+    .optional(),
 });
 
 export const updateMaterialSchema = createMaterialSchema.partial();

@@ -11,6 +11,8 @@ import {
   createEstimateMaterialSchema,
   updateEstimateMaterialSchema,
   reassignMaterialsSchema,
+  reassignMaterialSchema,
+  reassignMaterialParamsSchema,
   batchCreateEstimateMaterialsSchema,
 } from '@estimat/shared';
 
@@ -180,10 +182,9 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
     '/materials/:id/reassign',
     { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
-      const itemId = request.body?.itemId;
-      if (!itemId || typeof itemId !== 'string') {
-        return reply.status(400).send({ error: 'itemId обязателен' });
-      }
+      // Валидируем оба идентификатора как UUID до запросов — иначе кривой id даёт 500 из БД.
+      const { id: materialId } = reassignMaterialParamsSchema.parse(request.params);
+      const { itemId } = reassignMaterialSchema.parse(request.body);
       const client = await fastify.pool.connect();
       try {
         await client.query('BEGIN');
@@ -193,7 +194,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
           return reply.status(404).send({ error: 'Целевая работа не найдена' });
         }
         const estimateId = work[0].estimate_id as string;
-        const { rows: cur } = await client.query('SELECT * FROM estimate_materials WHERE id = $1 FOR UPDATE', [request.params.id]);
+        const { rows: cur } = await client.query('SELECT * FROM estimate_materials WHERE id = $1 FOR UPDATE', [materialId]);
         if (cur.length === 0) {
           await client.query('ROLLBACK');
           return reply.status(404).send({ error: 'Материал не найден' });
@@ -206,7 +207,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
           `UPDATE estimate_materials
               SET item_id = $1, needs_review = false, updated_by = $2
             WHERE id = $3 RETURNING *`,
-          [itemId, request.currentUser.id, request.params.id],
+          [itemId, request.currentUser.id, materialId],
         );
         // Перенос снимает needs_review → материал стал принятым; зеркалируем в справочник,
         // если он ещё не привязан к каталогу (mirror сам проверит инвариант).

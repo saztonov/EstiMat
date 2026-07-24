@@ -17,6 +17,7 @@ import {
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { modalWidth } from '../../lib/modalWidth';
+import { safeExternalHref } from '../../lib/safeUrl';
 import { formatSize } from '../../lib/files';
 import { RequestStatusTag, RequestTypeTag, money, round4 } from './requestConstants';
 import { RpFormModal } from './RpFormModal';
@@ -471,7 +472,7 @@ export function RequestDetailContent(
           ) : null}
           {r.rp_letter?.payhub_url ? (
             <Descriptions.Item label="Письмо PayHub">
-              <a href={r.rp_letter.payhub_url} target="_blank" rel="noopener noreferrer">Открыть <LinkOutlined /></a>
+              <a href={safeExternalHref(r.rp_letter.payhub_url)} target="_blank" rel="noopener noreferrer">Открыть <LinkOutlined /></a>
             </Descriptions.Item>
           ) : null}
           <Descriptions.Item label="Создана">{new Date(r.created_at).toLocaleString('ru-RU')}</Descriptions.Item>
