@@ -17,7 +17,7 @@ export default async function materialRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/materials/groups
-  fastify.post('/groups', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/groups', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createMaterialGroupSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       `INSERT INTO material_groups (name, parent_id, code)
@@ -95,7 +95,7 @@ export default async function materialRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/materials
-  fastify.post('/', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createMaterialSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       `INSERT INTO material_catalog (name, group_id, unit, unit_price, description, attributes)
@@ -106,7 +106,7 @@ export default async function materialRoutes(fastify: FastifyInstance) {
   });
 
   // PUT /api/materials/:id
-  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = updateMaterialSchema.parse(request.body);
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -132,7 +132,7 @@ export default async function materialRoutes(fastify: FastifyInstance) {
 
   // DELETE /api/materials/:id (мягкое удаление: is_active=false — жёсткий DELETE
   // каскадом удалил бы материал из состава работ, rate_materials ON DELETE CASCADE)
-  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const { rowCount } = await fastify.pool.query(
       'UPDATE material_catalog SET is_active = false WHERE id = $1',
       [request.params.id],

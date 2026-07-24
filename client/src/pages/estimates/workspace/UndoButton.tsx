@@ -22,7 +22,7 @@ export function UndoButton({ estimateId, projectId, editable, compact }: Props) 
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const role = useAuthStore((s) => s.user?.role);
-  const canUndo = editable && (role === 'admin' || role === 'engineer');
+  const canUndo = editable && (role === 'admin' || role === 'engineer' || role === 'manager');
 
   const { data: peek } = useQuery({
     queryKey: ['estimate-undo-peek', estimateId],

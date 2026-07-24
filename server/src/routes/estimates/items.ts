@@ -18,7 +18,7 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
   // POST /api/estimates/:id/items — создать работу
   fastify.post<{ Params: { id: string } }>(
     '/:id/items',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const body = createEstimateItemSchema.parse(request.body);
       // Единая correlation-группа жеста (работа + авто-материалы) — единица отмены (undo).
@@ -128,7 +128,7 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
   );
 
   // PUT /api/estimates/items/:id — обновить работу
-  fastify.put<{ Params: { id: string } }>('/items/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.put<{ Params: { id: string } }>('/items/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = updateEstimateItemSchema.parse(request.body);
     // Единая correlation-группа правки (работа + пересчитанные материалы) — единица отмены.
     const correlationId = randomUUID();
@@ -257,7 +257,7 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
 
   // PATCH /api/estimates/:id/items/reorder — нормализующая перестановка работ внутри вида
   // (клиент шлёт полный упорядоченный список id → sort_order = 0,1,2,…).
-  fastify.patch<{ Params: { id: string } }>('/:id/items/reorder', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.patch<{ Params: { id: string } }>('/:id/items/reorder', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = reorderEstimateItemsSchema.parse(request.body);
     const client = await fastify.pool.connect();
     try {
@@ -286,7 +286,7 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
   // открытая форма правки другого поля той же строки не словила ложный 409 при сохранении.
   fastify.patch<{ Params: { id: string } }>(
     '/:id/items/volume-type',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const estimateId = z.string().uuid().safeParse(request.params.id);
       if (!estimateId.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
@@ -350,7 +350,7 @@ export function registerItemRoutes(fastify: FastifyInstance): void {
     },
   );
   // DELETE /api/estimates/items/:id — удалить работу (материалы каскадом; snapshot обоих в журнал)
-  fastify.delete<{ Params: { id: string } }>('/items/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/items/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     // Единая correlation-группа удаления (работа + каскадные материалы) — единица отмены.
     const correlationId = randomUUID();
     const client = await fastify.pool.connect();

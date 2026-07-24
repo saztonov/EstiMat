@@ -161,7 +161,7 @@ export function SmetaPanel({
 
   // Массовые операции разрешены сервером только admin/engineer — кнопки остальным не показываем.
   const role = useAuthStore((s) => s.user?.role);
-  const canBulkDelete = editable && (role === 'admin' || role === 'engineer');
+  const canBulkDelete = editable && (role === 'admin' || role === 'engineer' || role === 'manager');
   // Перенос/копирование материалов (reassign-bulk / copy-bulk) — те же права, отдельное имя по смыслу.
   const canBulkMutateMaterials = canBulkDelete;
 

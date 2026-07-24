@@ -27,7 +27,7 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/rates/categories
-  fastify.post('/categories', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/categories', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createCostCategorySchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       `INSERT INTO cost_categories (name, code, sort_order)
@@ -38,7 +38,7 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   });
 
   // PATCH /api/rates/categories/reorder — нормализующая перестановка (sort_order = 0,1,2,…)
-  fastify.patch('/categories/reorder', { preHandler: [requireRole('admin', 'engineer')] }, async (request) => {
+  fastify.patch('/categories/reorder', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request) => {
     const body = reorderCategoriesSchema.parse(request.body);
     await fastify.pool.query(
       `UPDATE cost_categories c SET sort_order = t.ord - 1
@@ -50,7 +50,7 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   });
 
   // PUT /api/rates/categories/:id — переименование / код / порядок
-  fastify.put<{ Params: { id: string } }>('/categories/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.put<{ Params: { id: string } }>('/categories/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = updateCostCategorySchema.parse(request.body);
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -97,7 +97,7 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/rates/types
-  fastify.post('/types', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/types', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createCostTypeSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       `INSERT INTO cost_types (category_id, name, code, sort_order)
@@ -108,7 +108,7 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   });
 
   // PATCH /api/rates/types/reorder — перестановка видов внутри категории (sort_order = 0,1,2,…)
-  fastify.patch('/types/reorder', { preHandler: [requireRole('admin', 'engineer')] }, async (request) => {
+  fastify.patch('/types/reorder', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request) => {
     const body = reorderTypesSchema.parse(request.body);
     await fastify.pool.query(
       `UPDATE cost_types ct SET sort_order = t.ord - 1
@@ -120,7 +120,7 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   });
 
   // PUT /api/rates/types/:id — переименование / код / порядок
-  fastify.put<{ Params: { id: string } }>('/types/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.put<{ Params: { id: string } }>('/types/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = updateCostTypeSchema.parse(request.body);
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -228,7 +228,7 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   }
 
   // POST /api/rates — создание работы + связок с видами (транзакция)
-  fastify.post('/', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createRateSchema.parse(request.body);
     const primaryId = body.primaryCostTypeId ?? body.costTypeIds[0];
     const client = await fastify.pool.connect();
@@ -261,7 +261,7 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   });
 
   // PUT /api/rates/:id — обновление полей и/или набора видов (транзакция)
-  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = updateRateSchema.parse(request.body);
     const client = await fastify.pool.connect();
     try {
@@ -353,7 +353,7 @@ export default async function rateRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/rates/import — импорт из Excel
-  fastify.post('/import', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/import', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const file = await request.file();
     if (!file) return reply.status(400).send({ error: 'Файл не загружен' });
 

@@ -11,7 +11,7 @@ export function registerCostTypeCipherRoutes(fastify: FastifyInstance): void {
   // PUT /api/estimates/:id/cost-types/:costTypeId/ciphers — заменить набор шифров вида работ.
   fastify.put<{ Params: { id: string; costTypeId: string } }>(
     '/:id/cost-types/:costTypeId/ciphers',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const estimateId = z.string().uuid().safeParse(request.params.id);
       const costTypeId = z.string().uuid().safeParse(request.params.costTypeId);

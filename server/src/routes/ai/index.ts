@@ -178,7 +178,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/jobs',
     {
-      preHandler: [requireRole('admin', 'engineer')],
+      preHandler: [requireRole('admin', 'engineer', 'manager')],
       bodyLimit: 20 * 1024 * 1024, // РД-.md приходит строкой в JSON; дефолт Fastify 1 МБ мал
     },
     async (request, reply) => {
@@ -254,7 +254,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
   // POST /api/ai/jobs/:id/cancel — остановить задание (отмена выполнения)
   fastify.post<{ Params: { id: string } }>(
     '/jobs/:id/cancel',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const { id } = request.params;
       const exists = await fastify.pool.query('SELECT id FROM ai_jobs WHERE id = $1', [id]);
@@ -290,7 +290,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
   // POST /api/ai/jobs/:id/apply — применить ГОТОВЫЙ результат к смете (только из статуса 'ready').
   fastify.post<{ Params: { id: string } }>(
     '/jobs/:id/apply',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const { rows } = await fastify.pool.query('SELECT * FROM ai_jobs WHERE id = $1', [request.params.id]);
       const job = rows[0];

@@ -20,7 +20,7 @@ import {
 export function registerBulkRoutes(fastify: FastifyInstance): void {
   // POST /api/estimates/:id/confirm-all — согласовать все ИИ-позиции (снять needs_review),
   // row-level аудит по каждой затронутой работе/материалу.
-  fastify.post<{ Params: { id: string } }>('/:id/confirm-all', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post<{ Params: { id: string } }>('/:id/confirm-all', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const client = await fastify.pool.connect();
     try {
       await client.query('BEGIN');
@@ -79,7 +79,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
   // зеркалируются в legacy-справочник material_catalog (структура Категория → Вид работ).
   fastify.post<{ Params: { id: string } }>(
     '/:id/bulk-confirm',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const estimateId = z.string().uuid().safeParse(request.params.id);
       if (!estimateId.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
@@ -146,7 +146,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
   // (diffChanges) только по реально обновляемым полям.
   fastify.post<{ Params: { id: string } }>(
     '/:id/bulk-assign-location',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const eid = z.string().uuid().safeParse(request.params.id);
       if (!eid.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
@@ -213,7 +213,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
   // POST /api/estimates/:id/bulk-delete — массовое удаление работ (с каскадом материалов) и материалов.
   fastify.post<{ Params: { id: string } }>(
     '/:id/bulk-delete',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const estimateId = z.string().uuid().safeParse(request.params.id);
       if (!estimateId.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
@@ -285,7 +285,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
   // создаёт отдельную строку-копию (с материалами). Дубли по локации отсекаются (skipExisting).
   fastify.post<{ Params: { id: string } }>(
     '/:id/replicate-items',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const estimateId = z.string().uuid().safeParse(request.params.id);
       if (!estimateId.success) return reply.status(400).send({ error: 'Некорректный id сметы' });
@@ -450,7 +450,7 @@ export function registerBulkRoutes(fastify: FastifyInstance): void {
   // (удаляет ровно созданные строки; материалы каскадом).
   fastify.delete<{ Params: { id: string; batchId: string } }>(
     '/:id/copy-batch/:batchId',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const client = await fastify.pool.connect();
       try {

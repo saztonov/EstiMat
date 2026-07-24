@@ -22,7 +22,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   // POST /api/estimate-items/:itemId/materials — добавить материал к работе
   fastify.post<{ Params: { itemId: string } }>(
     '/:itemId/materials',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const body = createEstimateMaterialSchema.parse(request.body);
       const client = await fastify.pool.connect();
@@ -84,7 +84,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   // PUT /api/estimate-items/materials/:id — обновить материал
   fastify.put<{ Params: { id: string } }>(
     '/materials/:id',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const body = updateEstimateMaterialSchema.parse(request.body);
       const fields: string[] = [];
@@ -178,7 +178,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   // что и целевая работа. Привязка — действие ревью, снимаем needs_review.
   fastify.patch<{ Params: { id: string }; Body: { itemId?: string } }>(
     '/materials/:id/reassign',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const itemId = request.body?.itemId;
       if (!itemId || typeof itemId !== 'string') {
@@ -232,7 +232,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   // PATCH /api/estimate-items/materials/reassign-bulk — массовый перенос материалов к одной работе.
   fastify.patch(
     '/materials/reassign-bulk',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const { itemId, materialIds } = reassignMaterialsSchema.parse(request.body);
 
@@ -299,7 +299,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   // ручной материал (quantity фиксируется как видимое число, не пересчитывается от объёма целевой работы).
   fastify.post(
     '/materials/copy-bulk',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const { itemId, materialIds } = reassignMaterialsSchema.parse(request.body);
 
@@ -375,7 +375,7 @@ export default async function estimateItemsRoutes(fastify: FastifyInstance) {
   // DELETE /api/estimate-items/materials/:id — удалить материал (snapshot в журнал)
   fastify.delete<{ Params: { id: string } }>(
     '/materials/:id',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const client = await fastify.pool.connect();
       try {

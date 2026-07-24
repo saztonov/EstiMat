@@ -208,7 +208,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
   }
 
   // POST /api/ai-chat/sessions — создать сессию
-  fastify.post('/sessions', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/sessions', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createChatSessionSchema.parse(request.body);
     try {
       await assertEstimateAccess(fastify.pool, body.estimateId, chatUser(request.currentUser));
@@ -260,7 +260,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
   // POST /api/ai-chat/sessions/:id/messages — отправить сообщение, запустить ход агента
   fastify.post<{ Params: { id: string } }>(
     '/sessions/:id/messages',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const body = sendChatMessageSchema.parse(request.body);
       const chat = await loadChat(request.params.id);
@@ -353,7 +353,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
   // POST /api/ai-chat/messages/:id/cancel — остановить ход агента
   fastify.post<{ Params: { id: string } }>(
     '/messages/:id/cancel',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const upd = await fastify.pool.query(
         `UPDATE ai_chat_messages SET status = 'cancelled' WHERE id = $1 AND status = 'running' RETURNING id`,
@@ -366,7 +366,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
   );
 
   // POST /api/ai-chat/apply — добавить выбранные позиции (canonical из БД)
-  fastify.post('/apply', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/apply', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     // apply — ручное действие пользователя, работает и без ключа OpenRouter.
     const body = aiChatApplySchema.parse(request.body);
     const chat = await loadChat(body.chatId);
@@ -409,7 +409,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/ai-chat/apply-section — копировать раздел из другой сметы
-  fastify.post('/apply-section', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/apply-section', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = applySectionSchema.parse(request.body);
     const chat = await loadChat(body.chatId);
     if (!chat) return reply.status(404).send({ error: 'Чат не найден' });
@@ -449,7 +449,7 @@ export default async function aiChatRoutes(fastify: FastifyInstance) {
   // DELETE /api/ai-chat/sessions/:id — архивировать сессию
   fastify.delete<{ Params: { id: string } }>(
     '/sessions/:id',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const chat = await loadChat(request.params.id);
       if (!chat) return reply.status(404).send({ error: 'Чат не найден' });

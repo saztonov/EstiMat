@@ -12,7 +12,7 @@ export function registerContractorRoutes(fastify: FastifyInstance): void {
   // PUT /api/estimates/:id/contractors — назначить/сменить подрядчика для вида затрат
   fastify.put<{ Params: { id: string } }>(
     '/:id/contractors',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const body = setEstimateContractorSchema.parse(request.body);
       const { rows } = await fastify.pool.query(
@@ -41,7 +41,7 @@ export function registerContractorRoutes(fastify: FastifyInstance): void {
   // DELETE /api/estimates/:id/contractors?costTypeId= — снять подрядчика с вида затрат
   fastify.delete<{ Params: { id: string }; Querystring: { costTypeId?: string } }>(
     '/:id/contractors',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const { costTypeId } = request.query;
       if (!costTypeId) return reply.status(400).send({ error: 'Не указан вид затрат' });

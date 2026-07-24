@@ -20,7 +20,7 @@ export default async function unitRoutes(fastify: FastifyInstance) {
   ];
 
   // POST /api/units
-  fastify.post('/', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createUnitSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       `INSERT INTO units (name, sort_order, synonyms) VALUES ($1, $2, $3) RETURNING *`,
@@ -30,7 +30,7 @@ export default async function unitRoutes(fastify: FastifyInstance) {
   });
 
   // PUT /api/units/:id
-  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = updateUnitSchema.parse(request.body);
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -52,7 +52,7 @@ export default async function unitRoutes(fastify: FastifyInstance) {
   });
 
   // DELETE /api/units/:id
-  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const { rowCount } = await fastify.pool.query(
       'DELETE FROM units WHERE id = $1',
       [request.params.id],

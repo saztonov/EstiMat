@@ -42,7 +42,7 @@ export function registerCommentRoutes(fastify: FastifyInstance): void {
   // GET /api/estimates/:id/comments?targetType=&targetId= — лента комментариев цели (newest-first).
   fastify.get<{ Params: { id: string }; Querystring: { targetType?: string; targetId?: string } }>(
     '/:id/comments',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const q = listQuerySchema.safeParse(request.query);
       if (!q.success) return reply.status(400).send({ error: 'Некорректные параметры цели' });
@@ -59,7 +59,7 @@ export function registerCommentRoutes(fastify: FastifyInstance): void {
   // POST /api/estimates/:id/comments — добавить комментарий.
   fastify.post<{ Params: { id: string } }>(
     '/:id/comments',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const body = createEstimateCommentSchema.parse(request.body);
       const estimateId = request.params.id;
@@ -95,7 +95,7 @@ export function registerCommentRoutes(fastify: FastifyInstance): void {
   // PUT /api/estimates/comments/:commentId — редактировать комментарий (автор или admin).
   fastify.put<{ Params: { commentId: string } }>(
     '/comments/:commentId',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const body = updateEstimateCommentSchema.parse(request.body);
       const { rows: existing } = await fastify.pool.query(
@@ -121,7 +121,7 @@ export function registerCommentRoutes(fastify: FastifyInstance): void {
   // DELETE /api/estimates/comments/:commentId — удалить комментарий (автор или admin).
   fastify.delete<{ Params: { commentId: string } }>(
     '/comments/:commentId',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const { rows: existing } = await fastify.pool.query(
         'SELECT estimate_id, created_by FROM estimate_comments WHERE id = $1',

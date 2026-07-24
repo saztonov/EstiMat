@@ -14,7 +14,7 @@ export function RoomTypesPanel() {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
   const role = useAuthStore((s) => s.user?.role);
-  const canEdit = role === 'admin' || role === 'engineer';
+  const canEdit = role === 'admin' || role === 'engineer' || role === 'manager';
 
   const { data: roomTypes, isLoading } = useQuery({
     queryKey: ['room-types'],

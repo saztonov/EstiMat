@@ -8,7 +8,7 @@ export function registerUndoRoutes(fastify: FastifyInstance): void {
   // GET /api/estimates/:id/undo/peek — что отменится следующим нажатием (активность кнопки + подсказка).
   fastify.get<{ Params: { id: string } }>(
     '/:id/undo/peek',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const client = await fastify.pool.connect();
       try {
@@ -23,7 +23,7 @@ export function registerUndoRoutes(fastify: FastifyInstance): void {
   // POST /api/estimates/:id/undo — отменить последнее своё действие (в транзакции).
   fastify.post<{ Params: { id: string } }>(
     '/:id/undo',
-    { preHandler: [requireRole('admin', 'engineer')] },
+    { preHandler: [requireRole('admin', 'engineer', 'manager')] },
     async (request, reply) => {
       const client = await fastify.pool.connect();
       try {

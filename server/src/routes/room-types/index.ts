@@ -17,7 +17,7 @@ export default async function roomTypeRoutes(fastify: FastifyInstance) {
   });
 
   // POST /api/room-types
-  fastify.post('/', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.post('/', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = createRoomTypeSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       `INSERT INTO room_types (name, code, sort_order, is_active) VALUES ($1, $2, $3, $4) RETURNING *`,
@@ -27,7 +27,7 @@ export default async function roomTypeRoutes(fastify: FastifyInstance) {
   });
 
   // PUT /api/room-types/:id
-  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.put<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const body = updateRoomTypeSchema.parse(request.body);
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -50,7 +50,7 @@ export default async function roomTypeRoutes(fastify: FastifyInstance) {
   });
 
   // DELETE /api/room-types/:id (FK ON DELETE SET NULL обнулит room_type_id у строк)
-  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const { rowCount } = await fastify.pool.query(
       'DELETE FROM room_types WHERE id = $1',
       [request.params.id],
