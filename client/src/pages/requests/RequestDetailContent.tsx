@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import dayjs from 'dayjs';
 import {
   Card, Descriptions, Table, Space, Button, Tag, Empty, Timeline, Alert, Modal, Collapse, Tabs,
   Form, Input, InputNumber, DatePicker, Typography, Spin, App, Popconfirm, Tooltip,
@@ -132,6 +133,18 @@ export function RequestDetailContent(
       'Поставщик сохранён',
     )();
     if (ok) { setSupplierOpen(false); supForm.resetFields(); }
+  }
+
+  // Открытие оплаты с разумными значениями по умолчанию: дата — сегодня, сумма — остаток к
+  // оплате (счёт минус непогашенные платежи). Оба поля остаются редактируемыми.
+  function openPayment() {
+    const paid = (r?.payments ?? []).filter((p) => !p.reversed).reduce((s, p) => s + Number(p.amount), 0);
+    const remainder = Math.max(Number(r?.order?.amount ?? 0) - paid, 0);
+    payForm.setFieldsValue({
+      paidAt: dayjs(),
+      amount: remainder > 0 ? Number(remainder.toFixed(2)) : undefined,
+    });
+    setPaymentOpen(true);
   }
 
   async function submitPayment() {
@@ -522,7 +535,7 @@ export function RequestDetailContent(
           )}
           {canSendRp && <Button type="primary" icon={<SendOutlined />} onClick={() => setRpSendOpen(true)}>Отправить РП</Button>}
           {canReviseRp && <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>}
-          {canPayRp && <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Документы оплаты</Button>}
+          {canPayRp && <Button icon={<DollarOutlined />} onClick={openPayment}>Документы оплаты</Button>}
           {canResync && <Button icon={<SyncOutlined />} loading={busy} onClick={resync}>Повторить синхронизацию</Button>}
           {canCreateOrder && (
             <Button icon={<ShopOutlined />} onClick={() => setCreateOrderOpen(true)}>Создать заказ поставщику</Button>
@@ -532,7 +545,7 @@ export function RequestDetailContent(
               {r.order ? 'Изменить поставщика' : 'Выбрать поставщика'}
             </Button>
           )}
-          {canPayStd && <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Добавить оплату</Button>}
+          {canPayStd && <Button icon={<DollarOutlined />} onClick={openPayment}>Добавить оплату</Button>}
           {canRevisionStd && <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>}
           {canRevisionComplete && <Button type="primary" loading={busy} onClick={completeRevision}>Отправить доработку</Button>}
           {canEditOrder && <Button icon={<EditOutlined />} onClick={() => setOrderEditOpen(true)}>Редактировать</Button>}

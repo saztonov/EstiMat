@@ -59,6 +59,7 @@ export function OrderScheduleEditor({
     return m;
   });
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [bulkDate, setBulkDate] = useState<Dayjs | null>(null);
 
   const linesSig = lines.map((l) => l.aggKey).join('|');
 
@@ -102,6 +103,38 @@ export function OrderScheduleEditor({
     setSchedule((prev) => {
       const next = new Map(prev);
       next.set(key, fn(next.get(key) ?? []));
+      return next;
+    });
+  }
+
+  // Массовые операции по всем НЕисключённым материалам (исключённые и их даты не трогаем).
+  function applyDateToAll() {
+    if (!bulkDate) return;
+    setSchedule((prev) => {
+      const next = new Map(prev);
+      for (const l of lines) {
+        if (excluded.has(l.aggKey)) continue;
+        next.set(l.aggKey, (next.get(l.aggKey) ?? []).map((e) => ({ ...e, date: bulkDate })));
+      }
+      return next;
+    });
+  }
+
+  // Распределяем количество материала поровну по его строкам. Считаем в целых единицах 10⁻⁴,
+  // остаток от деления добавляем в последнюю строку — сумма совпадает с общим количеством точно.
+  function distributeEvenly() {
+    setSchedule((prev) => {
+      const next = new Map(prev);
+      for (const l of lines) {
+        if (excluded.has(l.aggKey)) continue;
+        const es = next.get(l.aggKey) ?? [];
+        const n = es.length;
+        if (n === 0) continue;
+        const total = Math.round(l.quantity * 1e4);
+        const base = Math.floor(total / n);
+        const rem = total - base * n;
+        next.set(l.aggKey, es.map((e, i) => ({ ...e, qty: (base + (i === n - 1 ? rem : 0)) / 1e4 })));
+      }
       return next;
     });
   }
@@ -248,6 +281,13 @@ export function OrderScheduleEditor({
                   ? 'Укажите даты поставки и количество к каждой дате. Заказать можно не больше остатка по заявке — недобранное останется в своде и попадёт в следующий заказ. График заявки при этом не меняется.'
                   : 'Укажите даты поставки и количество к каждой дате. Сумма по датам должна равняться количеству материала в заказе. График заявки при этом не меняется.'}
               />
+              <Space style={{ marginBottom: 8 }} wrap>
+                <DatePicker format="DD.MM.YYYY" placeholder="Дата на все строки" value={bulkDate} onChange={setBulkDate} />
+                <Button onClick={applyDateToAll} disabled={!bulkDate}>Применить дату ко всем</Button>
+                <Tooltip title="Разложить количество каждого материала поровну по его датам">
+                  <Button onClick={distributeEvenly}>Распределить количество поровну</Button>
+                </Tooltip>
+              </Space>
               <Table
                 rowKey="rowId" size="small" pagination={false}
                 columns={columns} dataSource={flatRows} scroll={{ y: tableScrollY ?? 360 }}
