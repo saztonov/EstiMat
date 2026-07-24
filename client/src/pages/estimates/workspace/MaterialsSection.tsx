@@ -47,7 +47,7 @@ interface Props {
 // с поиском. Панель — браузер справочника; материалы в смету добавляются под работой кнопкой
 // «Материал» (нужна активная работа). Двойной клик / «+» подсказывают это.
 export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) {
-  const { message, modal } = App.useApp();
+  const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<Key[]>([]);
@@ -57,8 +57,8 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
   const selectedWorkLabel = useEstimateSelectionStore((s) => s.selectedWorkLabel);
   const lastAdd = useRef<{ id: string; ts: number }>({ id: '', ts: 0 });
 
-  // Тоггл «проверенный материал». Перевод В проверенные — с подтверждением (требование
-  // пользователя); снятие отметки — сразу. После — инвалидация каталога (дерево + плоский список).
+  // Тоггл «проверенный материал» — быстрое действие без подтверждения (клик сразу переключает).
+  // После — инвалидация каталога (дерево + плоский список автодополнения).
   const verifyMutation = useMutation({
     mutationFn: ({ id, verified }: { id: string; verified: boolean }) =>
       api.patch(`/materials/${id}/verified`, { verified }),
@@ -72,18 +72,7 @@ export function MaterialsSection({ onAddMaterial, collapsed, onToggle }: Props) 
 
   function toggleVerified(m?: MaterialRef) {
     if (!m) return;
-    const next = !m.is_verified;
-    if (next) {
-      modal.confirm({
-        title: 'Отметить материал как проверенный?',
-        content: m.name,
-        okText: 'Отметить',
-        cancelText: 'Отмена',
-        onOk: () => verifyMutation.mutate({ id: m.id, verified: true }),
-      });
-    } else {
-      verifyMutation.mutate({ id: m.id, verified: false });
-    }
+    verifyMutation.mutate({ id: m.id, verified: !m.is_verified });
   }
 
   // Каталог большой и меняется редко: держим в кэше (staleTime/gcTime), чтобы при открытии

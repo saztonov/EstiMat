@@ -332,8 +332,8 @@ export default async function rateRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // DELETE /api/rates/:id (мягкое удаление: is_active=false)
-  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  // DELETE /api/rates/:id (мягкое удаление: is_active=false) — доступно всем, кто работает со сметой
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const { rowCount } = await fastify.pool.query(
       'UPDATE rates SET is_active = false WHERE id = $1',
       [request.params.id],

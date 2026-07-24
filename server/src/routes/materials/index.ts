@@ -143,7 +143,8 @@ export default async function materialRoutes(fastify: FastifyInstance) {
 
   // PATCH /api/materials/:id/verified — отметить/снять «проверенный материал» (курирование каталога,
   // отдельный флаг от is_active). Влияет на галочку в блоке справочника и фильтр «только проверенные».
-  fastify.patch<{ Params: { id: string } }>('/:id/verified', { preHandler: [requireRole('admin', 'engineer')] }, async (request, reply) => {
+  // Доступно всем, кто работает со сметой (admin/engineer/manager).
+  fastify.patch<{ Params: { id: string } }>('/:id/verified', { preHandler: [requireRole('admin', 'engineer', 'manager')] }, async (request, reply) => {
     const { verified } = setMaterialVerifiedSchema.parse(request.body);
     const { rows } = await fastify.pool.query(
       'UPDATE material_catalog SET is_verified = $1 WHERE id = $2 RETURNING id, is_verified',
