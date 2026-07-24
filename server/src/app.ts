@@ -136,6 +136,24 @@ export async function buildApp() {
     return payload;
   });
 
+  // CSRF-защита мутаций. Аутентификация — по httpOnly-cookie, а cookie отправляется
+  // браузером и при межсайтовом запросе (SameSite=None для раздельных доменов SPA/API).
+  // CORS ограничивает ЧТЕНИЕ ответа, но не сам запрос: «простой» POST с чужого сайта
+  // всё равно выполнится с амбиентной cookie. Поэтому для небезопасных методов сверяем
+  // Origin с белым списком. Отсутствие Origin (server-to-server по Api-Key — там нет
+  // амбиентных cookie) не блокируем, чтобы не задеть интеграции.
+  const allowedOrigins = new Set(
+    String(config.cors.origin).split(',').map((o) => o.trim()).filter(Boolean),
+  );
+  app.addHook('onRequest', async (request, reply) => {
+    const m = request.method;
+    if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return;
+    const origin = request.headers.origin;
+    if (origin && !allowedOrigins.has(origin)) {
+      return reply.status(403).send({ error: 'Недопустимый источник запроса' });
+    }
+  });
+
   // Database plugin
   await app.register(import('./plugins/database.js'));
 

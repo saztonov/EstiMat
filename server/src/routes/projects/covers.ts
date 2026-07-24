@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { unlink } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { COVER_KEY_RE } from '@estimat/shared';
 import { requireRole } from '../../middleware/requireRole.js';
 import { isLegacyLocalImage } from '../../lib/projectImage.js';
 
@@ -24,6 +25,9 @@ const COVER_MIME: Record<string, string> = {
 // deleteObject (идемпотентно, §15). Используется также в core.ts (PUT /:id).
 export async function removeUpload(fastify: FastifyInstance, value: string | null | undefined) {
   if (!value) return;
+  // Удаляем только собственные ключи обложек. Даже если в image_url когда-то попал
+  // посторонний ключ — по формату он сюда не пройдёт (защита от стирания чужого объекта S3).
+  if (!COVER_KEY_RE.test(value)) return;
   if (isLegacyLocalImage(value)) {
     if (!value.startsWith('/uploads/projects/')) return;
     const name = value.slice('/uploads/projects/'.length);
@@ -35,7 +39,16 @@ export async function removeUpload(fastify: FastifyInstance, value: string | nul
     }
     return;
   }
-  if (fastify.storage) await fastify.storage.deleteObject(value);
+  if (!fastify.storage) return;
+  // Ключ обложки не привязан к конкретному проекту (генерируется до создания объекта),
+  // поэтому перед удалением убеждаемся, что на него не ссылается НИ ОДИН проект. Иначе
+  // подстановкой чужого ключа в свой image_url можно было бы стереть обложку другого объекта.
+  const { rows } = await fastify.pool.query(
+    'SELECT 1 FROM projects WHERE image_url = $1 LIMIT 1',
+    [value],
+  );
+  if (rows.length > 0) return;
+  await fastify.storage.deleteObject(value);
 }
 
 // Обложки объектов: прокси чтения из S3.

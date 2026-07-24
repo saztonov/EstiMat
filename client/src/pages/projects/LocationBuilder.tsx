@@ -7,6 +7,7 @@ import {
   PlusOutlined, DeleteOutlined, CopyOutlined, ArrowLeftOutlined, ArrowRightOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { FLOOR_MIN, FLOOR_MAX } from '@estimat/shared';
 import { api } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
 import { useAuthStore } from '../../store/authStore';
@@ -377,7 +378,7 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
               <Space size="large" wrap>
                 <div>
                   <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>Надземных этажей</Typography.Text>
-                  <InputNumber controls={false} min={1} max={200} disabled={!canEdit} style={{ width: 120 }} value={buildingCount(editing)} onChange={(v) => applyBuilding(editing.id, { count: (v as number) ?? 1 })} />
+                  <InputNumber controls={false} min={1} max={FLOOR_MAX} disabled={!canEdit} style={{ width: 120 }} value={buildingCount(editing)} onChange={(v) => applyBuilding(editing.id, { count: (v as number) ?? 1 })} />
                 </div>
                 <div>
                   <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>Стилобат в составе, эт. (0 — нет)</Typography.Text>
@@ -403,11 +404,11 @@ export function LocationBuilder({ projectId, onDirtyChange }: Props) {
             <Space size="large">
               <div>
                 <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>Этаж от{editing.kind === 'parking' ? ' (−)' : ''}</Typography.Text>
-                <InputNumber controls={false} disabled={!canEdit} style={{ width: 110 }} value={editing.floorMin ?? undefined} onChange={(v) => patch(editing.id, { floorMin: (v as number) ?? null })} />
+                <InputNumber controls={false} min={FLOOR_MIN} max={FLOOR_MAX} disabled={!canEdit} style={{ width: 110 }} value={editing.floorMin ?? undefined} onChange={(v) => patch(editing.id, { floorMin: (v as number) ?? null })} />
               </div>
               <div>
                 <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>Этаж до</Typography.Text>
-                <InputNumber controls={false} disabled={!canEdit} style={{ width: 110 }} value={editing.floorMax ?? undefined} onChange={(v) => patch(editing.id, { floorMax: (v as number) ?? null })} />
+                <InputNumber controls={false} min={FLOOR_MIN} max={FLOOR_MAX} disabled={!canEdit} style={{ width: 110 }} value={editing.floorMax ?? undefined} onChange={(v) => patch(editing.id, { floorMax: (v as number) ?? null })} />
               </div>
             </Space>
             <div>

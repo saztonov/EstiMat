@@ -8,11 +8,18 @@ import { z } from 'zod';
 // Все координаты опциональны: пусто = «Весь объект / не указано».
 // ============================================================
 
+// Границы номера этажа. Реальные данные — в диапазоне −2…50; берём запас на подземные
+// паркинги и высотки. Ограничение — на СЕРВЕРЕ: без него сохранённый гигантский диапазон
+// раскручивался бы в цикл O(диапазон) при отрисовке шкалы этажей (сохраняемый DoS).
+export const FLOOR_MIN = -50;
+export const FLOOR_MAX = 150;
+const floorNumber = () => z.number().int().min(FLOOR_MIN).max(FLOOR_MAX);
+
 // Элемент мультилокации: одна зона + точный набор этажей (floors: [] = «весь корпус»).
 // Один и тот же набор этажей применяется ко всем выбранным зонам (по одному элементу на зону).
 export const locationEntrySchema = z.object({
   zoneId: z.string().uuid().nullable(),
-  floors: z.array(z.number().int()).max(500).default([]),
+  floors: z.array(floorNumber()).max(500).default([]),
 });
 
 // Контекст локации строки (мержится в create/update item; активный контекст панели).
@@ -23,8 +30,8 @@ export const locationEntrySchema = z.object({
 export const locationContextSchema = z.object({
   locations: z.array(locationEntrySchema).max(100).optional(),
   zoneId: z.string().uuid().nullable().optional(),
-  floorFrom: z.number().int().nullable().optional(),
-  floorTo: z.number().int().nullable().optional(),
+  floorFrom: floorNumber().nullable().optional(),
+  floorTo: floorNumber().nullable().optional(),
   roomTypeId: z.string().uuid().nullable().optional(),
   // Произвольный «тип» строки (на всю работу). Сервер upsert'ит его в
   // project_location_types (уникально на объект) и хранит FK location_type_id.
@@ -51,8 +58,8 @@ export const createZoneSchema = z
     name: z.string().min(1, 'Название обязательно'),
     kind: zoneKindSchema.default('building'),
     code: z.string().nullable().optional(),
-    floorMin: z.number().int().nullable().optional(),
-    floorMax: z.number().int().nullable().optional(),
+    floorMin: floorNumber().nullable().optional(),
+    floorMax: floorNumber().nullable().optional(),
     sortOrder: z.number().int().default(0),
     spansZoneIds: z.array(z.string().uuid()).max(100).default([]),
   })
@@ -67,8 +74,8 @@ export const updateZoneSchema = z
     name: z.string().min(1).optional(),
     kind: zoneKindSchema.optional(),
     code: z.string().nullable().optional(),
-    floorMin: z.number().int().nullable().optional(),
-    floorMax: z.number().int().nullable().optional(),
+    floorMin: floorNumber().nullable().optional(),
+    floorMax: floorNumber().nullable().optional(),
     sortOrder: z.number().int().optional(),
     spansZoneIds: z.array(z.string().uuid()).max(100).optional(),
   })
@@ -89,8 +96,8 @@ export const bulkZoneSchema = z
     name: z.string().min(1, 'Название обязательно'),
     kind: zoneKindSchema.default('building'),
     code: z.string().nullable().optional(),
-    floorMin: z.number().int().nullable().optional(),
-    floorMax: z.number().int().nullable().optional(),
+    floorMin: floorNumber().nullable().optional(),
+    floorMax: floorNumber().nullable().optional(),
     sortOrder: z.number().int().default(0),
     spansZoneIds: z.array(z.string().uuid()).max(100).default([]),
   })
@@ -144,8 +151,8 @@ export const replicateItemsSchema = z
       .max(100)
       .default([])
       .transform((ids) => [...new Set(ids)]),
-    floorFrom: z.number().int().nullable().optional(),
-    floorTo: z.number().int().nullable().optional(),
+    floorFrom: floorNumber().nullable().optional(),
+    floorTo: floorNumber().nullable().optional(),
     locationTypeName: z.string().trim().max(100).nullable().optional(),
     includeMaterials: z.boolean().default(true),
     skipExisting: z.boolean().default(true),
