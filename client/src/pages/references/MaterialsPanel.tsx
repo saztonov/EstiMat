@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, App, Popconfirm } from 'antd';
+import { NumberInput } from '../../components/NumberInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -141,7 +142,7 @@ export function MaterialsPanel() {
             <UnitSelect />
           </Form.Item>
           <Form.Item name="unitPrice" label="Цена, ₽" rules={[{ required: true, type: 'number', min: 0 }]}>
-            <InputNumber style={{ width: '100%' }} min={0} step={0.01} decimalSeparator="," />
+            <NumberInput preset="money" style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="description" label="Описание">
             <Input.TextArea />

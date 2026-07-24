@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Modal, Table, InputNumber, Input, Space, Typography, Alert, App } from 'antd';
+import { NumberInput } from '../../../components/NumberInput';
 import type { ColumnsType } from 'antd/es/table';
 import { useMutation } from '@tanstack/react-query';
 import { api, ApiError } from '../../../services/api';
@@ -62,8 +63,8 @@ export function OrderItemsEditModal({ order, onClose, onSaved }: {
     {
       title: 'Стало', key: 'now', width: 130, align: 'right',
       render: (_, it) => (
-        <InputNumber
-          min={0.0001} precision={4} style={{ width: 120 }}
+        <NumberInput
+          preset="quantity" min={0.0001} style={{ width: 120 }}
           value={draft[it.id]}
           onChange={(v) => setDraft((d) => ({ ...d, [it.id]: Number(v ?? 0) }))}
         />

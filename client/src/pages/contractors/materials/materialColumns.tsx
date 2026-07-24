@@ -1,4 +1,5 @@
 import { Button, InputNumber, Space, Tag, Tooltip } from 'antd';
+import { NumberInput } from '../../../components/NumberInput';
 import { EditOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
@@ -240,7 +241,8 @@ export function buildMaterialColumns({
             )}
             {/* size="small": поле дефолтного размера (32px) единолично задавало высоту строки
                 в режиме набора и сводило на нет компактность таблицы. */}
-            <InputNumber
+            <NumberInput
+              preset="quantity"
               min={0}
               size="small"
               style={{ width: 100 }}

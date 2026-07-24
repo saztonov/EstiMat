@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Modal, Table, InputNumber, Form, Input, Typography, Tag, Space, Alert, App } from 'antd';
+import { NumberInput } from '../../components/NumberInput';
 import { api, ApiError } from '../../services/api';
 import { modalWidth } from '../../lib/modalWidth';
 import { ROW_HIGHLIGHTS } from '../../lib/rowHighlights';
@@ -130,8 +131,8 @@ export function RequestItemsEditModal({ requestId, requestType, items, rowVersio
         const placed = Number(r.placed ?? 0);
         return (
           <Space direction="vertical" size={0} style={{ width: '100%' }}>
-            <InputNumber
-              min={0.0001} precision={4} style={{ width: '100%' }}
+            <NumberInput
+              preset="quantity" min={0.0001} style={{ width: '100%' }}
               value={value}
               onChange={(v) => setDraft((d) => ({ ...d, [r.id]: Number(v ?? 0) }))}
             />

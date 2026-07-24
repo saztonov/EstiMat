@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Tabs, Table, InputNumber, DatePicker, Button, Space, Typography, Alert, Tooltip } from 'antd';
+import { NumberInput } from '../../components/NumberInput';
 import { PlusOutlined, DeleteOutlined, StopOutlined, UndoOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs, { type Dayjs } from 'dayjs';
@@ -188,9 +189,9 @@ export function OrderScheduleEditor({
     {
       title: 'Кол-во', key: 'qty', width: 130, align: 'right',
       render: (_, r) => (
-        <InputNumber
+        <NumberInput
+          preset="quantity"
           min={0}
-          precision={4}
           style={{ width: 110 }}
           disabled={isOff(r)}
           value={r.entry.qty}

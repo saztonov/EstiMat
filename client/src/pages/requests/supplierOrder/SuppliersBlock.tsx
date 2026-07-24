@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   Table, Button, Space, Input, InputNumber, Select, Tag, Empty, Divider, Popconfirm, Alert, Typography, Upload, App,
 } from 'antd';
+import { NumberInput } from '../../../components/NumberInput';
 import {
   PlusOutlined, DeleteOutlined, TrophyOutlined, PaperClipOutlined, UploadOutlined, CloseOutlined,
 } from '@ant-design/icons';
@@ -186,12 +187,12 @@ export function SuppliersBlock({
     { title: 'Кол-во', dataIndex: 'quantity', key: 'q', width: 90, align: 'right', render: (v) => round4(v) },
     {
       title: 'Цена за ед.', key: 'price', width: 120, align: 'right',
-      render: (_, a) => <InputNumber min={0} precision={2} value={priceOf(a.agg_key).price ?? undefined} style={{ width: 110 }}
+      render: (_, a) => <NumberInput preset="money" value={priceOf(a.agg_key).price ?? undefined} style={{ width: 110 }}
         onChange={(v) => setPrice(a.agg_key, { price: v == null ? null : Number(v) })} />,
     },
     {
       title: 'Гарантия, мес.', key: 'w', width: 120, align: 'right',
-      render: (_, a) => <InputNumber min={0} precision={0} value={priceOf(a.agg_key).warranty ?? undefined} style={{ width: 100 }}
+      render: (_, a) => <NumberInput preset="integer" min={0} value={priceOf(a.agg_key).warranty ?? undefined} style={{ width: 100 }}
         onChange={(v) => setPrice(a.agg_key, { warranty: v == null ? null : Number(v) })} />,
     },
     {

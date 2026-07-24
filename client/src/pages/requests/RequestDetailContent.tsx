@@ -18,6 +18,7 @@ import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { modalWidth } from '../../lib/modalWidth';
 import { safeExternalHref } from '../../lib/safeUrl';
+import { NumberInput } from '../../components/NumberInput';
 import { formatSize } from '../../lib/files';
 import { RequestStatusTag, RequestTypeTag, money, round4 } from './requestConstants';
 import { RpFormModal } from './RpFormModal';
@@ -535,7 +536,7 @@ export function RequestDetailContent(
             <Input maxLength={12} />
           </Form.Item>
           <Form.Item name="resultAmount" label="Сумма, ₽" rules={[{ required: true, message: 'Укажите сумму' }]}>
-            <InputNumber min={0.01} precision={2} style={{ width: 220 }} />
+            <NumberInput preset="money" min={0.01} style={{ width: 220 }} />
           </Form.Item>
         </Form>
       </Modal>
@@ -545,7 +546,7 @@ export function RequestDetailContent(
         onOk={submitPayment} confirmLoading={busy} okText="Добавить" width={modalWidth(480)}>
         <Form form={payForm} layout="vertical">
           <Form.Item name="amount" label="Сумма, ₽" rules={[{ required: true, message: 'Укажите сумму' }]}>
-            <InputNumber min={0.01} precision={2} style={{ width: 220 }} />
+            <NumberInput preset="money" min={0.01} style={{ width: 220 }} />
           </Form.Item>
           <Form.Item name="paidAt" label="Дата оплаты"><DatePicker style={{ width: 220 }} format="DD.MM.YYYY" /></Form.Item>
           <Form.Item name="docNumber" label="№ документа"><Input maxLength={100} /></Form.Item>

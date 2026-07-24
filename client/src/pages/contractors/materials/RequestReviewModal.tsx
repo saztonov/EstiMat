@@ -5,6 +5,7 @@
 // Иначе проблемная строка тонет среди сотен обычных.
 import { useMemo, useState } from 'react';
 import { Alert, Button, InputNumber, Modal, Space, Switch, Table, Tag } from 'antd';
+import { NumberInput } from '../../../components/NumberInput';
 import type { ColumnsType } from 'antd/es/table';
 import { DEFAULT_PAGINATION } from '../../../lib/tableConfig';
 import { formatMoney } from '../../estimates/components/types';
@@ -79,7 +80,8 @@ export function RequestReviewModal({ open, lines, submitting, onChange, onCancel
       width: 120,
       align: 'right',
       render: (_, l) => (
-        <InputNumber
+        <NumberInput
+          preset="quantity"
           min={0}
           size="small"
           style={{ width: 100 }}

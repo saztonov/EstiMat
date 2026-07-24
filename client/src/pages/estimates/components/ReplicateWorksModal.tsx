@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Modal, Select, AutoComplete, InputNumber, Switch, Radio, Space, Typography, Alert, Divider } from 'antd';
+import { FLOOR_MIN, FLOOR_MAX } from '@estimat/shared';
+import { NumberInput } from '../../../components/NumberInput';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { type ZoneNode, flattenZones, ZONE_KIND_LABEL } from './location';
@@ -124,8 +126,8 @@ export function ReplicateWorksModal({ open, sourceWorks, zones, projectId, loadi
           </div>
           {floorMode === 'override' && (
             <Space style={{ marginTop: 8 }}>
-              <InputNumber placeholder="этаж от" value={floorFrom ?? undefined} onChange={(v) => setFloorFrom(v as number | null)} step={1} />
-              <InputNumber placeholder="до" value={floorTo ?? undefined} onChange={(v) => setFloorTo(v as number | null)} step={1} />
+              <NumberInput preset="integer" min={FLOOR_MIN} max={FLOOR_MAX} placeholder="этаж от" value={floorFrom ?? undefined} onChange={(v) => setFloorFrom(v as number | null)} />
+              <NumberInput preset="integer" min={FLOOR_MIN} max={FLOOR_MAX} placeholder="до" value={floorTo ?? undefined} onChange={(v) => setFloorTo(v as number | null)} />
             </Space>
           )}
         </div>

@@ -7,6 +7,7 @@
  */
 import type { Dispatch, SetStateAction } from 'react';
 import { Table, Button, Popconfirm, Space, Tag, AutoComplete, InputNumber, Tooltip } from 'antd';
+import { NumberInput } from '../../../components/NumberInput';
 import type { ColumnsType } from 'antd/es/table';
 import { DeleteOutlined, CheckOutlined, CloseOutlined, EditOutlined, AppstoreAddOutlined } from '@ant-design/icons';
 import { DragHandle } from '../../../components/dndSortable';
@@ -155,14 +156,14 @@ export function buildWorksColumns(ctx: WorksColumnsCtx): ColumnsType<EstimateIte
     },
     { title: 'Кол-во', key: 'quantity', dataIndex: 'quantity', width: 76, align: 'center', render: (v: string, r) =>
         isRowInEdit(r) && editing ? (
-          <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
+          <NumberInput preset="quantity" size="small" min={0} style={{ width: '100%' }} value={editing.quantity} onChange={(val) => setEditing({ ...editing, quantity: Number(val ?? 0) })} onPressEnter={commit} />
         ) : <span className="estimat-qty-chip">{Number(v).toLocaleString('ru-RU')}</span>,
     },
     ...(showPrices
       ? [
           { title: 'Цена', key: 'unit_price', width: 95, align: 'right' as const, render: (_v: unknown, r: EstimateItem) =>
               isRowInEdit(r) && editing ? (
-                <InputNumber size="small" min={0} step={0.01} decimalSeparator="," style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
+                <NumberInput preset="money" size="small" style={{ width: '100%' }} value={editing.unitPrice} onChange={(val) => setEditing({ ...editing, unitPrice: Number(val ?? 0) })} onPressEnter={commit} />
               ) : formatMoneyOrDash(priceOf(r, priceMode)),
           },
           { title: 'Сумма', key: 'total', width: 105, align: 'right' as const, render: (_v: unknown, r: EstimateItem) =>

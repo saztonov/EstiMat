@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Upload, Tag, Tooltip, App, Switch } from 'antd';
+import { NumberInput } from '../../components/NumberInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ClearOutlined, SearchOutlined, ApartmentOutlined, UndoOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -422,7 +423,7 @@ export function RatesPanel() {
             <UnitSelect />
           </Form.Item>
           <Form.Item name="price" label="Цена">
-            <InputNumber style={{ width: '100%' }} min={0} />
+            <NumberInput preset="money" style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item
             name="description"

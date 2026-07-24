@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Popconfirm, Space, Select, Tag, App } from 'antd';
+import { NumberInput } from '../../components/NumberInput';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -134,7 +135,7 @@ export function UnitsPanel() {
             />
           </Form.Item>
           <Form.Item name="sortOrder" label="Порядок сортировки">
-            <InputNumber style={{ width: '100%' }} min={0} step={1} />
+            <NumberInput preset="integer" min={0} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>

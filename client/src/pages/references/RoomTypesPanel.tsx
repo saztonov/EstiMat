@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Switch, Popconfirm, Space, Tag, App } from 'antd';
+import { NumberInput } from '../../components/NumberInput';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -124,7 +125,7 @@ export function RoomTypesPanel() {
             <Input placeholder="напр. LK" />
           </Form.Item>
           <Form.Item name="sortOrder" label="Порядок сортировки">
-            <InputNumber style={{ width: '100%' }} min={0} step={1} />
+            <NumberInput preset="integer" min={0} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="isActive" label="Активен" valuePropName="checked">
             <Switch />

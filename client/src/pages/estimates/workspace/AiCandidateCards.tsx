@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button, Checkbox, InputNumber, Tag, Tooltip, Typography } from 'antd';
+import { NumberInput } from '../../../components/NumberInput';
 import { PlusOutlined, CopyOutlined } from '@ant-design/icons';
 import type { ApplyItem, ChatCard, WorkCandidate, MaterialCandidate, SimilarWork, SimilarMaterial } from '@estimat/shared';
 import { useEstimateSelectionStore } from '../../../store/estimateSelectionStore';
@@ -125,7 +126,7 @@ function WorkCandidatesCard({
               {[c.categoryName, c.costTypeName].filter(Boolean).join(' › ') || '—'} · {fmt(c.price)} ₽/{c.unit ?? '—'}
             </div>
           </div>
-          <InputNumber size="small" min={0.0001} value={qty[c.catalogId] ?? 1} style={{ width: 78 }}
+          <NumberInput preset="quantity" size="small" min={0.0001} value={qty[c.catalogId] ?? 1} style={{ width: 78 }}
             onChange={(v) => setQty((q) => ({ ...q, [c.catalogId]: Number(v) || 1 }))} />
         </div>
       ))}
@@ -185,7 +186,7 @@ function MaterialCandidatesCard({
             </div>
             <div style={{ fontSize: 11, color: 'var(--est-text-secondary)' }}>{fmt(c.price)} ₽/{c.unit ?? '—'}</div>
           </div>
-          <InputNumber size="small" min={0.0001} value={qty[c.catalogId] ?? 1} style={{ width: 78 }}
+          <NumberInput preset="quantity" size="small" min={0.0001} value={qty[c.catalogId] ?? 1} style={{ width: 78 }}
             onChange={(v) => setQty((q) => ({ ...q, [c.catalogId]: Number(v) || 1 }))} />
         </div>
       ))}
@@ -241,7 +242,7 @@ function SimilarWorksCard({
             </div>
           </div>
           {w.rateId && (
-            <InputNumber size="small" min={0.0001} value={qty[i] ?? w.quantity} style={{ width: 78 }}
+            <NumberInput preset="quantity" size="small" min={0.0001} value={qty[i] ?? w.quantity} style={{ width: 78 }}
               onChange={(v) => setQty((q) => ({ ...q, [i]: Number(v) || 1 }))} />
           )}
         </div>
@@ -295,7 +296,7 @@ function SimilarMaterialsCard({
             </div>
           </div>
           {m.materialId && (
-            <InputNumber size="small" min={0.0001} value={qty[i] ?? m.quantity} style={{ width: 78 }}
+            <NumberInput preset="quantity" size="small" min={0.0001} value={qty[i] ?? m.quantity} style={{ width: 78 }}
               onChange={(v) => setQty((q) => ({ ...q, [i]: Number(v) || 1 }))} />
           )}
         </div>

@@ -4,6 +4,7 @@ import type { FormInstance } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { SHIPPING_CONDITIONS } from '@estimat/shared';
 import { api } from '../../services/api';
+import { NumberInput } from '../../components/NumberInput';
 
 interface Supplier {
   id: string;
@@ -70,7 +71,7 @@ export function RequisitesFields({ form, currentSupplier }: Props) {
       <Form.Item label="Срок поставки" required style={{ marginBottom: 8 }}>
         <Space align="start">
           <Form.Item name="deliveryDays" rules={[{ required: true, message: 'Укажите срок' }]} noStyle>
-            <InputNumber min={1} placeholder="дней" style={{ width: 120 }} />
+            <NumberInput preset="integer" min={1} placeholder="дней" style={{ width: 120 }} />
           </Form.Item>
           <Form.Item name="deliveryDaysType" initialValue="working" noStyle>
             <Segmented options={[{ value: 'working', label: 'рабочих' }, { value: 'calendar', label: 'календарных' }]} />
@@ -84,7 +85,7 @@ export function RequisitesFields({ form, currentSupplier }: Props) {
         />
       </Form.Item>
       <Form.Item name="invoiceAmount" label="Сумма счёта, ₽" rules={[{ required: true, message: 'Укажите сумму счёта' }]}>
-        <InputNumber min={0.01} precision={2} style={{ width: 220 }} />
+        <NumberInput preset="money" min={0.01} style={{ width: 220 }} />
       </Form.Item>
     </>
   );

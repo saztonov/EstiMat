@@ -18,6 +18,7 @@ import {
 } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { NumberInput } from '../../components/NumberInput';
 import { type Dayjs } from 'dayjs';
 import { usePersistedTab } from '../../hooks/usePersistedTab';
 import { DeliveryGantt, type GanttMaterial } from './DeliveryGantt';
@@ -323,7 +324,8 @@ export function DeliveryScheduleModal({ open, lines, estimateId, contractorId, r
         singleDate ? (
           <span>{num(r.line.quantity)}</span>
         ) : (
-          <InputNumber
+          <NumberInput
+            preset="quantity"
             min={0}
             style={{ width: 110 }}
             value={r.entry.qty}

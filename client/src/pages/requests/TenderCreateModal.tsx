@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Modal, Tabs, Table, InputNumber, Form, DatePicker, Input, Select, Collapse, Alert, App } from 'antd';
+import { NumberInput } from '../../components/NumberInput';
 import type { ColumnsType } from 'antd/es/table';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { TENDER_VAT_RATES, TENDER_VAT_RATE_LABELS } from '@estimat/shared';
@@ -101,7 +102,7 @@ export function TenderCreateModal({ projectId, rows, onClose, onDone }: Props) {
     { title: 'Остаток', dataIndex: 'remaining', key: 'rem', width: 90, align: 'right', render: (v: number) => round4(v) },
     {
       title: 'В тендер', key: 'qty', width: 120, align: 'right',
-      render: (_, it) => <InputNumber min={0} max={it.remaining} value={it.quantity} style={{ width: 100 }}
+      render: (_, it) => <NumberInput preset="quantity" min={0} max={it.remaining} value={it.quantity} style={{ width: 100 }}
         onChange={(v) => setDraft((prev) => new Map(prev).set(it.requestItemId, Number(v ?? 0)))} />,
     },
   ];
