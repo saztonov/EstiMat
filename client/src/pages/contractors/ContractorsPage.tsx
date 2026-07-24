@@ -218,9 +218,14 @@ export function ContractorsPage() {
   const contractorQ = useQuery({
     queryKey: ['contractor-my-items', estimateId],
     queryFn: () =>
-      api.get<{ data: { items: EstimateItem[]; cost_type_ciphers: CostTypeCiphers } }>(
-        `/contractors/my-items?estimateId=${estimateId}`,
-      ),
+      api.get<{
+        data: {
+          items: EstimateItem[];
+          cost_type_ciphers: CostTypeCiphers;
+          project_id: string | null;
+          project_name: string | null;
+        };
+      }>(`/contractors/my-items?estimateId=${estimateId}`),
     enabled: !!estimateId && viewerIsContractor,
     refetchOnWindowFocus: true,
   });
@@ -239,9 +244,11 @@ export function ContractorsPage() {
     [viewerIsContractor, contractorQ.data, engineerQ.data],
   );
 
-  // Объект строк: у инженера — из сметы, у подрядчика — из его первой строки (project_id есть в
-  // выдаче my-items). Пока строк нет — projectId undefined, и зоны не запрашиваются.
-  const projectId = viewerIsContractor ? items[0]?.project_id ?? undefined : engineerQ.data?.data.project_id;
+  // Объект строк: у инженера — из сметы, у подрядчика — из метаданных my-items (по estimateId, не из
+  // строк — надёжнее при пустом наборе). Пока не загрузилось — projectId undefined, зоны не грузятся.
+  const projectId = viewerIsContractor
+    ? contractorQ.data?.data.project_id ?? undefined
+    : engineerQ.data?.data.project_id;
 
   // Дерево зон объекта — для бейджей местоположения и отбора по корпусам (обе вкладки).
   const { data: zonesData } = useProjectZones(projectId ?? undefined);
@@ -269,11 +276,10 @@ export function ContractorsPage() {
 
   const isLoading = viewerIsContractor ? contractorQ.isLoading : engineerQ.isLoading;
   const refetch = viewerIsContractor ? contractorQ.refetch : engineerQ.refetch;
+  // Шапка для всех ролей — название объекта без кода.
   const title = viewerIsContractor
-    ? 'Назначенные мне работы'
-    : engineerQ.data?.data
-      ? `${engineerQ.data.data.project_code} · ${engineerQ.data.data.project_name}`
-      : 'Смета';
+    ? contractorQ.data?.data.project_name ?? 'Смета'
+    : engineerQ.data?.data?.project_name ?? 'Смета';
 
   return (
     <Card
@@ -324,7 +330,6 @@ export function ContractorsPage() {
                   projectId={projectId ?? ''}
                   costTypeCiphers={costTypeCiphers}
                   zones={zones}
-                  zoneIndex={zoneIndex}
                   onOpenVorRegistry={() => setVorListOpen(true)}
                   contractFilter={contractFilter}
                   onClearContractFilter={() => setContractFilter(null)}

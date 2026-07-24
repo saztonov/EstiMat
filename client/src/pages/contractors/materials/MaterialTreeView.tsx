@@ -5,7 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { LocationBadgesRow } from '../../estimates/components/LocationBadges';
 import { formatMoney } from '../../estimates/components/types';
 import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
-import { locationBadgeKey, withLocationBlocks } from './locationSpans';
+import { locationBadgeKey, withLocationBlocks } from '../../../lib/locationSpans';
 import type { MaterialTreeNode } from './materialTree';
 import type { OrderMaterialRow } from './orderRow';
 import { subtreeRows } from './draftFill';

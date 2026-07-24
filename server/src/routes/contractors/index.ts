@@ -9,23 +9,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { withImageSrc } from '../../lib/projectImage.js';
 import { bucketBy, fetchCostTypeCiphers, ITEMS_CANONICAL_ORDER_BY } from '../../lib/estimate-detail.js';
 import { isContractor } from '../../lib/chat/access.js';
-
-// Договорные поля — только для сотрудников: в кабинете подрядчика их быть не должно ни в
-// интерфейсе, ни в ответе API (выборки идут через ei.*/em.*, поэтому чистим явно).
-const CONTRACT_PRICE_FIELDS = [
-  'contract_unit_price',
-  'contract_total',
-  'contract_price_vor_id',
-  'contract_price_contractor_id',
-  'contract_price_updated_at',
-  'contract_price_updated_by',
-] as const;
-
-function stripContractPrice<T extends Record<string, unknown>>(row: T): T {
-  const out = { ...row };
-  for (const f of CONTRACT_PRICE_FIELDS) delete out[f];
-  return out;
-}
+import { contractorPriceView } from '../../lib/contractors/contractorPriceView.js';
 
 export default async function contractorRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate);
@@ -184,11 +168,14 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
         : [];
 
       // Бакетизация за один проход вместо .filter() внутри .map() (порядок задан ORDER BY).
-      // Договорные цены снимаем с ответа: они предназначены сотрудникам (раздел «Подрядчики»),
-      // а выборка идёт через ei.*/em.* — иначе новая колонка автоматически уехала бы подрядчику.
-      const materialsByItem = bucketBy(materials.map(stripContractPrice), (m) => m.item_id as string);
+      // Договорные цены отдаём подрядчику только свои (contractorPriceView): чужую/осиротевшую
+      // обнуляем, служебную мету вырезаем. Выборка идёт через ei.*/em.*, поэтому чистим явно.
+      const materialsByItem = bucketBy(
+        materials.map((m) => contractorPriceView(m, contractorId)),
+        (m) => m.item_id as string,
+      );
       const itemsWithMaterials = items.rows.map((it) => ({
-        ...stripContractPrice(it),
+        ...contractorPriceView(it, contractorId),
         materials: materialsByItem.get(it.id as string) ?? [],
       }));
 
@@ -199,7 +186,31 @@ export default async function contractorRoutes(fastify: FastifyInstance) {
         ? await fetchCostTypeCiphers(fastify.pool, request.query.estimateId)
         : {};
 
-      return { data: { items: itemsWithMaterials, cost_type_ciphers: costTypeCiphers } };
+      // Название и id объекта по смете: шапка кабинета подрядчика показывает имя объекта, а из ei.*
+      // оно не приходит. Берём по estimateId (доступ подрядчика к смете проверен выше).
+      let projectId: string | null = null;
+      let projectName: string | null = null;
+      if (request.query.estimateId) {
+        const pm = await fastify.pool.query(
+          `SELECT p.id AS project_id, p.name AS project_name
+             FROM estimates e JOIN projects p ON p.id = e.project_id
+            WHERE e.id = $1`,
+          [request.query.estimateId],
+        );
+        if (pm.rows[0]) {
+          projectId = pm.rows[0].project_id as string;
+          projectName = pm.rows[0].project_name as string;
+        }
+      }
+
+      return {
+        data: {
+          items: itemsWithMaterials,
+          cost_type_ciphers: costTypeCiphers,
+          project_id: projectId,
+          project_name: projectName,
+        },
+      };
     },
   );
 }

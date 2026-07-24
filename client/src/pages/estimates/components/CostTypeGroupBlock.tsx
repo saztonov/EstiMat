@@ -26,6 +26,8 @@ import { CommentsPopover } from './CommentsPopover';
 import { CostTypeCipherSelect } from './CostTypeCipherSelect';
 import type { ColumnPrefs } from '../../../store/smetaColumnsStore';
 import type { ZoneNode } from './location';
+import { buildZoneIndex, locationParts, toLocationSnapshot } from './location';
+import { locationBadgeKey, withLocationBlocks } from '../../../lib/locationSpans';
 import type { CostTypeGroup, EstimateItem, Organization, PriceMode, SaveWorkPayload, SaveMaterialPayload, WorkEdit } from './types';
 import { formatMoney, sumWorksTotal, DRAFT_ID } from './types';
 
@@ -87,6 +89,12 @@ interface Props {
   showCategoryInTitle?: boolean;
   /** Показывать колонку «Локация» (в группировке «по виду работ»). */
   showLocationColumn?: boolean;
+  /**
+   * Объединять соседние ячейки «Местоположение» в блоки (rowSpan) и красить строки полосами — как в
+   * разделе «Подрядчики». Opt-in: на основной «Смете» местоположение редактируется, там не включаем.
+   * Блок обрывается на раскрытой работе, чтобы rowSpan не пересёк вставленную antd строку материалов.
+   */
+  mergeLocationBlocks?: boolean;
   zones?: ZoneNode[];
   /** Объект строки — для автодополнения произвольных «типов» в поповере локации. */
   projectId?: string;
@@ -217,6 +225,7 @@ function CostTypeGroupBlockImpl({
   onWorkExpandChange,
   showCategoryInTitle = true,
   showLocationColumn = false,
+  mergeLocationBlocks = false,
   zones = [],
   projectId = '',
   leadingColumns = NO_LEADING_COLUMNS,
@@ -341,6 +350,16 @@ function CostTypeGroupBlockImpl({
   );
 
   const isRowInEdit = (r: EstimateItem) => !!editing && (r.id === DRAFT_ID || r.id === editing.workId);
+
+  // Классы строки таблицы работ: редактируемая строка и выбранная работа. Вынесены в одну функцию,
+  // потому что нужны и напрямую (rowClassName), и как внешний класс поверх полос блоков местоположения.
+  const rowClassOf = (r: EstimateItem) =>
+    [
+      isRowInEdit(r) ? 'estimat-row-editing' : '',
+      editable && r.id === selectedWorkId ? 'estimat-row-selected' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
 
   const nameOptions = useMemo(
     () =>
@@ -470,6 +489,26 @@ function CostTypeGroupBlockImpl({
     ],
   );
 
+
+  // Объединение ячеек «Местоположение» в блоки + полосы фона (opt-in, раздел «Подрядчики»). Считается
+  // поверх готовых columns/rows. Ключ блока — те же зоны/этажи/тип, что рисует LocationCell. Блок
+  // обрывается на раскрытой работе (isBoundaryAfter): её строку материалов antd вставляет отдельным
+  // <tr>, и rowSpan, «перепрыгивающий» через неё, ломал бы вёрстку.
+  const locBlocks = useMemo(() => {
+    if (!mergeLocationBlocks) return null;
+    const zoneIndex = buildZoneIndex(zones);
+    const expandedSet = new Set(effectiveExpandedKeys);
+    const keyOf = (r: EstimateItem) => {
+      const { zoneNames, floorsLabel, typeLabel } = locationParts(toLocationSnapshot(r), zoneIndex);
+      return locationBadgeKey({ zoneNames, floorsLabel, typeLabels: typeLabel ? [typeLabel] : [] });
+    };
+    const isBoundaryAfter = (i: number) => {
+      const row = rows[i];
+      return row ? expandedSet.has(row.id) : false;
+    };
+    return withLocationBlocks(columns, rows, keyOf, rowClassOf, isBoundaryAfter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mergeLocationBlocks, columns, rows, zones, effectiveExpandedKeys, editable, selectedWorkId, editing]);
 
   // Стабильный объект components: без useMemo AntD пересоздаёт обёртку строки при каждом рендере.
   const tableComponents = useMemo(
@@ -670,19 +709,12 @@ function CostTypeGroupBlockImpl({
           size="small"
           className="estimat-compact"
           components={tableComponents}
-          columns={columns}
+          columns={locBlocks ? locBlocks.columns : columns}
           dataSource={rows}
           pagination={false}
           scroll={tableScrollX ? { x: tableScrollX } : undefined}
           locale={{ emptyText: editable ? 'Нет работ. Нажмите «Работа».' : 'Нет работ.' }}
-          rowClassName={(r) =>
-            [
-              isRowInEdit(r) ? 'estimat-row-editing' : '',
-              editable && r.id === selectedWorkId ? 'estimat-row-selected' : '',
-            ]
-              .filter(Boolean)
-              .join(' ')
-          }
+          rowClassName={locBlocks ? locBlocks.rowClassName : (r) => rowClassOf(r)}
           rowSelection={
             (deleteMode && editable && !editing) || selectWorksMode
               ? {

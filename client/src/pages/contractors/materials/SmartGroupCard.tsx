@@ -6,7 +6,7 @@ import type { OrderMaterialRow } from './orderRow';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
-import { locationBadgeKey, withLocationBlocks } from './locationSpans';
+import { locationBadgeKey, withLocationBlocks } from '../../../lib/locationSpans';
 import type { DimensionFinding } from './dimensionChecks';
 import type { OnCostTypeCiphers } from './CostTypeCiphersModal';
 import type { SplitNode } from './smartSplit';

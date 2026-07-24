@@ -10,7 +10,7 @@ import { SmartGroupCard } from './SmartGroupCard';
 import type { BulkFill } from './MaterialTreeView';
 import { GroupCard } from './GroupCard';
 import { GroupFillButton } from './GroupFillButton';
-import { locationBadgeKey, withLocationBlocks } from './locationSpans';
+import { locationBadgeKey, withLocationBlocks } from '../../../lib/locationSpans';
 import { SHARED_KEY, UNGROUPED_KEY } from './materialBlocks';
 import type { DimensionFinding } from './dimensionChecks';
 import type { OnCostTypeCiphers } from './CostTypeCiphersModal';

@@ -8,7 +8,8 @@
 // Одного объединения мало: по вертикальной границе ячейки не видно, к каким строкам относится
 // подпись. Поэтому блоки ещё и чередуются фоном (белый/серый) — цвет строки и есть граница блока.
 //
-// Модуль чистый (без React и antd в рантайме) — тестируется в node:test.
+// Модуль чистый (без React и antd в рантайме) — тестируется в node:test. Лежит в client/src/lib,
+// а не в разделе «Подрядчики»: им пользуется и общий компонент сметы CostTypeGroupBlock.
 import type { ColumnsType } from 'antd/es/table';
 
 /** Максимум строк в одном объединённом блоке. */
@@ -51,15 +52,24 @@ export function locationBadgeKey(parts: {
  * rowSpan по индексу строки: размер блока у первой строки блока и 0 у продолжений (antd не рисует
  * ячейку с rowSpan 0). Объединяются только ПОДРЯД идущие строки с одинаковым ключом — тот же
  * ключ после разрыва начинает новый блок.
+ *
+ * `isBoundaryAfter(i)` — принудительная граница ПОСЛЕ строки i: блок закрывается на ней, даже если
+ * следующая строка того же места. Нужно там, где после строки antd вставляет отдельный <tr>
+ * (раскрытые материалы работы): объединение, «перепрыгивающее» через такой <tr>, ломает вёрстку,
+ * поэтому раскрытая работа обязана быть последней строкой своего блока.
  */
-export function locationRowSpans(keys: readonly string[], max: number = LOCATION_SPAN_MAX): number[] {
+export function locationRowSpans(
+  keys: readonly string[],
+  max: number = LOCATION_SPAN_MAX,
+  isBoundaryAfter?: (index: number) => boolean,
+): number[] {
   if (!Number.isInteger(max) || max < 1) {
     throw new Error(`locationRowSpans: max должен быть целым ≥ 1, получено ${max}`);
   }
   const spans = new Array<number>(keys.length).fill(1);
   let start = 0;
   for (let i = 1; i <= keys.length; i++) {
-    if (i < keys.length && keys[i] === keys[start]) continue;
+    if (i < keys.length && keys[i] === keys[start] && !isBoundaryAfter?.(i - 1)) continue;
     let at = start;
     for (const size of balancedChunks(i - start, max)) {
       spans[at] = size;
@@ -89,7 +99,8 @@ function balancedChunks(len: number, max: number): number[] {
  * Полоса переключается на СМЕНЕ местоположения, а не на границе объединённой ячейки: длинный
  * участок locationRowSpans режет на несколько ячеек (26 → 9+9+8), и смена цвета внутри него
  * читалась бы как новое место. Первая полоса всегда белая (false) — счёт начинается заново в
- * каждой таблице, то есть в каждой группе или виде работ.
+ * каждой таблице, то есть в каждой группе или виде работ. Принудительная граница блока (раскрытые
+ * материалы) на полосу не влияет — место то же, цвет обязан остаться прежним.
  */
 export function locationStripes(keys: readonly string[]): boolean[] {
   const out = new Array<boolean>(keys.length).fill(false);
@@ -115,6 +126,8 @@ export interface LocationBlocks<T> {
  * Ключи считаются из самих строк, а не принимаются готовым массивом: индекс в onCell — это индекс
  * в dataSource таблицы, и разъехавшийся с ним список ключей молча сдвинул бы объединение.
  *
+ * `isBoundaryAfter(i)` — принудительно завершить блок после строки i (см. locationRowSpans).
+ *
  * Годится только для таблиц без сортировки и пагинации: rowSpan привязан к порядку строк.
  */
 export function withLocationBlocks<T>(
@@ -122,9 +135,10 @@ export function withLocationBlocks<T>(
   rows: readonly T[],
   keyOf: (row: T) => string,
   rowClass?: (row: T) => string,
+  isBoundaryAfter?: (index: number) => boolean,
 ): LocationBlocks<T> {
   const keys = rows.map(keyOf);
-  const spans = locationRowSpans(keys);
+  const spans = locationRowSpans(keys, LOCATION_SPAN_MAX, isBoundaryAfter);
   const stripes = locationStripes(keys);
   // Колонки местоположения нет — объединять и размечать полосами нечего: чередование без видимого
   // признака выглядело бы случайным.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Checkbox, Empty, Select, Space, Table, Tag, Tooltip } from 'antd';
+import { Button, Checkbox, Empty, Select, Space, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   CaretRightOutlined,
@@ -22,13 +22,6 @@ import {
   type ItemContractor,
 } from '../estimates/components/types';
 import type { ZoneNode } from '../estimates/components/location';
-import {
-  LocationBadgesRow,
-  locationParts,
-  toLocationSnapshot,
-  type ZoneIndex,
-} from '../estimates/components/LocationBadges';
-import { locationBadgeKey, withLocationBlocks } from './materials/locationSpans';
 import { LocationFilterPopover } from '../estimates/workspace/LocationFilterPopover';
 import { useInitialCollapsedTypes } from '../estimates/workspace/useInitialCollapsedTypes';
 import { useContractorLocationFilter } from './useContractorLocationFilter';
@@ -45,7 +38,6 @@ interface Props {
   /** Шифры РД по видам работ — тегами в шапке блока (просмотр; правка только в разделе «Смета»). */
   costTypeCiphers: CostTypeCiphers;
   zones: ZoneNode[];
-  zoneIndex: ZoneIndex;
   /** Открыть реестр ВОР объекта (он один на раздел — им же владеет страница). */
   onOpenVorRegistry: () => void;
   /** Показывать только строки одного договора (вход по кнопке перехода из реестра ВОР). */
@@ -54,7 +46,6 @@ interface Props {
 }
 
 const NO_CATEGORY = '__none__';
-const num = (v: string | number | null | undefined) => Number(v ?? 0);
 
 // Подрядчики набора работ без повторов — для правой части заголовков «Категория» и «Вид работ».
 function contractorsOf(works: EstimateItem[]): ItemContractor[] {
@@ -87,72 +78,6 @@ function ContractorTags({ contractors }: { contractors: ItemContractor[] }) {
   );
 }
 
-/**
- * Работы одного вида работ в виде подрядчика.
- *
- * Отдельный компонент, а не таблица внутри groups.map: колонки и объединение ячеек местоположения
- * мемоизируются, а хуки в цикле родителя стоять не могут.
- */
-function ContractorWorksTable({ works, zoneIndex }: { works: EstimateItem[]; zoneIndex: ZoneIndex }) {
-  const columns = useMemo<ColumnsType<EstimateItem>>(
-    () => [
-      {
-        title: 'Местоположение',
-        key: 'location',
-        width: 237,
-        render: (_, it) => {
-          const { zoneNames, floorsLabel, typeLabel } = locationParts(toLocationSnapshot(it), zoneIndex);
-          return (
-            <LocationBadgesRow
-              zoneNames={zoneNames}
-              floorsLabel={floorsLabel}
-              typeLabels={typeLabel ? [typeLabel] : []}
-            />
-          );
-        },
-      },
-      {
-        title: 'Работа',
-        dataIndex: 'description',
-        key: 'description',
-        render: (_, it) => (
-          <span>
-            {it.description}
-            {it.rate_name && it.rate_name !== it.description && (
-              <span style={{ color: 'var(--est-text-tertiary)' }}> · {it.rate_name}</span>
-            )}
-          </span>
-        ),
-      },
-      { title: 'Ед.', dataIndex: 'unit', key: 'unit', width: 70 },
-      // Работа достаётся исполнителю целиком, поэтому его объём — объём строки.
-      { title: 'Кол-во', key: 'quantity', width: 110, align: 'right', render: (_, it) => num(it.quantity) },
-    ],
-    [zoneIndex],
-  );
-  // Ключ блока считаем той же locationParts, что и рендер, — иначе блок и подпись разъедутся.
-  const loc = useMemo(
-    () =>
-      withLocationBlocks(columns, works, (it) => {
-        const { zoneNames, floorsLabel, typeLabel } = locationParts(toLocationSnapshot(it), zoneIndex);
-        return locationBadgeKey({ zoneNames, floorsLabel, typeLabels: typeLabel ? [typeLabel] : [] });
-      }),
-    [columns, works, zoneIndex],
-  );
-  return (
-    <Table<EstimateItem>
-      rowKey="id"
-      size="small"
-      className="estimat-compact"
-      pagination={false}
-      dataSource={works}
-      columns={loc.columns}
-      rowClassName={loc.rowClassName}
-      scroll={{ x: 700 }}
-    />
-  );
-}
-
 export function ContractorsSmetaTab({
   estimateId,
   items,
@@ -161,7 +86,6 @@ export function ContractorsSmetaTab({
   projectId,
   costTypeCiphers,
   zones,
-  zoneIndex,
   onOpenVorRegistry,
   contractFilter = null,
   onClearContractFilter,
@@ -171,8 +95,8 @@ export function ContractorsSmetaTab({
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
   const [filterContractorIds, setFilterContractorIds] = useState<string[]>([]);
 
-  // Инженеру/админу видны цены (как на странице «Смета»).
-  const showPrices = canAssign;
+  // Цены (договорные из ВОР) видны всем — и сотруднику, и подрядчику: до заполнения ВОР это прочерк.
+  const showPrices = true;
 
   // Опции фильтра — только подрядчики, реально назначенные на работы в этой смете
   // (источник — item_contractors, а не справочник организаций).
@@ -352,59 +276,33 @@ export function ContractorsSmetaTab({
     />
   );
 
-  // ── Вид подрядчика: только его строки ──
-  if (viewerIsContractor) {
-    return (
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {/* Тулбар вне области результатов: иначе отбор «до нуля строк» убрал бы кнопку сброса. */}
-        <div style={{ flexShrink: 0, marginBottom: 12 }}>
-          <Space wrap className="estimat-toolbar">
-            {locationFilterPopover}
-          </Space>
-        </div>
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-          {groups.length === 0 ? (
-            <Empty description="Строк нет" />
-          ) : (
-            <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              {groups.map((g) => (
-                <div key={g.costTypeId ?? '__none__'}>
-                  <Space style={{ marginBottom: 8 }}>
-                    <strong>
-                      {g.costCategoryName ? `${g.costCategoryName} · ` : ''}
-                      {g.costTypeName ?? 'Без вида работ'}
-                    </strong>
-                  </Space>
-                  <ContractorWorksTable works={g.works} zoneIndex={zoneIndex} />
-                </div>
-              ))}
-            </Space>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Вид инженера/админа: как страница «Смета» + столбец «Исполнитель» слева ──
+  // ── Единый вид для сотрудника и подрядчика: страница «Смета» с раскрытием материалов и
+  // объединением местоположения. Отличие подрядчика — нет столбца «Исполнитель», фильтров по
+  // подрядчикам, цен справочника и меток ВОР (последнее — через vorByItem=undefined). ──
   return (
     <div className="contractors-smeta" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ flexShrink: 0, marginBottom: 12 }}>
         <Space wrap className="estimat-toolbar">
-          <Checkbox checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)}>
-            Только без подрядчика
-          </Checkbox>
-          <Select
-            mode="multiple"
-            allowClear
-            showSearch
-            placeholder="Фильтр по подрядчикам"
-            style={{ width: 280 }}
-            value={filterContractorIds}
-            onChange={setFilterContractorIds}
-            options={assignedContractorOptions}
-            optionFilterProp="label"
-            maxTagCount={1}
-          />
+          {/* Назначения и фильтр по подрядчикам — только сотрудникам: у подрядчика все строки его. */}
+          {!viewerIsContractor && (
+            <>
+              <Checkbox checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)}>
+                Только без подрядчика
+              </Checkbox>
+              <Select
+                mode="multiple"
+                allowClear
+                showSearch
+                placeholder="Фильтр по подрядчикам"
+                style={{ width: 280 }}
+                value={filterContractorIds}
+                onChange={setFilterContractorIds}
+                options={assignedContractorOptions}
+                optionFilterProp="label"
+                maxTagCount={1}
+              />
+            </>
+          )}
           {locationFilterPopover}
           {contractFilter && (
             <Tag color="blue" closable onClose={onClearContractFilter} style={{ marginInlineEnd: 0 }}>
@@ -474,6 +372,8 @@ export function ContractorsSmetaTab({
                     onToggleCollapsed={() => toggleType(group.costTypeId)}
                     showCategoryInTitle={false}
                     showLocationColumn
+                    // Соседние строки одного местоположения — объединённым блоком с полосами (обе роли).
+                    mergeLocationBlocks
                     zones={zones}
                     projectId={projectId}
                     // estimateId — только чтобы отрисовались шифры РД (условие показа в блоке).
@@ -484,7 +384,8 @@ export function ContractorsSmetaTab({
                     priceMode="contract"
                     vorByItem={vorByItem}
                     onOpenVor={openVorList}
-                    leadingColumns={executorColumn}
+                    // Столбец «Исполнитель» — только сотрудникам; подрядчик видит остальное.
+                    leadingColumns={canAssign ? executorColumn : undefined}
                     headerRight={<ContractorTags contractors={contractorsOf(group.works)} />}
                   />
                 ))}
