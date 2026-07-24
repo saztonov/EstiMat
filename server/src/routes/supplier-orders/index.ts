@@ -2135,7 +2135,7 @@ export default async function supplierOrderRoutes(fastify: FastifyInstance) {
                 mri.cost_type_id, ct.name AS cost_type_name,
                 cc.id AS category_id, cc.name AS category_name,
                 cc.sort_order AS category_sort, ct.sort_order AS cost_type_sort,
-                mri.material_id, mri.material_name, mri.unit, mri.agg_key,
+                mri.material_id, mri.material_name, mri.unit, mri.agg_key, mri.delivery_date,
                 mri.quantity::numeric AS requested, COALESCE(placed.qty, 0)::numeric AS ordered,
                 mr.contractor_id, mr.contractor_name
            FROM material_request_items mri

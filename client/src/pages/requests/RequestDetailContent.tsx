@@ -29,11 +29,12 @@ import { HistoryChanges } from './HistoryChangesView';
 import { TableLegend } from '../../components/table/TableLegend';
 import { ROW_HIGHLIGHTS } from '../../lib/rowHighlights';
 import { RequestLotsSection } from './RequestLotsSection';
+import { SupplierOrderModal } from './SupplierOrderModal';
 import { DeliveryGantt, type GanttMaterial } from '../contractors/DeliveryGantt';
 import { CommentsChat } from './CommentsChat';
 import { FileUploadList, type UploadItem } from '../../components/files/FileUploadList';
 import { FilePreviewModal } from '../../components/files/FilePreview';
-import type { RequestDetail, RequestItem, RequestFile, RequestPayment } from './types';
+import type { RequestDetail, RequestItem, RequestFile, RequestPayment, Su10MaterialRow } from './types';
 
 const { Text, Title } = Typography;
 
@@ -70,6 +71,7 @@ export function RequestDetailContent(
   const isContractor = role === 'contractor';
 
   const [supplierOpen, setSupplierOpen] = useState(false);
+  const [createOrderOpen, setCreateOrderOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [rpFormOpen, setRpFormOpen] = useState(false);
@@ -89,6 +91,19 @@ export function RequestDetailContent(
     enabled: !!id,
   });
   const r = data?.data;
+
+  // Материалы su10-заявки в формате свода — для кнопки «Создать заказ поставщику».
+  const lotsQ = useQuery({
+    queryKey: ['request-lots', id],
+    queryFn: () => api.get<{ data: { projectId: string | null; materials: Omit<Su10MaterialRow, 'assigned_responsibles'>[] } }>(
+      `/supplier-orders/by-request/${id}`,
+    ),
+    enabled: !!id && r?.request_type === 'su10' && isSupply,
+  });
+  const orderProjectId = lotsQ.data?.data?.projectId ?? null;
+  const orderableMaterials: Su10MaterialRow[] = (lotsQ.data?.data?.materials ?? [])
+    .filter((m) => Number(m.remaining ?? 0) > 0)
+    .map((m) => ({ ...m, assigned_responsibles: [] }));
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['requests', 'detail', id] });
@@ -209,8 +224,13 @@ export function RequestDetailContent(
   const canEditOrder = isOwnSupplier && !!r.order && r.status === 'rp_forming' && (isSupply || isContractor);
   const canRevisionComplete = isContractor && !isOwnSupplier && r.status === 'revision';
   const canRevisionStd = isSupply && !isOwnSupplier && r.status === 'in_work';
-  const canSetSupplier = (isSupply || (isContractor && isDirectRoute)) && !isOwnSupplier
+  // Ручной ввод поставщика/суммы — только «собственная поставка» (own_supply). Для su10 —
+  // формирование заказа поставщику через свод материалов (кнопка «Создать заказ поставщику»).
+  const canSetSupplier = isDirectRoute && (isSupply || isContractor) && !isOwnSupplier
     && r.status !== 'delivered' && r.status !== 'revision' && r.status !== 'cancelled';
+  const canCreateOrder = isSu10 && isSupply
+    && r.status !== 'delivered' && r.status !== 'revision' && r.status !== 'cancelled'
+    && orderableMaterials.length > 0;
   const canPayStd = isSupply && !isOwnSupplier && !!r.order && r.status !== 'delivered';
   const canUploadDocs = canEditFiles || isSupply;
   const uploadDocOptions = (isSupply ? REQUEST_DOC_TYPES : RP_APPLICATION_DOC_TYPES)
@@ -504,6 +524,9 @@ export function RequestDetailContent(
           {canReviseRp && <Button icon={<RollbackOutlined />} onClick={() => setRevisionOpen(true)}>На доработку</Button>}
           {canPayRp && <Button icon={<DollarOutlined />} onClick={() => setPaymentOpen(true)}>Документы оплаты</Button>}
           {canResync && <Button icon={<SyncOutlined />} loading={busy} onClick={resync}>Повторить синхронизацию</Button>}
+          {canCreateOrder && (
+            <Button icon={<ShopOutlined />} onClick={() => setCreateOrderOpen(true)}>Создать заказ поставщику</Button>
+          )}
           {canSetSupplier && (
             <Button icon={<ShopOutlined />} onClick={() => setSupplierOpen(true)}>
               {r.order ? 'Изменить поставщика' : 'Выбрать поставщика'}
@@ -540,6 +563,15 @@ export function RequestDetailContent(
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* Заказ поставщику из su10-заявки: стандартная модалка заказа со всеми материалами заявки. */}
+      {createOrderOpen && orderProjectId && (
+        <SupplierOrderModal
+          create={{ projectId: orderProjectId, rows: orderableMaterials }}
+          onClose={() => setCreateOrderOpen(false)}
+          onChanged={() => { invalidate(); qc.invalidateQueries({ queryKey: ['request-lots', id] }); }}
+        />
+      )}
 
       {/* Модалка: оплата */}
       <Modal title="Оплата" open={paymentOpen} onCancel={() => setPaymentOpen(false)}
